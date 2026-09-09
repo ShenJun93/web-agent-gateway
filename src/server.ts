@@ -4,7 +4,7 @@ import { InMemoryTaskStore, type TaskStore } from '@modelcontextprotocol/sdk/exp
 import { z } from 'zod';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
-import { assertReadTarget, canonicalWorkspace } from './path-policy.js';
+import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import {
   DEVSPACE_PROTOCOL_VERSION,
   DevspaceReadLimitError,
@@ -17,13 +17,13 @@ interface SnapshotOptions { maxFiles?: number; }
 export interface VerifyProfile { argv: readonly string[]; timeoutMs?: number; maxOutputTokens?: number; env?: Readonly<Record<string, string>>; }
 
 const SNAPSHOT_COMMAND = [
-  'git status --short --branch',
+  'git --no-optional-locks -c core.fsmonitor=false status --short --branch --ignore-submodules=all',
   'echo __WAG_HEAD__',
-  'git rev-parse HEAD',
+  'git --no-optional-locks -c core.fsmonitor=false rev-parse HEAD',
   'echo __WAG_DIFF__',
-  'git diff --stat -- .',
+  'git --no-optional-locks -c core.fsmonitor=false diff --no-ext-diff --no-textconv --ignore-submodules=all --stat -- .',
   'echo __WAG_FILES__',
-  'git ls-files',
+  'git --no-optional-locks -c core.fsmonitor=false ls-files',
 ].join(' && ');
 
 export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink }) {
@@ -180,20 +180,6 @@ function toolErrorResult(error: unknown) {
 }
 
 
-const SENSITIVE_PATH_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.azure', '.kube']);
-
-function validateReadPath(input: string): string {
-  const normalized = input.replace(/\\/g, '/');
-  if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
-    throw new Error('Gateway denied workspace-relative path');
-  }
-  const segments = normalized.split('/').filter((segment) => segment && segment !== '.');
-  if (segments.some((segment) => segment === '..')) throw new Error('Gateway denied workspace-relative path');
-  if (segments.some((segment) => SENSITIVE_PATH_SEGMENTS.has(segment.toLowerCase()))) {
-    throw new Error('Gateway denied sensitive path');
-  }
-  return segments.join('/');
-}
 
 function buildVerifyCommand(profile: VerifyProfile): string {
   if (profile.argv.length < 1 || profile.argv.length > 16) throw new Error('Invalid verify profile argv');

@@ -16,6 +16,10 @@ test('DevSpace supervisor environment allowlists runtime variables', () => {
   assert.equal(sanitized.OPENAI_API_KEY, undefined);
   assert.equal(sanitized.WAG_TEST_SECRET, undefined);
   assert.equal(sanitized.DEVSPACE_OAUTH_OWNER_TOKEN, 'owner');
+  assert.equal(sanitized.GIT_OPTIONAL_LOCKS, '0');
+  assert.equal(sanitized.GIT_CONFIG_COUNT, '1');
+  assert.equal(sanitized.GIT_CONFIG_KEY_0, 'core.fsmonitor');
+  assert.equal(sanitized.GIT_CONFIG_VALUE_0, 'false');
 });
 
 test('verify.run does not expose parent secrets or the DevSpace owner token to repository code', async (t) => {

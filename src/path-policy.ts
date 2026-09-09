@@ -1,7 +1,9 @@
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, parse, relative, resolve } from 'node:path';
 
-const SENSITIVE_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.azure', '.kube']);
+const SENSITIVE_SEGMENTS = new Set(['.git', '.ssh', '.aws', '.gnupg', '.azure', '.kube']);
+const SENSITIVE_FILES = new Set(['.npmrc', '.pypirc', '.netrc', '_netrc', '.git-credentials']);
+const SAFE_ENV_TEMPLATE_SUFFIXES = ['.example', '.sample', '.template'];
 
 export async function canonicalWorkspace(input: string, allowedRoots: readonly string[]): Promise<string> {
   const requested = input.trim();
@@ -19,6 +21,17 @@ export async function canonicalWorkspace(input: string, allowedRoots: readonly s
   const roots = await Promise.all(allowedRoots.map((root) => realpath(root)));
   if (!roots.some((root) => containsPath(root, canonical))) throw new Error('Gateway denied workspace outside allowed roots');
   return canonical;
+}
+
+export function validateReadPath(input: string): string {
+  const normalized = input.replace(/\\/g, '/');
+  if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+    throw new Error('Gateway denied workspace-relative path');
+  }
+  const segments = normalized.split('/').filter((segment) => segment && segment !== '.');
+  if (segments.some((segment) => segment === '..')) throw new Error('Gateway denied workspace-relative path');
+  if (segments.some(isSensitivePathComponent)) throw new Error('Gateway denied sensitive path');
+  return segments.join('/');
 }
 
 export async function assertReadTarget(root: string, relativePath: string): Promise<void> {
@@ -48,7 +61,14 @@ function isUnsafeWindowsNamespace(value: string): boolean {
 }
 
 function hasSensitiveSegment(value: string): boolean {
-  return value.replaceAll('\\', '/').split('/').some((segment) => SENSITIVE_SEGMENTS.has(segment.toLowerCase()));
+  return value.replaceAll('\\', '/').split('/').some(isSensitivePathComponent);
+}
+
+function isSensitivePathComponent(segment: string): boolean {
+  const lower = segment.toLowerCase();
+  if (SENSITIVE_SEGMENTS.has(lower) || SENSITIVE_FILES.has(lower)) return true;
+  if (lower === '.env') return true;
+  return lower.startsWith('.env.') && !SAFE_ENV_TEMPLATE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
 
 function isSystemWorkspace(value: string): boolean {

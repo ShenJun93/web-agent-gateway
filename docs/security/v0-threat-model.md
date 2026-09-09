@@ -50,3 +50,10 @@ Persistent approval/job storage and idempotency are not required for the initial
 DevSpace `exec_command` currently inherits the DevSpace process environment before adding its own workspace variables. V0 prevents the Web-AI caller from supplying arbitrary shell text or arbitrary environment variables through `verify.run`, but it does **not** claim that executed repository code receives a clean environment. Treat inherited process secrets as exposed to intentionally executed repository code unless the DevSpace supervisor launches with a sanitized environment or a stronger isolated runner is introduced.
 
 Task 3 must include an explicit fixture proving this limitation is either mitigated for the benchmark deployment or recorded as a failed security gate. Do not call `verify.run` environment-isolated until that evidence exists.
+
+### Pre-merge Git and credential hardening
+Repository-local Git configuration is semi-trusted. The DevSpace supervisor forces `GIT_OPTIONAL_LOCKS=0` and a command-line-equivalent Git config override of `core.fsmonitor=false`, so `open_workspace` and later Git children cannot execute a repository-configured fsmonitor command. `repo.snapshot` additionally ignores submodules and disables external diff/textconv execution.
+
+`file.read` denies `.git`, credential directories, `.env` and non-template `.env.*` files, `.npmrc`, `.pypirc`, `.netrc`, `_netrc`, and `.git-credentials`. `.env.example`, `.env.sample`, and `.env.template` remain readable as non-secret templates.
+
+MCP task cancellation is intentionally unsupported in V0.1. The task store rejects `cancelled` transitions until cancellation is wired to a real DevSpace process interrupt; a raw authenticated `tasks/cancel` request must not falsely report that execution stopped.

@@ -15,5 +15,9 @@ export function sanitizeDevspaceEnvironment(
     if (!DEVSPACE_ENV_KEYS.has(key)) throw new Error(`Unsupported DevSpace supervisor environment key: ${key}`);
     result[key] = value;
   }
+  result.GIT_OPTIONAL_LOCKS = '0';
+  result.GIT_CONFIG_COUNT = '1';
+  result.GIT_CONFIG_KEY_0 = 'core.fsmonitor';
+  result.GIT_CONFIG_VALUE_0 = 'false';
   return result;
 }
