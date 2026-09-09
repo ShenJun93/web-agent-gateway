@@ -2,49 +2,64 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prove or reject whether a thin provider-neutral gateway backed by DevSpace materially improves ChatGPT Web local coding execution over Remote Desktop Commander.
+**Goal:** Prove or reject whether a thin provider-neutral gateway backed by DevSpace materially improves Web-AI local coding execution over Remote Desktop Commander, without assuming private ChatGPT Plus full-write MCP availability.
 
-**Architecture:** Cloudflare Tunnel exposes only the owned MCP gateway. The gateway applies policy/telemetry and delegates localhost execution to pinned DevSpace. Remote Desktop Commander is baseline only.
+**Architecture:** A public MCP transport exposes only the owned gateway. The gateway delegates localhost execution to an exact pinned DevSpace process through a narrow adapter boundary. Remote Desktop Commander is the primary current baseline.
 
-**Tech Stack:** TypeScript/Node.js, official MCP SDK, DevSpace upstream, OpenTelemetry-compatible structured telemetry, Git, Windows.
+**Tech Stack:** TypeScript/Node.js, official MCP SDK, pinned DevSpace upstream, OpenTelemetry-compatible structured telemetry, Git, Windows.
 
 **Spec:** `docs/superpowers/specs/2026-09-09-web-agent-gateway-design.md`
 
 ## Global Constraints
 - Provider-neutral core; no ChatGPT-specific execution logic.
-- DevSpace binds localhost only.
+- DevSpace is a separately supervised localhost-only process, not imported as a library in V0.
+- Pin exact DevSpace version/commit and verify compatibility before benchmark use.
 - Default-deny for consequential operations.
 - No browser scraping or custom hosted relay in V0.
 - Benchmark before broad implementation.
+- Failures are evidence; never discard failed runs from latency/reliability reporting.
+
+### Task 0: De-risk host, executor, and transport assumptions
+**Files:** Create `docs/benchmarks/v0-prerequisites.md` and `docs/benchmarks/devspace-pin.json`.
+- [ ] Record the current ChatGPT Plus constraint: private developer-mode full MCP write is not a supported immediate path; published apps may support write depending on plan/app/rollout.
+- [ ] Select a currently supported Web host for architecture validation without adding provider-specific core logic. Record why it is suitable and keep ChatGPT Plus published-plugin access as an external future gate.
+- [ ] Pin one exact DevSpace release or commit. Record repository URL, revision, Node/npm versions, Windows version, and tool/schema fingerprint.
+- [ ] Run DevSpace locally on Windows and verify the minimum required tool surface before writing gateway code.
+- [ ] Verify current process-session semantics: running sessions are in-memory; DevSpace shutdown terminates them. Mark executor-restart durability explicitly out of V0 scope.
+- [ ] Validate Cloudflare Tunnel with the actual Streamable HTTP path, correlation IDs, reconnect after interruption, and realistic payload sizes. Do not require WebSocket or huge binary transfer unless the chosen host actually needs them.
+- [ ] STOP if no supported host can exercise the required write path or if the transport/executor cannot satisfy the minimal scenario without architecture changes.
 
 ### Task 1: Capture Remote Desktop Commander baseline
 **Files:** Create `docs/benchmarks/dc-baseline.json` and `docs/benchmarks/scenario.md`.
 - [ ] Define one deterministic disposable-repo scenario: snapshot, five reads, symbol search, patch, test, diff, second test, status.
-- [ ] Run the scenario through Remote Desktop Commander with timing enabled.
-- [ ] Record per-call latency, total time, remote tool-call count, errors, reconnects, and re-auth events.
-- [ ] Repeat enough times to report median and p95 without silently discarding failures.
+- [ ] Fix comparison conditions: same machine, same repository fixture, same network window where practical, same task text, and same failure-accounting rules.
+- [ ] Run the scenario through Remote Desktop Commander with timing enabled and correlation IDs where exposed.
+- [ ] Record per-call wall-clock latency, total wall-clock task time, remote tool-call count, time to first useful action, errors, retries, reconnects, and re-auth events.
+- [ ] Repeat enough times to report median and p95 without silently discarding failures; record run count and sampling window in the receipt.
 - [ ] Commit evidence with message `bench: capture desktop commander baseline`.
 
 ### Task 2: Build the minimum gateway path
-**Files:** Create `package.json`, `src/server.ts`, `src/executor/devspace.ts`, `src/telemetry.ts`, `test/health.test.ts`.
-- [ ] Write a failing health-path test that requires the gateway to reach a pinned localhost DevSpace instance.
+**Files:** Create `package.json`, `src/server.ts`, `src/executor/devspace.ts`, `src/telemetry.ts`, `test/health.test.ts`, `test/devspace-compat.test.ts`.
+- [ ] Write a failing compatibility test that requires the adapter to reach the exact pinned localhost DevSpace revision and verifies required tool names/schemas.
+- [ ] Write a failing health-path test that requires the gateway to reach that pinned localhost DevSpace instance.
 - [ ] Add only `health`, `workspace.open`, `repo.snapshot`, `file.read`, and `command.run` MCP tools.
-- [ ] Instrument request ID plus network-in, policy, executor, aggregation, and total latency fields.
+- [ ] Instrument correlation/request ID plus gateway ingress, policy, executor, aggregation, and total latency fields.
 - [ ] Verify no public listener exists for DevSpace itself.
 - [ ] Run focused tests and commit with message `feat: add benchmark gateway path`.
 
 ### Task 3: Security and transport acceptance
 **Files:** Create `test/security.test.ts` and `docs/benchmarks/gateway-results.json`.
 - [ ] Add failing tests for parent traversal, symlink escape, credential paths, destructive Git, and arbitrary drive-root access.
-- [ ] Implement the smallest strict policy needed to make those tests pass.
-- [ ] Run the same deterministic scenario through Gateway -> DevSpace.
-- [ ] Interrupt and restore the tunnel while a local job is running; verify process lifetime is independent from request lifetime.
-- [ ] Record median, p95, total time, failures, reconnects, and tool-call count.
+- [ ] Implement the smallest strict/context-aware policy needed to make those tests pass; risk decisions consider tool + target + workspace scope, not tool name alone.
+- [ ] Run the same deterministic scenario through Gateway -> DevSpace using the supported validation host from Task 0.
+- [ ] Interrupt and restore the public transport while a local job is running; verify process lifetime/output capture is independent from transport request lifetime.
+- [ ] Record median, p95, end-to-end wall clock, time to first useful action, failures/retries, reconnects, tool-call count, and task completion without manual transport recovery.
 
 ### Task 4: Gate decision
 **Files:** Create `docs/benchmarks/2026-09-09-v0-gate.md`; update ADR only if evidence changes the architecture.
-- [ ] Compare gateway evidence with the DC baseline without excluding failures.
+- [ ] Compare gateway evidence with the DC baseline without excluding failures. Do not use direct API timing as the primary comparator because it changes the product/cost path.
 - [ ] GO only for >=2x end-to-end speedup, or >=30-40% speedup plus clearly better reliability.
-- [ ] Require zero silent dropped calls and passing security/reconnect tests.
-- [ ] Otherwise mark NO-GO and stop; do not expand scope to Gemini/Claude, ACP/A2A, or plugin submission.
+- [ ] Require zero silent dropped calls, correlation-ID accounting for every request, and passing security/reconnect tests.
+- [ ] State separately whether the architecture passes and whether ChatGPT Plus has an immediately usable supported deployment path.
+- [ ] Otherwise mark NO-GO or BLOCKED with the exact failed gate; do not expand scope to Gemini/Claude orchestration, ACP/A2A, plugin submission, persistent job runtime, or large security subsystems without a new decision.
 - [ ] Commit the signed-off gate receipt.
