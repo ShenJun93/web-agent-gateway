@@ -12,6 +12,7 @@ test('verify.run executes only a configured local profile', async (t) => {
   await writeFile(join(fixture.workspaceRoot, 'verify.mjs'), 'console.log("verified")\n');
   const gateway = createGateway({
     executor: new DevspaceExecutor(fixture),
+    allowedRoots: [fixture.workspaceRoot],
     verifyProfiles: { test: { argv: ['node', 'verify.mjs'], timeoutMs: 2_000, maxOutputTokens: 1_000 } },
   });
   const { workspaceId } = await gateway.openWorkspace(fixture.workspaceRoot);
@@ -26,6 +27,7 @@ test('verify.run interrupts a profile that exceeds its bounded timeout', async (
   await writeFile(join(fixture.workspaceRoot, 'slow.mjs'), 'setInterval(() => {}, 1000)\n');
   const gateway = createGateway({
     executor: new DevspaceExecutor(fixture),
+    allowedRoots: [fixture.workspaceRoot],
     verifyProfiles: { slow: { argv: ['node', 'slow.mjs'], timeoutMs: 100, maxOutputTokens: 500 } },
   });
   const { workspaceId } = await gateway.openWorkspace(fixture.workspaceRoot);

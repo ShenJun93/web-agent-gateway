@@ -7,7 +7,7 @@ import { createGateway, createGatewayMcpServer } from '../src/server.js';
 
 test('public MCP exposes only the five V0 semantic tools', async (t) => {
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
-  const gateway = createGateway({ executor, verifyProfiles: { test: { argv: ['node', '--version'] } } });
+  const gateway = createGateway({ executor, allowedRoots: [process.cwd()], verifyProfiles: { test: { argv: ['node', '--version'] } } });
   const server = createGatewayMcpServer(gateway);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'gateway-test', version: '1.0.0' }, { capabilities: {} });

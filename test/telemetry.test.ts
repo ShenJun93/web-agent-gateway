@@ -23,7 +23,7 @@ test('all semantic operations emit correlation and phase latency telemetry witho
   await git(fixture.workspaceRoot, ['commit', '-m', 'fixture']);
 
   const telemetry = new MemoryTelemetry();
-  const gateway = createGateway({ executor: new DevspaceExecutor(fixture), telemetry, verifyProfiles: { test: { argv: ['node', 'verify.mjs'] } } });
+  const gateway = createGateway({ executor: new DevspaceExecutor(fixture), allowedRoots: [fixture.workspaceRoot], telemetry, verifyProfiles: { test: { argv: ['node', 'verify.mjs'] } } });
   await gateway.health();
   const { workspaceId } = await gateway.openWorkspace(fixture.workspaceRoot);
   await gateway.readFile(workspaceId, 'note.txt');

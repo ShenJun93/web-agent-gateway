@@ -21,7 +21,7 @@ test('repo.snapshot aggregates git state and deterministically prunes file outpu
   await git(fixture.workspaceRoot, ['commit', '-m', 'fixture']);
   await writeFile(join(fixture.workspaceRoot, 'b.txt'), 'modified\n');
 
-  const gateway = createGateway({ executor: new DevspaceExecutor({ baseUrl: fixture.baseUrl, accessToken: fixture.accessToken }) });
+  const gateway = createGateway({ executor: new DevspaceExecutor({ baseUrl: fixture.baseUrl, accessToken: fixture.accessToken }), allowedRoots: [fixture.workspaceRoot] });
   const { workspaceId } = await gateway.openWorkspace(fixture.workspaceRoot);
   const snapshot = await gateway.repoSnapshot(workspaceId, { maxFiles: 2 });
 

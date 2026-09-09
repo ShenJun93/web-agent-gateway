@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
+import { assertReadTarget, canonicalWorkspace } from './path-policy.js';
 import {
   DEVSPACE_PROTOCOL_VERSION,
   DevspaceReadLimitError,
@@ -9,7 +10,7 @@ import {
   type DevspaceExecutor,
 } from './executor/devspace.js';
 
-interface WorkspaceBinding { devspaceWorkspaceId: string; }
+interface WorkspaceBinding { devspaceWorkspaceId: string; canonicalRoot: string; }
 interface SnapshotOptions { maxFiles?: number; }
 export interface VerifyProfile { argv: readonly string[]; timeoutMs?: number; maxOutputTokens?: number; env?: Readonly<Record<string, string>>; }
 
@@ -23,7 +24,7 @@ const SNAPSHOT_COMMAND = [
   'git ls-files',
 ].join(' && ');
 
-export function createGateway({ executor, verifyProfiles = {}, telemetry = NOOP_TELEMETRY }: { executor: DevspaceExecutor; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink }) {
+export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink }) {
   const workspaces = new Map<string, WorkspaceBinding>();
 
   function binding(workspaceId: string): WorkspaceBinding {
@@ -51,14 +52,11 @@ export function createGateway({ executor, verifyProfiles = {}, telemetry = NOOP_
     async openWorkspace(path: string) {
       const trace = startTrace('workspace.open', telemetry); trace.markIngress();
       try {
-        const requestedPath = await trace.phase('policyMs', () => {
-          if (!path.trim()) throw new Error('Gateway denied empty workspace path');
-          return path;
-        });
-        const devspaceWorkspaceId = await trace.phase('executorMs', () => executor.openWorkspace(requestedPath));
+        const canonicalRoot = await trace.phase('policyMs', () => canonicalWorkspace(path, allowedRoots));
+        const devspaceWorkspaceId = await trace.phase('executorMs', () => executor.openWorkspace(canonicalRoot));
         const result = await trace.phase('aggregationMs', () => {
           const workspaceId = `ws_${randomUUID()}`;
-          workspaces.set(workspaceId, { devspaceWorkspaceId });
+          workspaces.set(workspaceId, { devspaceWorkspaceId, canonicalRoot });
           return { workspaceId };
         });
         trace.finish(true); return result;
@@ -68,7 +66,12 @@ export function createGateway({ executor, verifyProfiles = {}, telemetry = NOOP_
     async readFile(workspaceId: string, path: string) {
       const trace = startTrace('file.read', telemetry); trace.markIngress();
       try {
-        const scoped = await trace.phase('policyMs', () => ({ safePath: validateReadPath(path), devspaceWorkspaceId: binding(workspaceId).devspaceWorkspaceId }));
+        const scoped = await trace.phase('policyMs', async () => {
+          const workspace = binding(workspaceId);
+          const safePath = validateReadPath(path);
+          await assertReadTarget(workspace.canonicalRoot, safePath);
+          return { safePath, devspaceWorkspaceId: workspace.devspaceWorkspaceId };
+        });
         let content: string;
         try { content = await trace.phase('executorMs', () => executor.readFile(scoped.devspaceWorkspaceId, scoped.safePath, undefined, 2000)); }
         catch (error) { if (error instanceof DevspaceReadLimitError) throw new Error('Gateway rejected oversized content'); throw error; }
@@ -163,11 +166,12 @@ function buildVerifyCommand(profile: VerifyProfile): string {
   if (!profile.argv.every((arg) => safeArg.test(arg))) throw new Error('Invalid verify profile argv');
   const env = Object.entries(profile.env ?? {});
   if (env.length > 16) throw new Error('Invalid verify profile env');
-  if (env.some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !safeArg.test(value))) throw new Error('Invalid verify profile env');
-  const prefix = process.platform === 'win32'
+  if (env.some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !safeArg.test(value) || /(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY|CREDENTIAL)/i.test(key))) throw new Error('Invalid verify profile env');
+  const scrub = process.platform === 'win32' ? 'set "DEVSPACE_OAUTH_OWNER_TOKEN="' : 'unset DEVSPACE_OAUTH_OWNER_TOKEN';
+  const profileEnv = process.platform === 'win32'
     ? env.map(([key, value]) => 'set "' + key + '=' + value + '"').join(' && ')
     : env.map(([key, value]) => key + '=' + value).join(' ');
-  return [prefix, profile.argv.join(' ')].filter(Boolean).join(process.platform === 'win32' ? ' && ' : ' ');
+  return [scrub, profileEnv, profile.argv.join(' ')].filter(Boolean).join(process.platform === 'win32' ? ' && ' : ' ');
 }
 
 function parseSnapshot(output: string) {

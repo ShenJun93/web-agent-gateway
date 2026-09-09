@@ -7,7 +7,7 @@ import { startPinnedDevspace } from './devspace-fixture.js';
 test('workspace.open returns an opaque id after DevSpace accepts the workspace', async (t) => {
   const fixture = await startPinnedDevspace();
   t.after(() => fixture.stop());
-  const gateway = createGateway({ executor: new DevspaceExecutor({ baseUrl: fixture.baseUrl, accessToken: fixture.accessToken }) });
+  const gateway = createGateway({ executor: new DevspaceExecutor({ baseUrl: fixture.baseUrl, accessToken: fixture.accessToken }), allowedRoots: [fixture.workspaceRoot] });
 
   const opened = await gateway.openWorkspace(fixture.workspaceRoot);
   assert.match(opened.workspaceId, /^ws_[a-f0-9-]{36}$/);

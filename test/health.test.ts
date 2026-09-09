@@ -8,7 +8,7 @@ test('health reaches the pinned DevSpace executor and verifies its contract', as
   const fixture = await startPinnedDevspace();
   t.after(() => fixture.stop());
   const executor = new DevspaceExecutor({ baseUrl: fixture.baseUrl, accessToken: fixture.accessToken });
-  const gateway = createGateway({ executor });
+  const gateway = createGateway({ executor, allowedRoots: [fixture.workspaceRoot] });
 
   const health = await gateway.health();
   assert.equal(health.status, 'ok');

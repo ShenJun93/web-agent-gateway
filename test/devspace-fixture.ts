@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { sanitizeDevspaceEnvironment } from '../src/environment-policy.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -53,7 +54,7 @@ export async function startPinnedDevspace(): Promise<DevspaceFixture> {
 
   const child = spawn(process.execPath, ['dist/cli.js', 'serve'], {
     cwd: pinDir,
-    env: { ...process.env, DEVSPACE_CONFIG_DIR: configDir, DEVSPACE_OAUTH_OWNER_TOKEN: ownerToken },
+    env: sanitizeDevspaceEnvironment(process.env, { DEVSPACE_CONFIG_DIR: configDir, DEVSPACE_OAUTH_OWNER_TOKEN: ownerToken }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const logs: string[] = [];
