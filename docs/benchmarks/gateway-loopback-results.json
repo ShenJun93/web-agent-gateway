@@ -1,0 +1,1235 @@
+{
+  "recordedAt": "2026-09-09T15:12:53.513Z",
+  "fixtureHead": "57bcd8421936f3e44dba4eda80bbb98f583f8432",
+  "transport": "authenticated loopback Streamable HTTP",
+  "connectMs": 45.743099999999686,
+  "connectHttpEvents": [
+    {
+      "method": "POST",
+      "status": 200,
+      "requestId": "06a65fcf-d043-42e3-bce4-07b0f3716c61",
+      "durationMs": 30.019499999999425
+    },
+    {
+      "method": "POST",
+      "status": 202,
+      "requestId": "4ba25805-8045-4af1-98c1-cb46e519a9af",
+      "durationMs": 6.439400000000205
+    }
+  ],
+  "runs": [
+    {
+      "cold": true,
+      "totalMs": 2528.1725000000006,
+      "timeToFirstUsefulActionMs": 1000.5238000000008,
+      "toolCallCount": 9,
+      "httpRequestCount": 9,
+      "correlationIds": [
+        "55514c83-ff6c-4bf1-bbba-0dad62b08aa1",
+        "cbdacc28-b4b4-4baa-9255-ff29ad044871",
+        "371f6caf-8b5d-4da8-bb55-1b41a05a5ece",
+        "d6bef4fe-e22a-4527-bc7e-b7af053ea452",
+        "6889814e-e384-4f92-a8c7-574e829a97af",
+        "d639b5bf-7b49-49ca-8dc8-038e4dc55fae",
+        "d203334a-3218-4c93-9118-9e18210d8f1c",
+        "396a43c6-1a4d-4636-a6c9-9ccdf6afc235",
+        "158fd28c-796d-4bbc-a6a6-422e3d88899a"
+      ],
+      "toolEvents": [
+        {
+          "tool": "workspace.open",
+          "durationMs": 769.1782999999996,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "55514c83-ff6c-4bf1-bbba-0dad62b08aa1",
+              "durationMs": 12.006500000000415
+            }
+          ]
+        },
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 231.26200000000063,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "cbdacc28-b4b4-4baa-9255-ff29ad044871",
+              "durationMs": 4.453599999999824
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.973399999999856,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "371f6caf-8b5d-4da8-bb55-1b41a05a5ece",
+              "durationMs": 7.675500000000284
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 46.71950000000015,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "d6bef4fe-e22a-4527-bc7e-b7af053ea452",
+              "durationMs": 19.682400000000598
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.1291999999994,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "6889814e-e384-4f92-a8c7-574e829a97af",
+              "durationMs": 9.104299999999967
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.0645999999997,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "d639b5bf-7b49-49ca-8dc8-038e4dc55fae",
+              "durationMs": 11.077400000000125
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 31.87830000000031,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "d203334a-3218-4c93-9118-9e18210d8f1c",
+              "durationMs": 12.57629999999972
+            }
+          ]
+        },
+        {
+          "tool": "verify.run",
+          "durationMs": 1142.4117999999999,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "396a43c6-1a4d-4636-a6c9-9ccdf6afc235",
+              "durationMs": 3.7520999999997002
+            }
+          ]
+        },
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 209.38330000000042,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "158fd28c-796d-4bbc-a6a6-422e3d88899a",
+              "durationMs": 4.3770999999997
+            }
+          ]
+        }
+      ],
+      "telemetry": [
+        {
+          "requestId": "eb4584e0-5826-4faa-b984-d6dea1a4bba2",
+          "tool": "workspace.open",
+          "success": true,
+          "ingressMs": 0.05469999999968422,
+          "policyMs": 2.0546999999996842,
+          "executorMs": 754.1243999999997,
+          "aggregationMs": 0.05199999999967986,
+          "totalMs": 756.3927000000003
+        },
+        {
+          "requestId": "ad225b33-d2cf-4828-86d7-71bd61613750",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.014000000000123691,
+          "policyMs": 0.05019999999967695,
+          "executorMs": 225.85000000000036,
+          "aggregationMs": 0.3690999999998894,
+          "totalMs": 226.29420000000027
+        },
+        {
+          "requestId": "a1354f58-fe1d-46f7-95bc-3f4f80138e36",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.016499999999723514,
+          "policyMs": 1.220700000000761,
+          "executorMs": 23.83050000000003,
+          "aggregationMs": 0.08740000000034343,
+          "totalMs": 25.18040000000019
+        },
+        {
+          "requestId": "3242b37c-3319-4b16-b9fa-f6a2dd14a999",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.011700000000018917,
+          "policyMs": 0.8447999999998501,
+          "executorMs": 25.42990000000009,
+          "aggregationMs": 0.042999999999665306,
+          "totalMs": 26.34860000000026
+        },
+        {
+          "requestId": "78bc56a2-e04c-4ace-bea8-0c29d15d1cc9",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.014000000000123691,
+          "policyMs": 0.6497000000008484,
+          "executorMs": 21.54439999999977,
+          "aggregationMs": 0.018000000000029104,
+          "totalMs": 22.236900000000787
+        },
+        {
+          "requestId": "deb389a3-e572-443a-ab29-c953aa1effb2",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.010900000000219734,
+          "policyMs": 0.8893000000007305,
+          "executorMs": 19.776200000000244,
+          "aggregationMs": 0.011499999999614374,
+          "totalMs": 20.695700000000215
+        },
+        {
+          "requestId": "220073cf-23d4-4451-a74a-3fc65a13d3bd",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.013799999999719148,
+          "policyMs": 0.7359999999998763,
+          "executorMs": 18.256900000000314,
+          "aggregationMs": 0.011700000000018917,
+          "totalMs": 19.026700000000346
+        },
+        {
+          "requestId": "aa122ca7-c347-4664-9b1c-21b9e802ebdc",
+          "tool": "verify.run",
+          "success": true,
+          "ingressMs": 0.010000000000218279,
+          "policyMs": 0.03830000000016298,
+          "executorMs": 1138.0028999999995,
+          "aggregationMs": 0.07769999999982247,
+          "totalMs": 1138.3096000000005
+        },
+        {
+          "requestId": "aa0e2662-d9aa-4fd3-8c2e-cd47239fe6d8",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.009500000000116415,
+          "policyMs": 0.006399999999302963,
+          "executorMs": 204.6190000000006,
+          "aggregationMs": 0.054799999999886495,
+          "totalMs": 204.70219999999972
+        }
+      ]
+    },
+    {
+      "cold": false,
+      "totalMs": 1147.8761999999997,
+      "timeToFirstUsefulActionMs": 207.08190000000013,
+      "toolCallCount": 8,
+      "httpRequestCount": 8,
+      "correlationIds": [
+        "49523d2f-fdf1-4ef1-90cd-ccbc14568085",
+        "004c7809-6622-4fbf-bef6-552b00e7d234",
+        "a7ff8e00-54f6-4fdb-820a-8594901e010b",
+        "1820399b-88f1-4828-9c7e-d44233658486",
+        "6413724e-f491-455e-956b-48527b92a011",
+        "dab31979-cd6a-4779-a595-5057972c7eb7",
+        "ce006756-d46c-4ca7-9d90-33e1e964b05b",
+        "4838e671-06a0-4c1c-903d-8649de504445"
+      ],
+      "toolEvents": [
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 207.0585000000001,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "49523d2f-fdf1-4ef1-90cd-ccbc14568085",
+              "durationMs": 13.330800000000636
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 28.579799999999523,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "004c7809-6622-4fbf-bef6-552b00e7d234",
+              "durationMs": 6.072799999999916
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.689800000000105,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "a7ff8e00-54f6-4fdb-820a-8594901e010b",
+              "durationMs": 11.510400000000118
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.80799999999999,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "1820399b-88f1-4828-9c7e-d44233658486",
+              "durationMs": 12.123999999999796
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 33.810599999999795,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "6413724e-f491-455e-956b-48527b92a011",
+              "durationMs": 11.544399999999769
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.88799999999992,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "dab31979-cd6a-4779-a595-5057972c7eb7",
+              "durationMs": 11.76130000000012
+            }
+          ]
+        },
+        {
+          "tool": "verify.run",
+          "durationMs": 573.7443999999996,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "ce006756-d46c-4ca7-9d90-33e1e964b05b",
+              "durationMs": 3.1525000000001455
+            }
+          ]
+        },
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 206.17399999999998,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "4838e671-06a0-4c1c-903d-8649de504445",
+              "durationMs": 6.1346999999996115
+            }
+          ]
+        }
+      ],
+      "telemetry": [
+        {
+          "requestId": "049cc912-0297-4032-a500-3517a2e5b898",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.015900000000328873,
+          "policyMs": 0.010099999999511056,
+          "executorMs": 193.34670000000006,
+          "aggregationMs": 0.035600000000158616,
+          "totalMs": 193.41960000000017
+        },
+        {
+          "requestId": "991d215e-642c-4058-a091-dc9770a56490",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.012199999999211286,
+          "policyMs": 0.5884999999998399,
+          "executorMs": 21.64969999999994,
+          "aggregationMs": 0.011099999999714782,
+          "totalMs": 22.268099999999322
+        },
+        {
+          "requestId": "d482c9c1-c4be-4c76-a2b5-40828b5558f9",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.007500000000618456,
+          "policyMs": 0.799300000000585,
+          "executorMs": 20.277600000000348,
+          "aggregationMs": 0.014400000000023283,
+          "totalMs": 21.107700000000477
+        },
+        {
+          "requestId": "6575e11f-bcee-4c5d-bc4b-15166a6f4bf6",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.006399999999302963,
+          "policyMs": 0.7319999999999709,
+          "executorMs": 19.88000000000011,
+          "aggregationMs": 0.011300000000119326,
+          "totalMs": 20.638699999999517
+        },
+        {
+          "requestId": "dbbc2bfa-2fc7-4b3c-82c2-b12b57163ea0",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.0065999999997075065,
+          "policyMs": 0.7123999999994339,
+          "executorMs": 21.210000000000036,
+          "aggregationMs": 0.021499999999832653,
+          "totalMs": 21.959600000000137
+        },
+        {
+          "requestId": "1b0d51e8-2d0d-4f85-ad5e-71ecfbda5cdd",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.004400000000714499,
+          "policyMs": 0.49949999999989814,
+          "executorMs": 20.00799999999981,
+          "aggregationMs": 0.021200000000135333,
+          "totalMs": 20.54230000000007
+        },
+        {
+          "requestId": "731f5056-40ac-4099-88cf-5386b2ef8c8c",
+          "tool": "verify.run",
+          "success": true,
+          "ingressMs": 0.00559999999950378,
+          "policyMs": 0.009600000000318687,
+          "executorMs": 570.6157000000003,
+          "aggregationMs": 0.004399999999805004,
+          "totalMs": 570.6615000000002
+        },
+        {
+          "requestId": "55632bb3-23af-4a0f-9132-4c98ade80c99",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.004399999999805004,
+          "policyMs": 0.008100000000013097,
+          "executorMs": 199.85719999999947,
+          "aggregationMs": 0.03499999999985448,
+          "totalMs": 199.91060000000016
+        }
+      ]
+    },
+    {
+      "cold": false,
+      "totalMs": 1132.5342999999993,
+      "timeToFirstUsefulActionMs": 206.05519999999888,
+      "toolCallCount": 8,
+      "httpRequestCount": 8,
+      "correlationIds": [
+        "a999c574-d504-47c7-a292-625e95cc9d7a",
+        "a31c81a4-c91c-4d3f-984e-d69e16790763",
+        "7020226e-ed78-4aa1-8417-6344ae2f06b4",
+        "0d66d4aa-ca40-4510-bb09-78a037c5bc22",
+        "ce8ee132-a8ad-4c8c-ac80-c6d2cb10fdec",
+        "424a4c84-8420-472b-8e36-259dafb367e2",
+        "4697ae9e-81d0-4316-9dd1-480ed08f67be",
+        "1eda09d3-38d1-46f7-a363-4b59aa47c1f1"
+      ],
+      "toolEvents": [
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 206.03670000000056,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "a999c574-d504-47c7-a292-625e95cc9d7a",
+              "durationMs": 13.912899999999354
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 28.08719999999994,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "a31c81a4-c91c-4d3f-984e-d69e16790763",
+              "durationMs": 8.884799999999814
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 35.610099999999875,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "7020226e-ed78-4aa1-8417-6344ae2f06b4",
+              "durationMs": 13.431300000000192
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 31.208599999999933,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "0d66d4aa-ca40-4510-bb09-78a037c5bc22",
+              "durationMs": 12.432699999999386
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 34.739299999999275,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "ce8ee132-a8ad-4c8c-ac80-c6d2cb10fdec",
+              "durationMs": 13.476399999999558
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 33.259000000000015,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "424a4c84-8420-472b-8e36-259dafb367e2",
+              "durationMs": 11.816199999999299
+            }
+          ]
+        },
+        {
+          "tool": "verify.run",
+          "durationMs": 569.8772000000008,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "4697ae9e-81d0-4316-9dd1-480ed08f67be",
+              "durationMs": 11.903299999999945
+            }
+          ]
+        },
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 193.59580000000096,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "1eda09d3-38d1-46f7-a363-4b59aa47c1f1",
+              "durationMs": 4.2730999999985215
+            }
+          ]
+        }
+      ],
+      "telemetry": [
+        {
+          "requestId": "bb14f73e-b23f-4633-be4a-caa821bac7e9",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.006999999999607098,
+          "policyMs": 0.01989999999932479,
+          "executorMs": 192.09149999999863,
+          "aggregationMs": 0.03559999999924912,
+          "totalMs": 192.16140000000087
+        },
+        {
+          "requestId": "68b1f356-bbf9-4f6f-a2f5-469da1b733e7",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.008499999999912689,
+          "policyMs": 0.6761999999998807,
+          "executorMs": 18.234800000000178,
+          "aggregationMs": 0.008299999999508145,
+          "totalMs": 18.937700000000405
+        },
+        {
+          "requestId": "e7c9cf9a-68e1-4261-97e5-03096171a2f7",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.004399999999805004,
+          "policyMs": 0.631600000000617,
+          "executorMs": 21.146099999999933,
+          "aggregationMs": 0.01540000000022701,
+          "totalMs": 21.80529999999999
+        },
+        {
+          "requestId": "3f5de806-e80b-4141-8f5d-0fb59808cb14",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.003700000001117587,
+          "policyMs": 0.6825000000008004,
+          "executorMs": 17.714500000000044,
+          "aggregationMs": 0.005199999999604188,
+          "totalMs": 18.411400000000867
+        },
+        {
+          "requestId": "1e42af1a-8704-49bb-9df6-28329cc72f00",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.006299999999100692,
+          "policyMs": 0.7721000000001368,
+          "executorMs": 20.1257999999998,
+          "aggregationMs": 0.0072000000000116415,
+          "totalMs": 20.91899999999987
+        },
+        {
+          "requestId": "6f6ede93-97ab-4df7-9c40-a9538d26a909",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.007600000000820728,
+          "policyMs": 0.7008999999998196,
+          "executorMs": 20.3762999999999,
+          "aggregationMs": 0.005000000001018634,
+          "totalMs": 21.095100000000457
+        },
+        {
+          "requestId": "79b71623-58c4-498b-9802-3eeb9ba942a0",
+          "tool": "verify.run",
+          "success": true,
+          "ingressMs": 0.004600000000209548,
+          "policyMs": 0.008200000000215368,
+          "executorMs": 557.9375,
+          "aggregationMs": 0.004899999999906868,
+          "totalMs": 557.9763999999996
+        },
+        {
+          "requestId": "0f8157b9-88be-40c3-8d6c-724963e40965",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.004400000001623994,
+          "policyMs": 0.007400000000416185,
+          "executorMs": 189.17359999999826,
+          "aggregationMs": 0.033400000000256114,
+          "totalMs": 189.22370000000046
+        }
+      ]
+    },
+    {
+      "cold": false,
+      "totalMs": 1185.3618999999999,
+      "timeToFirstUsefulActionMs": 222.40589999999975,
+      "toolCallCount": 8,
+      "httpRequestCount": 8,
+      "correlationIds": [
+        "e1b53bf5-1844-4777-8f06-3c2f92bfe390",
+        "7ba180a1-7ae5-4b78-a4dc-8bbdef2b2c21",
+        "b44ac3c2-6186-4a1c-93cb-63232ded82fe",
+        "fd6121fd-ff70-40c9-96b4-e4d6b83ae28f",
+        "b1b7fc45-30c8-4520-a135-b88bd89b601d",
+        "a1f8c5ec-110a-4b44-8a80-5b53985561e3",
+        "a207d94c-8410-4107-bda0-a9137a1b532f",
+        "6515571e-85ed-41e7-912d-e4eb7db2fde9"
+      ],
+      "toolEvents": [
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 222.38880000000063,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "e1b53bf5-1844-4777-8f06-3c2f92bfe390",
+              "durationMs": 5.326900000000023
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 33.21939999999995,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "7ba180a1-7ae5-4b78-a4dc-8bbdef2b2c21",
+              "durationMs": 10.661000000000058
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 27.910600000001068,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "b44ac3c2-6186-4a1c-93cb-63232ded82fe",
+              "durationMs": 11.842399999999543
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.32440000000133,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "fd6121fd-ff70-40c9-96b4-e4d6b83ae28f",
+              "durationMs": 4.6472000000012486
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 25.06209999999919,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "b1b7fc45-30c8-4520-a135-b88bd89b601d",
+              "durationMs": 4.221099999998842
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.461199999999735,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "a1f8c5ec-110a-4b44-8a80-5b53985561e3",
+              "durationMs": 12.417499999999563
+            }
+          ]
+        },
+        {
+          "tool": "verify.run",
+          "durationMs": 601.9519,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "a207d94c-8410-4107-bda0-a9137a1b532f",
+              "durationMs": 13.85779999999977
+            }
+          ]
+        },
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 209.86319999999978,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "6515571e-85ed-41e7-912d-e4eb7db2fde9",
+              "durationMs": 10.26339999999982
+            }
+          ]
+        }
+      ],
+      "telemetry": [
+        {
+          "requestId": "8d197f5b-8aff-4c9f-a387-8daf6af72ec4",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.005699999999706051,
+          "policyMs": 0.010500000000320142,
+          "executorMs": 216.42169999999896,
+          "aggregationMs": 0.042400000000270666,
+          "totalMs": 216.48949999999968
+        },
+        {
+          "requestId": "01c22d0a-d9ac-486f-8801-97b91f6052bc",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.007000000001426088,
+          "policyMs": 0.7525999999998021,
+          "executorMs": 20.9971000000005,
+          "aggregationMs": 0.01540000000022701,
+          "totalMs": 21.780099999999948
+        },
+        {
+          "requestId": "5992cd08-236a-48d3-8a01-96da5f722402",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.007700000000113505,
+          "policyMs": 4.067000000000917,
+          "executorMs": 14.214899999999034,
+          "aggregationMs": 0.01419999999961874,
+          "totalMs": 18.314699999998993
+        },
+        {
+          "requestId": "3f691456-c4b5-4c9a-a171-6850f59914c0",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.005199999999604188,
+          "policyMs": 0.6013999999995576,
+          "executorMs": 26.312699999998586,
+          "aggregationMs": 0.011099999999714782,
+          "totalMs": 26.9387999999999
+        },
+        {
+          "requestId": "3e7b38c0-f8aa-4b5d-b1fd-cc8e7094872d",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.007100000000718865,
+          "policyMs": 0.8348999999998341,
+          "executorMs": 19.76879999999983,
+          "aggregationMs": 0.007999999999810825,
+          "totalMs": 20.6270999999997
+        },
+        {
+          "requestId": "c8f64ac1-4b85-42f8-a62d-cb0879180054",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.0059000000001105946,
+          "policyMs": 0.5983999999989464,
+          "executorMs": 19.139499999999316,
+          "aggregationMs": 0.005700000001525041,
+          "totalMs": 19.75510000000031
+        },
+        {
+          "requestId": "82a0dda5-77ed-4ede-9d14-734421babbc3",
+          "tool": "verify.run",
+          "success": true,
+          "ingressMs": 0.0046999999995023245,
+          "policyMs": 0.017399999998815474,
+          "executorMs": 587.6932000000015,
+          "aggregationMs": 0.016499999999723514,
+          "totalMs": 587.7569999999996
+        },
+        {
+          "requestId": "8df9f9a3-5c98-469b-be6c-becff869e113",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.005100000000311411,
+          "policyMs": 0.011700000000928412,
+          "executorMs": 199.4256000000005,
+          "aggregationMs": 0.0944999999992433,
+          "totalMs": 199.54620000000068
+        }
+      ]
+    },
+    {
+      "cold": false,
+      "totalMs": 1189.501400000001,
+      "timeToFirstUsefulActionMs": 226.52520000000004,
+      "toolCallCount": 8,
+      "httpRequestCount": 8,
+      "correlationIds": [
+        "5215d787-e934-419c-a6e3-96485ec80156",
+        "016be8bb-f1cd-4f38-af53-e79c74a03d3b",
+        "43314535-0d31-4d03-87d6-bd3eca536889",
+        "be52ae90-49d2-4c01-8eef-b94f2be39f8c",
+        "531d8b2c-fbb4-447c-a890-e115ff5feeb3",
+        "3839ec4a-4be3-4944-aa52-c9fe821e767f",
+        "262baf71-c064-489a-85fa-c664f16d1ffe",
+        "384cda15-3400-46d0-b090-c66fc21ddcf4"
+      ],
+      "toolEvents": [
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 226.51130000000012,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "5215d787-e934-419c-a6e3-96485ec80156",
+              "durationMs": 19.849699999998847
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 30.333200000000943,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "016be8bb-f1cd-4f38-af53-e79c74a03d3b",
+              "durationMs": 9.07129999999961
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 16.32630000000063,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "43314535-0d31-4d03-87d6-bd3eca536889",
+              "durationMs": 2.8628000000007887
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 32.189800000000105,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "be52ae90-49d2-4c01-8eef-b94f2be39f8c",
+              "durationMs": 12.221400000000358
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 33.60940000000119,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "531d8b2c-fbb4-447c-a890-e115ff5feeb3",
+              "durationMs": 13.442600000000311
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 33.031199999999444,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "3839ec4a-4be3-4944-aa52-c9fe821e767f",
+              "durationMs": 13.217400000001362
+            }
+          ]
+        },
+        {
+          "tool": "verify.run",
+          "durationMs": 601.6507000000001,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "262baf71-c064-489a-85fa-c664f16d1ffe",
+              "durationMs": 13.536000000000058
+            }
+          ]
+        },
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 215.73309999999947,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "384cda15-3400-46d0-b090-c66fc21ddcf4",
+              "durationMs": 3.980100000000675
+            }
+          ]
+        }
+      ],
+      "telemetry": [
+        {
+          "requestId": "f392ee12-2f25-4925-9c2b-656b797c1b1a",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.004899999999906868,
+          "policyMs": 0.012400000001434819,
+          "executorMs": 206.45479999999952,
+          "aggregationMs": 0.06260000000111177,
+          "totalMs": 206.54279999999926
+        },
+        {
+          "requestId": "6943ae17-b833-4ae1-9ffa-6bd18a1ac8ef",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.006299999999100692,
+          "policyMs": 0.5276999999987311,
+          "executorMs": 20.40020000000004,
+          "aggregationMs": 0.007600000000820728,
+          "totalMs": 20.94839999999931
+        },
+        {
+          "requestId": "95ca3c37-3524-4d08-b53b-1b121121c404",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.006300000000919681,
+          "policyMs": 0.5869999999995343,
+          "executorMs": 12.554399999999077,
+          "aggregationMs": 0.00969999999870197,
+          "totalMs": 13.164200000001074
+        },
+        {
+          "requestId": "121618e9-0fef-4f73-a17e-6aaa6b25dbe9",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.004000000000814907,
+          "policyMs": 0.4514000000017404,
+          "executorMs": 19.170599999999467,
+          "aggregationMs": 0.005300000000715954,
+          "totalMs": 19.63550000000032
+        },
+        {
+          "requestId": "393c75d9-a96d-430f-b99b-197cc31aec43",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.006499999999505235,
+          "policyMs": 0.6158999999988737,
+          "executorMs": 19.494199999999182,
+          "aggregationMs": 0.005400000000008731,
+          "totalMs": 20.1265999999996
+        },
+        {
+          "requestId": "93a74ea1-ba54-4e7c-914b-6648366536e0",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.005800000000817818,
+          "policyMs": 0.6646999999993568,
+          "executorMs": 18.82929999999942,
+          "aggregationMs": 0.006600000000617001,
+          "totalMs": 19.513600000000224
+        },
+        {
+          "requestId": "dea550e2-dfab-4323-94b2-b67fe897d916",
+          "tool": "verify.run",
+          "success": true,
+          "ingressMs": 0.006199999999807915,
+          "policyMs": 0.013100000000122236,
+          "executorMs": 588.0437000000002,
+          "aggregationMs": 0.01419999999961874,
+          "totalMs": 588.1203000000005
+        },
+        {
+          "requestId": "315982e4-c7e1-41c3-8be4-e799a3bb817d",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.007100000000718865,
+          "policyMs": 0.01630000000113796,
+          "executorMs": 211.5534000000007,
+          "aggregationMs": 0.10779999999977008,
+          "totalMs": 211.72260000000097
+        }
+      ]
+    },
+    {
+      "cold": false,
+      "totalMs": 1191.1306000000004,
+      "timeToFirstUsefulActionMs": 215.09230000000025,
+      "toolCallCount": 8,
+      "httpRequestCount": 8,
+      "correlationIds": [
+        "33b53782-ca68-4162-999d-42c951afd5b0",
+        "45b28e0d-4e1e-4120-bb38-6985757aec35",
+        "01394a5e-2d17-4d4e-b7e3-5d3a785db611",
+        "cd74dfb6-0c50-4e74-a332-b0c061c85e09",
+        "95c37fe7-bfa5-4d93-98d6-2bdce0470704",
+        "81f799b1-f06c-4327-b7da-d29c9aa17a14",
+        "040d3e6e-d384-40ec-a0ea-649657e44f21",
+        "3982cf82-ddc1-4fc7-8c80-e51ea239833e"
+      ],
+      "toolEvents": [
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 215.0733999999993,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "33b53782-ca68-4162-999d-42c951afd5b0",
+              "durationMs": 3.447700000000623
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 23.119400000001406,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "45b28e0d-4e1e-4120-bb38-6985757aec35",
+              "durationMs": 2.8564000000005763
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 31.52599999999984,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "01394a5e-2d17-4d4e-b7e3-5d3a785db611",
+              "durationMs": 10.022100000000137
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 33.41120000000046,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "cd74dfb6-0c50-4e74-a332-b0c061c85e09",
+              "durationMs": 9.958400000001348
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 21.183499999999185,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "95c37fe7-bfa5-4d93-98d6-2bdce0470704",
+              "durationMs": 11.756900000000314
+            }
+          ]
+        },
+        {
+          "tool": "file.read",
+          "durationMs": 28.097100000000864,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "81f799b1-f06c-4327-b7da-d29c9aa17a14",
+              "durationMs": 7.118000000000393
+            }
+          ]
+        },
+        {
+          "tool": "verify.run",
+          "durationMs": 627.9046999999991,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "040d3e6e-d384-40ec-a0ea-649657e44f21",
+              "durationMs": 12.541900000000169
+            }
+          ]
+        },
+        {
+          "tool": "repo.snapshot",
+          "durationMs": 210.6996999999992,
+          "http": [
+            {
+              "method": "POST",
+              "status": 200,
+              "requestId": "3982cf82-ddc1-4fc7-8c80-e51ea239833e",
+              "durationMs": 17.976599999999962
+            }
+          ]
+        }
+      ],
+      "telemetry": [
+        {
+          "requestId": "55fa0d17-1020-4339-9bef-7c9d056b075e",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.008899999998902786,
+          "policyMs": 0.007700000000113505,
+          "executorMs": 211.38190000000031,
+          "aggregationMs": 0.05130000000099244,
+          "totalMs": 211.46049999999923
+        },
+        {
+          "requestId": "87dd9fb3-01ff-4fca-9d45-b9ad3509f2ea",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.006900000000314321,
+          "policyMs": 0.6849999999994907,
+          "executorMs": 19.162200000000666,
+          "aggregationMs": 0.009200000000419095,
+          "totalMs": 19.871299999998882
+        },
+        {
+          "requestId": "a4dd39c2-e1ab-46d5-94bd-d7ac3a24142d",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.004800000000614091,
+          "policyMs": 0.5324999999993452,
+          "executorMs": 20.55949999999939,
+          "aggregationMs": 0.011000000000422006,
+          "totalMs": 21.113999999999578
+        },
+        {
+          "requestId": "1c288a3b-da1d-4e61-945a-684dd7ed21d7",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.003800000000410364,
+          "policyMs": 0.5343000000011671,
+          "executorMs": 22.5554000000011,
+          "aggregationMs": 0.006799999999202555,
+          "totalMs": 23.106400000000576
+        },
+        {
+          "requestId": "a30c624a-3b71-49ac-adad-4a95f94bb1ac",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.005100000000311411,
+          "policyMs": 0.6996999999992113,
+          "executorMs": 8.484300000000076,
+          "aggregationMs": 0.006799999999202555,
+          "totalMs": 9.202300000000832
+        },
+        {
+          "requestId": "0dee0ca4-cd27-4f00-bd1b-fce4788a335a",
+          "tool": "file.read",
+          "success": true,
+          "ingressMs": 0.006400000000212458,
+          "policyMs": 0.6405999999988126,
+          "executorMs": 20.046299999999974,
+          "aggregationMs": 0.007500000001527951,
+          "totalMs": 20.709100000000035
+        },
+        {
+          "requestId": "031adc9b-6884-41a3-8eae-02729075b316",
+          "tool": "verify.run",
+          "success": true,
+          "ingressMs": 0.007599999999001739,
+          "policyMs": 0.011500000000523869,
+          "executorMs": 615.339100000001,
+          "aggregationMs": 0.007999999999810825,
+          "totalMs": 615.3997999999992
+        },
+        {
+          "requestId": "1ab05092-ec8c-41b9-bd78-d9d76e717944",
+          "tool": "repo.snapshot",
+          "success": true,
+          "ingressMs": 0.005400000000008731,
+          "policyMs": 0.004100000000107684,
+          "executorMs": 192.35280000000057,
+          "aggregationMs": 0.03889999999955762,
+          "totalMs": 192.40809999999874
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "coldTotalMs": 2528.1725000000006,
+    "warmRunCount": 5,
+    "warmMedianMs": 1185.362,
+    "warmSampleP95Ms": 1190.805,
+    "warmMinMs": 1132.5342999999993,
+    "warmMaxMs": 1191.1306000000004
+  }
+}

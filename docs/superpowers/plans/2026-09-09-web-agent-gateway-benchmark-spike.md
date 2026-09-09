@@ -60,18 +60,18 @@
 - [x] Add failing tests for parent traversal, symlink/junction escape where supported, credential/system paths, UNC/device-path forms, and arbitrary drive-root access.
 - [x] Add a prompt-injection fixture proving repository/output text cannot alter policy state.
 - [x] Implement the smallest strict/context-aware policy needed to make those tests pass; risk decisions consider operation + target + workspace scope, not tool name alone.
-- [ ] Run the ADR-0005 V0 read/verify scenario through Gateway -> DevSpace over the authenticated HTTP transport. Compare against `dc-read-verify-subset.json`; report cold and warm workspace timing separately.
-- [ ] Interrupt and restore the public transport while a local verification job is running; verify process lifetime/output capture is independent from transport request lifetime. If no stable named tunnel/equivalent exists, record stable-public acceptance as BLOCKED and keep Quick Tunnel results provisional.
-- [ ] Record median, p95, end-to-end wall clock, time to first useful action, failures/retries, reconnects, tool-call count, and task completion without manual transport recovery.
+- [x] Run the ADR-0005 V0 read/verify scenario through Gateway -> DevSpace over the authenticated HTTP transport. Compare against `dc-read-verify-subset.json`; report cold and warm workspace timing separately.
+- [x] Interrupt and restore the public transport while a local verification job is running; verify process lifetime/output capture is independent from transport request lifetime. If no stable named tunnel/equivalent exists, record stable-public acceptance as BLOCKED and keep Quick Tunnel results provisional.
+- [x] Record median, p95, end-to-end wall clock, time to first useful action, failures/retries, reconnects, tool-call count, and task completion without manual transport recovery.
 
 ### Task 4: Gate decision
 **Files:** Create `docs/benchmarks/2026-09-09-v0-gate.md`; update ADR only if evidence changes the architecture.
-- [ ] Compare the V0 read/verify gateway evidence with the derived DC read/verify subset without excluding failures. Do not claim full mutation-task equivalence; direct API timing is not the primary comparator.
-- [ ] Architecture GO for the read/verify surface requires >=2x end-to-end speedup, or >=30-40% speedup plus clearly better reliability, or a smaller latency gain only if remote tool-turn/reliability evidence materially improves read/verify task completion. Mutation requires a separate post-GO decision.
-- [ ] Require zero silent dropped calls, correlation-ID accounting for every request, authenticated public access, and passing containment/reconnect tests.
-- [ ] Report remote tool-turn reduction and task-completion rate alongside latency; latency alone cannot override a reliability/security failure.
-- [ ] State separately whether the architecture passes and whether ChatGPT Plus has an immediately usable supported deployment path.
-- [ ] Otherwise mark NO-GO or BLOCKED with the exact failed gate; do not expand scope to patching, arbitrary shell, Git mutation, persistent job runtime, OS sandboxing, ACP/A2A, or plugin submission without a new decision.
+- [x] Compare the V0 read/verify gateway evidence with the derived DC read/verify subset without excluding failures. Do not claim full mutation-task equivalence; direct API timing is not the primary comparator.
+- [x] Architecture GO for the read/verify surface requires >=2x end-to-end speedup, or >=30-40% speedup plus clearly better reliability, or a smaller latency gain only if remote tool-turn/reliability evidence materially improves read/verify task completion. Mutation requires a separate post-GO decision.
+- [x] Require zero silent dropped calls, correlation-ID accounting for every request, authenticated public access, and passing containment/reconnect tests.
+- [x] Report remote tool-turn reduction and task-completion rate alongside latency; latency alone cannot override a reliability/security failure.
+- [x] State separately whether the architecture passes and whether ChatGPT Plus has an immediately usable supported deployment path.
+- [x] Otherwise mark NO-GO or BLOCKED with the exact failed gate; do not expand scope to patching, arbitrary shell, Git mutation, persistent job runtime, OS sandboxing, ACP/A2A, or plugin submission without a new decision.
 - [ ] Commit the signed-off gate receipt.
 
 ### Phase-gated work after a V0 GO

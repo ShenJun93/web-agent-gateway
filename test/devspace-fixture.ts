@@ -17,17 +17,17 @@ export interface DevspaceFixture {
   stop(): Promise<void>;
 }
 
-export async function startPinnedDevspace(): Promise<DevspaceFixture> {
+export async function startPinnedDevspace(options: { workspaceRoot?: string } = {}): Promise<DevspaceFixture> {
   const pin = JSON.parse(await readFile(new URL('../docs/benchmarks/devspace-pin.json', import.meta.url), 'utf8')) as { revision: string };
   const pinDir = process.env.DEVSPACE_PIN_DIR ?? join(tmpdir(), 'web-agent-gateway-devspace-33d6d0b');
   const { stdout } = await execFileAsync('git', ['-C', pinDir, 'rev-parse', 'HEAD']);
   if (stdout.trim() !== pin.revision) throw new Error(`DevSpace pin mismatch: expected ${pin.revision}, got ${stdout.trim()}`);
 
   const root = await mkdtemp(join(tmpdir(), 'web-agent-gateway-test-'));
-  const workspaceRoot = join(root, 'workspace');
+  const workspaceRoot = options.workspaceRoot ?? join(root, 'workspace');
   const configDir = join(root, 'config');
   const stateDir = join(root, 'state');
-  await mkdir(workspaceRoot, { recursive: true });
+  if (!options.workspaceRoot) await mkdir(workspaceRoot, { recursive: true });
   await mkdir(configDir, { recursive: true });
   const port = await reservePort();
   const ownerToken = 'web-agent-gateway-test-owner-token-long-enough';

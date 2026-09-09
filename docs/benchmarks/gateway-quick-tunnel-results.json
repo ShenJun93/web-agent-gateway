@@ -1,0 +1,1244 @@
+{
+    "recordedAt":  "2026-09-09T18:42:45.381Z",
+    "fixtureHead":  "57bcd8421936f3e44dba4eda80bbb98f583f8432",
+    "transport":  "authenticated Cloudflare Quick Tunnel Streamable HTTP (provisional)",
+    "publicTransportStable":  false,
+    "tunnelSetupMs":  11079.645600000002,
+    "connectMs":  304.2981,
+    "connectHttpEvents":  [
+                              {
+                                  "method":  "POST",
+                                  "status":  200,
+                                  "requestId":  "19b5e84e-ddf8-44a8-b314-925974183834",
+                                  "durationMs":  202.88580000000002
+                              },
+                              {
+                                  "method":  "POST",
+                                  "status":  202,
+                                  "requestId":  "1a9e5b4d-ab5e-46ed-be0f-b302f19c39eb",
+                                  "durationMs":  91.02869999999893
+                              }
+                          ],
+    "runs":  [
+                 {
+                     "cold":  true,
+                     "totalMs":  3900.525700000002,
+                     "timeToFirstUsefulActionMs":  1518.116900000001,
+                     "toolCallCount":  9,
+                     "httpRequestCount":  10,
+                     "correlationIds":  [
+                                            "fb7e5fd4-0132-4e88-8f5d-a36b3c8e02d9",
+                                            "287e0d00-49c9-49df-b744-b79b62344591",
+                                            "20fbe143-8e96-47ab-ad02-62e3b6e50be8",
+                                            "2679818d-103a-4e9c-86f6-d08da2116829",
+                                            "6b3b60c2-e65e-4734-983e-a1ac60a0df9d",
+                                            "52cd6599-c82e-4260-b55b-00b579868533",
+                                            "54f583c8-d886-4a05-a42f-c1a48bbcaec1",
+                                            "5640d0de-4cb6-4c19-babc-9fbbafd5b583",
+                                            "122d8a55-08e7-4373-a71e-13891f72d672",
+                                            "25cea9ab-4a64-4221-8d0c-c9adfd908e2b"
+                                        ],
+                     "toolEvents":  [
+                                        {
+                                            "tool":  "workspace.open",
+                                            "durationMs":  1113.3188999999984,
+                                            "http":  [
+                                                         {
+                                                             "method":  "GET",
+                                                             "status":  405,
+                                                             "requestId":  "fb7e5fd4-0132-4e88-8f5d-a36b3c8e02d9",
+                                                             "durationMs":  356.54399999999805
+                                                         },
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "287e0d00-49c9-49df-b744-b79b62344591",
+                                                             "durationMs":  1111.8835
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  404.66669999999795,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "20fbe143-8e96-47ab-ad02-62e3b6e50be8",
+                                                             "durationMs":  403.52310000000216
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  131.3104999999996,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "2679818d-103a-4e9c-86f6-d08da2116829",
+                                                             "durationMs":  130.35130000000208
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  126.17480000000069,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "6b3b60c2-e65e-4734-983e-a1ac60a0df9d",
+                                                             "durationMs":  125.03570000000036
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  111.19550000000163,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "52cd6599-c82e-4260-b55b-00b579868533",
+                                                             "durationMs":  110.54030000000057
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  118.3237999999983,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "54f583c8-d886-4a05-a42f-c1a48bbcaec1",
+                                                             "durationMs":  117.58740000000034
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  118.72340000000258,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "5640d0de-4cb6-4c19-babc-9fbbafd5b583",
+                                                             "durationMs":  118.06910000000062
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "verify.run",
+                                            "durationMs":  1245.4585000000006,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "122d8a55-08e7-4373-a71e-13891f72d672",
+                                                             "durationMs":  1244.3503000000019
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  531.0901000000013,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "25cea9ab-4a64-4221-8d0c-c9adfd908e2b",
+                                                             "durationMs":  529.9488000000019
+                                                         }
+                                                     ]
+                                        }
+                                    ],
+                     "telemetry":  [
+                                       {
+                                           "requestId":  "c8141c27-3266-4581-83cd-bdef4995b1c6",
+                                           "tool":  "workspace.open",
+                                           "success":  true,
+                                           "ingressMs":  0.06480000000010477,
+                                           "policyMs":  1.6490000000012515,
+                                           "executorMs":  1011.5062000000034,
+                                           "aggregationMs":  0.06790000000182772,
+                                           "totalMs":  1013.4193000000014
+                                       },
+                                       {
+                                           "requestId":  "d103e594-7e6d-481c-af73-6a361e515948",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.014400000000023283,
+                                           "policyMs":  0.06420000000071013,
+                                           "executorMs":  297.03210000000036,
+                                           "aggregationMs":  0.36409999999887077,
+                                           "totalMs":  297.48509999999806
+                                       },
+                                       {
+                                           "requestId":  "c9baae85-6cf0-4da5-9634-33327e0d0523",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.01209999999991851,
+                                           "policyMs":  0.7312999999994645,
+                                           "executorMs":  21.679800000001705,
+                                           "aggregationMs":  0.10299999999915599,
+                                           "totalMs":  22.53989999999976
+                                       },
+                                       {
+                                           "requestId":  "be3ff06e-3a3b-4e9e-b9fe-d1142165386d",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.015500000001338776,
+                                           "policyMs":  0.6111000000018976,
+                                           "executorMs":  26.392100000000937,
+                                           "aggregationMs":  0.04899999999906868,
+                                           "totalMs":  27.097100000002683
+                                       },
+                                       {
+                                           "requestId":  "b9a46c7f-173f-46ab-837e-bb7797dc3aa9",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.01809999999750289,
+                                           "policyMs":  0.5060000000012224,
+                                           "executorMs":  23.552800000001298,
+                                           "aggregationMs":  0.0239000000001397,
+                                           "totalMs":  24.11529999999766
+                                       },
+                                       {
+                                           "requestId":  "3e637fd7-86d0-4237-9d04-7f0c54856984",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.019799999998213025,
+                                           "policyMs":  0.5613999999986845,
+                                           "executorMs":  18.471199999999953,
+                                           "aggregationMs":  0.019799999998213025,
+                                           "totalMs":  19.087400000000343
+                                       },
+                                       {
+                                           "requestId":  "92693cf5-3566-4e4c-8522-c45e1ba0482f",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.016700000000128057,
+                                           "policyMs":  1.6778999999987718,
+                                           "executorMs":  27.086300000002666,
+                                           "aggregationMs":  0.023300000000745058,
+                                           "totalMs":  28.823899999999412
+                                       },
+                                       {
+                                           "requestId":  "e39126cd-bbc1-429f-9220-90778517a45d",
+                                           "tool":  "verify.run",
+                                           "success":  true,
+                                           "ingressMs":  0.02019999999902211,
+                                           "policyMs":  0.07109999999738648,
+                                           "executorMs":  1136.5946000000004,
+                                           "aggregationMs":  0.13220000000001164,
+                                           "totalMs":  1137.1791999999987
+                                       },
+                                       {
+                                           "requestId":  "e9cc49a7-be9a-403e-b6f7-7e6238ea8cef",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.03289999999833526,
+                                           "policyMs":  0.030599999998230487,
+                                           "executorMs":  441.6441999999988,
+                                           "aggregationMs":  0.10719999999855645,
+                                           "totalMs":  441.8433999999979
+                                       }
+                                   ]
+                 },
+                 {
+                     "cold":  false,
+                     "totalMs":  2682.1363999999994,
+                     "timeToFirstUsefulActionMs":  523.1486000000004,
+                     "toolCallCount":  8,
+                     "httpRequestCount":  8,
+                     "correlationIds":  [
+                                            "390362a0-c01e-4374-b3b5-368909d717f2",
+                                            "c039a70f-5569-44f8-931c-81abffe86222",
+                                            "8c3f62dd-f043-4aee-ba47-8ac1dd20acd5",
+                                            "05c0b618-8824-426e-a55a-868336dde14b",
+                                            "a3131217-9106-40ff-b644-e7e7eae25fea",
+                                            "15b286dd-761e-41db-9bc5-af193cb3b6c3",
+                                            "0563d765-64a4-4f3f-9cb7-0cc078a3c8a3",
+                                            "b6b2a4d5-77dc-44f1-8b9a-54e695ecbedb"
+                                        ],
+                     "toolEvents":  [
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  523.1065999999992,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "390362a0-c01e-4374-b3b5-368909d717f2",
+                                                             "durationMs":  522.075499999999
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  126.03549999999814,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "c039a70f-5569-44f8-931c-81abffe86222",
+                                                             "durationMs":  125.20630000000165
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  101.54140000000189,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "8c3f62dd-f043-4aee-ba47-8ac1dd20acd5",
+                                                             "durationMs":  100.78389999999854
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  125.58699999999953,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "05c0b618-8824-426e-a55a-868336dde14b",
+                                                             "durationMs":  124.8849999999984
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  109.45010000000184,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "a3131217-9106-40ff-b644-e7e7eae25fea",
+                                                             "durationMs":  108.92450000000099
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  123.4422999999988,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "15b286dd-761e-41db-9bc5-af193cb3b6c3",
+                                                             "durationMs":  122.88190000000031
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "verify.run",
+                                            "durationMs":  1136.7739000000001,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "0563d765-64a4-4f3f-9cb7-0cc078a3c8a3",
+                                                             "durationMs":  1135.9061000000002
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  435.9779000000017,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "b6b2a4d5-77dc-44f1-8b9a-54e695ecbedb",
+                                                             "durationMs":  435.1830999999984
+                                                         }
+                                                     ]
+                                        }
+                                    ],
+                     "telemetry":  [
+                                       {
+                                           "requestId":  "be66a309-65ae-4f44-8a33-6e2873a2e515",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.02750000000014552,
+                                           "policyMs":  0.023699999997916166,
+                                           "executorMs":  414.54139999999825,
+                                           "aggregationMs":  0.05849999999918509,
+                                           "totalMs":  414.67429999999877
+                                       },
+                                       {
+                                           "requestId":  "860c5b23-a361-4e95-a2db-c7b945297a2b",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.021300000000337604,
+                                           "policyMs":  0.7060999999994237,
+                                           "executorMs":  17.590700000000652,
+                                           "aggregationMs":  0.02509999999892898,
+                                           "totalMs":  18.358200000002398
+                                       },
+                                       {
+                                           "requestId":  "5174a246-3f7a-4129-85aa-b427b51a2bee",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.010300000001734588,
+                                           "policyMs":  0.744699999999284,
+                                           "executorMs":  13.807499999998981,
+                                           "aggregationMs":  0.03240000000005239,
+                                           "totalMs":  14.610599999999977
+                                       },
+                                       {
+                                           "requestId":  "c360ce8a-cbe6-4f58-bb38-a56196ae2de9",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.006799999999202555,
+                                           "policyMs":  0.6778999999987718,
+                                           "executorMs":  14.022899999999936,
+                                           "aggregationMs":  0.026699999998527346,
+                                           "totalMs":  14.746999999999389
+                                       },
+                                       {
+                                           "requestId":  "d971f81c-2d2f-4fa9-8f73-53a894184eed",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.008399999998800922,
+                                           "policyMs":  0.6383999999998196,
+                                           "executorMs":  21.29790000000139,
+                                           "aggregationMs":  0.03989999999976135,
+                                           "totalMs":  21.998399999996764
+                                       },
+                                       {
+                                           "requestId":  "630968c1-06d2-4e81-9473-b5558e6cdcbe",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.006000000001222361,
+                                           "policyMs":  0.7165999999997439,
+                                           "executorMs":  13.941900000001624,
+                                           "aggregationMs":  0.030099999999947613,
+                                           "totalMs":  14.708200000000943
+                                       },
+                                       {
+                                           "requestId":  "298bf8e8-3fdb-4208-abe3-47874e9d08ab",
+                                           "tool":  "verify.run",
+                                           "success":  true,
+                                           "ingressMs":  0.008499999999912689,
+                                           "policyMs":  0.027599999997619307,
+                                           "executorMs":  1047.818800000001,
+                                           "aggregationMs":  0.029099999999743886,
+                                           "totalMs":  1047.9331999999995
+                                       },
+                                       {
+                                           "requestId":  "4b936f8f-2a0d-45fa-8d6a-ff13d1199511",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.006900000000314321,
+                                           "policyMs":  0.017899999998917338,
+                                           "executorMs":  333.7756999999983,
+                                           "aggregationMs":  0.07280000000173459,
+                                           "totalMs":  333.8816000000006
+                                       }
+                                   ]
+                 },
+                 {
+                     "cold":  false,
+                     "totalMs":  2376.5910000000003,
+                     "timeToFirstUsefulActionMs":  401.5836999999992,
+                     "toolCallCount":  8,
+                     "httpRequestCount":  8,
+                     "correlationIds":  [
+                                            "f4644549-0db3-46d2-9526-2ac466fa97a1",
+                                            "e54d9a1b-f748-40b4-b7f1-e8f24ec3b1f1",
+                                            "731c0a2d-847d-45f5-a9ed-ac0544d7a272",
+                                            "7fc12039-e18d-48d1-994b-063ccccc50d7",
+                                            "437e6a67-064a-4c92-9dc6-1fa84785f069",
+                                            "74a546fb-fbd5-454a-915b-9bc20f03337f",
+                                            "450b67fd-d265-4cb8-b72c-c4503690f1ea",
+                                            "85955425-591b-4a69-85a0-8150f0e4e3fc"
+                                        ],
+                     "toolEvents":  [
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  401.5554000000011,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "f4644549-0db3-46d2-9526-2ac466fa97a1",
+                                                             "durationMs":  400.7423999999992
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  112.66129999999976,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "e54d9a1b-f748-40b4-b7f1-e8f24ec3b1f1",
+                                                             "durationMs":  111.96429999999964
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  96.1182000000008,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "731c0a2d-847d-45f5-a9ed-ac0544d7a272",
+                                                             "durationMs":  95.55739999999787
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  107.70090000000346,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "7fc12039-e18d-48d1-994b-063ccccc50d7",
+                                                             "durationMs":  107.11399999999776
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  121.12320000000182,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "437e6a67-064a-4c92-9dc6-1fa84785f069",
+                                                             "durationMs":  120.47559999999794
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  119.37090000000171,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "74a546fb-fbd5-454a-915b-9bc20f03337f",
+                                                             "durationMs":  118.71649999999863
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "verify.run",
+                                            "durationMs":  1039.8189999999995,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "450b67fd-d265-4cb8-b72c-c4503690f1ea",
+                                                             "durationMs":  1039.0944000000018
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  378.0448000000033,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "85955425-591b-4a69-85a0-8150f0e4e3fc",
+                                                             "durationMs":  377.4252000000015
+                                                         }
+                                                     ]
+                                        }
+                                    ],
+                     "telemetry":  [
+                                       {
+                                           "requestId":  "dc79c25d-8535-473e-82af-4dd7e1e91de5",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.009600000001228182,
+                                           "policyMs":  0.01749999999810825,
+                                           "executorMs":  315.0502000000015,
+                                           "aggregationMs":  0.0864000000001397,
+                                           "totalMs":  315.1765000000014
+                                       },
+                                       {
+                                           "requestId":  "e2f2b81f-b53d-4dfb-a1ac-85f22a449362",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.006799999999202555,
+                                           "policyMs":  0.619299999998475,
+                                           "executorMs":  19.56000000000131,
+                                           "aggregationMs":  0.027399999999033753,
+                                           "totalMs":  20.22609999999986
+                                       },
+                                       {
+                                           "requestId":  "add5b64d-5caf-4a2e-a290-431ad7f78a6e",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.004700000001321314,
+                                           "policyMs":  0.49539999999979045,
+                                           "executorMs":  9.544400000002497,
+                                           "aggregationMs":  0.023000000001047738,
+                                           "totalMs":  10.076600000000326
+                                       },
+                                       {
+                                           "requestId":  "4a72c1f1-5222-4de0-91bc-8908b1731cea",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.007599999997182749,
+                                           "policyMs":  0.5454000000027008,
+                                           "executorMs":  8.613600000000588,
+                                           "aggregationMs":  0.011599999997997656,
+                                           "totalMs":  9.190699999999197
+                                       },
+                                       {
+                                           "requestId":  "4558b6ad-2b5d-4d23-9549-fb609cfadff7",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.008000000001629815,
+                                           "policyMs":  0.5655000000006112,
+                                           "executorMs":  14.217100000001665,
+                                           "aggregationMs":  0.008600000001024455,
+                                           "totalMs":  14.8096000000005
+                                       },
+                                       {
+                                           "requestId":  "31540cc2-d824-492c-a5ae-b3d7d0da4fa9",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.007100000002537854,
+                                           "policyMs":  0.5627999999996973,
+                                           "executorMs":  15.328499999999622,
+                                           "aggregationMs":  0.009700000002339948,
+                                           "totalMs":  15.917500000003201
+                                       },
+                                       {
+                                           "requestId":  "6fbe6ebf-f5f4-4d1d-9322-879a7a702e95",
+                                           "tool":  "verify.run",
+                                           "success":  true,
+                                           "ingressMs":  0.007499999999708962,
+                                           "policyMs":  0.01329999999870779,
+                                           "executorMs":  937.2835000000014,
+                                           "aggregationMs":  0.008300000001327135,
+                                           "totalMs":  937.3499000000011
+                                       },
+                                       {
+                                           "requestId":  "f5929c72-8537-4e85-9025-2171e1dde237",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.008399999998800922,
+                                           "policyMs":  0.01569999999992433,
+                                           "executorMs":  272.63560000000143,
+                                           "aggregationMs":  0.07510000000183936,
+                                           "totalMs":  272.74909999999727
+                                       }
+                                   ]
+                 },
+                 {
+                     "cold":  false,
+                     "totalMs":  2331.848600000001,
+                     "timeToFirstUsefulActionMs":  474.174500000001,
+                     "toolCallCount":  8,
+                     "httpRequestCount":  8,
+                     "correlationIds":  [
+                                            "e7bf4546-1452-4b85-b954-002b99e77cfd",
+                                            "9f6babec-8377-4ee5-992d-c02a80795adb",
+                                            "102c7129-b658-4af9-98a6-852948f54335",
+                                            "3ac4e8ed-7bc1-4bbe-85e8-db5f80d2a46a",
+                                            "75f25643-dac1-4e93-a509-ac450ae7fc44",
+                                            "3315a96b-3393-443b-8f90-966175f339a8",
+                                            "ff109a84-87f9-4904-8671-14a7a8a1327e",
+                                            "6c9b7573-b81a-4eca-a675-90946576dbab"
+                                        ],
+                     "toolEvents":  [
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  474.15490000000136,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "e7bf4546-1452-4b85-b954-002b99e77cfd",
+                                                             "durationMs":  473.4560999999994
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  110.21069999999963,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "9f6babec-8377-4ee5-992d-c02a80795adb",
+                                                             "durationMs":  109.54330000000118
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  125.1244000000006,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "102c7129-b658-4af9-98a6-852948f54335",
+                                                             "durationMs":  124.38839999999982
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  129.9459999999999,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "3ac4e8ed-7bc1-4bbe-85e8-db5f80d2a46a",
+                                                             "durationMs":  129.07860000000073
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  119.27950000000055,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "75f25643-dac1-4e93-a509-ac450ae7fc44",
+                                                             "durationMs":  118.52909999999974
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  120.79170000000158,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "3315a96b-3393-443b-8f90-966175f339a8",
+                                                             "durationMs":  120.02890000000116
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "verify.run",
+                                            "durationMs":  895.3740999999973,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "ff109a84-87f9-4904-8671-14a7a8a1327e",
+                                                             "durationMs":  894.8035000000018
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  356.7528999999995,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "6c9b7573-b81a-4eca-a675-90946576dbab",
+                                                             "durationMs":  356.16519999999946
+                                                         }
+                                                     ]
+                                        }
+                                    ],
+                     "telemetry":  [
+                                       {
+                                           "requestId":  "4ae0b2e0-2727-450c-850d-df5950d97892",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.009599999997590203,
+                                           "policyMs":  0.017699999996693805,
+                                           "executorMs":  375.613400000002,
+                                           "aggregationMs":  0.08430000000225846,
+                                           "totalMs":  375.73959999999715
+                                       },
+                                       {
+                                           "requestId":  "e7473e54-03d7-48f7-9ca2-444f53196aa6",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.010200000000622822,
+                                           "policyMs":  0.5817999999999302,
+                                           "executorMs":  15.983500000002095,
+                                           "aggregationMs":  0.010399999999208376,
+                                           "totalMs":  16.597099999999045
+                                       },
+                                       {
+                                           "requestId":  "cf8a1242-2cbf-4fc1-a785-7047d6af9af0",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.005399999998189742,
+                                           "policyMs":  0.49510000000009313,
+                                           "executorMs":  24.504899999999907,
+                                           "aggregationMs":  0.016400000000430737,
+                                           "totalMs":  25.032999999999447
+                                       },
+                                       {
+                                           "requestId":  "4d9c636d-0acb-4f22-a5ec-fdf9a6c00fde",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.010200000000622822,
+                                           "policyMs":  0.6553999999996449,
+                                           "executorMs":  28.794700000002194,
+                                           "aggregationMs":  0.008499999999912689,
+                                           "totalMs":  29.479999999999563
+                                       },
+                                       {
+                                           "requestId":  "8b7f7201-1f4f-478f-99c2-1d562daa0e3c",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.013800000000628643,
+                                           "policyMs":  0.6947000000000116,
+                                           "executorMs":  16.732499999998254,
+                                           "aggregationMs":  0.01269999999931315,
+                                           "totalMs":  17.488900000000285
+                                       },
+                                       {
+                                           "requestId":  "bbcf5db9-a202-4a4b-a489-0a9e77f69cbb",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.006300000000919681,
+                                           "policyMs":  0.5516000000025088,
+                                           "executorMs":  17.08889999999883,
+                                           "aggregationMs":  0.012200000001030276,
+                                           "totalMs":  17.669799999999668
+                                       },
+                                       {
+                                           "requestId":  "290794f6-1d61-4063-94d9-d90a520949c2",
+                                           "tool":  "verify.run",
+                                           "success":  true,
+                                           "ingressMs":  0.0076999999982945155,
+                                           "policyMs":  0.015599999998812564,
+                                           "executorMs":  808.7558000000026,
+                                           "aggregationMs":  0.007400000002235174,
+                                           "totalMs":  808.8214999999982
+                                       },
+                                       {
+                                           "requestId":  "94dbf1f5-c93b-452b-96e4-796aa2ff53a1",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.007900000000518048,
+                                           "policyMs":  0.015500000001338776,
+                                           "executorMs":  259.4346000000005,
+                                           "aggregationMs":  0.09790000000066357,
+                                           "totalMs":  259.5686999999998
+                                       }
+                                   ]
+                 },
+                 {
+                     "cold":  false,
+                     "totalMs":  2243.2765,
+                     "timeToFirstUsefulActionMs":  361.2044999999998,
+                     "toolCallCount":  8,
+                     "httpRequestCount":  8,
+                     "correlationIds":  [
+                                            "ba2525cd-f81d-4aba-8123-3e79425acfa2",
+                                            "2df9d5ec-a08d-4d0e-8df4-188328f0b934",
+                                            "28a63234-f22d-496e-897d-eb5e2ff48424",
+                                            "1fb7df0e-4566-47b9-8505-92c3fdf7032d",
+                                            "155ffc52-0312-452a-823f-1a65a8b7859a",
+                                            "cf650a5d-694a-4244-872f-0ec851887042",
+                                            "89bbb84b-4c92-49dc-997e-edaf0a10c7af",
+                                            "2eaa2470-a657-4d64-a788-606bfd6b0884"
+                                        ],
+                     "toolEvents":  [
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  361.1841999999997,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "ba2525cd-f81d-4aba-8123-3e79425acfa2",
+                                                             "durationMs":  360.4937000000027
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  122.1298999999999,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "2df9d5ec-a08d-4d0e-8df4-188328f0b934",
+                                                             "durationMs":  121.64480000000185
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  98.17380000000048,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "28a63234-f22d-496e-897d-eb5e2ff48424",
+                                                             "durationMs":  97.58130000000165
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  116.91150000000198,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "1fb7df0e-4566-47b9-8505-92c3fdf7032d",
+                                                             "durationMs":  116.3140999999996
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  132.70639999999912,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "155ffc52-0312-452a-823f-1a65a8b7859a",
+                                                             "durationMs":  132.3283999999985
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  117.22299999999814,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "cf650a5d-694a-4244-872f-0ec851887042",
+                                                             "durationMs":  116.79009999999835
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "verify.run",
+                                            "durationMs":  919.2425999999978,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "89bbb84b-4c92-49dc-997e-edaf0a10c7af",
+                                                             "durationMs":  918.5586999999978
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  375.53440000000046,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "2eaa2470-a657-4d64-a788-606bfd6b0884",
+                                                             "durationMs":  375.05029999999897
+                                                         }
+                                                     ]
+                                        }
+                                    ],
+                     "telemetry":  [
+                                       {
+                                           "requestId":  "7a4d86d5-565e-4989-aec9-dc99c6e6ce96",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.0068999999966763426,
+                                           "policyMs":  0.018899999999121064,
+                                           "executorMs":  273.02070000000094,
+                                           "aggregationMs":  0.10170000000289292,
+                                           "totalMs":  273.16129999999976
+                                       },
+                                       {
+                                           "requestId":  "13ce3dff-72d5-43f7-b786-be4eacb8e472",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.009099999999307329,
+                                           "policyMs":  0.6045999999987544,
+                                           "executorMs":  14.515200000001641,
+                                           "aggregationMs":  0.011099999999714782,
+                                           "totalMs":  15.151600000001054
+                                       },
+                                       {
+                                           "requestId":  "12b0b956-2fd2-46b2-85cc-bf71277504c9",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.006199999999807915,
+                                           "policyMs":  0.8351999999977124,
+                                           "executorMs":  10.868899999997666,
+                                           "aggregationMs":  0.016400000000430737,
+                                           "totalMs":  11.737099999998463
+                                       },
+                                       {
+                                           "requestId":  "992d9479-d91a-4178-afb4-0728b3aedaf6",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.007999999997991836,
+                                           "policyMs":  0.5450999999993655,
+                                           "executorMs":  22.917999999997846,
+                                           "aggregationMs":  0.011399999999412103,
+                                           "totalMs":  23.492699999998877
+                                       },
+                                       {
+                                           "requestId":  "fa0d8e16-66b0-467f-84c8-bfa3037e498f",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.004899999999906868,
+                                           "policyMs":  0.5290999999997439,
+                                           "executorMs":  24.299399999999878,
+                                           "aggregationMs":  0.006400000002031447,
+                                           "totalMs":  24.849200000000565
+                                       },
+                                       {
+                                           "requestId":  "4517f790-2dae-4eca-9d22-2a851347c4db",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.005600000000413274,
+                                           "policyMs":  0.4805000000014843,
+                                           "executorMs":  23.39129999999932,
+                                           "aggregationMs":  0.006000000001222361,
+                                           "totalMs":  23.89129999999932
+                                       },
+                                       {
+                                           "requestId":  "98a56da2-47df-4eec-85c7-c3da3228b067",
+                                           "tool":  "verify.run",
+                                           "success":  true,
+                                           "ingressMs":  0.004899999999906868,
+                                           "policyMs":  0.009799999999813735,
+                                           "executorMs":  830.5419999999976,
+                                           "aggregationMs":  0.016400000000430737,
+                                           "totalMs":  830.6094000000012
+                                       },
+                                       {
+                                           "requestId":  "7e1127be-33ad-4410-9162-1e70afc2f255",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.04769999999916763,
+                                           "policyMs":  0.027099999999336433,
+                                           "executorMs":  275.0676999999996,
+                                           "aggregationMs":  0.11759999999776483,
+                                           "totalMs":  275.3044000000009
+                                       }
+                                   ]
+                 },
+                 {
+                     "cold":  false,
+                     "totalMs":  2786.8724,
+                     "timeToFirstUsefulActionMs":  492.28489999999874,
+                     "toolCallCount":  8,
+                     "httpRequestCount":  8,
+                     "correlationIds":  [
+                                            "742e87a6-78b1-46a8-916a-6e7310a4dd0d",
+                                            "189a04b8-ab25-43e1-8d3a-3cf063a63f8b",
+                                            "25175c25-1978-4b1d-893a-636575417590",
+                                            "7452448f-8fbe-4437-9c3b-53f96d873f8c",
+                                            "0037824e-3d20-4e75-9434-b42a066a70bc",
+                                            "8deff023-e8fc-4dd2-bc3e-87cabe2be9b0",
+                                            "1a5ebd39-bc4a-4a73-9183-65c03add378b",
+                                            "1ada4765-ca49-4a0d-9f18-4f4a820d6590"
+                                        ],
+                     "toolEvents":  [
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  492.2573999999986,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "742e87a6-78b1-46a8-916a-6e7310a4dd0d",
+                                                             "durationMs":  491.55569999999716
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  126.0630999999994,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "189a04b8-ab25-43e1-8d3a-3cf063a63f8b",
+                                                             "durationMs":  125.40989999999874
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  101.65340000000288,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "25175c25-1978-4b1d-893a-636575417590",
+                                                             "durationMs":  101.15380000000005
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  140.29720000000088,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "7452448f-8fbe-4437-9c3b-53f96d873f8c",
+                                                             "durationMs":  139.77320000000327
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  112.64310000000114,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "0037824e-3d20-4e75-9434-b42a066a70bc",
+                                                             "durationMs":  112.16389999999956
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "file.read",
+                                            "durationMs":  132.79669999999896,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "8deff023-e8fc-4dd2-bc3e-87cabe2be9b0",
+                                                             "durationMs":  132.07009999999718
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "verify.run",
+                                            "durationMs":  1233.3574999999983,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "1a5ebd39-bc4a-4a73-9183-65c03add378b",
+                                                             "durationMs":  1232.6304999999993
+                                                         }
+                                                     ]
+                                        },
+                                        {
+                                            "tool":  "repo.snapshot",
+                                            "durationMs":  447.63820000000123,
+                                            "http":  [
+                                                         {
+                                                             "method":  "POST",
+                                                             "status":  200,
+                                                             "requestId":  "1ada4765-ca49-4a0d-9f18-4f4a820d6590",
+                                                             "durationMs":  447.1580000000031
+                                                         }
+                                                     ]
+                                        }
+                                    ],
+                     "telemetry":  [
+                                       {
+                                           "requestId":  "e7d396d9-993e-45fe-a439-c5b2a171d310",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.011999999998806743,
+                                           "policyMs":  0.009399999999004649,
+                                           "executorMs":  399.78259999999864,
+                                           "aggregationMs":  0.06749999999738066,
+                                           "totalMs":  399.8902999999991
+                                       },
+                                       {
+                                           "requestId":  "17802168-e06b-46d5-ac4d-9e14fdc3485c",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.009799999999813735,
+                                           "policyMs":  0.6274999999950523,
+                                           "executorMs":  27.86359999999695,
+                                           "aggregationMs":  0.010900000001129229,
+                                           "totalMs":  28.523800000002666
+                                       },
+                                       {
+                                           "requestId":  "5432d47d-d9b0-40d3-b65d-cd63e8dd08cc",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.0072000000000116415,
+                                           "policyMs":  0.6716999999989639,
+                                           "executorMs":  12.810700000001816,
+                                           "aggregationMs":  0.010300000001734588,
+                                           "totalMs":  13.508999999998196
+                                       },
+                                       {
+                                           "requestId":  "44bb84c6-e859-4dcc-8ba0-bfbf85219891",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.011599999997997656,
+                                           "policyMs":  0.7571000000025379,
+                                           "executorMs":  29.672099999996135,
+                                           "aggregationMs":  0.010800000003655441,
+                                           "totalMs":  30.463899999995192
+                                       },
+                                       {
+                                           "requestId":  "7d6ce7a6-9831-4cb4-a783-ea508cdb3ffd",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.005900000003748573,
+                                           "policyMs":  0.6164000000062515,
+                                           "executorMs":  23.36200000000099,
+                                           "aggregationMs":  0.00789999999688007,
+                                           "totalMs":  24.001100000001315
+                                       },
+                                       {
+                                           "requestId":  "96706d14-9603-448c-b667-860b59b737f0",
+                                           "tool":  "file.read",
+                                           "success":  true,
+                                           "ingressMs":  0.007400000002235174,
+                                           "policyMs":  0.6005000000004657,
+                                           "executorMs":  23.338000000003376,
+                                           "aggregationMs":  0.009100000002945308,
+                                           "totalMs":  23.964500000001863
+                                       },
+                                       {
+                                           "requestId":  "184242b7-cdea-49cd-bdae-5e160fc8089f",
+                                           "tool":  "verify.run",
+                                           "success":  true,
+                                           "ingressMs":  0.006300000000919681,
+                                           "policyMs":  0.011299999998300336,
+                                           "executorMs":  1134.527399999999,
+                                           "aggregationMs":  0.028199999993375968,
+                                           "totalMs":  1134.6082999999999
+                                       },
+                                       {
+                                           "requestId":  "e3abe324-85b4-479a-bb75-2fffe665baaa",
+                                           "tool":  "repo.snapshot",
+                                           "success":  true,
+                                           "ingressMs":  0.006600000000617001,
+                                           "policyMs":  0.005299999997077975,
+                                           "executorMs":  344.5994999999966,
+                                           "aggregationMs":  0.03989999999612337,
+                                           "totalMs":  344.6583000000028
+                                       }
+                                   ]
+                 }
+             ],
+    "summary":  {
+                    "coldTotalMs":  3900.525700000002,
+                    "warmRunCount":  5,
+                    "warmMedianMs":  2376.591,
+                    "warmSampleP95Ms":  2765.925,
+                    "warmMinMs":  2243.2765,
+                    "warmMaxMs":  2786.8724
+                }
+}
