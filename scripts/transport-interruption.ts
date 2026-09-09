@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { startGatewayHttpServer } from '../src/http-server.js';
 import { createGateway } from '../src/server.js';
@@ -17,7 +18,7 @@ const cloudflaredBinEnv = process.env.CLOUDFLARED_BIN;
 if (!fixtureDirEnv || !cloudflaredBinEnv) throw new Error('BENCHMARK_FIXTURE_DIR and CLOUDFLARED_BIN are required');
 const fixtureDir: string = fixtureDirEnv;
 const cloudflaredBin: string = cloudflaredBinEnv;
-const fixtureHead = '57bcd8421936f3e44dba4eda80bbb98f583f8432';
+const fixtureHead = process.env.BENCHMARK_FIXTURE_HEAD ?? '57bcd8421936f3e44dba4eda80bbb98f583f8432';
 await resetFixture();
 await writeFile(join(fixtureDir, 'transport-job.mjs'), [
   "import { writeFile } from 'node:fs/promises';",
@@ -41,29 +42,67 @@ let secondTunnel: QuickTunnel | undefined;
 let firstClient: Client | undefined;
 let secondClient: Client | undefined;
 let workspaceId = '';
-let firstCallOutcome = 'pending';
+let taskId = '';
+let recoveredStatus = '';
+let recoveredProfile = '';
+let recoveredExitCode: number | null = null;
+let recoveredOutput = '';
 let marker = '';
-let reconnectOk = false;
+let failureStage = '';
+let failureMessage = '';
+let firstTunnelSetupMs: number | null = null;
+let secondTunnelSetupMs: number | null = null;
 
 try {
+  failureStage = 'first_tunnel_setup';
+  const firstSetupStarted = performance.now();
   firstTunnel = await startQuickTunnel(cloudflaredBin, `http://${http.host}:${http.port}`);
+  firstTunnelSetupMs = performance.now() - firstSetupStarted;
+  failureStage = 'first_client_connect';
   firstClient = await connectClient(`${firstTunnel.publicBaseUrl}/mcp`, token);
   const opened = await firstClient.callTool({ name: 'workspace.open', arguments: { path: fixtureDir } });
   workspaceId = String((opened.structuredContent as { workspaceId?: string } | undefined)?.workspaceId ?? '');
   if (!workspaceId.startsWith('ws_')) throw new Error('workspace.open failed');
 
-  const callPromise = firstClient.callTool({ name: 'verify.run', arguments: { workspace_id: workspaceId, profile: 'transport' } })
-    .then(() => { firstCallOutcome = 'resolved'; })
-    .catch(() => { firstCallOutcome = 'rejected_after_transport_loss'; });
-  await sleep(500);
+  failureStage = 'task_create';
+  const stream = firstClient.experimental.tasks.callToolStream(
+    { name: 'verify.run', arguments: { workspace_id: workspaceId, profile: 'transport' } },
+    CallToolResultSchema,
+    { task: { ttl: 60_000 } },
+  );
+  const created = await stream.next();
+  if (created.done || created.value?.type !== 'taskCreated') throw new Error('verify.run did not return taskCreated');
+  taskId = created.value.task.taskId;
+
+  failureStage = 'transport_cut';
   await firstTunnel.stop();
   await sleep(3000);
-  await Promise.race([callPromise, sleep(1000)]);
+
+  failureStage = 'second_tunnel_setup';
+  const secondSetupStarted = performance.now();
   secondTunnel = await startQuickTunnel(cloudflaredBin, `http://${http.host}:${http.port}`);
+  secondTunnelSetupMs = performance.now() - secondSetupStarted;
+  failureStage = 'second_client_connect';
   secondClient = await connectClient(`${secondTunnel.publicBaseUrl}/mcp`, token);
+
+  failureStage = 'task_recovery';
+  let task = await secondClient.experimental.tasks.getTask(taskId);
+  for (let attempt = 0; attempt < 40 && task.status !== 'completed' && task.status !== 'failed'; attempt += 1) {
+    await sleep(100);
+    task = await secondClient.experimental.tasks.getTask(taskId);
+  }
+  recoveredStatus = task.status;
+  const result = await secondClient.experimental.tasks.getTaskResult(taskId, CallToolResultSchema);
+  const value = result.structuredContent as { profile?: string; exitCode?: number; output?: string } | undefined;
+  recoveredProfile = String(value?.profile ?? '');
+  recoveredExitCode = typeof value?.exitCode === 'number' ? value.exitCode : null;
+  recoveredOutput = String(value?.output ?? '');
+
   const read = await secondClient.callTool({ name: 'file.read', arguments: { workspace_id: workspaceId, path: 'transport-survived.txt' } });
   marker = String((read.structuredContent as { content?: string } | undefined)?.content ?? '').trim();
-  reconnectOk = marker === 'completed';
+  failureStage = '';
+} catch (error) {
+  failureMessage = error instanceof Error ? error.message : String(error);
 } finally {
   await firstClient?.close().catch(() => undefined);
   await secondClient?.close().catch(() => undefined);
@@ -75,16 +114,28 @@ try {
 }
 
 const verifyEvent = telemetry.snapshot().find((event) => event.tool === 'verify.run');
+const resultRecoverySupported = recoveredStatus === 'completed'
+  && recoveredProfile === 'transport'
+  && recoveredExitCode === 0
+  && recoveredOutput === 'TRANSPORT_JOB_COMPLETED';
 console.log(JSON.stringify({
   recordedAt: new Date().toISOString(),
   fixtureHead,
-  firstCallOutcome,
+  taskId,
+  failureStage: failureMessage ? failureStage : '',
+  failureMessage,
+  firstTunnelSetupMs,
+  secondTunnelSetupMs,
   localVerifyTelemetrySuccess: verifyEvent?.success ?? false,
   localVerifyTotalMs: verifyEvent?.totalMs ?? null,
-  reconnectOk,
+  recoveredStatus,
+  recoveredProfile,
+  recoveredExitCode,
+  recoveredOutput,
   markerRecoveredThroughGateway: marker,
-  resultRecoverySupported: false,
+  resultRecoverySupported,
 }, null, 2));
+if (!resultRecoverySupported) process.exitCode = 1;
 interface QuickTunnel { publicBaseUrl: string; pid: number; stop(): Promise<void>; }
 
 async function connectClient(url: string, bearerToken: string): Promise<Client> {
@@ -135,7 +186,7 @@ async function waitForTunnelUrl(child: ChildProcess, logs: string[]): Promise<st
 async function waitForPublicBoundary(publicBaseUrl: string): Promise<void> {
   for (let i = 0; i < 120; i += 1) {
     try {
-      const response = await fetch(`${publicBaseUrl}/mcp`, { method: 'POST' });
+      const response = await fetch(`${publicBaseUrl}/mcp`, { method: 'POST', signal: AbortSignal.timeout(3000) });
       if (response.status === 401) return;
     } catch {}
     await sleep(500);
