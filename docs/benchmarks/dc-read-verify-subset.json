@@ -1,0 +1,224 @@
+{
+  "source": "docs/benchmarks/dc-baseline.json",
+  "fixture_head": "57bcd8421936f3e44dba4eda80bbb98f583f8432",
+  "subset": [
+    "snapshot",
+    "read_math",
+    "read_greet",
+    "read_clamp",
+    "read_version",
+    "read_even",
+    "test_1",
+    "status"
+  ],
+  "runs": [
+    {
+      "run": 1,
+      "result": "PASS_WITH_BENCHMARK_COMMAND_RETRY",
+      "call_count": 8,
+      "total_ms": 21774,
+      "calls": [
+        [
+          "snapshot",
+          2663
+        ],
+        [
+          "read_math",
+          2354
+        ],
+        [
+          "read_greet",
+          1891
+        ],
+        [
+          "read_clamp",
+          2643
+        ],
+        [
+          "read_version",
+          2088
+        ],
+        [
+          "read_even",
+          2732
+        ],
+        [
+          "test_1",
+          4825
+        ],
+        [
+          "status",
+          2578
+        ]
+      ]
+    },
+    {
+      "run": 2,
+      "result": "PASS",
+      "call_count": 8,
+      "total_ms": 24786,
+      "calls": [
+        [
+          "snapshot",
+          3092
+        ],
+        [
+          "read_math",
+          2298
+        ],
+        [
+          "read_greet",
+          2745
+        ],
+        [
+          "read_clamp",
+          2533
+        ],
+        [
+          "read_version",
+          2426
+        ],
+        [
+          "read_even",
+          2609
+        ],
+        [
+          "test_1",
+          5518
+        ],
+        [
+          "status",
+          3565
+        ]
+      ]
+    },
+    {
+      "run": 3,
+      "result": "PASS",
+      "call_count": 8,
+      "total_ms": 18020,
+      "calls": [
+        [
+          "snapshot",
+          2809
+        ],
+        [
+          "read_math",
+          2188
+        ],
+        [
+          "read_greet",
+          2069
+        ],
+        [
+          "read_clamp",
+          2058
+        ],
+        [
+          "read_version",
+          1875
+        ],
+        [
+          "read_even",
+          2542
+        ],
+        [
+          "test_1",
+          3130
+        ],
+        [
+          "status",
+          1349
+        ]
+      ]
+    },
+    {
+      "run": 4,
+      "result": "PASS",
+      "call_count": 8,
+      "total_ms": 11708,
+      "calls": [
+        [
+          "snapshot",
+          1269
+        ],
+        [
+          "read_math",
+          1129
+        ],
+        [
+          "read_greet",
+          1671
+        ],
+        [
+          "read_clamp",
+          1155
+        ],
+        [
+          "read_version",
+          1171
+        ],
+        [
+          "read_even",
+          1115
+        ],
+        [
+          "test_1",
+          2765
+        ],
+        [
+          "status",
+          1433
+        ]
+      ]
+    },
+    {
+      "run": 5,
+      "result": "PASS",
+      "call_count": 8,
+      "total_ms": 12318,
+      "calls": [
+        [
+          "snapshot",
+          1478
+        ],
+        [
+          "read_math",
+          1344
+        ],
+        [
+          "read_greet",
+          1559
+        ],
+        [
+          "read_clamp",
+          1617
+        ],
+        [
+          "read_version",
+          1812
+        ],
+        [
+          "read_even",
+          1235
+        ],
+        [
+          "test_1",
+          2056
+        ],
+        [
+          "status",
+          1217
+        ]
+      ]
+    }
+  ],
+  "summary": {
+    "run_count": 5,
+    "median_ms": 18020,
+    "sample_p95_ms": 24183.6,
+    "min_ms": 11708,
+    "max_ms": 24786,
+    "call_count_per_run": 8
+  }
+}
