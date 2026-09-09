@@ -72,7 +72,7 @@
 - [x] Report remote tool-turn reduction and task-completion rate alongside latency; latency alone cannot override a reliability/security failure.
 - [x] State separately whether the architecture passes and whether ChatGPT Plus has an immediately usable supported deployment path.
 - [x] Otherwise mark NO-GO or BLOCKED with the exact failed gate; do not expand scope to patching, arbitrary shell, Git mutation, persistent job runtime, OS sandboxing, ACP/A2A, or plugin submission without a new decision.
-- [ ] Commit the signed-off gate receipt.
+- [x] Commit the signed-off gate receipt.
 
 ### Phase-gated work after a V0 GO
 - `file.patch`: dry-run + base hash + canonical path check + changed-target reject + approval policy as required.
