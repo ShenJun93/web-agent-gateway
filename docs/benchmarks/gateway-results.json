@@ -1,0 +1,68 @@
+{
+  "recorded_at": "2026-09-10",
+  "fixture_head": "57bcd8421936f3e44dba4eda80bbb98f583f8432",
+  "scope": "ADR-0005 read/verify V0; not mutation-equivalent",
+  "dc_subset": {
+    "run_count": 5,
+    "median_ms": 18020,
+    "sample_p95_ms": 24183.6,
+    "min_ms": 11708,
+    "max_ms": 24786,
+    "call_count_per_run": 8
+  },
+  "gateway_loopback": {
+    "coldTotalMs": 2528.1725000000006,
+    "warmRunCount": 5,
+    "warmMedianMs": 1185.362,
+    "warmSampleP95Ms": 1190.805,
+    "warmMinMs": 1132.5342999999993,
+    "warmMaxMs": 1191.1306000000004,
+    "warm_first_action_median_ms": 215.092,
+    "warm_tool_calls_per_run": 8
+  },
+  "gateway_quick_tunnel": {
+    "coldTotalMs": 3900.525700000002,
+    "warmRunCount": 5,
+    "warmMedianMs": 2376.591,
+    "warmSampleP95Ms": 2765.925,
+    "warmMinMs": 2243.2765,
+    "warmMaxMs": 2786.8724,
+    "warm_first_action_median_ms": 474.175,
+    "warm_tool_calls_per_run": 8,
+    "tunnel_setup_ms": 11079.646,
+    "connect_ms": 304.298,
+    "stable_endpoint": false,
+    "non_200_run_events": [
+      {
+        "cold": true,
+        "tool": "workspace.open",
+        "method": "GET",
+        "status": 405
+      }
+    ]
+  },
+  "comparison": {
+    "loopback_warm_speedup_vs_dc_median": 15.202,
+    "quick_tunnel_warm_speedup_vs_dc_median": 7.582,
+    "remote_tool_turn_reduction_for_read_verify_subset": 0
+  },
+  "transport_interruption": {
+    "recordedAt": "2026-09-09T18:55:06.680Z",
+    "fixtureHead": "57bcd8421936f3e44dba4eda80bbb98f583f8432",
+    "firstCallOutcome": "rejected_after_transport_loss",
+    "localVerifyTelemetrySuccess": true,
+    "localVerifyTotalMs": 2163.4311,
+    "reconnectOk": true,
+    "markerRecoveredThroughGateway": "completed",
+    "resultRecoverySupported": false
+  },
+  "gate_inputs": {
+    "performance_threshold": "PASS",
+    "authenticated_public_quick_tunnel": "PASS_PROVISIONAL",
+    "stable_named_public_endpoint": "BLOCKED_NOT_CONFIGURED",
+    "path_and_environment_security": "PASS",
+    "process_survives_transport_loss": "PASS",
+    "lost_request_result_recovery": "FAIL_NOT_IMPLEMENTED",
+    "chatgpt_plus_private_full_write_deployment": "BLOCKED_PRODUCT_ACCESS"
+  }
+}

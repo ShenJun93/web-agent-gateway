@@ -1,0 +1,55 @@
+{
+  "schema": "web-agent-gateway.transport-interruption-tasks.v1",
+  "date": "2026-09-10",
+  "purpose": "Verify original verify.run MCP task result recovery after public transport replacement while the same gateway runtime remains alive.",
+  "transport": {
+    "kind": "cloudflare_quick_tunnel",
+    "stability": "provisional_only",
+    "cloudflaredVersion": "2026.8.3",
+    "cloudflaredSha256": "83e726ed18ea78c5ad5213c4c3a3a27051393950d2bc8ed4de69bec12d14eaae"
+  },
+  "fixture": {
+    "kind": "disposable_transport_only_repo",
+    "head": "4a3c1089999b9af04f6df91065b4ca1710eb4f23",
+    "note": "This fixture is only for V0.1 transport durability acceptance and does not replace the V0 latency benchmark fixture."
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "status": "FAILED_HARNESS_INFRA",
+      "failureStage": "public_boundary_readiness",
+      "failure": "Readiness fetch had no per-attempt timeout and the harness was terminated after remaining stuck for more than four minutes.",
+      "gatewayTaskResult": "UNOBSERVED",
+      "retained": true,
+      "correctiveAction": "Add AbortSignal.timeout(3000) to each public-boundary readiness fetch."
+    },
+    {
+      "attempt": 2,
+      "status": "PASS",
+      "recordedAt": "2026-09-09T20:02:04.600Z",
+      "taskId": "e32aa3d480e580fe642092691b8a1ec5",
+      "firstTunnelSetupMs": 29338.5489,
+      "secondTunnelSetupMs": 25051.197500000002,
+      "localVerifyTelemetrySuccess": true,
+      "localVerifyTotalMs": 2170.806500000006,
+      "recoveredStatus": "completed",
+      "recoveredProfile": "transport",
+      "recoveredExitCode": 0,
+      "recoveredOutput": "TRANSPORT_JOB_COMPLETED",
+      "markerRecoveredThroughGateway": "completed",
+      "resultRecoverySupported": true,
+      "cleanup": {
+        "fixtureClean": true,
+        "fixtureHeadVerified": true,
+        "devspaceLeaks": 0,
+        "cloudflaredLeaks": 0
+      }
+    }
+  ],
+  "decision": {
+    "sameRuntimeTaskResultRecovery": "PASS",
+    "gatewayRestartDurability": "OUT_OF_SCOPE",
+    "stableNamedEndpoint": "BLOCKED_NOT_CONFIGURED",
+    "chatgptPlusPrivateFullWrite": "BLOCKED_PRODUCT_ACCESS"
+  }
+}

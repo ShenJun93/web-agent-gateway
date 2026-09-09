@@ -1,0 +1,100 @@
+{
+  "recorded_at": "2026-09-09",
+  "fixture_head": "57bcd8421936f3e44dba4eda80bbb98f583f8432",
+  "device": "DESKTOP-A51OJ35",
+  "measurement": "Remote Desktop Commander start_process calls with verbose timing; reset excluded from scenario totals",
+  "runs": [
+    {
+      "run": 1,
+      "result": "PASS_WITH_BENCHMARK_COMMAND_RETRY",
+      "call_count": 13,
+      "total_ms": 39789,
+      "benchmark_command_failures": 1,
+      "transport_failures": 0,
+      "calls": [
+        ["snapshot",2663],["read_math",2354],["read_greet",1891],["read_clamp",2643],["read_version",2088],["read_even",2732],["search",2622],["patch_failed",3433],["patch_retry",3215],["test_1",4825],["diff",2695],["test_2",6050],["status",2578]
+      ],
+      "local_test_duration_ms": [210.4946,285.0984]
+    },
+    {
+      "run": 2,
+      "result": "PASS",
+      "call_count": 12,
+      "total_ms": 40387,
+      "benchmark_command_failures": 0,
+      "transport_failures": 0,
+      "calls": [
+        ["snapshot",3092],["read_math",2298],["read_greet",2745],["read_clamp",2533],["read_version",2426],["read_even",2609],["search",2493],["patch",3505],["test_1",5518],["diff",3521],["test_2",6082],["status",3565]
+      ],
+      "local_test_duration_ms": [190.3235,323.2917]
+    },
+    {
+      "run": 3,
+      "result": "PASS",
+      "call_count": 12,
+      "total_ms": 24966,
+      "benchmark_command_failures": 0,
+      "transport_failures": 0,
+      "calls": [
+        ["snapshot",2809],["read_math",2188],["read_greet",2069],["read_clamp",2058],["read_version",1875],["read_even",2542],["search",1619],["patch",1450],["test_1",3130],["diff",1719],["test_2",2158],["status",1349]
+      ],
+      "local_test_duration_ms": [130.7862,92.6137]
+    },
+    {
+      "run": 4,
+      "result": "PASS",
+      "call_count": 12,
+      "total_ms": 17776,
+      "benchmark_command_failures": 0,
+      "transport_failures": 0,
+      "calls": [
+        ["snapshot",1269],["read_math",1129],["read_greet",1671],["read_clamp",1155],["read_version",1171],["read_even",1115],["search",1338],["patch",1329],["test_1",2765],["diff",1308],["test_2",2093],["status",1433]
+      ],
+      "local_test_duration_ms": [103.256,95.2377]
+    },
+    {
+      "run": 5,
+      "result": "PASS",
+      "call_count": 12,
+      "total_ms": 18878,
+      "benchmark_command_failures": 0,
+      "transport_failures": 0,
+      "calls": [
+        ["snapshot",1478],["read_math",1344],["read_greet",1559],["read_clamp",1617],["read_version",1812],["read_even",1235],["search",1316],["patch",1232],["test_1",2056],["diff",1701],["test_2",2311],["status",1217]
+      ],
+      "local_test_duration_ms": [98.9331,117.4764]
+    }
+  ],
+  "summary": {
+    "scenario_run_count": 5,
+    "scenario_total_ms": [39789,40387,24966,17776,18878],
+    "scenario_median_ms": 24966,
+    "scenario_sample_p95_ms": 40267,
+    "scenario_min_ms": 17776,
+    "scenario_max_ms": 40387,
+    "clean_run_count": 4,
+    "clean_scenario_median_ms": 21922,
+    "clean_scenario_sample_p95_ms": 38074,
+    "all_call_count": 61,
+    "all_call_median_ms": 2093,
+    "all_call_sample_p95_ms": 4825,
+    "clean_call_count": 48,
+    "clean_call_median_ms": 1844,
+    "clean_call_sample_p95_ms": 3550,
+    "transport_failures": 0,
+    "silent_drops": 0,
+    "reconnects": 0,
+    "reauth_events": 0,
+    "benchmark_command_failures": 1,
+    "benchmark_command_retries": 1,
+    "local_test_median_ms": 124.1313,
+    "dc_test_call_median_ms": 2947.5,
+    "dc_to_local_test_median_ratio": 23.745
+  },
+  "interpretation": [
+    "Remote Desktop Commander improved materially after warming: clean run totals fell from 40.387 s to 24.966 s to 17.776 s, then 18.878 s.",
+    "Even at the warm floor, the scenario still pays roughly one to two seconds for many tiny remote calls whose local work is near-instant.",
+    "The dominant optimization target is therefore reducing remote round-trip count and isolating remote transport from local job lifetime, not making local filesystem or Git operations faster.",
+    "The five-run sample is sufficient to establish a baseline for the spike, but sample p95 values are descriptive rather than production-SLO estimates."
+  ]
+}

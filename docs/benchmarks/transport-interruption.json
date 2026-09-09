@@ -1,0 +1,10 @@
+{
+    "recordedAt":  "2026-09-09T18:55:06.680Z",
+    "fixtureHead":  "57bcd8421936f3e44dba4eda80bbb98f583f8432",
+    "firstCallOutcome":  "rejected_after_transport_loss",
+    "localVerifyTelemetrySuccess":  true,
+    "localVerifyTotalMs":  2163.4311,
+    "reconnectOk":  true,
+    "markerRecoveredThroughGateway":  "completed",
+    "resultRecoverySupported":  false
+}

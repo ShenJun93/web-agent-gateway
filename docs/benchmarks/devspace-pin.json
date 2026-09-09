@@ -1,0 +1,58 @@
+{
+  "recorded_at": "2026-09-09T18:58:00+07:00",
+  "repository": "Waishnav/devspace",
+  "revision": "33d6d0bcc2256024484d2456da924af8afd814ed",
+  "package_name": "@waishnav/devspace",
+  "package_version": "1.0.8",
+  "license": "MIT",
+  "package_node_engine": ">=22.19 <27",
+  "package_manager": "pnpm@11.25.0",
+  "host": {
+    "os": "Microsoft Windows 11 Pro",
+    "os_version": "10.0.26200",
+    "arch": "x64",
+    "node": "v24.20.0",
+    "npm": "12.0.2",
+    "git": "2.55.0.windows.2",
+    "bash": "C:\\Program Files\\Git\\bin\\bash.exe -c"
+  },
+  "install": {
+    "method": "ephemeral npx pnpm@11.25.0",
+    "frozen_lockfile": true,
+    "lockfile_policy_entries": 434,
+    "result": "PASS"
+  },
+  "focused_tests": {
+    "files": [
+      "src/mcp-modern-server.test.ts",
+      "src/process-sessions.test.ts",
+      "src/git-worktrees.test.ts",
+      "src/roots.test.ts"
+    ],
+    "tests": 18,
+    "passed": 17,
+    "failed": 0,
+    "skipped": 1,
+    "skipped_case": "cleanup rejects a managed worktree path replaced by a symlink",
+    "result": "PASS_WITH_ONE_ENVIRONMENT_SKIP"
+  },
+  "build": {
+    "command": "pnpm build",
+    "result": "PASS"
+  },
+  "runtime": {
+    "bind": "127.0.0.1:7676",
+    "mcp_path": "/mcp",
+    "fixture_root_only": true,
+    "auth_required": true,
+    "sqlite_native_dependency": "ok",
+    "result": "PASS"
+  },
+  "process_session_semantics": {
+    "store": "in-memory Map",
+    "completed_session_ttl_ms": 300000,
+    "shutdown_terminates_running_processes": true,
+    "executor_restart_durability": false,
+    "v0_decision": "executor-restart durability out of scope"
+  }
+}
