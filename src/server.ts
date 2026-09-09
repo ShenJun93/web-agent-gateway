@@ -153,8 +153,8 @@ export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new In
       const store = extra.taskStore;
       const task = await store.createTask({ ttl: 300_000, pollInterval: 100 });
       void gateway.verifyRun(workspace_id, profile).then(
-        (value) => store.storeTaskResult(task.taskId, 'completed', toolResult(value)),
-        (error) => store.storeTaskResult(task.taskId, 'failed', toolErrorResult(error)),
+        (value) => taskStore.storeTaskResult(task.taskId, 'completed', toolResult(value)),
+        (error) => taskStore.storeTaskResult(task.taskId, 'failed', toolErrorResult(error)),
       );
       return { task };
     },
