@@ -24,23 +24,23 @@
 
 ### Task 0: De-risk host, executor, transport, and safety assumptions
 **Files:** Create `docs/benchmarks/v0-prerequisites.md` and `docs/benchmarks/devspace-pin.json`.
-- [ ] Record the current ChatGPT Plus constraint: private developer-mode full MCP write is not a supported immediate path; published apps may support write depending on plan/app/rollout.
-- [ ] Select a currently supported Web host for architecture validation without adding provider-specific core logic. Record why it is suitable and keep ChatGPT Plus published-plugin access as an external future gate.
-- [ ] Pin one exact DevSpace release or commit. Record repository URL, revision, Node/npm versions, Windows version, and tool/schema fingerprint.
-- [ ] Run DevSpace locally on Windows and verify the minimum required read/process surface before writing gateway code.
-- [ ] Verify current process-session semantics: running sessions are in-memory; DevSpace shutdown terminates them. Mark executor-restart durability explicitly out of V0 scope.
-- [ ] Validate the public transport candidate with the actual Streamable HTTP path, authentication, correlation IDs, reconnect after interruption, and realistic payload sizes.
-- [ ] Define the hostile Windows path fixture set: traversal, symlink/junction/reparse, UNC/device-path and credential/system-path cases where supported by the test environment.
-- [ ] STOP if no supported host can exercise the required validation path or if transport/executor cannot satisfy the minimal scenario without architecture changes.
+- [x] Record the current ChatGPT Plus constraint: private developer-mode full MCP write is not a supported immediate path; published apps may support write depending on plan/app/rollout.
+- [x] Record the Web-host deployment status without adding provider-specific core logic: ChatGPT Plus private full-write MCP is BLOCKED; local architecture validation proceeds under ADR-0004 and published-plugin access remains an external future gate.
+- [x] Pin one exact DevSpace release or commit. Record repository URL, revision, Node/npm versions, Windows version, and tool/schema fingerprint.
+- [x] Run DevSpace locally on Windows and verify the minimum required read/process surface before writing gateway code.
+- [x] Verify current process-session semantics: running sessions are in-memory; DevSpace shutdown terminates them. Mark executor-restart durability explicitly out of V0 scope.
+- [x] Validate the public transport candidate with the actual Streamable HTTP path, authentication, correlation IDs, reconnect after interruption, and realistic payload sizes.
+- [x] Define the hostile Windows path fixture set: traversal, symlink/junction/reparse, UNC/device-path and credential/system-path cases where supported by the test environment.
+- [x] Record the split gate: transport/executor architecture prerequisites PASS; ChatGPT Plus public write deployment is BLOCKED. Per ADR-0004, Task 2 local work may proceed while Task 3 public-host acceptance remains blocked.
 
 ### Task 1: Capture Remote Desktop Commander baseline
 **Files:** Create `docs/benchmarks/dc-baseline.json` and `docs/benchmarks/scenario.md`.
-- [ ] Define one deterministic disposable-repo scenario: snapshot-equivalent inspection, five reads, symbol search, configured verification, diff/status inspection; mutation is a separate later scenario.
-- [ ] Fix comparison conditions: same machine, same repository fixture, same network window where practical, same task text, and same failure-accounting rules.
-- [ ] Run the scenario through Remote Desktop Commander with timing enabled and correlation IDs where exposed.
-- [ ] Record per-call wall-clock latency, total wall-clock task time, remote tool-call count, time to first useful action, errors, retries, reconnects, and re-auth events.
-- [ ] Repeat enough times to report median and p95 without silently discarding failures; record run count and sampling window in the receipt.
-- [ ] Commit evidence with message `bench: capture desktop commander baseline`.
+- [x] Define one deterministic disposable-repo scenario: snapshot-equivalent inspection, five reads, symbol search, one behavior-preserving semantic patch, two test runs, diff, and final status.
+- [x] Fix comparison conditions: same machine, same repository fixture, same network window where practical, same task text, and same failure-accounting rules.
+- [x] Run the scenario through Remote Desktop Commander with timing enabled and correlation IDs where exposed.
+- [x] Record per-call wall-clock latency, total wall-clock task time, remote tool-call count, time to first useful action, errors, retries, reconnects, and re-auth events.
+- [x] Repeat enough times to report median and p95 without silently discarding failures; record run count and sampling window in the receipt.
+- [x] Commit canonical baseline evidence to the benchmark branch; raw failures remain included.
 
 ### Task 2: Build the minimum read/verify gateway path
 **Files:** Create `package.json`, `src/server.ts`, `src/executor/devspace.ts`, `src/telemetry.ts`, `test/health.test.ts`, `test/devspace-compat.test.ts`.
