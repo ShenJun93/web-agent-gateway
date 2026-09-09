@@ -44,16 +44,16 @@
 
 ### Task 2: Build the minimum read/verify gateway path
 **Files:** Create `package.json`, `src/server.ts`, `src/executor/devspace.ts`, `src/telemetry.ts`, `test/health.test.ts`, `test/devspace-compat.test.ts`.
-- [ ] Write a failing compatibility test that reaches the exact pinned localhost DevSpace revision and verifies required tool names/schemas.
-- [ ] Write a failing health-path test that requires the gateway to reach that pinned localhost DevSpace instance.
-- [ ] Add only `health`, `workspace.open`, `repo.snapshot`, `file.read`, and `verify.run` MCP tools.
-- [ ] `workspace.open` returns an opaque workspace ID; later tools accept workspace IDs rather than unconstrained raw roots.
-- [ ] `repo.snapshot` has deterministic pruning and output/token budgets.
-- [ ] `file.read` has workspace containment, size/binary checks, and sensitive-path deny rules.
-- [ ] `verify.run` maps only to configured profiles with bounded argv/env/timeout/output; no raw shell string is exposed.
-- [ ] Instrument correlation/request ID plus gateway ingress, policy, executor, aggregation, and total latency fields.
-- [ ] Verify no public listener exists for DevSpace itself.
-- [ ] Run focused tests and commit with message `feat: add benchmark gateway path`.
+- [x] Write a failing compatibility test that reaches the exact pinned localhost DevSpace revision and verifies required tool names/schemas.
+- [x] Write a failing health-path test that requires the gateway to reach that pinned localhost DevSpace instance.
+- [x] Add only `health`, `workspace.open`, `repo.snapshot`, `file.read`, and `verify.run` MCP tools.
+- [x] `workspace.open` returns an opaque workspace ID; later tools accept workspace IDs rather than unconstrained raw roots.
+- [x] `repo.snapshot` has deterministic pruning and output/token budgets.
+- [x] `file.read` has workspace containment, size/binary checks, and sensitive-path deny rules.
+- [x] `verify.run` maps only to configured profiles with bounded argv/profile-supplied env/timeout/output; no raw shell string is exposed. Inherited DevSpace process environment remains an explicit Task 3 security risk.
+- [x] Instrument correlation/request ID plus gateway ingress, policy, executor, aggregation, and total latency fields.
+- [x] Verify no public listener exists for DevSpace itself.
+- [x] Run focused tests and commit with message `feat: add benchmark gateway path`.
 
 ### Task 3: Safety and transport acceptance
 **Files:** Create `test/security.test.ts` and `docs/benchmarks/gateway-results.json`.

@@ -45,3 +45,8 @@ When mutation is introduced, approval must be local, one-time, atomic, fingerpri
 
 ## Future state invariants
 Persistent approval/job storage and idempotency are not required for the initial read/verify spike. If added, retries must be keyed by caller/request identity plus canonical tool-parameter hash to prevent duplicate consequential actions.
+
+### Executor environment inheritance
+DevSpace `exec_command` currently inherits the DevSpace process environment before adding its own workspace variables. V0 prevents the Web-AI caller from supplying arbitrary shell text or arbitrary environment variables through `verify.run`, but it does **not** claim that executed repository code receives a clean environment. Treat inherited process secrets as exposed to intentionally executed repository code unless the DevSpace supervisor launches with a sanitized environment or a stronger isolated runner is introduced.
+
+Task 3 must include an explicit fixture proving this limitation is either mitigated for the benchmark deployment or recorded as a failed security gate. Do not call `verify.run` environment-isolated until that evidence exists.

@@ -12,6 +12,7 @@ export interface DevspaceFixture {
   baseUrl: string;
   accessToken: string;
   workspaceRoot: string;
+  pid: number;
   stop(): Promise<void>;
 }
 
@@ -62,20 +63,31 @@ export async function startPinnedDevspace(): Promise<DevspaceFixture> {
   await waitForServer(baseUrl, child, logs);
   const accessToken = await issueAccessToken(baseUrl, ownerToken);
 
+  if (!child.pid) throw new Error('DevSpace child has no pid');
   return {
     baseUrl,
     accessToken,
     workspaceRoot,
+    pid: child.pid,
     async stop() {
-      if (child.exitCode === null) child.kill('SIGTERM');
-      await new Promise<void>((resolve) => {
-        if (child.exitCode !== null) return resolve();
-        child.once('exit', () => resolve());
-        setTimeout(() => resolve(), 3000).unref();
-      });
+      if (child.exitCode === null) {
+        if (process.platform === 'win32') {
+          try { await execFileAsync('taskkill', ['/pid', String(child.pid), '/T', '/F']); }
+          catch { if (child.exitCode === null) child.kill(); }
+        } else child.kill('SIGTERM');
+      }
+      await waitForExit(child, 3000);
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+async function waitForExit(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null) return;
+  await Promise.race([
+    new Promise<void>((resolve) => child.once('exit', () => resolve())),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timed out stopping DevSpace test process')), timeoutMs)),
+  ]);
 }
 
 async function reservePort(): Promise<number> {
