@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { InMemoryTaskStore, type TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks';
 import { z } from 'zod';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace } from './path-policy.js';
 import {
@@ -131,19 +133,52 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
 
 export type GatewayApi = ReturnType<typeof createGateway>;
 
-export function createGatewayMcpServer(gateway: GatewayApi): McpServer {
-  const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
+export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new InMemoryTaskStore() }: { taskStore?: TaskStore } = {}): McpServer {
+  const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' }, {
+    taskStore,
+    capabilities: { tasks: { requests: { tools: { call: {} } } } },
+  });
   server.registerTool('health', { description: 'Check gateway and executor compatibility.', annotations: { readOnlyHint: true } }, async () => toolResult(await gateway.health()));
   server.registerTool('workspace.open', { description: 'Open one approved local workspace and return an opaque workspace id.', inputSchema: { path: z.string().min(1) }, annotations: { readOnlyHint: true } }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
   server.registerTool('repo.snapshot', { description: 'Return bounded repository status, HEAD, diff summary, and tracked files.', inputSchema: { workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }, annotations: { readOnlyHint: true } }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
   server.registerTool('file.read', { description: 'Read bounded text from an opened workspace.', inputSchema: { workspace_id: z.string().min(1), path: z.string().min(1) }, annotations: { readOnlyHint: true } }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
-  server.registerTool('verify.run', { description: 'Run one locally configured verification profile; arbitrary shell input is not accepted.', inputSchema: { workspace_id: z.string().min(1), profile: z.string().min(1) }, annotations: { readOnlyHint: false } }, async ({ workspace_id, profile }) => toolResult(await gateway.verifyRun(workspace_id, profile)));
+  server.experimental.tasks.registerToolTask('verify.run', {
+    description: 'Run one locally configured verification profile; arbitrary shell input is not accepted.',
+    inputSchema: { workspace_id: z.string().min(1), profile: z.string().min(1) },
+    annotations: { readOnlyHint: false },
+    execution: { taskSupport: 'optional' },
+  }, {
+    async createTask({ workspace_id, profile }, extra) {
+      if (!extra.taskStore) throw new Error('MCP task store unavailable');
+      const store = extra.taskStore;
+      const task = await store.createTask({ ttl: 300_000, pollInterval: 100 });
+      void gateway.verifyRun(workspace_id, profile).then(
+        (value) => store.storeTaskResult(task.taskId, 'completed', toolResult(value)),
+        (error) => store.storeTaskResult(task.taskId, 'failed', toolErrorResult(error)),
+      );
+      return { task };
+    },
+    async getTask(_args, extra) {
+      if (!extra.taskStore || !extra.taskId) throw new Error('MCP task context unavailable');
+      return extra.taskStore.getTask(extra.taskId);
+    },
+    async getTaskResult(_args, extra) {
+      if (!extra.taskStore || !extra.taskId) throw new Error('MCP task context unavailable');
+      return extra.taskStore.getTaskResult(extra.taskId) as Promise<CallToolResult>;
+    },
+  });
   return server;
 }
 
 function toolResult(value: object) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> };
 }
+
+function toolErrorResult(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return { content: [{ type: 'text' as const, text: message }], isError: true };
+}
+
 
 const SENSITIVE_PATH_SEGMENTS = new Set(['.ssh', '.aws', '.gnupg', '.azure', '.kube']);
 

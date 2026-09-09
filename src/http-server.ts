@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks';
 import { createGatewayMcpServer, type GatewayApi } from './server.js';
 
 export interface GatewayHttpServerOptions {
@@ -22,6 +23,7 @@ export async function startGatewayHttpServer(options: GatewayHttpServerOptions):
   if (host !== '127.0.0.1' && host !== '::1') throw new Error('Gateway HTTP server must bind loopback in V0');
   if (Buffer.byteLength(options.bearerToken) < 32) throw new Error('Gateway bearer token must be at least 32 bytes');
 
+  const taskStore = new InMemoryTaskStore();
   const server = createServer(async (req, res) => {
     res.setHeader('x-request-id', randomUUID());
     if (req.url !== '/mcp') { res.writeHead(404).end(); return; }
@@ -36,7 +38,7 @@ export async function startGatewayHttpServer(options: GatewayHttpServerOptions):
       return;
     }
 
-    const mcp = createGatewayMcpServer(options.gateway);
+    const mcp = createGatewayMcpServer(options.gateway, { taskStore });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
       await mcp.connect(transport);
@@ -56,7 +58,7 @@ export async function startGatewayHttpServer(options: GatewayHttpServerOptions):
     host,
     port,
     mcpUrl: `http://${host}:${port}/mcp`,
-    close: () => closeServer(server),
+    close: async () => { taskStore.cleanup(); await closeServer(server); },
   };
 }
 
