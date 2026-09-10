@@ -17,7 +17,13 @@ export interface DevspaceFixture {
   stop(): Promise<void>;
 }
 
-export async function startPinnedDevspace(options: { workspaceRoot?: string } = {}): Promise<DevspaceFixture> {
+interface StartPinnedDevspaceOptions {
+  workspaceRoot?: string;
+  startupTimeoutMs?: number;
+  onSpawn?: (pid: number) => void;
+}
+
+export async function startPinnedDevspace(options: StartPinnedDevspaceOptions = {}): Promise<DevspaceFixture> {
   const pin = JSON.parse(await readFile(new URL('../docs/benchmarks/devspace-pin.json', import.meta.url), 'utf8')) as { revision: string };
   const pinDir = process.env.DEVSPACE_PIN_DIR ?? join(tmpdir(), 'web-agent-gateway-devspace-33d6d0b');
   const { stdout } = await execFileAsync('git', ['-C', pinDir, 'rev-parse', 'HEAD']);
@@ -60,27 +66,43 @@ export async function startPinnedDevspace(options: { workspaceRoot?: string } = 
   const logs: string[] = [];
   child.stdout.on('data', (chunk) => logs.push(String(chunk)));
   child.stderr.on('data', (chunk) => logs.push(String(chunk)));
+  const childPid = child.pid;
+  if (!childPid) {
+    await rm(root, { recursive: true, force: true });
+    throw new Error('DevSpace child has no pid');
+  }
+  options.onSpawn?.(childPid);
   const baseUrl = `http://127.0.0.1:${port}`;
-  await waitForServer(baseUrl, child, logs);
-  const accessToken = await issueAccessToken(baseUrl, ownerToken);
+  let accessToken: string;
+  try {
+    await waitForServer(baseUrl, child, logs, options.startupTimeoutMs ?? 15_000);
+    accessToken = await issueAccessToken(baseUrl, ownerToken);
+  } catch (error) {
+    await stopDevspaceProcess(child).catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
 
-  if (!child.pid) throw new Error('DevSpace child has no pid');
   return {
     baseUrl,
     accessToken,
     workspaceRoot,
-    pid: child.pid,
+    pid: childPid,
     async stop() {
-      if (child.exitCode === null) {
-        if (process.platform === 'win32') {
-          try { await execFileAsync('taskkill', ['/pid', String(child.pid), '/T', '/F']); }
-          catch { if (child.exitCode === null) child.kill(); }
-        } else child.kill('SIGTERM');
-      }
-      await waitForExit(child, 3000);
+      await stopDevspaceProcess(child);
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+async function stopDevspaceProcess(child: ReturnType<typeof spawn>): Promise<void> {
+  if (child.exitCode === null) {
+    if (process.platform === 'win32') {
+      try { await execFileAsync('taskkill', ['/pid', String(child.pid), '/T', '/F']); }
+      catch { if (child.exitCode === null) child.kill(); }
+    } else child.kill('SIGTERM');
+  }
+  await waitForExit(child, 3000);
 }
 
 async function waitForExit(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<void> {
@@ -100,14 +122,16 @@ async function reservePort(): Promise<number> {
   return address.port;
 }
 
-async function waitForServer(baseUrl: string, child: ReturnType<typeof spawn>, logs: string[]): Promise<void> {
-  for (let i = 0; i < 100; i += 1) {
+async function waitForServer(baseUrl: string, child: ReturnType<typeof spawn>, logs: string[], timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`DevSpace exited early (${child.exitCode}): ${logs.join('')}`);
     try {
       const response = await fetch(`${baseUrl}/.well-known/oauth-authorization-server`);
       if (response.ok) return;
     } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const remainingMs = deadline - Date.now();
+    if (remainingMs > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(50, remainingMs)));
   }
   throw new Error(`Timed out waiting for DevSpace: ${logs.join('')}`);
 }
