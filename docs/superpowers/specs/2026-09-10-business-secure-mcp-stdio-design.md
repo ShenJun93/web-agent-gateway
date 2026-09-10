@@ -84,14 +84,18 @@ Use one explicit JSON config file. No secrets are stored in it.
   "verifyProfiles": {
     "test": {
       "argv": ["npm", "test"],
-      "timeoutMs": 120000,
+      "timeoutMs": 30000,
       "maxOutputTokens": 8000
     }
   }
 }
 ```
 
-The config parser is strict: unknown fields fail closed. `baseUrl` must be loopback HTTP/HTTPS. `resourceUrl` must use the configured DevSpace MCP resource. Allowed-root and verify-profile rules reuse the existing gateway policy rather than creating a second policy layer.
+The config parser is strict: unknown fields fail closed. `baseUrl` must be loopback HTTP/HTTPS. `resourceUrl` must use the configured DevSpace MCP resource. Every configured allowed root must itself pass the existing canonical workspace policy, so drive-root, UNC/device, system, and sensitive roots fail during startup rather than broadening containment. Allowed-root and verify-profile rules reuse the existing gateway policy rather than creating a second policy layer. V0.2 private config does not expose per-profile `env`; adding environment injection to this deployment surface requires a separate security design.
+
+## Production-discipline carry-over from PFP audit
+
+The Project Factory Platform audit reinforces patterns, not code sharing: fail-closed strict config, secrets outside Git, exact-SHA acceptance evidence, and explicit ownership before process/resource cleanup. Web Agent Gateway remains a separate execution-plane repository and does not import PFP PostgreSQL jobs, executor registry, governance tables, schedulers, or runtime state.
 
 ## DevSpace authentication lifecycle
 
@@ -146,7 +150,7 @@ On stdio EOF, SIGINT, or SIGTERM:
 - erase in-memory OAuth references by releasing the session;
 - exit without killing separately supervised DevSpace.
 
-No background process started by Gateway may survive Gateway shutdown. Existing `verify.run` timeout/interrupt semantics continue to govern DevSpace command sessions.
+Gateway starts no OS child process in this topology and therefore terminates only MCP/task/OAuth resources it owns. A DevSpace command already delegated before Gateway shutdown is DevSpace-owned and may continue under the separately supervised executor; V0.2 does not invent cross-process cancellation on Gateway exit. Gateway task/result recovery remains process-lifetime only, so the post-upgrade interruption gate must record what happens if tunnel-client restarts the stdio child.
 
 ## Packaging
 
