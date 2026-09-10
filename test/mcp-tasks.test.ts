@@ -4,10 +4,17 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { startGatewayHttpServer } from '../src/http-server.js';
+import { NonCancellingTaskStore } from '../src/task-store.js';
 import { createGateway } from '../src/server.js';
 import { startPinnedDevspace } from './devspace-fixture.js';
 
 const TOKEN = 'task-test-token-0123456789abcdef0123456789abcdef';
+
+test('shared task store rejects cancellation until executor interruption exists', async () => {
+  const store = new NonCancellingTaskStore();
+  await assert.rejects(() => store.updateTaskStatus('task-test', 'cancelled'), /not supported/i);
+  store.cleanup();
+});
 
 test('non-task MCP client still receives synchronous verify.run result', async (t) => {
   const fixture = await startPinnedDevspace();
