@@ -8,7 +8,9 @@
   },
   "scripts": {
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test:business": "npm run build && tsx --test --test-concurrency=1 test/business-stdio.acceptance.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

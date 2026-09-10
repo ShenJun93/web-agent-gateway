@@ -1,9 +1,8 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks';
-import type { Task } from '@modelcontextprotocol/sdk/types.js';
 import { createGatewayMcpServer, type GatewayApi } from './server.js';
+import { NonCancellingTaskStore } from './task-store.js';
 
 export interface GatewayHttpServerOptions {
   gateway: GatewayApi;
@@ -80,19 +79,4 @@ async function listen(server: Server, host: string, port: number): Promise<numbe
 
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-}
-
-
-class NonCancellingTaskStore extends InMemoryTaskStore {
-  override async updateTaskStatus(
-    taskId: string,
-    status: Task['status'],
-    statusMessage?: string,
-    sessionId?: string,
-  ): Promise<void> {
-    if (status === 'cancelled') {
-      throw new Error('Task cancellation is not supported until executor interruption is implemented');
-    }
-    return super.updateTaskStatus(taskId, status, statusMessage, sessionId);
-  }
 }

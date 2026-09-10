@@ -4,12 +4,25 @@ export const REQUIRED_DEVSPACE_TOOLS = [
 ] as const;
 
 export interface DevspaceTool { name: string; inputSchema: unknown; }
-export interface DevspaceExecutorOptions { baseUrl: string; accessToken: string; }
+export interface DevspaceTokenSource {
+  getAccessToken(): Promise<string>;
+  refreshAfterUnauthorized?(): Promise<string>;
+  close?(): void | Promise<void>;
+}
+export type DevspaceExecutorOptions =
+  | { baseUrl: string; accessToken: string; tokenSource?: never }
+  | { baseUrl: string; tokenSource: DevspaceTokenSource; accessToken?: never };
 export interface ExecResult { output: string; exitCode?: number; running: boolean; sessionId?: number; }
 export class DevspaceReadLimitError extends Error {}
 
 export class DevspaceExecutor {
-  constructor(private readonly options: DevspaceExecutorOptions) {}
+  private readonly baseUrl: string;
+  private readonly tokenSource: DevspaceTokenSource;
+
+  constructor(options: DevspaceExecutorOptions) {
+    this.baseUrl = options.baseUrl;
+    this.tokenSource = options.tokenSource ?? fixedTokenSource(options.accessToken);
+  }
 
   async listTools(): Promise<DevspaceTool[]> {
     const body = await this.request('tools/list', {});
@@ -57,27 +70,38 @@ export class DevspaceExecutor {
   }
 
   private async request(method: string, params: Record<string, unknown>, mcpName?: string): Promise<{ result?: Record<string, unknown>; error?: unknown }> {
-    const response = await fetch(`${this.options.baseUrl}/mcp`, {
+    const payload = JSON.stringify({ jsonrpc: '2.0', id: `gateway-${method}`, method, params: {
+      ...params,
+      _meta: {
+        'io.modelcontextprotocol/protocolVersion': DEVSPACE_PROTOCOL_VERSION,
+        'io.modelcontextprotocol/clientCapabilities': {},
+        'io.modelcontextprotocol/clientInfo': { name: 'web-agent-gateway', version: '0.0.0' },
+      },
+    } });
+    const send = async (accessToken: string) => fetch(`${this.baseUrl}/mcp`, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${this.options.accessToken}`,
+        authorization: `Bearer ${accessToken}`,
         'content-type': 'application/json',
         'mcp-method': method,
         'mcp-protocol-version': DEVSPACE_PROTOCOL_VERSION,
         ...(mcpName ? { 'mcp-name': mcpName } : {}),
       },
-      body: JSON.stringify({ jsonrpc: '2.0', id: `gateway-${method}`, method, params: {
-        ...params,
-        _meta: {
-          'io.modelcontextprotocol/protocolVersion': DEVSPACE_PROTOCOL_VERSION,
-          'io.modelcontextprotocol/clientCapabilities': {},
-          'io.modelcontextprotocol/clientInfo': { name: 'web-agent-gateway', version: '0.0.0' },
-        },
-      } }),
+      body: payload,
     });
+
+    let response = await send(await this.tokenSource.getAccessToken());
+    if (response.status === 401 && this.tokenSource.refreshAfterUnauthorized) {
+      await response.text();
+      response = await send(await this.tokenSource.refreshAfterUnauthorized());
+    }
     if (!response.ok) throw new Error(`DevSpace ${method} failed: HTTP ${response.status} ${await response.text()}`);
     const body = await response.json() as { result?: Record<string, unknown>; error?: unknown };
     if (body.error) throw new Error(`DevSpace ${method} returned JSON-RPC error: ${JSON.stringify(body.error)}`);
     return body;
   }
+}
+
+function fixedTokenSource(accessToken: string): DevspaceTokenSource {
+  return { async getAccessToken() { return accessToken; } };
 }

@@ -9,18 +9,23 @@ import { sanitizeDevspaceEnvironment } from '../src/environment-policy.js';
 
 const execFileAsync = promisify(execFile);
 
+export const DEVSPACE_TEST_OWNER_TOKEN = 'web-agent-gateway-test-owner-token-long-enough';
+
 export interface DevspaceFixture {
   baseUrl: string;
   accessToken: string;
+  resourceUrl: string;
   workspaceRoot: string;
   pid: number;
   stop(): Promise<void>;
 }
 
-interface StartPinnedDevspaceOptions {
+export interface StartPinnedDevspaceOptions {
   workspaceRoot?: string;
   startupTimeoutMs?: number;
   onSpawn?: (pid: number) => void;
+  accessTokenTtlSeconds?: number;
+  refreshTokenTtlSeconds?: number;
 }
 
 export async function startPinnedDevspace(options: StartPinnedDevspaceOptions = {}): Promise<DevspaceFixture> {
@@ -36,10 +41,12 @@ export async function startPinnedDevspace(options: StartPinnedDevspaceOptions = 
   if (!options.workspaceRoot) await mkdir(workspaceRoot, { recursive: true });
   await mkdir(configDir, { recursive: true });
   const port = await reservePort();
-  const ownerToken = 'web-agent-gateway-test-owner-token-long-enough';
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const resourceUrl = `${baseUrl}/mcp`;
+  const ownerToken = DEVSPACE_TEST_OWNER_TOKEN;
   const config = {
     configVersion: 1,
-    server: { host: '127.0.0.1', port, publicBaseUrl: 'https://example.test', allowedHosts: [], trustProxy: false },
+    server: { host: '127.0.0.1', port, publicBaseUrl: baseUrl, allowedHosts: [], trustProxy: false },
     workspaces: { allowedRoots: [workspaceRoot], worktreeRoot: join(root, 'worktrees') },
     storage: { stateDir },
     tools: { mode: 'codex' },
@@ -49,8 +56,8 @@ export async function startPinnedDevspace(options: StartPinnedDevspaceOptions = 
     subagents: { enabled: false, instructions: 'on-demand', providers: [] },
     logging: { level: 'error', format: 'json', requests: false, assets: false, toolCalls: false, shellCommands: false },
     oauth: {
-      accessTokenTtlSeconds: 3600,
-      refreshTokenTtlSeconds: 2592000,
+      accessTokenTtlSeconds: options.accessTokenTtlSeconds ?? 3600,
+      refreshTokenTtlSeconds: options.refreshTokenTtlSeconds ?? 2592000,
       scopes: ['devspace'],
       allowedResourceUrls: [],
       allowedRedirectHosts: ['localhost', '127.0.0.1'],
@@ -72,11 +79,10 @@ export async function startPinnedDevspace(options: StartPinnedDevspaceOptions = 
     throw new Error('DevSpace child has no pid');
   }
   options.onSpawn?.(childPid);
-  const baseUrl = `http://127.0.0.1:${port}`;
   let accessToken: string;
   try {
     await waitForServer(baseUrl, child, logs, options.startupTimeoutMs ?? 15_000);
-    accessToken = await issueAccessToken(baseUrl, ownerToken);
+    accessToken = await issueAccessToken(baseUrl, ownerToken, resourceUrl);
   } catch (error) {
     await stopDevspaceProcess(child).catch(() => undefined);
     await rm(root, { recursive: true, force: true });
@@ -86,6 +92,7 @@ export async function startPinnedDevspace(options: StartPinnedDevspaceOptions = 
   return {
     baseUrl,
     accessToken,
+    resourceUrl,
     workspaceRoot,
     pid: childPid,
     async stop() {
@@ -135,7 +142,7 @@ async function waitForServer(baseUrl: string, child: ReturnType<typeof spawn>, l
   }
   throw new Error(`Timed out waiting for DevSpace: ${logs.join('')}`);
 }
-async function issueAccessToken(baseUrl: string, ownerToken: string): Promise<string> {
+async function issueAccessToken(baseUrl: string, ownerToken: string, resourceUrl: string): Promise<string> {
   const redirectUri = 'http://127.0.0.1/callback';
   const verifier = 'web-agent-gateway-test-verifier-0123456789';
   const challenge = createHash('sha256').update(verifier).digest('base64url');
@@ -149,7 +156,7 @@ async function issueAccessToken(baseUrl: string, ownerToken: string): Promise<st
 
   const approval = await fetch(`${baseUrl}/authorize`, {
     method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, redirect: 'manual',
-    body: new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', scope: 'devspace', resource: 'https://example.test/mcp', state: 'gateway-test', owner_token: ownerToken }),
+    body: new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', scope: 'devspace', resource: resourceUrl, state: 'gateway-test', owner_token: ownerToken }),
   });
   const location = approval.headers.get('location');
   if (approval.status !== 302 || !location) throw new Error(`OAuth approval failed: ${approval.status} ${await approval.text()}`);
@@ -158,7 +165,7 @@ async function issueAccessToken(baseUrl: string, ownerToken: string): Promise<st
 
   const exchange = await fetch(`${baseUrl}/token`, {
     method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: redirectUri, resource: 'https://example.test/mcp' }),
+    body: new URLSearchParams({ grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: redirectUri, resource: resourceUrl }),
   });
   if (!exchange.ok) throw new Error(`OAuth exchange failed: ${exchange.status} ${await exchange.text()}`);
   const token = await exchange.json() as { access_token?: string };
