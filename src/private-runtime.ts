@@ -3,6 +3,7 @@ import { DevspaceExecutor } from './executor/devspace.js';
 import type { PrivateGatewayConfig } from './private-config.js';
 import { createGateway, type GatewayApi } from './server.js';
 import type { TelemetrySink } from './telemetry.js';
+import type { PatchApprovalStore } from './patch-approval.js';
 
 export type PrivateRuntimeErrorCode =
   | 'DEVSPACE_OWNER_TOKEN_MISSING'
@@ -23,6 +24,7 @@ export interface PrivateRuntimeOptions {
   env?: NodeJS.ProcessEnv;
   telemetry?: TelemetrySink;
   oauthFactory?: typeof createDevspaceOAuthSession;
+  patchApprovals?: PatchApprovalStore;
 }
 export interface PrivateGatewayRuntime {
   gateway: GatewayApi;
@@ -62,6 +64,7 @@ export async function bootstrapPrivateGateway(
     allowedRoots: config.allowedRoots,
     verifyProfiles: config.verifyProfiles,
     telemetry: options.telemetry,
+    patchApprovals: options.patchApprovals,
   });
 
   try {
