@@ -5,6 +5,8 @@ import { z } from 'zod';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
+import { FilePatchController, type FilePatchBinding, type FilePatchInput } from './file-patch.js';
+import type { PatchApprovalStore } from './patch-approval.js';
 import {
   DEVSPACE_PROTOCOL_VERSION,
   DevspaceReadLimitError,
@@ -26,8 +28,9 @@ const SNAPSHOT_COMMAND = [
   'git --no-optional-locks -c core.fsmonitor=false ls-files',
 ].join(' && ');
 
-export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink }) {
+export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, patchApprovals }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; patchApprovals?: PatchApprovalStore }) {
   const workspaces = new Map<string, WorkspaceBinding>();
+  const filePatch = patchApprovals ? new FilePatchController({ executor, approvals: patchApprovals }) : undefined;
 
   function binding(workspaceId: string): WorkspaceBinding {
     const value = workspaces.get(workspaceId);
@@ -108,6 +111,20 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       } catch (error) { trace.finish(false, error); throw error; }
     },
 
+    async filePatchPreview(workspaceId: string, input: FilePatchInput) {
+      if (!filePatch) throw new Error('Gateway file.patch is disabled');
+      const workspace = binding(workspaceId);
+      const patchBinding: FilePatchBinding = { workspaceId, ...workspace };
+      return filePatch.preview(patchBinding, input);
+    },
+
+    async filePatchApply(workspaceId: string, input: FilePatchInput & { approvalId: string }) {
+      if (!filePatch) throw new Error('Gateway file.patch is disabled');
+      const workspace = binding(workspaceId);
+      const patchBinding: FilePatchBinding = { workspaceId, ...workspace };
+      return filePatch.apply(patchBinding, input);
+    },
+
     async repoSnapshot(workspaceId: string, options: SnapshotOptions = {}) {
       const trace = startTrace('repo.snapshot', telemetry); trace.markIngress();
       try {
@@ -133,7 +150,7 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
 
 export type GatewayApi = ReturnType<typeof createGateway>;
 
-export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new InMemoryTaskStore() }: { taskStore?: TaskStore } = {}): McpServer {
+export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new InMemoryTaskStore(), enableFilePatch = false }: { taskStore?: TaskStore; enableFilePatch?: boolean } = {}): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' }, {
     taskStore,
     capabilities: { tasks: { requests: { tools: { call: {} } } } },
@@ -167,6 +184,30 @@ export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new In
       return extra.taskStore.getTaskResult(extra.taskId) as Promise<CallToolResult>;
     },
   });
+  if (enableFilePatch) {
+    const patchInput = z.object({
+      phase: z.enum(['preview', 'apply']),
+      workspace_id: z.string().min(1),
+      path: z.string().min(1),
+      base_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      before: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      after: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      approval_id: z.string().min(1).optional(),
+    }).strict().superRefine((value, ctx) => {
+      if (value.phase === 'apply' && !value.approval_id) ctx.addIssue({ code: 'custom', path: ['approval_id'], message: 'approval_id is required for apply' });
+      if (value.phase === 'preview' && value.approval_id !== undefined) ctx.addIssue({ code: 'custom', path: ['approval_id'], message: 'approval_id is only valid for apply' });
+    });
+    server.registerTool('file.patch', {
+      description: 'Preview or apply one approval-gated update to an existing workspace text file.',
+      inputSchema: patchInput,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ phase, workspace_id, path, base_sha256, before, after, approval_id }) => {
+      const input = { path, baseSha256: base_sha256, before, after };
+      if (phase === 'preview') return toolResult(await gateway.filePatchPreview(workspace_id, input));
+      return toolResult(await gateway.filePatchApply(workspace_id, { ...input, approvalId: approval_id! }));
+    });
+  }
+
   return server;
 }
 

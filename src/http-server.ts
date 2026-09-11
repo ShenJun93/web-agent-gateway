@@ -9,6 +9,7 @@ export interface GatewayHttpServerOptions {
   bearerToken: string;
   host?: string;
   port?: number;
+  enableFilePatch?: boolean;
 }
 
 export interface GatewayHttpServer {
@@ -38,7 +39,7 @@ export async function startGatewayHttpServer(options: GatewayHttpServerOptions):
       return;
     }
 
-    const mcp = createGatewayMcpServer(options.gateway, { taskStore });
+    const mcp = createGatewayMcpServer(options.gateway, { taskStore, enableFilePatch: options.enableFilePatch });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
       await mcp.connect(transport);
