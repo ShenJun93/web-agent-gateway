@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
@@ -34,6 +36,22 @@ test('exact pinned DevSpace exposes the expected Codex MCP tool contract', async
   }
 });
 
+
+test('typed applyPatch wrapper returns structured update metadata', async (t) => {
+  const fixture = await startPinnedDevspace();
+  t.after(() => fixture.stop());
+  await writeFile(join(fixture.workspaceRoot, 'note.txt'), 'alpha\nbeta\ngamma\n');
+  const executor = new DevspaceExecutor(fixture);
+  const workspaceId = await executor.openWorkspace(fixture.workspaceRoot);
+  const patch = '*** Begin Patch\n*** Update File: note.txt\n@@\n-alpha\n-beta\n+alpha\n+BETA\n gamma\n*** End Patch';
+
+  const result = await executor.applyPatch(workspaceId, patch);
+  assert.equal(result.result, 'Applied patch to 1 file(s): note.txt');
+  assert.equal(result.additions, 1);
+  assert.equal(result.removals, 1);
+  assert.deepEqual(result.files, [{ path: 'note.txt', operation: 'update' }]);
+  assert.equal(await executor.readFile(workspaceId, 'note.txt'), 'alpha\nBETA\ngamma\n');
+});
 test('pinned DevSpace process listens only on Windows loopback', async (t) => {
   if (process.platform !== 'win32') return t.skip('Windows listener assertion');
   const fixture = await startPinnedDevspace();
