@@ -63,6 +63,12 @@ export class PatchApprovalStore {
     return this.entries.delete(approvalId);
   }
 
+  get(approvalId: string): PatchApprovalRequest | undefined {
+    this.pruneExpired();
+    const request = this.entries.get(approvalId);
+    return request ? { ...request, summary: { ...request.summary } } : undefined;
+  }
+
   listPending(limit = 20): PatchApprovalRequest[] {
     this.pruneExpired();
     const safeLimit = Math.min(Math.max(limit, 0), 100);
