@@ -64,6 +64,14 @@ The 60-second TTL is explicitly required by the approved design and was not rela
 
 No production approval endpoint, persistent approval, wildcard approval, raw patch input, file creation/deletion/move, or Business mutation enablement was added to work around the host limitation.
 
+## Recommended next decision
+
+Do not solve the browser timing evidence by simply widening the single preview-to-apply TTL. That would also widen the lifetime of an already-approved mutation when local approval happens early.
+
+If mutation exploration continues, open a separate ADR to evaluate a two-window approval state machine: a longer **pending preview lifetime** for an unapproved fingerprint, then a fresh **approved-use lifetime** of 60 seconds starting at `approveLocal`. The pending state cannot mutate anything; the approved state would remain fingerprint-bound, process-memory only, local-only, single-use, and fully revalidated immediately before DevSpace. This is a recommendation from the spike, not authorization to change ADR-0008 or the approved design.
+
+A simpler 120-second preview TTL is easier to implement but is not recommended because it increases the active approval window as well as host tolerance. Keeping the current 60-second preview TTL requires no semantic change but has already failed the supported ChatGPT path and therefore does not unblock Task 6 Step 2.
+
 ## Gate result
 
 `LOCAL_FILE_PATCH_SPIKE = PASS`
