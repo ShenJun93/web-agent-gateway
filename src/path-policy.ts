@@ -29,7 +29,7 @@ export function validateReadPath(input: string): string {
     throw new Error('Gateway denied workspace-relative path');
   }
   const segments = normalized.split('/').filter((segment) => segment && segment !== '.');
-  if (segments.some((segment) => segment === '..')) throw new Error('Gateway denied workspace-relative path');
+  if (segments.length === 0 || segments.some((segment) => segment === '..')) throw new Error('Gateway denied workspace-relative path');
   if (segments.some(isSensitivePathComponent)) throw new Error('Gateway denied sensitive path');
   return segments.join('/');
 }
