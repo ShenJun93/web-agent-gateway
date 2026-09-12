@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-12-file-patch-approval-timing-design.md`
 
-**Implementation SHA:** `0bb0cf3adad1a13fad2b5adc82bab21d3c32f949`
+**Implementation SHA:** `53d398a2d42c530f2a710bb244cbac99a5386ea4`
 
 **Current gate:** local verification PASS; supported-host browser mutation acceptance remains incomplete/fail-closed.
 

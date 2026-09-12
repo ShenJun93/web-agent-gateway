@@ -1,7 +1,7 @@
 # File patch mutation spike gate receipt
 
 Date: 2026-09-12
-Candidate SHA (split-TTL local gate): `0bb0cf3adad1a13fad2b5adc82bab21d3c32f949`
+Candidate SHA (split-TTL local gate): `53d398a2d42c530f2a710bb244cbac99a5386ea4`
 Historical browser evidence implementation SHA (pre-split): `19ff33c42c30c81cad313d4107410b5056ce9813`
 Fresh split-TTL browser attempt implementation SHA: `0bb0cf3adad1a13fad2b5adc82bab21d3c32f949`
 DevSpace revision: `33d6d0bcc2256024484d2456da924af8afd814ed`
@@ -18,7 +18,7 @@ Executed from the isolated `feat/file-patch-spike` worktree, in the required ord
 4. `npm run test:business` — PASS; 1 passed, 0 failed, 0 skipped.
 5. `git diff --check` — PASS.
 
-The suite includes pending/approved split-TTL approval state-machine tests, approval single-use/fingerprint checks, stale-target rejection, path containment, binary/size bounds, exact-match uniqueness including overlapping occurrences, LF and CRLF mutation, donor metadata validation, post-write SHA verification, default five-tool regression, and the local browser-spike approval parser.
+The suite includes pending/approved split-TTL approval state-machine tests, exact pending-deadline expiry, rejection of invalid/overlong TTL and non-finite clocks, approval single-use/fingerprint checks, stale-target rejection, path containment, binary/size bounds, exact-match uniqueness including overlapping occurrences, LF and CRLF mutation, donor metadata validation, post-write SHA verification, default five-tool regression, and the local browser-spike approval parser.
 
 After the historical browser evidence was collected, hardening added explicit rejection of an `update` entry carrying `previousPath`, rejection of `.` / `./` paths that normalize to an empty relative path, and rejection of overlapping `before` occurrences. ADR-0009 then split the approval timing into a 60-second pending-preview window and a separate 60-second approved-use window beginning at first successful local approval. The full local gate above was rerun on the split-TTL candidate SHA.
 
@@ -61,7 +61,7 @@ A genuinely visible Gemini tab was reloaded against the same disposable mutation
 
 ## Fresh split-TTL browser attempt
 
-ADR-0009 was accepted and implemented on candidate `0bb0cf3adad1a13fad2b5adc82bab21d3c32f949`. A fresh disposable harness was started from that exact worktree implementation and the disposable fixture was reset to the original clean three-line file. The first DevSpace readiness attempt hit the known transient startup timeout; retrying the unchanged harness succeeded. A fresh loopback auth proxy was then started.
+ADR-0009 was accepted and initially implemented on `0bb0cf3adad1a13fad2b5adc82bab21d3c32f949`. The current local candidate `53d398a2d42c530f2a710bb244cbac99a5386ea4` adds fail-closed constructor/clock hardening: test TTLs may be shorter but cannot exceed 60 seconds, and non-finite clock values are rejected. The browser retry below ran on `0bb0cf3`; this later hardening does not widen or alter the default 60-second timing semantics. A fresh disposable harness was started from that exact worktree implementation and the disposable fixture was reset to the original clean three-line file. The first DevSpace readiness attempt hit the known transient startup timeout; retrying the unchanged harness succeeded. A fresh loopback auth proxy was then started.
 
 The existing Edge browser was attached through the official Playwright Extension consent flow, selecting the intended Gemini tab. The visible SuperAssistant sidebar then showed `Server Connected`, `MCP Settings - Active`, and `6 of 6 tools enabled`. The historical Gemini conversation still exposed supported `workspace.open` and `file.read` function blocks and their prior execution history.
 
