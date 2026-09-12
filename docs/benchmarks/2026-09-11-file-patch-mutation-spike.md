@@ -1,8 +1,9 @@
 # File patch mutation spike gate receipt
 
 Date: 2026-09-12
-Candidate SHA (local gate): `6269541722389a090566adb7336a820ca9a696a8`
-Browser evidence implementation SHA: `19ff33c42c30c81cad313d4107410b5056ce9813`
+Candidate SHA (split-TTL local gate): `0bb0cf3adad1a13fad2b5adc82bab21d3c32f949`
+Historical browser evidence implementation SHA (pre-split): `19ff33c42c30c81cad313d4107410b5056ce9813`
+Fresh split-TTL browser attempt implementation SHA: `0bb0cf3adad1a13fad2b5adc82bab21d3c32f949`
 DevSpace revision: `33d6d0bcc2256024484d2456da924af8afd814ed`
 DevSpace package observed at runtime: `@waishnav/devspace@1.0.8`
 Protocol: MCP `2026-07-28`
@@ -11,15 +12,15 @@ Protocol: MCP `2026-07-28`
 
 Executed from the isolated `feat/file-patch-spike` worktree, in the required order:
 
-1. `npm test` — PASS; 61 passed, 0 failed, 0 skipped.
+1. `npm test` — PASS; 64 passed, 0 failed, 0 skipped.
 2. `npm run typecheck` — PASS.
 3. `npm run build` — PASS.
 4. `npm run test:business` — PASS; 1 passed, 0 failed, 0 skipped.
 5. `git diff --check` — PASS.
 
-The suite includes approval TTL/single-use/fingerprint checks, stale-target rejection, path containment, binary/size bounds, exact-match uniqueness including overlapping occurrences, LF and CRLF mutation, donor metadata validation, post-write SHA verification, default five-tool regression, and the local browser-spike approval parser.
+The suite includes pending/approved split-TTL approval state-machine tests, approval single-use/fingerprint checks, stale-target rejection, path containment, binary/size bounds, exact-match uniqueness including overlapping occurrences, LF and CRLF mutation, donor metadata validation, post-write SHA verification, default five-tool regression, and the local browser-spike approval parser.
 
-After browser evidence was collected, hardening added explicit rejection of an `update` entry carrying `previousPath`, rejection of `.` / `./` paths that normalize to an empty relative path, and rejection of overlapping `before` occurrences; the full local gate above was rerun on the candidate SHA.
+After the historical browser evidence was collected, hardening added explicit rejection of an `update` entry carrying `previousPath`, rejection of `.` / `./` paths that normalize to an empty relative path, and rejection of overlapping `before` occurrences. ADR-0009 then split the approval timing into a 60-second pending-preview window and a separate 60-second approved-use window beginning at first successful local approval. The full local gate above was rerun on the split-TTL candidate SHA.
 
 ## Surface and scope evidence
 
@@ -58,21 +59,21 @@ At the end of the ChatGPT attempts the disposable file still had the original SH
 
 A genuinely visible Gemini tab was reloaded against the same disposable mutation Gateway and showed `Server Connected` with `6 of 6 tools enabled`. The SuperAssistant function block for call 201 `workspace.open` was executed with its visible `Run` control and appeared in Gemini execution history. Gemini then used the actual function result from call 201 to issue call 202 `file.read` for `note.txt`; call 202 was recorded in extension execution history with that returned workspace binding. Before destructive preview call 203 could be submitted, the browser-control environment blocked the automation request at its own safety boundary. No Gemini preview/apply call was sent after that block, and no Gemini mutation result is claimed.
 
-## Approval friction and safety result
+## Fresh split-TTL browser attempt
 
-The 60-second TTL is explicitly required by the approved design and was not relaxed for acceptance. Browser/model latency can exceed that window, so approval can expire before an apply call reaches Gateway. The latest Instant-mode attempt measured 66.717 seconds from preview execution history to apply execution history, with apply arriving about 6.752 seconds after expiry. The observed behavior was fail-closed: expired approvals never mutated the target, and stale requests required a fresh preview and local approval.
+ADR-0009 was accepted and implemented on candidate `0bb0cf3adad1a13fad2b5adc82bab21d3c32f949`. A fresh disposable harness was started from that exact worktree implementation and the disposable fixture was reset to the original clean three-line file. The first DevSpace readiness attempt hit the known transient startup timeout; retrying the unchanged harness succeeded. A fresh loopback auth proxy was then started.
 
-No production approval endpoint, persistent approval, wildcard approval, raw patch input, file creation/deletion/move, or Business mutation enablement was added to work around the host limitation.
+The existing Edge browser was attached through the official Playwright Extension consent flow, selecting the intended Gemini tab. The visible SuperAssistant sidebar then showed `Server Connected`, `MCP Settings - Active`, and `6 of 6 tools enabled`. The historical Gemini conversation still exposed supported `workspace.open` and `file.read` function blocks and their prior execution history.
 
-## Recommended next decision
+Before a fresh split-TTL `workspace.open -> file.read -> file.patch preview -> local approval -> file.patch apply -> file.read -> repo.snapshot` sequence could be completed, the browser-control environment began blocking ordinary UI activation commands at its own safety boundary. The attempt stopped there rather than switching to a synthetic MCP call path or bypassing the host-control restriction. No split-TTL mutation call was sent and no successful browser mutation is claimed from this attempt.
 
-Do not solve the browser timing evidence by simply widening the single preview-to-apply TTL. That would also widen the lifetime of an already-approved mutation when local approval happens early.
+## Approval timing and safety result
 
-The latest trace narrows the issue: call 163 preview executed at about 08:28:24.6, the local approval command was issued at about 08:28:54, and call 164 apply executed at about 08:29:31.4. Apply was therefore 66.717 seconds after preview but only about 37 seconds after the operator issued approval.
+The historical single-clock trace measured 66.717 seconds from preview execution to apply execution, while apply arrived only about 37 seconds after local approval. ADR-0009 addresses exactly that distinction without lengthening mutation authority: pending preview remains valid for 60 seconds, and first successful exact local approval starts a separate 60-second approved-use window. Re-approval does not extend that window.
 
-If mutation exploration continues, open a separate ADR to evaluate a two-window approval state machine that **keeps the existing 60-second pending-preview TTL** and starts a fresh **60-second approved-use TTL** when `approveLocal` succeeds. No longer pending lifetime is required by the observed trace. The pending state cannot mutate anything; the approved state would remain fingerprint-bound, process-memory only, local-only, single-use, and fully revalidated immediately before DevSpace. This is a recommendation from the spike, not authorization to change ADR-0008 or the approved design.
+Local controller tests prove apply may occur after the preview deadline when first approval happened before that deadline and the approved-use deadline is still live; apply fails at or after the approved-use deadline. Browser acceptance must still demonstrate the same behavior through a supported host.
 
-A simpler 120-second preview TTL is easier to implement but is not recommended because it increases the active approval window as well as host tolerance. Keeping one fixed 60-second clock anchored at preview requires no semantic change but has already failed the supported ChatGPT path and therefore does not unblock Task 6 Step 2.
+No production approval endpoint, persistent approval, wildcard approval, raw patch input, file creation/deletion/move, or Business mutation enablement was added. Default and Business surfaces remain non-mutation five-tool surfaces.
 
 ## Gate result
 
