@@ -52,6 +52,14 @@ test('file patch preview rejects stale hash, duplicate before, sensitive path, a
     path: 'missing.txt', baseSha256: sha256(original), before: 'beta', after: 'BETA',
   }));
 });
+
+test('file patch preview rejects overlapping before occurrences', async (t) => {
+  const original = 'aaa';
+  const { controller, binding } = await setup(t, original);
+  await assert.rejects(controller.preview(binding, {
+    path: 'note.txt', baseSha256: sha256(original), before: 'aa', after: 'AA',
+  }), /before text must occur exactly once/);
+});
 test('file patch preview rejects escape, binary text, and size bounds', async (t) => {
   const { fixture, controller, binding } = await setup(t);
   const outsideDir = join(dirname(fixture.workspaceRoot), 'patch-outside');

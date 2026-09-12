@@ -190,7 +190,7 @@ function countOccurrences(value: string, needle: string): number {
     const index = value.indexOf(needle, offset);
     if (index === -1) return count;
     count += 1;
-    offset = index + needle.length;
+    offset = index + 1;
   }
 }
 
