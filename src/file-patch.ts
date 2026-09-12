@@ -200,7 +200,7 @@ function lineCount(value: string): number {
 }
 
 export function assertSingleUpdateResult(result: DevspacePatchResult, path: string): void {
-  if (result.files.length !== 1 || result.files[0]?.operation !== 'update' || result.files[0]?.path !== path) {
+  if (result.files.length !== 1 || result.files[0]?.operation !== 'update' || result.files[0]?.path !== path || result.files[0]?.previousPath !== undefined) {
     throw new Error('Gateway rejected DevSpace patch result');
   }
 }

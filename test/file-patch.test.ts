@@ -184,6 +184,7 @@ test('file patch apply rejects non-update and wrong-target donor metadata', asyn
     [{ path: 'note.txt', operation: 'delete' }],
     [{ path: 'note.txt', operation: 'move' }],
     [{ path: 'other.txt', operation: 'update' }],
+    [{ path: 'note.txt', previousPath: 'old-note.txt', operation: 'update' }],
   ];
   for (const files of badFiles) {
     const result = { result: 'bad', additions: 1, removals: 1, files };
