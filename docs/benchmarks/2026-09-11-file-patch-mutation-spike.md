@@ -1,7 +1,7 @@
 # File patch mutation spike gate receipt
 
 Date: 2026-09-12
-Candidate SHA (local gate): `679dfaeadddb0d5842b0478513b6df3639b0595b`
+Candidate SHA (local gate): `6269541722389a090566adb7336a820ca9a696a8`
 Browser evidence implementation SHA: `19ff33c42c30c81cad313d4107410b5056ce9813`
 DevSpace revision: `33d6d0bcc2256024484d2456da924af8afd814ed`
 DevSpace package observed at runtime: `@waishnav/devspace@1.0.8`
@@ -11,15 +11,15 @@ Protocol: MCP `2026-07-28`
 
 Executed from the isolated `feat/file-patch-spike` worktree, in the required order:
 
-1. `npm test` — PASS; 60 passed, 0 failed, 0 skipped.
+1. `npm test` — PASS; 61 passed, 0 failed, 0 skipped.
 2. `npm run typecheck` — PASS.
 3. `npm run build` — PASS.
 4. `npm run test:business` — PASS; 1 passed, 0 failed, 0 skipped.
 5. `git diff --check` — PASS.
 
-The suite includes approval TTL/single-use/fingerprint checks, stale-target rejection, path containment, binary/size bounds, LF and CRLF mutation, donor metadata validation, post-write SHA verification, default five-tool regression, and the local browser-spike approval parser.
+The suite includes approval TTL/single-use/fingerprint checks, stale-target rejection, path containment, binary/size bounds, exact-match uniqueness including overlapping occurrences, LF and CRLF mutation, donor metadata validation, post-write SHA verification, default five-tool regression, and the local browser-spike approval parser.
 
-After browser evidence was collected, hardening added explicit rejection of an `update` entry carrying `previousPath` and rejection of `.` / `./` paths that normalize to an empty relative path; the full local gate above was rerun on the candidate SHA.
+After browser evidence was collected, hardening added explicit rejection of an `update` entry carrying `previousPath`, rejection of `.` / `./` paths that normalize to an empty relative path, and rejection of overlapping `before` occurrences; the full local gate above was rerun on the candidate SHA.
 
 ## Surface and scope evidence
 
