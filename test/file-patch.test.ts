@@ -115,6 +115,31 @@ test('file patch apply requires exact local approval and rejects expiry', async 
   await assert.rejects(controller.apply(binding, { ...input, approvalId: preview.approvalId }), /approval/i);
 });
 
+test('file patch apply uses approved-use deadline after timely local approval', async (t) => {
+  let now = 1_000;
+  const approvals = new PatchApprovalStore({ ttlMs: 10, now: () => now });
+  const { fixture, controller, binding } = await setup(t, 'alpha\nbeta\ngamma\n', approvals);
+  const original = 'alpha\nbeta\ngamma\n';
+  const input = { path: 'note.txt', baseSha256: sha256(original), before: 'beta', after: 'BETA' };
+
+  const preview = await controller.preview(binding, input);
+  assert.equal(preview.expiresAt, 1_010);
+  now = 1_009;
+  assert.equal(approvals.approveLocal(preview.approvalId, preview.fingerprint), true);
+  now = 1_011;
+  const result = await controller.apply(binding, { ...input, approvalId: preview.approvalId });
+  assert.equal(result.status, 'applied');
+
+  await writeFile(join(fixture.workspaceRoot, 'note.txt'), original);
+  now = 2_000;
+  const second = await controller.preview(binding, input);
+  now = 2_009;
+  assert.equal(approvals.approveLocal(second.approvalId, second.fingerprint), true);
+  now = 2_019;
+  await assert.rejects(controller.apply(binding, { ...input, approvalId: second.approvalId }), /approval/i);
+  assert.equal(await readFile(join(fixture.workspaceRoot, 'note.txt'), 'utf8'), original);
+});
+
 test('file patch apply revokes approval when request fingerprint changes', async (t) => {
   const { controller, approvals, binding } = await setup(t);
   const original = 'alpha\nbeta\ngamma\n';
