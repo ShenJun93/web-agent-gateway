@@ -48,15 +48,19 @@ Local terminal approval returned `approved` for fresh preview requests, but Chat
 
 A SuperAssistant `Re-execute` action generated a fresh preview approval through the extension MCP client. Harmless browser call 150 executed `health` successfully through that same client. Diagnostic call 151 was rejected by the `file.patch` schema before mutation because the cloned function block retained stale apply-only state. These diagnostics prove browser-extension MCP execution but do not satisfy the required mutation acceptance sequence.
 
+A later retest switched ChatGPT to `Instant` while the sidebar showed `Server Connected` and `6 of 6 tools enabled`. Browser execution history then recorded call 160 `file.read`, followed by call 161 `file.read` on the same fresh workspace used by the mutation attempts; call 161 again returned the expected three-line file. Calls 162 and 163 performed fresh `file.patch` previews for that workspace and returned `approval_required`. The local approval command for call 163 returned `approved`, but call 164 `file.patch` apply was recorded 66.717 seconds after call 163. The approval expiry was 60 seconds, so call 164 reached Gateway about 6.752 seconds after expiry and correctly failed with `Gateway denied patch approval`.
+
+Switching the host to `Instant` therefore did not make the supported ChatGPT host path complete preview-to-apply inside the fixed TTL. Static inspection of the disposable SuperAssistant bundle showed its MCP client is exposed only inside the content-script isolated world and tool calls cross its internal background ContextBridge; no supported page-level tool-call bridge was available. The adapter was not patched to manufacture a faster acceptance path.
+
 At the end of the ChatGPT attempts the disposable file still had the original SHA-256 and the disposable Git fixture remained clean. There is no successful browser mutation/read-back/snapshot evidence to claim.
 
 ## Gemini browser evidence
 
-A visible Gemini tab connected to the same disposable mutation Gateway and discovered/enabled 6 of 6 tools through the loopback Streamable HTTP auth proxy. The full mutation sequence was not run because the plan requires ChatGPT first and the ChatGPT mutation gate had not passed. Later UI automation was unavailable, so no Gemini mutation result is claimed.
+A genuinely visible Gemini tab was reloaded against the same disposable mutation Gateway and showed `Server Connected` with `6 of 6 tools enabled`. The SuperAssistant function block for call 201 `workspace.open` was executed with its visible `Run` control and appeared in Gemini execution history. Gemini then used the actual function result from call 201 to issue call 202 `file.read` for `note.txt`; call 202 was recorded in extension execution history with that returned workspace binding. Before destructive preview call 203 could be submitted, the browser-control environment blocked the automation request at its own safety boundary. No Gemini preview/apply call was sent after that block, and no Gemini mutation result is claimed.
 
 ## Approval friction and safety result
 
-The 60-second TTL is explicitly required by the approved design and was not relaxed for acceptance. Browser/model latency can exceed that window, so approval can expire before an apply call reaches Gateway. The observed behavior was fail-closed: expired approvals never mutated the target, and stale requests required a fresh preview and local approval.
+The 60-second TTL is explicitly required by the approved design and was not relaxed for acceptance. Browser/model latency can exceed that window, so approval can expire before an apply call reaches Gateway. The latest Instant-mode attempt measured 66.717 seconds from preview execution history to apply execution history, with apply arriving about 6.752 seconds after expiry. The observed behavior was fail-closed: expired approvals never mutated the target, and stale requests required a fresh preview and local approval.
 
 No production approval endpoint, persistent approval, wildcard approval, raw patch input, file creation/deletion/move, or Business mutation enablement was added to work around the host limitation.
 
