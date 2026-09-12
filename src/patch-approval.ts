@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+const MAX_TTL_MS = 60_000;
+
 export interface PatchApprovalSummary {
   path: string;
   additions: number;
@@ -28,13 +30,15 @@ export class PatchApprovalStore {
   private readonly now: () => number;
 
   constructor(options: PatchApprovalStoreOptions = {}) {
-    this.ttlMs = options.ttlMs ?? 60_000;
+    const ttlMs = options.ttlMs ?? MAX_TTL_MS;
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0 || ttlMs > MAX_TTL_MS) throw new Error('Patch approval TTL must be finite and no more than 60 seconds');
+    this.ttlMs = ttlMs;
     this.now = options.now ?? Date.now;
   }
 
   createPending(input: { fingerprint: string; summary: PatchApprovalSummary }): PatchApprovalRequest {
     this.pruneExpired();
-    const createdAt = this.now();
+    const createdAt = this.currentTime();
     const pendingExpiresAt = createdAt + this.ttlMs;
     const request: PatchApprovalRequest = {
       approvalId: `pa_${randomUUID()}`,
@@ -53,7 +57,7 @@ export class PatchApprovalStore {
     const request = this.entries.get(approvalId);
     if (!request || request.fingerprint !== fingerprint) return false;
     if (request.approved) return true;
-    const approvedAt = this.now();
+    const approvedAt = this.currentTime();
     request.approved = true;
     request.approvedAt = approvedAt;
     request.approvedExpiresAt = approvedAt + this.ttlMs;
@@ -88,8 +92,14 @@ export class PatchApprovalStore {
     }));
   }
 
-  private pruneExpired(): void {
+  private currentTime(): number {
     const now = this.now();
+    if (!Number.isFinite(now)) throw new Error('Patch approval clock must be finite');
+    return now;
+  }
+
+  private pruneExpired(): void {
+    const now = this.currentTime();
     for (const [approvalId, request] of this.entries) {
       const expiresAt = request.approved ? request.approvedExpiresAt : request.pendingExpiresAt;
       if (expiresAt === undefined || expiresAt <= now) this.entries.delete(approvalId);

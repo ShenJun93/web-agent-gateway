@@ -5,6 +5,24 @@ import { PatchApprovalStore } from '../src/patch-approval.js';
 const fingerprint = 'a'.repeat(64);
 const summary = { path: 'note.txt', additions: 1, removals: 1 };
 
+test('patch approval rejects invalid or overlong TTL and non-finite clock values', () => {
+  assert.throws(() => new PatchApprovalStore({ ttlMs: 0 }), /TTL/);
+  assert.throws(() => new PatchApprovalStore({ ttlMs: 60_001 }), /TTL/);
+  assert.throws(() => new PatchApprovalStore({ ttlMs: Number.POSITIVE_INFINITY }), /TTL/);
+
+  const store = new PatchApprovalStore({ now: () => Number.NaN });
+  assert.throws(() => store.createPending({ fingerprint, summary }), /clock/);
+});
+
+test('patch approval pending authority expires exactly at its deadline', () => {
+  let now = 7_000;
+  const store = new PatchApprovalStore({ ttlMs: 1_000, now: () => now });
+  const pending = store.createPending({ fingerprint, summary });
+  now = pending.pendingExpiresAt;
+  assert.equal(store.approveLocal(pending.approvalId, fingerprint), false);
+  assert.equal(store.get(pending.approvalId), undefined);
+});
+
 test('patch approval requires local approval and is single-use', () => {
   let now = 1_000;
   const store = new PatchApprovalStore({ ttlMs: 1_000, now: () => now });
