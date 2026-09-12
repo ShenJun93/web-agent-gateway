@@ -10,6 +10,9 @@ export interface PatchApprovalRequest {
   approvalId: string;
   fingerprint: string;
   expiresAt: number;
+  pendingExpiresAt: number;
+  approvedAt?: number;
+  approvedExpiresAt?: number;
   summary: PatchApprovalSummary;
   approved: boolean;
 }
@@ -31,10 +34,13 @@ export class PatchApprovalStore {
 
   createPending(input: { fingerprint: string; summary: PatchApprovalSummary }): PatchApprovalRequest {
     this.pruneExpired();
+    const createdAt = this.now();
+    const pendingExpiresAt = createdAt + this.ttlMs;
     const request: PatchApprovalRequest = {
       approvalId: `pa_${randomUUID()}`,
       fingerprint: input.fingerprint,
-      expiresAt: this.now() + this.ttlMs,
+      expiresAt: pendingExpiresAt,
+      pendingExpiresAt,
       summary: { ...input.summary },
       approved: false,
     };
@@ -46,7 +52,11 @@ export class PatchApprovalStore {
     this.pruneExpired();
     const request = this.entries.get(approvalId);
     if (!request || request.fingerprint !== fingerprint) return false;
+    if (request.approved) return true;
+    const approvedAt = this.now();
     request.approved = true;
+    request.approvedAt = approvedAt;
+    request.approvedExpiresAt = approvedAt + this.ttlMs;
     return true;
   }
 
@@ -81,7 +91,8 @@ export class PatchApprovalStore {
   private pruneExpired(): void {
     const now = this.now();
     for (const [approvalId, request] of this.entries) {
-      if (request.expiresAt <= now) this.entries.delete(approvalId);
+      const expiresAt = request.approved ? request.approvedExpiresAt : request.pendingExpiresAt;
+      if (expiresAt === undefined || expiresAt <= now) this.entries.delete(approvalId);
     }
   }
 }
