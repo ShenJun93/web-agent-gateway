@@ -1,7 +1,7 @@
 # File patch mutation spike gate receipt
 
 Date: 2026-09-12
-Candidate SHA (local gate): `269a01cf55f6f6d037c97b4d29c47c9571dd23fb`
+Candidate SHA (local gate): `679dfaeadddb0d5842b0478513b6df3639b0595b`
 Browser evidence implementation SHA: `19ff33c42c30c81cad313d4107410b5056ce9813`
 DevSpace revision: `33d6d0bcc2256024484d2456da924af8afd814ed`
 DevSpace package observed at runtime: `@waishnav/devspace@1.0.8`
@@ -19,7 +19,7 @@ Executed from the isolated `feat/file-patch-spike` worktree, in the required ord
 
 The suite includes approval TTL/single-use/fingerprint checks, stale-target rejection, path containment, binary/size bounds, LF and CRLF mutation, donor metadata validation, post-write SHA verification, default five-tool regression, and the local browser-spike approval parser.
 
-After browser evidence was collected, donor-result hardening added explicit rejection of an `update` entry carrying `previousPath`; the full local gate above was rerun on the candidate SHA.
+After browser evidence was collected, hardening added explicit rejection of an `update` entry carrying `previousPath` and rejection of `.` / `./` paths that normalize to an empty relative path; the full local gate above was rerun on the candidate SHA.
 
 ## Surface and scope evidence
 
