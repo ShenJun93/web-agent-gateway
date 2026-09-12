@@ -217,6 +217,25 @@ export class SqliteDurableStore {
     }));
   }
 
+  expireMutation(mutationId: string, expectedState: Extract<MutationState, 'PENDING_APPROVAL' | 'QUEUED'>, now: number): boolean {
+    const deadlineColumn = expectedState === 'PENDING_APPROVAL' ? 'review_deadline' : 'execution_admission_deadline';
+    return Boolean(this.transition(mutationId, expectedState, 'EXPIRED', now, () => {
+      const result = this.db.prepare(`UPDATE mutations SET state = 'EXPIRED', completed_at = ?
+        WHERE mutation_id = ? AND state = ? AND ${deadlineColumn} <= ?`)
+        .run(now, mutationId, expectedState, now);
+      return Number(result.changes) === 1;
+    }));
+  }
+
+  requeueExecuting(mutationId: string, now: number): boolean {
+    return Boolean(this.transition(mutationId, 'EXECUTING', 'QUEUED', now, () => {
+      const result = this.db.prepare(`UPDATE mutations SET state = 'QUEUED', execution_started_at = NULL
+        WHERE mutation_id = ? AND state = 'EXECUTING' AND execution_admission_deadline > ?`)
+        .run(mutationId, now);
+      return Number(result.changes) === 1;
+    }));
+  }
+
   listRecoverableMutations(): MutationRecord[] {
     const rows = this.db.prepare("SELECT * FROM mutations WHERE state IN ('PENDING_APPROVAL','QUEUED','EXECUTING') ORDER BY created_at").all();
     return rows.map((row) => mutationFromRow(row as Record<string, unknown>));
