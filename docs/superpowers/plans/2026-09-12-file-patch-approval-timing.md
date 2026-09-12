@@ -179,6 +179,6 @@ git add docs/benchmarks/2026-09-11-file-patch-mutation-spike.md
 git commit -m "bench: record split-window browser acceptance"
 ```
 
-- [ ] **Step 6: Final branch verification**
+- [x] **Step 6: Final branch verification**
 
 Re-run the complete local gate on final HEAD, verify the feature worktree is clean, and verify canonical `main` has not moved as part of this work. Do not merge or push mutation capability unless separately authorized.
