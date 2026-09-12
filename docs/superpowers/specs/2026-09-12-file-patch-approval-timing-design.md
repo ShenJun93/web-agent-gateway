@@ -1,7 +1,7 @@
 # File Patch Approval Timing Design Delta
 
 Date: 2026-09-12
-Status: Proposed for Human review
+Status: Accepted
 Decision authority: ADR-0009
 Amends: `2026-09-11-file-patch-mutation-spike-design.md` timing semantics only
 
