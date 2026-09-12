@@ -68,9 +68,11 @@ No production approval endpoint, persistent approval, wildcard approval, raw pat
 
 Do not solve the browser timing evidence by simply widening the single preview-to-apply TTL. That would also widen the lifetime of an already-approved mutation when local approval happens early.
 
-If mutation exploration continues, open a separate ADR to evaluate a two-window approval state machine: a longer **pending preview lifetime** for an unapproved fingerprint, then a fresh **approved-use lifetime** of 60 seconds starting at `approveLocal`. The pending state cannot mutate anything; the approved state would remain fingerprint-bound, process-memory only, local-only, single-use, and fully revalidated immediately before DevSpace. This is a recommendation from the spike, not authorization to change ADR-0008 or the approved design.
+The latest trace narrows the issue: call 163 preview executed at about 08:28:24.6, the local approval command was issued at about 08:28:54, and call 164 apply executed at about 08:29:31.4. Apply was therefore 66.717 seconds after preview but only about 37 seconds after the operator issued approval.
 
-A simpler 120-second preview TTL is easier to implement but is not recommended because it increases the active approval window as well as host tolerance. Keeping the current 60-second preview TTL requires no semantic change but has already failed the supported ChatGPT path and therefore does not unblock Task 6 Step 2.
+If mutation exploration continues, open a separate ADR to evaluate a two-window approval state machine that **keeps the existing 60-second pending-preview TTL** and starts a fresh **60-second approved-use TTL** when `approveLocal` succeeds. No longer pending lifetime is required by the observed trace. The pending state cannot mutate anything; the approved state would remain fingerprint-bound, process-memory only, local-only, single-use, and fully revalidated immediately before DevSpace. This is a recommendation from the spike, not authorization to change ADR-0008 or the approved design.
+
+A simpler 120-second preview TTL is easier to implement but is not recommended because it increases the active approval window as well as host tolerance. Keeping one fixed 60-second clock anchored at preview requires no semantic change but has already failed the supported ChatGPT path and therefore does not unblock Task 6 Step 2.
 
 ## Gate result
 
