@@ -90,9 +90,11 @@ test('browser adapter local path survives native-host reconnect', async (t) => {
     { version: 1, type: 'hello', requestId: 'req_accept_hello_2' },
     { version: 1, type: 'session.bind', requestId: 'req_accept_bind_2', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
     { version: 1, type: 'tool.call', requestId: 'req_accept_read_2', sessionId, tool: 'file.read', arguments: { workspace_id: workspaceId, path: 'note.txt' } },
+    { version: 1, type: 'tool.call', requestId: 'req_accept_ads_2', sessionId, tool: 'file.read', arguments: { workspace_id: workspaceId, path: 'note.txt:stream' } },
   ];
   const second = await runHost(executable, discoveryPath, secondMessages);
   assert.equal(result<{ content?: string }>(second, 'req_accept_read_2').content, note.trimEnd());
+  assert.equal(second.find((value) => value.requestId === 'req_accept_ads_2')?.type, 'error');
 
   const wire = JSON.stringify([...firstMessages, ...first, ...secondMessages, ...second]);
   const responsesOnly = JSON.stringify([...first, ...second]);
