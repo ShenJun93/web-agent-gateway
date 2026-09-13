@@ -176,11 +176,11 @@
 - Create: `test/native-host-manifest.test.ts`
 
 **Interfaces:**
-- Produces: `startBrowserAdapterRuntime({ configPath, statePath, discoveryPath, env })` returning `{ mcpUrl, close() }` and writing a local-only discovery JSON containing the loopback MCP URL plus a random bearer token.
+- Produces: `startBrowserAdapterRuntime({ configPath, discoveryPath, env })` returning `{ mcpUrl, close() }` and writing a local-only discovery JSON containing the loopback MCP URL plus a random bearer token. No read-only-only state database is introduced; reconnect relies on the still-running WAG runtime.
 - Produces: `createNativeHostManifest({ executablePath, extensionId })` with name `com.openai.web_agent_gateway`, `type: 'stdio'`, and exactly one `allowed_origins` entry `chrome-extension://<extensionId>/`.
 
-- [ ] **Step 1: Write failing runtime tests** with exact-pinned DevSpace. Prove the runtime binds authenticated loopback only, writes discovery outside the fixture repository, removes the bearer from the supplied environment, and closing a native-host/link client does not close the runtime.
-- [ ] **Step 2: Write failing native-host manifest tests.** Reject relative executable paths, malformed extension ids, wildcard/multiple origins, and non-Windows path forms for the v1 generator.
+- [ ] **Step 1: Write failing runtime tests** with exact-pinned DevSpace. Prove the runtime binds authenticated loopback only, writes discovery outside the fixture repository, consumes the DevSpace owner token from the supplied environment, keeps the generated browser-link bearer only in local discovery state, and closing a native-host/link client does not close the runtime.
+- [ ] **Step 2: Write failing native-host manifest tests.** Reject relative executable paths, malformed or wildcard extension ids, and non-Windows path forms for the v1 generator; prove output contains exactly one allowed origin.
 - [ ] **Step 3: Run both test files; verify RED.**
 - [ ] **Step 4: Implement the read-only assembly** from `bootstrapPrivateGateway` + `startGatewayHttpServer`; do not pass `mutationContext` or `enableFilePatch`.
 - [ ] **Step 5: Implement manifest generation and a dry-run CLI output under `artifacts/browser-adapter/`.** The CLI writes only artifact files; it does not touch HKCU, Chrome/Edge policies, or installed extension state.
