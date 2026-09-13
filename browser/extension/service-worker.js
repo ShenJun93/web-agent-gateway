@@ -1,11 +1,31 @@
 import { createBrowserExtensionCore } from './service-worker-core.js';
+import { parseChatGptToolCall } from './chatgpt-call-parser.js';
 
 const core = createBrowserExtensionCore();
+const sessionsByTab = new Map();
 let nativePort;
 let nativeBoundSession;
 let helloSent = false;
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'provider.observed_text') {
+    const tabId = sender.tab?.id;
+    const senderUrl = sender.url;
+    if (!Number.isInteger(tabId) || typeof senderUrl !== 'string' || !isChatGptUrl(senderUrl)) {
+      sendResponse({ queued: false });
+      return false;
+    }
+    const call = parseChatGptToolCall(message.text);
+    if (!call) { sendResponse({ queued: false }); return false; }
+    const sessionId = sessionForTab(tabId);
+    const request = {
+      version: 1, type: 'tool.call', requestId: `req_${crypto.randomUUID()}`,
+      sessionId, tool: call.tool, arguments: call.arguments,
+    };
+    const queued = core.queueProviderRequest({ url: senderUrl, tabId }, request);
+    sendResponse({ queued, requestId: queued ? request.requestId : undefined });
+    return false;
+  }
   if (message?.type === 'panel.state') {
     sendResponse({ pending: core.pending(), nativeConnected: Boolean(nativePort) });
     return false;
@@ -28,6 +48,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   return false;
 });
+
+function sessionForTab(tabId) {
+  let value = sessionsByTab.get(tabId);
+  if (!value) {
+    value = `session_${crypto.randomUUID()}`;
+    sessionsByTab.set(tabId, value);
+  }
+  return value;
+}
+
+function isChatGptUrl(value) {
+  try { return new URL(value).origin === 'https://chatgpt.com'; }
+  catch { return false; }
+}
+
 function ensureNativeSession(sessionId) {
   if (!nativePort) {
     nativePort = chrome.runtime.connectNative('com.openai.web_agent_gateway');
@@ -43,7 +78,9 @@ function ensureNativeSession(sessionId) {
     helloSent = true;
   }
   if (nativeBoundSession && nativeBoundSession !== sessionId) {
-    nativePort.postMessage({ version: 1, type: 'session.unbind', requestId: controlId('unbind'), sessionId: nativeBoundSession });
+    nativePort.postMessage({
+      version: 1, type: 'session.unbind', requestId: controlId('unbind'), sessionId: nativeBoundSession,
+    });
     nativeBoundSession = undefined;
   }
   if (!nativeBoundSession) {

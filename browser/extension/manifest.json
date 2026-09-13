@@ -12,5 +12,10 @@
   },
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "content_scripts": [{
+    "matches": ["https://chatgpt.com/*"],
+    "js": ["content/chatgpt.js"],
+    "run_at": "document_idle"
+  }]
 }
