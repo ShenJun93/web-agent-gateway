@@ -109,13 +109,13 @@
 - Publish steps are guarded by `github.event_name == 'push' && github.ref == 'refs/heads/main'`.
 
 - [ ] **Step 1: Write the failing workflow-contract test.** Read the YAML as text and assert exact triggers, permissions, runner, Node version, cache disablement, the three full action SHAs, absence of `${{ secrets.` and `pull_request_target`, and absence of any floating `uses: ...@vN` form.
-- [ ] **Step 2: Assert publication gating.** The test must prove the build/package/upload block has the exact main-push condition and the artifact name includes `${{ github.sha }}`.
+- [ ] **Step 2: Assert publication gating.** The test must prove the build/package/upload block has the exact main-push condition and the artifact name includes both `${{ github.sha }}` and `${{ github.run_attempt }}`.
 - [ ] **Step 3: Run `npx tsx --test test/native-host-distribution-workflow.test.ts`; verify RED because the workflow does not exist.**
 - [ ] **Step 4: Create the workflow.** Run `npm ci`, `npm run typecheck`, `npm run build`, and the focused browser/native/distribution tests before any publication step.
 - [ ] **Step 5: Build the publish candidate exactly once** into `artifacts/native-host-build`, then run `test/native-host-artifact.test.ts` with `WAG_NATIVE_HOST_BUILD_DIR` pointing at that directory.
 - [ ] **Step 6: On main-push only, run the packaging CLI** into `artifacts/native-host-distribution`, using GitHub/runner metadata from the workflow environment.
 - [ ] **Step 7: Run the verifier CLI against the produced directory** with expected repository `${{ github.repository }}` and expected SHA `${{ github.sha }}` before upload.
-- [ ] **Step 8: Upload only `artifacts/native-host-distribution/`** as `wag-native-host-windows-x64-${{ github.sha }}` with `if-no-files-found: error` and a bounded retention period such as 14 days.
+- [ ] **Step 8: Upload only `artifacts/native-host-distribution/`** as `wag-native-host-windows-x64-${{ github.sha }}-attempt-${{ github.run_attempt }}` with `if-no-files-found: error` and a bounded retention period such as 14 days.
 - [ ] **Step 9: Run the workflow-contract test plus typecheck locally; verify GREEN.**
 - [ ] **Step 10: Commit `ci: build native host distribution artifact`.**
 
@@ -143,7 +143,7 @@
 
 - [ ] **Step 1: Identify the exact merged `main` commit SHA** and fetch the `native-host-distribution` workflow run whose source SHA equals that commit.
 - [ ] **Step 2: Require the Windows job and every distribution step to pass.** Record run id, run attempt, runner image identity, and source SHA.
-- [ ] **Step 3: Fetch exactly one artifact named `wag-native-host-windows-x64-<source-sha>`.** Reject duplicate, expired, ambiguous, or differently named candidates.
+- [ ] **Step 3: Fetch exactly one artifact named `wag-native-host-windows-x64-<source-sha>-attempt-<run-attempt>`.** Reject duplicate, expired, ambiguous, differently named, or wrong-attempt candidates.
 - [ ] **Step 4: Download the artifact to a disposable local evidence directory.** This gate verifies distribution integrity only; browser registration remains outside scope.
 - [ ] **Step 5: Inspect the extracted payload and require exactly three files:** `wag-native-host.exe`, `wag-native-host.exe.sha256`, `build-receipt.json`.
 - [ ] **Step 6: Run `scripts/verify-native-host-distribution.ts`** with the exact repository identity and merged source SHA; require binary/checksum/receipt equality without rebuilding the executable.

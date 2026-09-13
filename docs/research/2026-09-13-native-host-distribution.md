@@ -85,3 +85,14 @@ Fresh tag resolution on 2026-09-13 selected these reviewed immutable commits:
 - `actions/upload-artifact@v7.0.1` -> `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`.
 
 The selected `setup-node` action itself runs on Node 24 and exposes `package-manager-cache: false`. GitHub currently supports the `windows-2025` x64 hosted-runner label; v1 should use that explicit label rather than the drifting `windows-latest` alias.
+
+## Follow-up: workflow re-run artifact identity
+
+Fresh review on 2026-09-13 found one ambiguity in the first draft: `actions/upload-artifact` v7 treats artifacts as immutable and requires artifact names to be unique within a workflow run. GitHub also defines `github.run_attempt` / `GITHUB_RUN_ATTEMPT` as a per-run attempt number that starts at 1 and increments on each re-run, while the workflow run id and source SHA remain stable.
+
+Sources:
+- https://github.com/actions/upload-artifact/blob/043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/README.md
+- https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+- https://docs.github.com/en/actions/reference/workflows-and-actions/variables
+
+The distribution artifact name therefore binds both source SHA and run attempt: `wag-native-host-windows-x64-<source-sha>-attempt-<run-attempt>`. v1 does not use `overwrite: true`; each attempt remains separately immutable, and post-merge acceptance must select the exact successful attempt recorded in the build receipt.

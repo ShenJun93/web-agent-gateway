@@ -31,11 +31,11 @@ test('native host workflow pins researched action commits and forbids floating t
   assert.doesNotMatch(workflow, /uses:\s+[^@\s]+@v\d+(?:\.\d+){0,2}\s*$/m);
 });
 
-test('native host publication is main-push only and names artifact with exact source sha', async () => {
+test('native host publication is main-push only and disambiguates rerun attempts', async () => {
   const workflow = await workflowText();
   const conditionMatches = workflow.match(new RegExp(`if: \\${mainPushCondition.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g')) ?? [];
   assert.equal(conditionMatches.length, 3);
-  assert.match(workflow, /name:\s*wag-native-host-windows-x64-\$\{\{\s*github\.sha\s*\}\}/);
+  assert.match(workflow, /name:\s*wag-native-host-windows-x64-\$\{\{\s*github\.sha\s*\}\}-attempt-\$\{\{\s*github\.run_attempt\s*\}\}/);
   assert.match(workflow, /if-no-files-found:\s*error/);
   assert.match(workflow, /retention-days:\s*14/);
 });

@@ -1,7 +1,7 @@
-# Native Host Distribution v1 — Design
+# Native Host Distribution v1 - Design
 
 Date: 2026-09-13
-Status: Proposed for written review
+Status: Accepted - written review approved 2026-09-13
 Decision authority: ADR-0013, ADR-0014
 Research basis: `docs/research/2026-09-13-native-host-distribution.md`
 
@@ -44,7 +44,7 @@ The initial workflow MUST run on `pull_request` for verification and on `push` t
 
 Pull-request runs prove that the proposed source can build and pass the distribution-specific tests, but they do not upload a distributable native-host artifact.
 
-Only a successful `push` run whose `github.sha` is the exact intended reviewed `main` commit may publish a Task-10-consumable artifact. Re-running that same workflow run is allowed because it preserves the source SHA; silently substituting a different branch/ref is not.
+Only a successful `push` run whose `github.sha` is the exact intended reviewed `main` commit may publish a Task-10-consumable artifact. Each re-run is a distinct workflow attempt; the artifact identity MUST bind both the source SHA and `github.run_attempt`, and a later attempt MUST NOT overwrite an earlier attempt artifact.
 
 Workflow permissions are explicitly `contents: read`. No write-capable repository token operation is part of the job.
 
@@ -66,7 +66,7 @@ The workflow does not claim full repository acceptance from this subset. Full WA
 If any distribution-specific check fails, no Task-10-consumable artifact is published from that run.
 ## Published artifact
 
-A successful `main` job publishes one immutable Actions artifact named with the exact source SHA, for example `wag-native-host-windows-x64-<40-hex-sha>`.
+A successful `main` job publishes one immutable Actions artifact named with the exact source SHA and run attempt, for example `wag-native-host-windows-x64-<40-hex-sha>-attempt-<positive-integer>`.
 
 The artifact contains the Windows native-host binary, a SHA-256 checksum file for that binary, and `build-receipt.json`. It does not contain a machine-specific Native Messaging manifest, local discovery state, browser profile, token, credential, signing key, or installer.
 
@@ -97,8 +97,8 @@ A local consumer MUST verify the artifact before any browser or registry install
 Verification order:
 
 1. identify the intended reviewed WAG commit;
-2. select a successful distribution workflow run for that exact `main` commit;
-3. download the uniquely named artifact from that run;
+2. select a successful distribution workflow run and exact run attempt for that `main` commit;
+3. download the artifact whose name binds that exact source SHA and run attempt;
 4. parse the bounded build receipt and require the exact repository, source SHA, native application name, and extension id;
 5. compute SHA-256 of the downloaded native-host binary and require exact equality with the receipt/checksum;
 6. reject extra unexpected executable payloads or ambiguous duplicate artifacts;
