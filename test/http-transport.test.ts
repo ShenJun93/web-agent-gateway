@@ -49,3 +49,29 @@ test('HTTP server refuses direct non-loopback bind in V0', async () => {
   const gateway = createGateway({ executor: new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' }), allowedRoots: [process.cwd()] });
   await assert.rejects(startGatewayHttpServer({ gateway, bearerToken: TOKEN, host: '0.0.0.0' }), /must bind loopback/);
 });
+
+test('HTTP MCP forwards opt-in durable mutation context without changing default surface', async (t) => {
+  const gateway = createGateway({
+    executor: new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' }),
+    allowedRoots: [process.cwd()],
+  });
+  const mutationContext = {
+    caller: { ownerId: 'owner_http', sessionId: 'session_http', adapterId: 'adapter_http' },
+    coordinator: {
+      preview: async () => { throw new Error('not called'); },
+      result: () => { throw new Error('not called'); },
+    },
+  };
+  const http = await startGatewayHttpServer({ gateway, bearerToken: TOKEN, mutationContext });
+  t.after(() => http.close());
+  const client = new Client({ name: 'http-mutation-test', version: '1.0.0' }, { capabilities: {} });
+  const transport = new StreamableHTTPClientTransport(new URL(http.mcpUrl), {
+    requestInit: { headers: { authorization: ['Bearer', TOKEN].join(' ') } },
+  });
+  await client.connect(transport);
+  t.after(() => client.close());
+  const tools = await client.listTools();
+  assert.deepEqual(tools.tools.map((tool) => tool.name), [
+    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'mutation.preview', 'mutation.result',
+  ]);
+});

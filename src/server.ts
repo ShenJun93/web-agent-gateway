@@ -7,6 +7,7 @@ import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import { FilePatchController, type FilePatchBinding, type FilePatchInput } from './file-patch.js';
 import type { PatchApprovalStore } from './patch-approval.js';
+import type { DurableMutationCoordinator, MutationCaller } from './durable-mutation.js';
 import {
   DEVSPACE_PROTOCOL_VERSION,
   DevspaceReadLimitError,
@@ -150,7 +151,12 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
 
 export type GatewayApi = ReturnType<typeof createGateway>;
 
-export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new InMemoryTaskStore(), enableFilePatch = false }: { taskStore?: TaskStore; enableFilePatch?: boolean } = {}): McpServer {
+export interface MutationMcpContext {
+  caller: MutationCaller;
+  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
+}
+
+export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new InMemoryTaskStore(), enableFilePatch = false, mutationContext }: { taskStore?: TaskStore; enableFilePatch?: boolean; mutationContext?: MutationMcpContext } = {}): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' }, {
     taskStore,
     capabilities: { tasks: { requests: { tools: { call: {} } } } },
@@ -184,6 +190,29 @@ export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new In
       return extra.taskStore.getTaskResult(extra.taskId) as Promise<CallToolResult>;
     },
   });
+  if (mutationContext) {
+    const previewInput = z.object({
+      workspace_id: z.string().min(1),
+      path: z.string().min(1),
+      base_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      before: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      after: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+    }).strict();
+    server.registerTool('mutation.preview', {
+      description: 'Persist an immutable preview of one bounded existing-file update for local human review.',
+      inputSchema: previewInput,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, base_sha256, before, after }) => toolResult(await mutationContext.coordinator.preview(
+      mutationContext.caller,
+      workspace_id,
+      { path, baseSha256: base_sha256, before, after },
+    )));
+    server.registerTool('mutation.result', {
+      description: 'Read the durable state and bounded result metadata for one mutation.',
+      inputSchema: z.object({ mutation_id: z.string().min(1) }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ mutation_id }) => toolResult(mutationContext.coordinator.result(mutationContext.caller, mutation_id)));
+  }
   if (enableFilePatch) {
     const patchInput = z.object({
       phase: z.enum(['preview', 'apply']),

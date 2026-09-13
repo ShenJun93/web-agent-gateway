@@ -55,3 +55,53 @@ test('opt-in MCP exposes file.patch without raw patch input', async (t) => {
   }
   assert.doesNotMatch(schema, /"patch"\s*:/, 'remote callers must not supply raw patch text');
 });
+
+test('opt-in durable mutation MCP exposes preview/result without remote approval fields', async (t) => {
+  const { createHash } = await import('node:crypto');
+  const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { SqliteDurableStore } = await import('../src/durable-store.js');
+  const { DurableMutationCoordinator } = await import('../src/durable-mutation.js');
+  const root = await mkdtemp(join(tmpdir(), 'wag-mcp-mutation-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const original = 'alpha\nbeta\n';
+  await writeFile(join(root, 'note.txt'), original);
+  const caller = { ownerId: 'owner_test', sessionId: 'session_test', adapterId: 'adapter_test' };
+  const store = new SqliteDurableStore(':memory:');
+  t.after(() => store.close());
+  const workspace = store.openWorkspaceRecord({ ...caller, canonicalRoot: root, backendKind: 'fake', createdAt: 1 });
+  const backend = { kind: 'fake', readExact: async () => original, updateExisting: async () => undefined };
+  const coordinator = new DurableMutationCoordinator({ store, backends: [backend] });
+  const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
+  const gateway = createGateway({ executor, allowedRoots: [root] });
+  const server = createGatewayMcpServer(gateway, { mutationContext: { caller, coordinator } });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'durable-mutation-test', version: '1.0.0' }, { capabilities: {} });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await server.close(); });
+  const tools = await client.listTools();
+  assert.deepEqual(tools.tools.map((tool) => tool.name), [
+    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'mutation.preview', 'mutation.result',
+  ]);
+  const previewTool = tools.tools.find((tool) => tool.name === 'mutation.preview');
+  const resultTool = tools.tools.find((tool) => tool.name === 'mutation.result');
+  assert.deepEqual(previewTool?.annotations, {
+    readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false,
+  });
+  assert.equal(resultTool?.annotations?.readOnlyHint, true);
+  const schemas = JSON.stringify([previewTool?.inputSchema, resultTool?.inputSchema]);
+  for (const forbidden of ['approval_id', 'phase', 'patch', 'canonical_root', 'owner_id', 'session_id', 'adapter_id']) {
+    assert.doesNotMatch(schemas, new RegExp(`"${forbidden}"`), `durable mutation schema must omit ${forbidden}`);
+  }
+
+  const baseSha256 = createHash('sha256').update(original, 'utf8').digest('hex');
+  const preview = await client.callTool({ name: 'mutation.preview', arguments: {
+    workspace_id: workspace.workspaceId, path: 'note.txt', base_sha256: baseSha256, before: 'beta', after: 'BETA',
+  } });
+  const mutationId = (preview.structuredContent as { mutationId?: string } | undefined)?.mutationId;
+  assert.match(mutationId ?? '', /^mut_/);
+  const result = await client.callTool({ name: 'mutation.result', arguments: { mutation_id: mutationId } });
+  assert.equal((result.structuredContent as { state?: string } | undefined)?.state, 'PENDING_APPROVAL');
+});
