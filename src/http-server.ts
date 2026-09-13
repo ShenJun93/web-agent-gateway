@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createGatewayMcpServer, type GatewayApi } from './server.js';
+import { createGatewayMcpServer, type GatewayApi, type MutationMcpContext } from './server.js';
 import { NonCancellingTaskStore } from './task-store.js';
 
 export interface GatewayHttpServerOptions {
@@ -9,6 +9,8 @@ export interface GatewayHttpServerOptions {
   bearerToken: string;
   host?: string;
   port?: number;
+  enableFilePatch?: boolean;
+  mutationContext?: MutationMcpContext;
 }
 
 export interface GatewayHttpServer {
@@ -38,7 +40,11 @@ export async function startGatewayHttpServer(options: GatewayHttpServerOptions):
       return;
     }
 
-    const mcp = createGatewayMcpServer(options.gateway, { taskStore });
+    const mcp = createGatewayMcpServer(options.gateway, {
+      taskStore,
+      enableFilePatch: options.enableFilePatch,
+      mutationContext: options.mutationContext,
+    });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
       await mcp.connect(transport);

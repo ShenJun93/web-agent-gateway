@@ -5,6 +5,9 @@ import { z } from 'zod';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
+import { FilePatchController, type FilePatchBinding, type FilePatchInput } from './file-patch.js';
+import type { PatchApprovalStore } from './patch-approval.js';
+import type { DurableMutationCoordinator, MutationCaller } from './durable-mutation.js';
 import {
   DEVSPACE_PROTOCOL_VERSION,
   DevspaceReadLimitError,
@@ -26,8 +29,9 @@ const SNAPSHOT_COMMAND = [
   'git --no-optional-locks -c core.fsmonitor=false ls-files',
 ].join(' && ');
 
-export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink }) {
+export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, patchApprovals, openWorkspaceId }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; patchApprovals?: PatchApprovalStore; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string> }) {
   const workspaces = new Map<string, WorkspaceBinding>();
+  const filePatch = patchApprovals ? new FilePatchController({ executor, approvals: patchApprovals }) : undefined;
 
   function binding(workspaceId: string): WorkspaceBinding {
     const value = workspaces.get(workspaceId);
@@ -56,8 +60,8 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       try {
         const canonicalRoot = await trace.phase('policyMs', () => canonicalWorkspace(path, allowedRoots));
         const devspaceWorkspaceId = await trace.phase('executorMs', () => executor.openWorkspace(canonicalRoot));
-        const result = await trace.phase('aggregationMs', () => {
-          const workspaceId = `ws_${randomUUID()}`;
+        const result = await trace.phase('aggregationMs', async () => {
+          const workspaceId = openWorkspaceId ? await openWorkspaceId(canonicalRoot) : `ws_${randomUUID()}`;
           workspaces.set(workspaceId, { devspaceWorkspaceId, canonicalRoot });
           return { workspaceId };
         });
@@ -108,6 +112,20 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       } catch (error) { trace.finish(false, error); throw error; }
     },
 
+    async filePatchPreview(workspaceId: string, input: FilePatchInput) {
+      if (!filePatch) throw new Error('Gateway file.patch is disabled');
+      const workspace = binding(workspaceId);
+      const patchBinding: FilePatchBinding = { workspaceId, ...workspace };
+      return filePatch.preview(patchBinding, input);
+    },
+
+    async filePatchApply(workspaceId: string, input: FilePatchInput & { approvalId: string }) {
+      if (!filePatch) throw new Error('Gateway file.patch is disabled');
+      const workspace = binding(workspaceId);
+      const patchBinding: FilePatchBinding = { workspaceId, ...workspace };
+      return filePatch.apply(patchBinding, input);
+    },
+
     async repoSnapshot(workspaceId: string, options: SnapshotOptions = {}) {
       const trace = startTrace('repo.snapshot', telemetry); trace.markIngress();
       try {
@@ -133,7 +151,12 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
 
 export type GatewayApi = ReturnType<typeof createGateway>;
 
-export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new InMemoryTaskStore() }: { taskStore?: TaskStore } = {}): McpServer {
+export interface MutationMcpContext {
+  caller: MutationCaller;
+  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
+}
+
+export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new InMemoryTaskStore(), enableFilePatch = false, mutationContext }: { taskStore?: TaskStore; enableFilePatch?: boolean; mutationContext?: MutationMcpContext } = {}): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' }, {
     taskStore,
     capabilities: { tasks: { requests: { tools: { call: {} } } } },
@@ -167,6 +190,53 @@ export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new In
       return extra.taskStore.getTaskResult(extra.taskId) as Promise<CallToolResult>;
     },
   });
+  if (mutationContext) {
+    const previewInput = z.object({
+      workspace_id: z.string().min(1),
+      path: z.string().min(1),
+      base_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      before: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      after: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+    }).strict();
+    server.registerTool('mutation.preview', {
+      description: 'Persist an immutable preview of one bounded existing-file update for local human review.',
+      inputSchema: previewInput,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, base_sha256, before, after }) => toolResult(await mutationContext.coordinator.preview(
+      mutationContext.caller,
+      workspace_id,
+      { path, baseSha256: base_sha256, before, after },
+    )));
+    server.registerTool('mutation.result', {
+      description: 'Read the durable state and bounded result metadata for one mutation.',
+      inputSchema: z.object({ mutation_id: z.string().min(1) }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ mutation_id }) => toolResult(mutationContext.coordinator.result(mutationContext.caller, mutation_id)));
+  }
+  if (enableFilePatch) {
+    const patchInput = z.object({
+      phase: z.enum(['preview', 'apply']),
+      workspace_id: z.string().min(1),
+      path: z.string().min(1),
+      base_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      before: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      after: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      approval_id: z.string().min(1).optional(),
+    }).strict().superRefine((value, ctx) => {
+      if (value.phase === 'apply' && !value.approval_id) ctx.addIssue({ code: 'custom', path: ['approval_id'], message: 'approval_id is required for apply' });
+      if (value.phase === 'preview' && value.approval_id !== undefined) ctx.addIssue({ code: 'custom', path: ['approval_id'], message: 'approval_id is only valid for apply' });
+    });
+    server.registerTool('file.patch', {
+      description: 'Preview or apply one approval-gated update to an existing workspace text file.',
+      inputSchema: patchInput,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ phase, workspace_id, path, base_sha256, before, after, approval_id }) => {
+      const input = { path, baseSha256: base_sha256, before, after };
+      if (phase === 'preview') return toolResult(await gateway.filePatchPreview(workspace_id, input));
+      return toolResult(await gateway.filePatchApply(workspace_id, { ...input, approvalId: approval_id! }));
+    });
+  }
+
   return server;
 }
 

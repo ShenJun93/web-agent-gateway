@@ -1,0 +1,9 @@
+{
+  "main": "wag-native-host.cjs",
+  "output": "sea-prep.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": false,
+  "execArgv": [],
+  "execArgvExtension": "none"
+}

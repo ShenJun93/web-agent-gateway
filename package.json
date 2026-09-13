@@ -10,6 +10,7 @@
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
+    "build:native-host": "tsx scripts/build-native-host.ts",
     "test:business": "npm run build && tsx --test --test-concurrency=1 test/business-stdio.acceptance.ts"
   },
   "dependencies": {
@@ -18,6 +19,8 @@
   },
   "devDependencies": {
     "@types/node": "25.9.1",
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
     "tsx": "4.22.3",
     "typescript": "6.0.3"
   }

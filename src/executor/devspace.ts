@@ -13,6 +13,14 @@ export type DevspaceExecutorOptions =
   | { baseUrl: string; accessToken: string; tokenSource?: never }
   | { baseUrl: string; tokenSource: DevspaceTokenSource; accessToken?: never };
 export interface ExecResult { output: string; exitCode?: number; running: boolean; sessionId?: number; }
+export type DevspacePatchOperation = 'add' | 'update' | 'delete' | 'move';
+export interface DevspacePatchFile { path: string; previousPath?: string; operation: DevspacePatchOperation; }
+export interface DevspacePatchResult {
+  result: string;
+  additions: number;
+  removals: number;
+  files: DevspacePatchFile[];
+}
 export class DevspaceReadLimitError extends Error {}
 
 export class DevspaceExecutor {
@@ -47,6 +55,17 @@ export class DevspaceExecutor {
     return content;
   }
 
+  async applyPatch(workspaceId: string, patch: string): Promise<DevspacePatchResult> {
+    const response = await this.callTool('apply_patch', { workspaceId, patch }) as { structuredContent?: unknown };
+    const value = response.structuredContent;
+    if (!value || typeof value !== 'object') throw new Error('DevSpace apply_patch returned invalid structured result');
+    const structured = value as Record<string, unknown>;
+    if (typeof structured.result !== 'string' || typeof structured.additions !== 'number' || typeof structured.removals !== 'number' || !Array.isArray(structured.files)) {
+      throw new Error('DevSpace apply_patch returned invalid structured result');
+    }
+    const files = structured.files.map((entry) => validatePatchFile(entry));
+    return { result: structured.result, additions: structured.additions, removals: structured.removals, files };
+  }
   async execCommand(workspaceId: string, cmd: string, maxOutputTokens = 8000, yieldTimeMs = 30_000): Promise<ExecResult> {
     const result = await this.callTool('exec_command', { workspaceId, cmd, yieldTimeMs, maxOutputTokens }) as {
       structuredContent?: { result?: string; exitCode?: number; running?: boolean; sessionId?: number };
@@ -102,6 +121,22 @@ export class DevspaceExecutor {
   }
 }
 
+function validatePatchFile(value: unknown): DevspacePatchFile {
+  if (!value || typeof value !== 'object') throw new Error('DevSpace apply_patch returned invalid structured result');
+  const entry = value as Record<string, unknown>;
+  const operation = entry.operation;
+  if (typeof entry.path !== 'string' || !['add', 'update', 'delete', 'move'].includes(String(operation))) {
+    throw new Error('DevSpace apply_patch returned invalid structured result');
+  }
+  if (entry.previousPath !== undefined && typeof entry.previousPath !== 'string') {
+    throw new Error('DevSpace apply_patch returned invalid structured result');
+  }
+  return {
+    path: entry.path,
+    ...(entry.previousPath === undefined ? {} : { previousPath: entry.previousPath }),
+    operation: operation as DevspacePatchOperation,
+  };
+}
 function fixedTokenSource(accessToken: string): DevspaceTokenSource {
   return { async getAccessToken() { return accessToken; } };
 }

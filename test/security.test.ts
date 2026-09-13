@@ -5,10 +5,30 @@ import { dirname, join, parse } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
+import { validateReadPath } from '../src/path-policy.js';
 import { createGateway } from '../src/server.js';
 import { startPinnedDevspace } from './devspace-fixture.js';
 
 const execFileAsync = promisify(execFile);
+
+test('file path policy rejects Windows alternate streams and ambiguous trailing components', () => {
+  if (process.platform !== 'win32') return;
+  for (const path of ['note.txt:stream', 'dir/file.txt:meta', 'dir./note.txt', 'dir /note.txt', 'note.txt.', 'note.txt ']) {
+    assert.throws(() => validateReadPath(path), /Gateway denied unsafe Windows path/);
+  }
+  assert.equal(validateReadPath('docs/concept.txt'), 'docs/concept.txt');
+});
+
+test('file path policy rejects reserved Windows device names', () => {
+  if (process.platform !== 'win32') return;
+  for (const path of [
+    'CON', 'con.txt', 'AUX.log', 'NUL.tar.gz', 'COM1', 'COM9.txt', 'LPT1', 'LPT9.prn',
+    'COM¹.txt', 'COM²', 'COM³.log', 'LPT¹', 'LPT².txt', 'LPT³.log',
+  ]) {
+    assert.throws(() => validateReadPath(path), /Gateway denied unsafe Windows path/);
+  }
+  assert.equal(validateReadPath('assets/auxiliary.log'), 'assets/auxiliary.log');
+});
 
 test('workspace.open owns Windows root, UNC, device, and sensitive path policy', async (t) => {
   const fixture = await startPinnedDevspace();

@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "WAG Browser Adapter",
+  "version": "0.0.1",
+  "minimum_chrome_version": "114",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAktt37VlzyiwkwuF2ONM3H09llkskfo/zTcEbyV+rjyn7HsTC3K0kwmMaXLUJtboA+m5JQOj1GJTbvSiLAjwSuoRilIoPoi+8WccFfeSSnWlVh/qWy8FEvywA5BcxgekJmHwJYgv62Pupqvpk3oC6MN5LGETVkYxjMPsmnVdVB6MZy5hvP5Pum1VoSexNvi3lK41iXy6C6qqg2iXhCdO62hcCxkLznLWJMn+Us6W9vc0gkDSEVxKxo7aAv1Jpu+8bk9IAZCNkguHgK4uB9gdMYXSFL1O1F2LmDYLY1/L0QPcfRWTpwDKXbXIHQzVTJ2LEzaCZAggUk4wRa7MG52XmuQIDAQAB",
+  "permissions": ["nativeMessaging", "sidePanel", "storage"],
+  "host_permissions": ["https://chatgpt.com/*"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [{
+    "matches": ["https://chatgpt.com/*"],
+    "js": ["content/chatgpt.js"],
+    "run_at": "document_idle"
+  }]
+}

@@ -30,6 +30,8 @@ test('file.read rejects non-relative and sensitive workspace paths before return
 
   await assert.rejects(gateway.readFile(workspaceId, '../outside.txt'), /Gateway denied workspace-relative path/);
   await assert.rejects(gateway.readFile(workspaceId, 'C:\\Windows\\win.ini'), /Gateway denied workspace-relative path/);
+  await assert.rejects(gateway.readFile(workspaceId, '.'), /Gateway denied workspace-relative path/);
+  await assert.rejects(gateway.readFile(workspaceId, './'), /Gateway denied workspace-relative path/);
   await assert.rejects(gateway.readFile(workspaceId, '.ssh/id_rsa'), /Gateway denied sensitive path/);
   await assert.rejects(gateway.readFile(workspaceId, '.env'), /Gateway denied sensitive path/);
   await assert.rejects(gateway.readFile(workspaceId, '.env.local'), /Gateway denied sensitive path/);

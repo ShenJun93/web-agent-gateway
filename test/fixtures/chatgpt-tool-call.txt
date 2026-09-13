@@ -1,0 +1,5 @@
+WAG tool call fixture
+
+```wag-tool
+{"tool":"workspace.open","arguments":{"path":"C:\\WagFixture"}}
+```

@@ -29,7 +29,10 @@ export function validateReadPath(input: string): string {
     throw new Error('Gateway denied workspace-relative path');
   }
   const segments = normalized.split('/').filter((segment) => segment && segment !== '.');
-  if (segments.some((segment) => segment === '..')) throw new Error('Gateway denied workspace-relative path');
+  if (segments.length === 0 || segments.some((segment) => segment === '..')) throw new Error('Gateway denied workspace-relative path');
+  if (process.platform === 'win32' && segments.some(isUnsafeWindowsPathComponent)) {
+    throw new Error('Gateway denied unsafe Windows path');
+  }
   if (segments.some(isSensitivePathComponent)) throw new Error('Gateway denied sensitive path');
   return segments.join('/');
 }
@@ -52,6 +55,14 @@ function isDriveRoot(value: string): boolean {
 
 function samePath(a: string, b: string): boolean {
   return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+function isUnsafeWindowsPathComponent(segment: string): boolean {
+  if (!segment || /[\u0000-\u001f<>:"|?*]/.test(segment)) return true;
+  if (/[. ]$/.test(segment)) return true;
+  const base = segment.split('.', 1)[0]!.toUpperCase();
+  if (base === 'CON' || base === 'PRN' || base === 'AUX' || base === 'NUL') return true;
+  return /^(?:COM[1-9¹²³]|LPT[1-9¹²³])$/.test(base);
 }
 
 function isUnsafeWindowsNamespace(value: string): boolean {

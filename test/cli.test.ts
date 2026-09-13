@@ -38,6 +38,7 @@ function makeCliHarness() {
     loadConfig: async () => config(),
     bootstrap: async () => ({
       gateway: {} as never,
+      executor: {} as never,
       health: { status: 'ok', executor: 'devspace', protocolVersion: '2026-07-28', toolCount: 6 },
       close: async () => { runtimeClosed += 1; },
     }),
