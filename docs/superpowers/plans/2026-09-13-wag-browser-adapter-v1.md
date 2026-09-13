@@ -128,7 +128,8 @@
 
 **Files:**
 - Create: `browser/extension/content/chatgpt.js`
-- Create: `src/browser-adapter/chatgpt-call-parser.ts`
+- Create: `browser/extension/chatgpt-call-parser.js`
+- Create: `browser/extension/chatgpt-call-parser.d.ts`
 - Create: `test/fixtures/chatgpt-tool-call.txt`
 - Create: `test/chatgpt-provider.test.ts`
 
@@ -138,7 +139,7 @@
 
 - [ ] **Step 1: Write failing parser tests** from saved assistant-text fixtures. Accept one complete structured call for `health`, `workspace.open`, or `file.read`; reject incomplete blocks, duplicate parameters, unknown tools, malformed JSON, nested/oversized values, and calls mixed with conflicting tool names.
 - [ ] **Step 2: Run `npx tsx --test test/chatgpt-provider.test.ts`; verify RED.**
-- [ ] **Step 3: Implement the parser as pure TypeScript** and reuse Task 1 argument schemas so provider parsing cannot widen the browser tool surface.
+- [ ] **Step 3: Implement the parser as a pure browser ESM module inside the extension package.** Node tests import this exact runtime module and cross-check each accepted call by constructing trusted request/session ids and passing the resulting envelope through Task 1 `parseBrowserAdapterRequest`; the native host remains the authoritative protocol validator.
 - [ ] **Step 4: Implement the content script as a bounded observer.** Inspect only ChatGPT assistant-message containers, forward newly observed text once per DOM node/version, cap each observation below the protocol limit, and derive only a non-authoritative conversation hint from the page URL.
 - [ ] **Step 5: Wire ChatGPT observations into `service-worker.js`.** Validate `MessageSender.url` and `sender.tab.id`, parse observed text with `parseChatGptToolCall`, then queue only a validated read-only request in the extension core.
 - [ ] **Step 6: Keep v1 result delivery extension-owned.** The side panel renders the bounded tool result for the user; v1 does not auto-submit text into the ChatGPT composer. Chaining `workspace.open -> file.read` in acceptance may use an explicit user relay of the returned opaque workspace id.
