@@ -29,7 +29,7 @@ const SNAPSHOT_COMMAND = [
   'git --no-optional-locks -c core.fsmonitor=false ls-files',
 ].join(' && ');
 
-export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, patchApprovals }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; patchApprovals?: PatchApprovalStore }) {
+export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, patchApprovals, openWorkspaceId }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; patchApprovals?: PatchApprovalStore; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string> }) {
   const workspaces = new Map<string, WorkspaceBinding>();
   const filePatch = patchApprovals ? new FilePatchController({ executor, approvals: patchApprovals }) : undefined;
 
@@ -60,8 +60,8 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       try {
         const canonicalRoot = await trace.phase('policyMs', () => canonicalWorkspace(path, allowedRoots));
         const devspaceWorkspaceId = await trace.phase('executorMs', () => executor.openWorkspace(canonicalRoot));
-        const result = await trace.phase('aggregationMs', () => {
-          const workspaceId = `ws_${randomUUID()}`;
+        const result = await trace.phase('aggregationMs', async () => {
+          const workspaceId = openWorkspaceId ? await openWorkspaceId(canonicalRoot) : `ws_${randomUUID()}`;
           workspaces.set(workspaceId, { devspaceWorkspaceId, canonicalRoot });
           return { workspaceId };
         });

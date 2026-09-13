@@ -25,9 +25,11 @@ export interface PrivateRuntimeOptions {
   telemetry?: TelemetrySink;
   oauthFactory?: typeof createDevspaceOAuthSession;
   patchApprovals?: PatchApprovalStore;
+  openWorkspaceId?: (canonicalRoot: string) => string | Promise<string>;
 }
 export interface PrivateGatewayRuntime {
   gateway: GatewayApi;
+  executor: DevspaceExecutor;
   health: Awaited<ReturnType<GatewayApi['health']>>;
   close(): Promise<void>;
 }
@@ -59,17 +61,19 @@ export async function bootstrapPrivateGateway(
     closed = true;
     await session.close();
   };
+  const executor = new DevspaceExecutor({ baseUrl: config.devspace.baseUrl, tokenSource: session });
   const gateway = createGateway({
-    executor: new DevspaceExecutor({ baseUrl: config.devspace.baseUrl, tokenSource: session }),
+    executor,
     allowedRoots: config.allowedRoots,
     verifyProfiles: config.verifyProfiles,
     telemetry: options.telemetry,
     patchApprovals: options.patchApprovals,
+    openWorkspaceId: options.openWorkspaceId,
   });
 
   try {
     const health = await gateway.health();
-    return { gateway, health, close };
+    return { gateway, executor, health, close };
   } catch (error) {
     await close();
     throw new PrivateRuntimeError('DEVSPACE_COMPAT_FAILED', { cause: error });
