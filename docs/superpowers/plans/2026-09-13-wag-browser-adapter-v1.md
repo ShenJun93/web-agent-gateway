@@ -171,6 +171,7 @@
 
 **Files:**
 - Create: `scripts/browser-adapter-runtime.ts`
+- Create: `scripts/generate-native-host-manifest.ts`
 - Create: `src/browser-adapter/native-host-manifest.ts`
 - Create: `test/browser-adapter-runtime.test.ts`
 - Create: `test/native-host-manifest.test.ts`
