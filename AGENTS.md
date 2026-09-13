@@ -4,6 +4,7 @@
 - Resolve exact state from Git, approved specs, ADRs, tests, CI, and live evidence.
 - Never reconstruct HEAD, task state, blockers, benchmark results, or provider capability from chat memory.
 - Prefer current upstream source/docs over remembered behavior.
+- Before promoting architecture, trust-boundary, dependency, packaging, or provider-capability decisions, fresh-research current upstream/official sources and record dated evidence.
 
 ## Required reading order
 1. `README.md`

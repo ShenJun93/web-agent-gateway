@@ -1,0 +1,78 @@
+name: Native Host Distribution
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  distribution:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.20.0'
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Focused distribution tests
+        run: >-
+          npx tsx --test --test-concurrency=1
+          test/native-host-distribution.test.ts
+          test/native-host-distribution-cli.test.ts
+          test/native-host-distribution-workflow.test.ts
+          test/browser-adapter-protocol.test.ts
+          test/native-messaging-framing.test.ts
+          test/native-host.test.ts
+          test/native-host-manifest.test.ts
+          test/browser-extension-core.test.ts
+
+      - name: Build publish candidate once
+        run: npm run build:native-host -- --output "${{ github.workspace }}\artifacts\native-host-build"
+
+      - name: Test exact publish candidate
+        env:
+          WAG_NATIVE_HOST_BUILD_DIR: ${{ github.workspace }}\artifacts\native-host-build
+        run: npx tsx --test test/native-host-artifact.test.ts
+
+      - name: Package distribution
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: >-
+          npx tsx scripts/package-native-host-distribution.ts
+          --executable "${{ github.workspace }}\artifacts\native-host-build\wag-native-host.exe"
+          --package-lock "${{ github.workspace }}\package-lock.json"
+          --output "${{ github.workspace }}\artifacts\native-host-distribution"
+
+      - name: Verify distribution
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: >-
+          npx tsx scripts/verify-native-host-distribution.ts
+          --directory "${{ github.workspace }}\artifacts\native-host-distribution"
+          --repository "${{ github.repository }}"
+          --source-sha "${{ github.sha }}"
+
+      - name: Upload distribution
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wag-native-host-windows-x64-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: ${{ github.workspace }}\artifacts\native-host-distribution\
+          if-no-files-found: error
+          retention-days: 14
