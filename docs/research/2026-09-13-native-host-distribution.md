@@ -75,3 +75,13 @@ A later supported-host acceptance may consume that artifact only after proving t
 ## Research conclusion
 
 Proceed with a small `Native Host Distribution v1` subsystem. Its first acceptance gate is build/distribution integrity only. It does not change browser authority, WAG tool exposure, mutation authority, terminal/Git authority, HKCU state, or provider integration.
+
+## Action pins resolved for implementation planning
+
+Fresh tag resolution on 2026-09-13 selected these reviewed immutable commits:
+
+- `actions/checkout@v7.0.1` -> `3d3c42e5aac5ba805825da76410c181273ba90b1`;
+- `actions/setup-node@v7.0.0` -> `820762786026740c76f36085b0efc47a31fe5020`;
+- `actions/upload-artifact@v7.0.1` -> `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`.
+
+The selected `setup-node` action itself runs on Node 24 and exposes `package-manager-cache: false`. GitHub currently supports the `windows-2025` x64 hosted-runner label; v1 should use that explicit label rather than the drifting `windows-latest` alias.
