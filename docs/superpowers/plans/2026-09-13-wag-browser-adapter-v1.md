@@ -34,9 +34,10 @@
 - Produces: `BROWSER_ADAPTER_PROTOCOL_VERSION = 1`.
 - Produces: `BROWSER_ADAPTER_MAX_BYTES = 256 * 1024`.
 - Produces: `BrowserToolName = 'health' | 'workspace.open' | 'file.read'`.
-- Produces: `BrowserAdapterRequest`, `BrowserAdapterResponse`, `parseBrowserAdapterRequest`, `parseBrowserAdapterResponse`.
+- Produces: `BrowserAdapterRequest` union for `hello`, `session.bind`, `session.unbind`, `tools.list`, `tool.call`, and `ping`; tool calls carry a bounded transport `sessionId`.
+- Produces: `BrowserAdapterResponse`, `parseBrowserAdapterRequest`, `parseBrowserAdapterResponse`.
 
-- [ ] **Step 1: Write failing protocol tests.** Prove strict version/type parsing, exact tool allowlist, request-id bounds, argument schemas, response/error bounds, rejection of extra keys, and rejection when serialized UTF-8 size exceeds `256 KiB`.
+- [ ] **Step 1: Write failing protocol tests.** Prove strict version/type parsing, request/session-id bounds, `hello`, one active transport-session binding shape, `ping`, exact tool allowlist, argument schemas, response/error bounds, rejection of extra keys, and rejection when serialized UTF-8 size exceeds `256 KiB`.
 - [ ] **Step 2: Run `npx tsx --test test/browser-adapter-protocol.test.ts`; verify RED because the protocol module does not exist.**
 - [ ] **Step 3: Implement the protocol with strict Zod discriminated unions.** `health` accepts `{}`; `workspace.open` accepts `{ path: string }`; `file.read` accepts `{ workspace_id: string, path: string }`; responses carry either bounded JSON-safe `result` or bounded `{ code, message }`.
 - [ ] **Step 4: Add `serializedBytes(value)` and enforce the same cap on ingress and egress before parsing/returning.**
@@ -91,7 +92,7 @@
 - Produces: `runNativeHost({ input, output, link, expectedOrigin }): Promise<void>` for tests and CLI.
 - CLI locates exactly one `chrome-extension://<id>/` caller-origin argument from the native-host invocation, loads discovery from `%LOCALAPPDATA%\WebAgentGateway\browser-adapter.json` by default, and supports `--discovery <absolute-path>` only for tests/manual disposable runs. It does not hard-code one argv index because source-run Node and packaged SEA argv layouts differ.
 
-- [ ] **Step 1: Write failing engine tests** with `PassThrough` streams and a fake link. Prove exact extension-origin check, `hello`, tool listing, one tool call, request/response correlation, duplicate request rejection within one host process, malformed frame fail-closed, and no stdout logging outside framed messages.
+- [ ] **Step 1: Write failing engine tests** with `PassThrough` streams and a fake link. Prove exact extension-origin check, `hello`, `session.bind`, tool listing, one tool call bound to that session, `ping`, `session.unbind`, request/response correlation, duplicate request rejection within one host process, malformed frame fail-closed, and no stdout logging outside framed messages.
 - [ ] **Step 2: Add lifecycle tests** proving EOF/disconnect closes only the `LocalAdapterLink`; it does not kill the WAG HTTP runtime or any executor process.
 - [ ] **Step 3: Run `npx tsx --test test/native-host.test.ts`; verify RED.**
 - [ ] **Step 4: Implement the native-host engine.** Validate every decoded request with `parseBrowserAdapterRequest`; validate every response before encoding; send bounded protocol errors for request-scoped failures and terminate on framing/origin violations.
