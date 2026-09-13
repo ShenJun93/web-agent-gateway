@@ -31,20 +31,20 @@
 - Produces: `DurableStore`, `WorkspaceRecord`, `MutationRecord`, `MutationState`, `MutationIdentity`.
 - Produces: `openWorkspaceRecord`, `createMutation`, `getMutation`, `listPendingMutations`, `approveMutation`, `rejectMutation`, `claimMutation`, `finishMutation`, `listRecoverableMutations`, `appendAuditEvent`, `close`.
 
-- [ ] **Step 1: Write failing persistence/state tests**
+- [x] **Step 1: Write failing persistence/state tests**
   - Prove workspace records survive close/reopen.
   - Prove mutation plans are immutable after insert.
   - Prove approval is conditional on `PENDING_APPROVAL` and `reviewDeadline > now`.
   - Prove two approval attempts cannot both advance the record.
   - Prove claim requires live `QUEUED` admission deadline.
   - Prove audit rows are append-only and omit `before` / `after` contents.
-- [ ] **Step 2: Run `tsx --test test/durable-store.test.ts` and verify RED.**
-- [ ] **Step 3: Implement `SqliteDurableStore` with `node:sqlite` `DatabaseSync`.**
+- [x] **Step 2: Run `tsx --test test/durable-store.test.ts` and verify RED.**
+- [x] **Step 3: Implement `SqliteDurableStore` with `node:sqlite` `DatabaseSync`.**
   - Use WAL mode, foreign keys, prepared statements, and conditional `UPDATE ... WHERE state = ? AND deadline > ?` transitions.
   - Schema: `workspaces`, `mutations`, `audit_events`; store bounded text only in `mutations`.
   - Generate opaque ids as `ws_...` and `mut_...` outside SQL.
-- [ ] **Step 4: Run the task test and `npm run typecheck`; verify GREEN.**
-- [ ] **Step 5: Commit `feat: add durable mutation store`.**
+- [x] **Step 4: Run the task test and `npm run typecheck`; verify GREEN.**
+- [x] **Step 5: Commit `feat: add durable mutation store`.**
 
 ### Task 2: Capability-Specific File Mutation Backend
 
@@ -63,11 +63,11 @@ export interface FileMutationBackend {
 ```
 - Produces: `DevspaceFileMutationBackend` wrapping the existing `DevspaceExecutor`.
 
-- [ ] **Step 1: Write failing contract tests** for exact reads, one-file update, wrong-target donor metadata, post-write mismatch, LF and CRLF preservation.
-- [ ] **Step 2: Run `tsx --test test/file-mutation-backend.test.ts`; verify RED.**
-- [ ] **Step 3: Implement the narrow backend.** Rebind DevSpace from canonical root per operation; do not persist DevSpace workspace ids as authority.
-- [ ] **Step 4: Run task tests plus existing `test/file-patch.test.ts`; verify GREEN.**
-- [ ] **Step 5: Commit `refactor: add file mutation backend port`.**
+- [x] **Step 1: Write failing contract tests** for exact reads, one-file update, wrong-target donor metadata, post-write mismatch, LF and CRLF preservation.
+- [x] **Step 2: Run `tsx --test test/file-mutation-backend.test.ts`; verify RED.**
+- [x] **Step 3: Implement the narrow backend.** Rebind DevSpace from canonical root per operation; do not persist DevSpace workspace ids as authority.
+- [x] **Step 4: Run task tests plus existing `test/file-patch.test.ts`; verify GREEN.**
+- [x] **Step 5: Commit `refactor: add file mutation backend port`.**
 
 ### Task 3: Durable Mutation Coordinator
 
@@ -87,15 +87,15 @@ export class DurableMutationCoordinator {
 }
 ```
 
-- [ ] **Step 1: Write failing tests** for immutable preview, identity mismatch, stale target, duplicate/overlap match, sensitive/escape/binary/size rejection, 60s review expiry, 60s admission expiry, single approval, single claim, final hash verification and bounded result/error fields.
-- [ ] **Step 2: Add restart tests:** `EXECUTING + result hash -> SUCCEEDED`; `EXECUTING + base hash + live admission -> QUEUED`; divergent hash -> `OUTCOME_UNKNOWN`; recovery never extends deadlines.
-- [ ] **Step 3: Run the test file; verify RED.**
-- [ ] **Step 4: Implement preview using the existing path policy and the new backend port; persist before returning `mutationId`.**
-- [ ] **Step 5: Implement local approval as `PENDING_APPROVAL -> QUEUED`, then asynchronously claim and execute the exact stored plan.**
-- [ ] **Step 6: Implement `result()` as a read-only bounded projection with no local paths or stored `before`/`after` content.**
-- [ ] **Step 7: Implement restart reconciliation exactly as the spec state machine requires.**
-- [ ] **Step 8: Run task tests, `npm run typecheck`, and existing file-patch tests; verify GREEN.**
-- [ ] **Step 9: Commit `feat: add durable mutation coordinator`.**
+- [x] **Step 1: Write failing tests** for immutable preview, identity mismatch, stale target, duplicate/overlap match, sensitive/escape/binary/size rejection, 60s review expiry, 60s admission expiry, single approval, single claim, final hash verification and bounded result/error fields.
+- [x] **Step 2: Add restart tests:** `EXECUTING + result hash -> SUCCEEDED`; `EXECUTING + base hash + live admission -> QUEUED`; divergent hash -> `OUTCOME_UNKNOWN`; recovery never extends deadlines.
+- [x] **Step 3: Run the test file; verify RED.**
+- [x] **Step 4: Implement preview using the existing path policy and the new backend port; persist before returning `mutationId`.**
+- [x] **Step 5: Implement local approval as `PENDING_APPROVAL -> QUEUED`, then asynchronously claim and execute the exact stored plan.**
+- [x] **Step 6: Implement `result()` as a read-only bounded projection with no local paths or stored `before`/`after` content.**
+- [x] **Step 7: Implement restart reconciliation exactly as the spec state machine requires.**
+- [x] **Step 8: Run task tests, `npm run typecheck`, and existing file-patch tests; verify GREEN.**
+- [x] **Step 9: Commit `feat: add durable mutation coordinator`.**
 
 ### Task 4: Loopback Operator Review Service
 
@@ -113,13 +113,13 @@ export interface OperatorServer {
 export function startOperatorServer(options: { coordinator: DurableMutationCoordinator; host?: string; port?: number }): Promise<OperatorServer>;
 ```
 
-- [ ] **Step 1: Write failing HTTP tests** proving non-loopback bind is rejected, bootstrap token is one-time, session cookie is `HttpOnly; SameSite=Strict`, wrong/missing Origin is rejected, wrong/missing CSRF is rejected, and no operator credential appears in page URLs after bootstrap.
-- [ ] **Step 2: Write rendering tests** proving the page exposes only mutation id, relative path, bounded summary, hashes/fingerprint, line counts and state; escape every rendered value.
-- [ ] **Step 3: Run `tsx --test test/operator-server.test.ts`; verify RED.**
-- [ ] **Step 4: Implement GET bootstrap/session establishment, pending list/detail pages, approve and reject POST forms, exact Origin checks and per-session CSRF.**
-- [ ] **Step 5: Add restrictive response headers:** `Content-Security-Policy`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`.
-- [ ] **Step 6: Run task tests and typecheck; verify GREEN.**
-- [ ] **Step 7: Commit `feat: add local mutation review service`.**
+- [x] **Step 1: Write failing HTTP tests** proving non-loopback bind is rejected, bootstrap token is one-time, session cookie is `HttpOnly; SameSite=Strict`, wrong/missing Origin is rejected, wrong/missing CSRF is rejected, and no operator credential appears in page URLs after bootstrap.
+- [x] **Step 2: Write rendering tests** proving the page exposes only mutation id, relative path, bounded summary, hashes/fingerprint, line counts and state; escape every rendered value.
+- [x] **Step 3: Run `tsx --test test/operator-server.test.ts`; verify RED.**
+- [x] **Step 4: Implement GET bootstrap/session establishment, pending list/detail pages, approve and reject POST forms, exact Origin checks and per-session CSRF.**
+- [x] **Step 5: Add restrictive response headers:** `Content-Security-Policy`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`.
+- [x] **Step 6: Run task tests and typecheck; verify GREEN.**
+- [x] **Step 7: Commit `feat: add local mutation review service`.**
 
 ### Task 5: Opt-In MCP Projection Without Remote Apply
 
@@ -137,12 +137,12 @@ export interface MutationMcpContext {
 }
 ```
 
-- [ ] **Step 1: Write failing MCP tests** proving default tool list is unchanged and opt-in list adds only `mutation.preview` and `mutation.result`.
-- [ ] **Step 2: Prove the new schemas contain no approval id, apply phase, raw patch, local root, owner id, session id or adapter id fields.** Identity is adapter/server context, not model input.
-- [ ] **Step 3: Prove `mutation.preview` is non-read-only/destructive-capability annotated while `mutation.result` is read-only.**
-- [ ] **Step 4: Implement optional mutation context wiring in MCP and HTTP server factories; leave historical `file.patch` behind its separate old spike flag until new acceptance passes.**
-- [ ] **Step 5: Run `test/mcp-surface.test.ts`, `test/http-transport.test.ts`, typecheck; verify GREEN.**
-- [ ] **Step 6: Commit `feat: expose durable mutation result protocol`.**
+- [x] **Step 1: Write failing MCP tests** proving default tool list is unchanged and opt-in list adds only `mutation.preview` and `mutation.result`.
+- [x] **Step 2: Prove the new schemas contain no approval id, apply phase, raw patch, local root, owner id, session id or adapter id fields.** Identity is adapter/server context, not model input.
+- [x] **Step 3: Prove `mutation.preview` is non-read-only/destructive-capability annotated while `mutation.result` is read-only.**
+- [x] **Step 4: Implement optional mutation context wiring in MCP and HTTP server factories; leave historical `file.patch` behind its separate old spike flag until new acceptance passes.**
+- [x] **Step 5: Run `test/mcp-surface.test.ts`, `test/http-transport.test.ts`, typecheck; verify GREEN.**
+- [x] **Step 6: Commit `feat: expose durable mutation result protocol`.**
 
 ### Task 6: Experimental Durable-Mutation Runtime
 
@@ -161,13 +161,13 @@ export interface DurableMutationSpikeRuntime {
 }
 ```
 
-- [ ] **Step 1: Write failing lifecycle tests** proving the runtime creates a disposable SQLite database, starts loopback MCP plus operator service, runs reconciliation before accepting new mutation work, and closes only resources it owns.
-- [ ] **Step 2: Prove operator bootstrap URL is emitted only to the local launcher return value/stderr path and is never returned by MCP.**
-- [ ] **Step 3: Run the task test; verify RED.**
-- [ ] **Step 4: Implement the experimental runner using a fixed local `MutationCaller` supplied by the adapter configuration, not by tool arguments.**
-- [ ] **Step 5: Wire `SqliteDurableStore`, `DevspaceFileMutationBackend`, `DurableMutationCoordinator`, operator server and authenticated loopback MCP server.**
-- [ ] **Step 6: Run task tests, typecheck and build; verify GREEN.**
-- [ ] **Step 7: Commit `feat: add durable mutation spike runtime`.**
+- [x] **Step 1: Write failing lifecycle tests** proving the runtime creates a disposable SQLite database, starts loopback MCP plus operator service, runs reconciliation before accepting new mutation work, and closes only resources it owns.
+- [x] **Step 2: Prove operator bootstrap URL is emitted only to the local launcher return value/stderr path and is never returned by MCP.**
+- [x] **Step 3: Run the task test; verify RED.**
+- [x] **Step 4: Implement the experimental runner using a fixed local `MutationCaller` supplied by the adapter configuration, not by tool arguments.**
+- [x] **Step 5: Wire `SqliteDurableStore`, `DevspaceFileMutationBackend`, `DurableMutationCoordinator`, operator server and authenticated loopback MCP server.**
+- [x] **Step 6: Run task tests, typecheck and build; verify GREEN.**
+- [x] **Step 7: Commit `feat: add durable mutation spike runtime`.**
 
 ### Task 7: End-to-End Local Gate and Migration Evidence
 
@@ -176,12 +176,12 @@ export interface DurableMutationSpikeRuntime {
 - Create: `docs/benchmarks/2026-09-13-durable-mutation-control-plane.md`
 - Modify: `docs/superpowers/plans/2026-09-13-durable-local-control-plane.md` only to check completed steps.
 
-- [ ] **Step 1: Write an acceptance test** using a fresh disposable Git fixture and pinned DevSpace: open durable workspace -> preview -> local operator approval -> local execution -> `mutation.result` -> file read-back -> repository snapshot.
-- [ ] **Step 2: Add restart cases** with a file-backed SQLite database: recover queued work; reconcile executing/result-hash to success; divergent content to `OUTCOME_UNKNOWN`; verify no blind second write.
-- [ ] **Step 3: Verify exactly one expected file changes and expected result SHA-256 matches.**
-- [ ] **Step 4: Run full repository gate:** `npm test`, `npm run typecheck`, `npm run build`, `npm run test:business`, exact-pinned DevSpace compatibility checks, `git diff --check`.
-- [ ] **Step 5: Record latency and failure spans against the historical two-step browser receipt; do not claim browser-host acceptance yet.**
-- [ ] **Step 6: Commit `bench: verify durable mutation control plane`.**
+- [x] **Step 1: Write an acceptance test** using a fresh disposable Git fixture and pinned DevSpace: open durable workspace -> preview -> local operator approval -> local execution -> `mutation.result` -> file read-back -> repository snapshot.
+- [x] **Step 2: Add restart cases** with a file-backed SQLite database: recover queued work; reconcile executing/result-hash to success; divergent content to `OUTCOME_UNKNOWN`; verify no blind second write.
+- [x] **Step 3: Verify exactly one expected file changes and expected result SHA-256 matches.**
+- [x] **Step 4: Run full repository gate:** `npm test`, `npm run typecheck`, `npm run build`, `npm run test:business`, exact-pinned DevSpace compatibility checks, `git diff --check`.
+- [x] **Step 5: Record latency and failure spans against the historical two-step browser receipt; do not claim browser-host acceptance yet.**
+- [x] **Step 6: Commit `bench: verify durable mutation control plane`.**
 
 ### Task 8: Supported-Host Acceptance Checkpoint
 
