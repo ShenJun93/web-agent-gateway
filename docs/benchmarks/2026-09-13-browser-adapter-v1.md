@@ -50,7 +50,15 @@ The local read-only slice conforms to the five locked control-plane contracts wi
 
 Contract 2 is intentionally inactive: Browser Adapter v1 exposes no mutation tool. Contract 4 is exercised only for adapter-process ownership/lifecycle, not as a claim that a generic durable process manager exists.
 
-Contract 3 creates a prerequisite before supported-host installation: Windows namespace/device/alternate-stream forms that are not yet covered by current path-policy tests must be rejected explicitly before `file.read` is projected through the installed browser adapter. Therefore Task 10 installation is blocked on that containment-hardening gate even though Task 9 is read-only.
+Contract 3 created a prerequisite before supported-host installation: Windows namespace/device/alternate-stream forms had to be rejected explicitly before `file.read` could be projected through the installed browser adapter. That prerequisite is now closed by the containment-hardening gate below.
+
+## Windows containment hardening evidence
+
+The central workspace-relative path policy now rejects NTFS alternate-stream syntax, Windows-forbidden filename characters/control characters, trailing dot/space components, standard reserved device names with or without extensions, and the documented superscript COM/LPT device-name forms. Existing absolute/rooted/UNC/device-namespace admission checks and resolved-target symlink/junction containment remain in force.
+
+The browser-adapter acceptance adds a negative real-native-host `file.read` request using an alternate-stream path and proves the request returns an error through the normal bounded protocol. `file.read`, durable mutation, and historical `file.patch` all share the same central path policy, so there is no adapter-specific containment exception.
+
+Fresh focused regression evidence after hardening: browser acceptance + file read + durable mutation + historical file patch + security tests passed 28/28; typecheck and build passed.
 
 ## Repository verification
 
@@ -75,3 +83,23 @@ The accepted control-plane contracts remain authoritative over these implementat
 `BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
 
 No HKCU Native Messaging registration, browser installation, enterprise policy change, or supported-host browser acceptance is claimed by this receipt.
+
+## Task 10 supported-host attempt
+
+Explicit authorization was obtained for one disposable read-only supported-host acceptance run, including one per-user Native Messaging registration and one owned disposable Chromium profile. Browser policy was fresh-read immediately before automation.
+
+Preflight found one unrelated active Playwright session, `cgpt-n16-policy-0913`, using the legacy `E:\AI-BROWSER\profile`; it was left untouched. The planned owned session/profile was `wag-task10-0913` / `E:\AI-BROWSER\profiles\wag-task10-0913`.
+
+Before any installation mutation, the default WAG browser-adapter discovery file was absent, the Edge NativeMessagingHosts key `com.openai.web_agent_gateway` was absent, and the owned profile did not exist. The disposable task directory was empty.
+
+The first activation step attempted to create the owned Playwright configuration that would load only the committed WAG extension via Chromium `--disable-extensions-except` / `--load-extension`. The local safety layer blocked that file write before execution. Per Task 10 fail-closed policy, the attempt stopped immediately. No alternate launcher/config writer, JavaScript injection, synthetic Native Messaging/MCP call, browser attach, or route around the control was used.
+
+No HKCU registry key was created, no WAG browser profile/session was created, no extension was activated, no browser-adapter runtime was started, and no supported-host WAG tool call occurred.
+
+This section supersedes the earlier pre-Task-10 gate labels for current status:
+
+`WINDOWS_CONTAINMENT_HARDENING = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
