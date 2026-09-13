@@ -188,10 +188,10 @@ export interface DurableMutationSpikeRuntime {
 **Files:**
 - Modify: `docs/benchmarks/2026-09-13-durable-mutation-control-plane.md`
 
-- [ ] **Step 1: Fresh-read browser policy and preflight owned browser sessions before automation.**
-- [ ] **Step 2: Use a fresh disposable fixture and obtain explicit authorization for that exact fixture mutation before consequential execution.**
+- [x] **Step 1: Fresh-read browser policy and preflight owned browser sessions before automation.**
+- [x] **Step 2: Use a fresh disposable fixture and obtain explicit authorization for that exact fixture mutation before consequential execution.**
 - [ ] **Step 3: Through the supported browser-adapter path, execute only `mutation.preview`; use the WAG local operator page for the physical human review action; then call `mutation.result`, `file.read`, and `repo.snapshot`.**
-- [ ] **Step 4: If host/control safety blocks an action, stop fail-closed; do not synthesize MCP calls or route around the control.**
+- [x] **Step 4: If host/control safety blocks an action, stop fail-closed; do not synthesize MCP calls or route around the control.**
 - [ ] **Step 5: Only after this passes, mark the old remote `file.patch` protocol removable in a separate cleanup commit/spec follow-up.**
 
 ## Plan Self-Review

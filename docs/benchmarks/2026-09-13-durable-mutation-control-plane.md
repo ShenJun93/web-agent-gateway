@@ -82,8 +82,24 @@ The architectural improvement is stronger than the raw timing comparison: after 
 
 `BUSINESS_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
 
-`SUPPORTED_BROWSER_HOST_MUTATION = NOT_YET_RUN`
+`SUPPORTED_BROWSER_HOST_MUTATION = BLOCKED_FAIL_CLOSED`
 
 `HISTORICAL_FILE_PATCH_PROTOCOL = COMPATIBILITY_ONLY`
 
-This receipt authorizes proceeding to the supported-host acceptance checkpoint only. It does not authorize merging mutation capability into the default or Business surface, removing the historical spike, or widening terminal/Git authority.
+This receipt records a locally accepted durable control plane and a fail-closed supported-host attempt. It does not authorize merging mutation capability into the default or Business surface, removing the historical spike, or widening terminal/Git authority.
+
+## Supported-host attempt: ChatGPT browser bridge
+
+A fresh disposable fixture was prepared at `E:\Spikes\wag-plus-acceptance\durable-mutation-fixture-0913` with `note.txt` equal to `alpha\nbeta\ngamma\n`. Exact user authorization was obtained for only `beta -> beta-browser` in that file through the durable mutation protocol.
+
+Browser preflight fresh-read `E:\AI-BROWSER\PLAYWRIGHT_HANDOFF.md` and `playwright-cli list`. The unrelated active session/profile was left untouched. The owned `wag-accept-0912` session was opened headed with the existing disposable SuperAssistant extension config because headless ChatGPT hit a Cloudflare 403 challenge.
+
+The extension loaded normally. Its initial persisted endpoint was stale (`http://localhost:3006/sse`) and the sidebar reported `Server Disconnected`. A fresh durable WAG runtime and upstream `mcp-superassistant-proxy` were started on a separate disposable path, with the proxy listening on `http://localhost:3018/sse`. The extension Server URI field was updated through its normal settings UI to that endpoint.
+
+The next normal UI action, `Save & Reconnect`, was blocked by the browser-control safety layer before execution. The attempt stopped immediately. No alternate selector, JavaScript injection, synthetic MCP call, direct HTTP tool call, or other route around that control was used.
+
+No supported-host `workspace.open`, `file.read`, `mutation.preview`, local approval, mutation execution, `mutation.result`, or `repo.snapshot` was sent in this attempt. The fixture remained at the original three-line content and `git status --short` remained empty. All owned browser/runtime/proxy resources were then closed or terminated by exact ownership.
+
+`SUPPORTED_BROWSER_HOST_MUTATION = BLOCKED_FAIL_CLOSED`
+
+This is host/control-path evidence, not a failure of the locally accepted durable mutation state machine. It does not satisfy Task 8 Step 3 and does not authorize promotion or cleanup of the historical compatibility protocol.
