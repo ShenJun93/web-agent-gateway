@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
@@ -25,17 +25,47 @@ function run(command: string, args: string[], cwd = root): Promise<{ code: numbe
     child.once('close', (code) => resolve({ code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr).toString('utf8') }));
   });
 }
+
+async function resolveArtifactUnderTest(tempRoot: string, override = process.env.WAG_NATIVE_HOST_BUILD_DIR) {
+  let outputDir: string;
+  let builtLocally = false;
+  if (override) {
+    if (!isAbsolute(override)) throw new Error('WAG_NATIVE_HOST_BUILD_DIR must be absolute');
+    outputDir = override;
+    for (const name of ['wag-native-host.exe', 'sea-config.json']) {
+      const info = await stat(join(outputDir, name));
+      if (!info.isFile()) throw new Error(`Prebuilt artifact is missing ${name}`);
+    }
+  } else {
+    outputDir = join(tempRoot, 'artifact');
+    const tsxCli = fileURLToPath(import.meta.resolve('tsx/cli'));
+    const build = await run(process.execPath, [tsxCli, 'scripts/build-native-host.ts', '--output', outputDir]);
+    assert.equal(build.code, 0, build.stderr);
+    builtLocally = true;
+  }
+  return { outputDir, executable: join(outputDir, 'wag-native-host.exe'), builtLocally };
+}
+
+test('artifact harness selects a supplied prebuilt directory without rebuilding', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows v1 artifact');
+  const temp = await mkdtemp(join(tmpdir(), 'wag-native-host-prebuilt-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  await writeFile(join(temp, 'wag-native-host.exe'), 'fixture');
+  await writeFile(join(temp, 'sea-config.json'), JSON.stringify({ execArgvExtension: 'none' }));
+
+  const resolved = await resolveArtifactUnderTest(temp, temp);
+  assert.equal(resolved.outputDir, temp);
+  assert.equal(resolved.executable, join(temp, 'wag-native-host.exe'));
+  assert.equal(resolved.builtLocally, false);
+});
+
 test('Windows SEA native host speaks framed protocol against local WAG', async (t) => {
   if (process.platform !== 'win32') return t.skip('Windows v1 artifact');
   const temp = await mkdtemp(join(tmpdir(), 'wag-native-host-artifact-'));
   t.after(() => rm(temp, { recursive: true, force: true }));
 
-  const outputDir = join(temp, 'artifact');
-  const tsxCli = fileURLToPath(import.meta.resolve('tsx/cli'));
-  const build = await run(process.execPath, [tsxCli, 'scripts/build-native-host.ts', '--output', outputDir]);
-  assert.equal(build.code, 0, build.stderr);
-
-  const executable = join(outputDir, 'wag-native-host.exe');
+  const artifact = await resolveArtifactUnderTest(temp);
+  const { outputDir, executable } = artifact;
   const seaConfig = JSON.parse(await readFile(join(outputDir, 'sea-config.json'), 'utf8')) as { execArgvExtension?: string };
   assert.equal(seaConfig.execArgvExtension, 'none');
 
