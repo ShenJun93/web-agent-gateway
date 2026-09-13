@@ -41,6 +41,11 @@ export interface MutationResultView {
   errorClass?: string;
 }
 
+export interface MutationLocalReviewView extends MutationResultView {
+  before: string;
+  after: string;
+}
+
 export class DurableMutationCoordinator {
   private readonly backends: Map<string, FileMutationBackend>;
   private readonly now: () => number;
@@ -94,20 +99,16 @@ export class DurableMutationCoordinator {
     const record = this.options.store.getMutation(mutationId);
     if (!record) throw new Error('Unknown mutation_id');
     assertIdentity(caller, record);
-    return {
-      mutationId: record.mutationId,
-      state: record.state,
-      path: record.path,
-      baseSha256: record.baseSha256,
-      resultSha256: record.resultSha256,
-      fingerprint: record.fingerprint,
-      additions: record.additions,
-      removals: record.removals,
-      reviewDeadline: record.reviewDeadline,
-      ...(record.executionAdmissionDeadline === undefined ? {} : { executionAdmissionDeadline: record.executionAdmissionDeadline }),
-      ...(record.completedAt === undefined ? {} : { completedAt: record.completedAt }),
-      ...(record.errorClass === undefined ? {} : { errorClass: record.errorClass }),
-    };
+    return toResultView(record);
+  }
+
+  listPendingLocal(limit = 20): MutationLocalReviewView[] {
+    return this.options.store.listPendingMutations(limit).map(toLocalReviewView);
+  }
+
+  reviewLocal(mutationId: string): MutationLocalReviewView | undefined {
+    const record = this.options.store.getMutation(mutationId);
+    return record ? toLocalReviewView(record) : undefined;
   }
 
   async approveLocal(mutationId: string): Promise<boolean> {
@@ -302,6 +303,27 @@ function assertIdentity(expected: MutationCaller, actual: MutationIdentity): voi
   if (expected.ownerId !== actual.ownerId || expected.sessionId !== actual.sessionId || expected.adapterId !== actual.adapterId) {
     throw new Error('Gateway denied mutation identity');
   }
+}
+
+function toResultView(record: MutationRecord): MutationResultView {
+  return {
+    mutationId: record.mutationId,
+    state: record.state,
+    path: record.path,
+    baseSha256: record.baseSha256,
+    resultSha256: record.resultSha256,
+    fingerprint: record.fingerprint,
+    additions: record.additions,
+    removals: record.removals,
+    reviewDeadline: record.reviewDeadline,
+    ...(record.executionAdmissionDeadline === undefined ? {} : { executionAdmissionDeadline: record.executionAdmissionDeadline }),
+    ...(record.completedAt === undefined ? {} : { completedAt: record.completedAt }),
+    ...(record.errorClass === undefined ? {} : { errorClass: record.errorClass }),
+  };
+}
+
+function toLocalReviewView(record: MutationRecord): MutationLocalReviewView {
+  return { ...toResultView(record), before: record.before, after: record.after };
 }
 
 function toPreview(record: MutationRecord): MutationPreview {
