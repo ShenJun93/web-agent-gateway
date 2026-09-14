@@ -147,3 +147,22 @@ Post-attempt committed read-only installation verification remained exact: regis
 `SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
 
 `BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host attempt 7
+
+Attempt 7 used committed provider hardening `6bf100eb47dffa7088532bc49bb1668b9e784956`. Before browser control, canonical WAG state and both local handoffs were fresh-read. The committed installation verifier returned registration `MATCH`, executable SHA-256 `0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf`, and manifest SHA-256 `706a38b97b51102f886dcbb94de76e62bb7243d664dca65deaae3c8bcd5aa3ca`.
+
+The mandatory first browser-control command, `playwright-cli list --all --json`, completed successfully. Only unrelated worker `cgpt-n09-provenance-0913` was present and it was left untouched. The owned worker was `wag-task10-0914-a7` with brand-new profile/output paths and an `OWNER.json` binding the exact session/profile.
+
+A disposable exact-pinned DevSpace and read-only WAG browser runtime started successfully against a task-owned fixture containing `note.txt` with `alpha`, `beta`, `gamma`. Playwright-bundled Chromium opened headed with only the committed WAG extension from the `6bf100e` worktree. Loading `chrome-extension://nnhhhppkpogkedpjnijeagcbfjaoogec/sidepanel.html` proved the runtime extension identity and rendered the WAG Browser Adapter UI; pending calls were initially empty and native connection remained lazy/disconnected before execution.
+ChatGPT loaded normally and the anonymous composer was available. The cookie dialog was closed through a snapshot/ref interaction. The next browser-control action attempted to fill the composer with the canonical `workspace.open` prompt. The OpenAI safety layer blocked that `fill` command before execution. Under Task 10 step 6, the attempt stopped fail-closed; the prompt was not retried, reformulated, injected through page script/eval, or routed through direct MCP/native calls.
+
+Exact-owned cleanup then succeeded. Fresh global inventory correlated `wag-task10-0914-a7` with its exact profile, the owned browser was closed, the disposable runtime stopped through its owned stop marker, and a final inventory showed only unrelated `cgpt-n09-provenance-0913`. The exact owned a7 profile/output directories were deleted. Post-run installation verification again returned the same registration `MATCH` and receipt-bound executable/manifest hashes.
+
+No ChatGPT-produced WAG call reached the extension queue, so no supported-host `workspace.open`, `file.read`, reconnect, or same-workspace evidence is claimed.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
