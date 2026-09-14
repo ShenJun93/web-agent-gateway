@@ -166,3 +166,21 @@ No ChatGPT-produced WAG call reached the extension queue, so no supported-host `
 `SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
 
 `BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host attempt 8
+
+Attempt 8 started as a fresh read-only Task 10 acceptance attempt from branch HEAD `5007437fef2b42ebe1ee35ce844ef108ab1bb1c7`, whose provider code remains committed at `6bf100eb47dffa7088532bc49bb1668b9e784956`. Canonical Git state, `AGENTS.md`, `README.md`, the browser-adapter spec, ADR-0013/0014, the Task 10 plan, both external handoffs, and the latest receipt were fresh-read before any owned browser-resource allocation.
+
+The committed native-host installation verifier returned exact registration `MATCH`, executable SHA-256 `0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf`, and manifest SHA-256 `706a38b97b51102f886dcbb94de76e62bb7243d664dca65deaae3c8bcd5aa3ca`. The canonical Playwright policy was then fresh-read immediately before browser control.
+
+The mandatory first browser-control command, `playwright-cli list --all --json`, was blocked by the OpenAI safety layer before execution. Per Task 10 step 2/6 and the canonical browser policy, Attempt 8 stopped fail-closed immediately. The blocked inventory was not retried, reformulated, or obtained through another browser-control route.
+
+Because inventory ownership could not be established, `wag-task10-0914-a8` was never allocated or opened. Its intended profile and output paths remained absent, no browser or disposable WAG runtime was started, no provider prompt was sent, and no direct MCP/native shortcut was used.
+
+A fresh post-block committed installation verification again returned the same exact registration `MATCH` and receipt-bound executable/manifest hashes.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
