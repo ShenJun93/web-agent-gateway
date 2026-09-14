@@ -103,3 +103,47 @@ This section supersedes the earlier pre-Task-10 gate labels for current status:
 `SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
 
 `BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host preflight
+
+After `NATIVE_HOST_INSTALLATION = PASS` was established separately, Task 10 was retried under the updated canonical browser policy. The policy was fresh-read immediately before browser automation.
+
+The mandatory first browser-control command was the global ownership inventory:
+
+`playwright-cli list --all --json`
+
+The command was blocked by the OpenAI safety layer before execution. Under the canonical policy, a blocked global inventory is a hard fail-closed condition: no worker/session/profile may be allocated or opened when ownership inventory cannot be established.
+
+No alternate list command, launcher, attach path, direct MCP/native shortcut, or other route around the blocked preflight was used. No Playwright session/profile/output directory was allocated, no browser was opened, and no extension activation or supported-host WAG call occurred.
+
+A fresh committed read-only installation verification after the blocker still returned exact registration `MATCH`, executable SHA-256 `0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf`, and manifest SHA-256 `706a38b97b51102f886dcbb94de76e62bb7243d664dca65deaae3c8bcd5aa3ca`.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host attempt 4
+
+A later retry fresh-read the canonical browser policy and successfully completed the mandatory global `playwright-cli list --all --json` ownership preflight. Two unrelated workers were present and were left untouched.
+
+The owned acceptance worker was `wag-task10-0914-a4` with a brand-new profile and output directory plus an `OWNER.json` binding that exact session/profile. A disposable exact-pinned DevSpace and read-only WAG browser runtime were started against a task-owned Git fixture; the installed native host consumed its canonical `%LOCALAPPDATA%\WebAgentGateway\browser-adapter.json` discovery path.
+
+The current Playwright CLI expected bundled Chromium revision `1243`, which was not installed. No browser installation was performed. An already installed Playwright-managed full Chromium revision `1234` was used through an explicit `executablePath`, with only the committed WAG extension enabled via `--disable-extensions-except` and `--load-extension`.
+
+The first headless navigation to ChatGPT returned HTTP `403` / `Just a moment...`. Before further provider interaction, the owned session directly loaded `chrome-extension://nnhhhppkpogkedpjnijeagcbfjaoogec/sidepanel.html`, proving the runtime extension identity matched the committed id and rendered the WAG Browser Adapter UI.
+
+Per policy, the exact owned session was closed, global inventory was refreshed, and the same proven-owned profile was reopened headed for troubleshooting. In headed mode `https://chatgpt.com/` loaded successfully with the normal ChatGPT page title.
+
+The next browser-control action was blocked by the OpenAI safety layer before execution. Task 10 therefore stopped fail-closed without retrying the blocked operation in another form. No ChatGPT-produced WAG call was executed, no `workspace.open` or `file.read` supported-host evidence was produced, and no direct MCP/native shortcut was used as a substitute.
+
+Only exact owned cleanup followed: `wag-task10-0914-a4` was closed, the disposable runtime stopped normally, its discovery file was removed, and the exact owned profile/output directories were deleted. A fresh global inventory confirmed the unrelated workers remained active and the owned worker was absent.
+
+Post-attempt committed read-only installation verification remained exact: registration `MATCH`, executable SHA-256 `0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf`, manifest SHA-256 `706a38b97b51102f886dcbb94de76e62bb7243d664dca65deaae3c8bcd5aa3ca`.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
