@@ -91,14 +91,14 @@
 ### Task 4: Repository Regression Gate and Preparation Receipt
 
 **Files:**
-- Create after implementation evidence: `docs/benchmarks/2026-09-14-native-host-installation-v1.md`
+- Record execution evidence in the ignored SDD ledger only. The benchmark receipt remains deferred to Task 6 after live operational acceptance.
 
 - [ ] **Step 1: Run focused installation tests:** `npx tsx --test --test-concurrency=1 test/native-host-installation.test.ts test/native-host-installation-cli.test.ts test/native-host-installation-verifier.test.ts`.
 - [ ] **Step 2: Re-run distribution/manifest regressions:** `npx tsx --test --test-concurrency=1 test/native-host-distribution.test.ts test/native-host-distribution-cli.test.ts test/native-host-manifest.test.ts`.
 - [ ] **Step 3: Run `npm test`, `npm run typecheck`, `npm run build`, and `npm run test:business`; require exit 0.**
 - [ ] **Step 4: Run `git diff --check` and inspect status.** Generated executable/install state, registration data, browser profiles, and credentials stay uncommitted.
-- [ ] **Step 5: Record preparation evidence only.** Gate state is `NATIVE_HOST_INSTALLATION = PREPARED_AWAITING_REGISTRATION`; never claim PASS before live read-only verification.
-- [ ] **Step 6: Commit `bench: verify native host installation preparation`.**
+- [ ] **Step 5: Record repository regression evidence only.** Do not advance `NATIVE_HOST_INSTALLATION`; `PREPARED_AWAITING_REGISTRATION` begins only after Task 6 performs actual machine preparation.
+- [ ] **Step 6: Leave repository state unchanged when the regression gate is clean; no benchmark commit is created in Task 4.**
 
 ---
 
