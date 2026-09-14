@@ -103,3 +103,23 @@ This section supersedes the earlier pre-Task-10 gate labels for current status:
 `SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
 
 `BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host preflight
+
+After `NATIVE_HOST_INSTALLATION = PASS` was established separately, Task 10 was retried under the updated canonical browser policy. The policy was fresh-read immediately before browser automation.
+
+The mandatory first browser-control command was the global ownership inventory:
+
+`playwright-cli list --all --json`
+
+The command was blocked by the OpenAI safety layer before execution. Under the canonical policy, a blocked global inventory is a hard fail-closed condition: no worker/session/profile may be allocated or opened when ownership inventory cannot be established.
+
+No alternate list command, launcher, attach path, direct MCP/native shortcut, or other route around the blocked preflight was used. No Playwright session/profile/output directory was allocated, no browser was opened, and no extension activation or supported-host WAG call occurred.
+
+A fresh committed read-only installation verification after the blocker still returned exact registration `MATCH`, executable SHA-256 `0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf`, and manifest SHA-256 `706a38b97b51102f886dcbb94de76e62bb7243d664dca65deaae3c8bcd5aa3ca`.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
