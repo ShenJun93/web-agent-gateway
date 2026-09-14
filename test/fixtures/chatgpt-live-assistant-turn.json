@@ -1,0 +1,16 @@
+{
+  "scope": "sanitized structural selector evidence from supported-host Attempt 6",
+  "observedAt": "2026-09-14",
+  "tag": "LI",
+  "attributes": {
+    "data-message-role": "assistant",
+    "data-assistant-content-started": "",
+    "data-message-complete": ""
+  },
+  "accessibleLabel": "ChatGPT said:",
+  "code": {
+    "parentTag": "PRE",
+    "tag": "CODE",
+    "className": "language-wag-tool"
+  }
+}

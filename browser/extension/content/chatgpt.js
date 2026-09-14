@@ -32,9 +32,17 @@ function scanAssistantMessages() {
 }
 
 function assistantMessageNodes() {
+  const live = [...document.querySelectorAll('[data-message-role="assistant"]')];
+  if (live.length) return live.filter(isCompletedLiveTurn);
+
   const turns = [...document.querySelectorAll('[data-testid^="conversation-turn-"][data-turn="assistant"]')];
   if (turns.length) return turns;
   return [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+}
+
+function isCompletedLiveTurn(node) {
+  const value = node.getAttribute?.('data-message-complete');
+  return value === '' || value === 'true';
 }
 
 function assistantContentNodes(node) {
@@ -49,6 +57,7 @@ function outermost(nodes) {
     other !== candidate && typeof other.contains === 'function' && other.contains(candidate),
   ));
 }
+
 function renderedCodeBlocks(contents) {
   const blocks = contents.flatMap((content) =>
     [...(content.querySelectorAll?.('pre code') ?? [])].map((code) => ({
@@ -74,6 +83,8 @@ new MutationObserver(scheduleScan).observe(document.documentElement, {
   childList: true,
   subtree: true,
   characterData: true,
+  attributes: true,
+  attributeFilter: ['data-message-complete'],
 });
 
 scheduleScan();
