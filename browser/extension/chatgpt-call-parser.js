@@ -32,6 +32,21 @@ export function parseChatGptToolCall(text) {
   }
   return undefined;
 }
+
+export function parseChatGptObservation(value) {
+  if (!plainObject(value) || typeof value.text !== 'string') return undefined;
+  if (!Object.prototype.hasOwnProperty.call(value, 'codeBlocks')) {
+    return parseChatGptToolCall(value.text);
+  }
+  if (!exactKeys(value, ['text', 'codeBlocks'])) return undefined;
+  if (!Array.isArray(value.codeBlocks) || value.codeBlocks.length !== 1) return undefined;
+  const block = value.codeBlocks[0];
+  if (!plainObject(block) || !exactKeys(block, ['language', 'text'])) return undefined;
+  if (block.language !== 'wag-tool' || typeof block.text !== 'string') return undefined;
+  if (block.text.includes('```')) return undefined;
+  return parseChatGptToolCall('```wag-tool\n' + block.text.trim() + '\n```');
+}
+
 function compactJson(value) {
   let result = '';
   let inString = false;

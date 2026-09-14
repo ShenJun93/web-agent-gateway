@@ -1,5 +1,5 @@
 import { createBrowserExtensionCore } from './service-worker-core.js';
-import { parseChatGptToolCall } from './chatgpt-call-parser.js';
+import { parseChatGptObservation } from './chatgpt-call-parser.js';
 
 const core = createBrowserExtensionCore();
 const sessionsByTab = new Map();
@@ -15,7 +15,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ queued: false });
       return false;
     }
-    const call = parseChatGptToolCall(message.text);
+    const call = parseChatGptObservation({ text: message.text, codeBlocks: message.codeBlocks });
     if (!call) { sendResponse({ queued: false }); return false; }
     const sessionId = sessionForTab(tabId);
     const request = {

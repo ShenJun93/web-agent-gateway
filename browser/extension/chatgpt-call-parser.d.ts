@@ -6,3 +6,5 @@ export type ParsedProviderCall =
   | { tool: 'file.read'; arguments: { workspace_id: string; path: string } };
 
 export function parseChatGptToolCall(text: string): ParsedProviderCall | undefined;
+
+export function parseChatGptObservation(value: unknown): ParsedProviderCall | undefined;

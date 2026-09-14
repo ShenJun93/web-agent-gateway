@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { parseBrowserAdapterRequest, type BrowserAdapterRequest } from '../src/browser-adapter/protocol.js';
-import { parseChatGptToolCall } from '../browser/extension/chatgpt-call-parser.js';
+import { parseChatGptObservation, parseChatGptToolCall } from '../browser/extension/chatgpt-call-parser.js';
 
 type ToolCallRequest = Extract<BrowserAdapterRequest, { type: 'tool.call' }>;
 
@@ -45,4 +45,43 @@ test('chatgpt parser rejects oversized observations and arguments', () => {
   assert.equal(parseChatGptToolCall('x'.repeat(140 * 1024)), undefined);
   const huge = 'x'.repeat(5000);
   assert.equal(parseChatGptToolCall(block(JSON.stringify({ tool: 'workspace.open', arguments: { path: huge } }))), undefined);
+});
+
+test('chatgpt parser accepts rendered WAG code metadata without accepting generic JSON code', () => {
+  const json = '{"tool":"workspace.open","arguments":{"path":"C:\\\\WagFixture"}}';
+  assert.deepEqual(parseChatGptObservation({
+    text: json,
+    codeBlocks: [{ language: 'wag-tool', text: json }],
+  }), { tool: 'workspace.open', arguments: { path: 'C:\\WagFixture' } });
+
+  assert.equal(parseChatGptObservation({ text: json, codeBlocks: [] }), undefined);
+  assert.equal(parseChatGptObservation({
+    text: json,
+    codeBlocks: [{ language: 'json', text: json }],
+  }), undefined);
+  assert.equal(parseChatGptObservation({
+    text: json,
+    codeBlocks: [
+      { language: 'wag-tool', text: json },
+      { language: 'json', text: '{}' },
+    ],
+  }), undefined);
+});
+
+test('rendered WAG observation rejects embedded fence text', () => {
+  assert.equal(parseChatGptObservation({
+    text: 'rendered',
+    codeBlocks: [{ language: 'wag-tool', text: '{"tool":"health","arguments":{}}\n```\ntrailing' }],
+  }), undefined);
+});
+
+test('rendered observation code-block multiplicity overrides direct fenced text', () => {
+  const fenced = '```wag-tool\n{"tool":"health","arguments":{}}\n```';
+  assert.equal(parseChatGptObservation({
+    text: fenced,
+    codeBlocks: [
+      { language: 'wag-tool', text: '{"tool":"health","arguments":{}}' },
+      { language: '', text: '' },
+    ],
+  }), undefined);
 });

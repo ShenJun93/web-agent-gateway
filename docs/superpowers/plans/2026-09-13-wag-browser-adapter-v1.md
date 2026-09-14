@@ -135,7 +135,7 @@
 
 **Interfaces:**
 - Produces: `parseChatGptToolCall(text): ParsedProviderCall | undefined` for the exact WAG JSON function-call format.
-- Content script sends only bounded `{ type: 'provider.observed_text', text, conversationHint }` messages; it never sends native messages directly.
+- Content script sends only bounded `{ type: 'provider.observed_text', text, codeBlocks, conversationHint }` observations. `codeBlocks` contains at most two non-empty rendered code blocks with bounded language/text metadata so the service worker can preserve the exact-one-block decision after Markdown rendering; it never sends native messages directly.
 
 - [ ] **Step 1: Write failing parser tests** from saved assistant-text fixtures. Accept one complete structured call for `health`, `workspace.open`, or `file.read`; reject incomplete blocks, duplicate parameters, unknown tools, malformed JSON, nested/oversized values, and calls mixed with conflicting tool names.
 - [ ] **Step 2: Run `npx tsx --test test/chatgpt-provider.test.ts`; verify RED.**
