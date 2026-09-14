@@ -204,3 +204,19 @@ Post-run installation verification again returned exact registration `MATCH` and
 `SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
 
 `BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-attempt 9 Native Messaging launch diagnostic
+
+A bounded diagnostic investigated why Attempt 9 consumed a real queued `workspace.open` request but returned no WAG result. Chromium was relaunched in an exact-owned disposable profile with native-messaging logging enabled; this diagnostic is not Task 10 acceptance evidence and did not substitute a direct local call for the supported-host path.
+
+Chromium logged the exact launch failure: `COMSPEC is not set`, followed by `Error launching process ...\wag-native-host.exe` and `Failed to start native messaging host.` The Desktop Commander execution environment independently reported `COMSPEC = null` while `SystemRoot` and `WINDIR` were present.
+
+The installed executable itself was not stale or broken: native-host/local-link/build sources had no diff between installed source SHA `fd60c602dfe84ddf05b7e1575e77f45eb2c56b9d` and current main `f0be5ac4270eeca36ea1f444e0ad3d47e50ecbb3`, and the exact installed executable remained alive when launched manually against the same disposable discovery runtime.
+
+The launcher fix was verified without changing user or machine environment. `COMSPEC` was set only in the process executing `playwright-cli open`, to `$env:SystemRoot\System32\cmd.exe`, so Chromium inherited the existing parent environment plus that missing Windows variable. No partial `browser.launchOptions.env` object was used.
+
+With that process-local environment, the same Playwright-bundled Chromium, committed extension, installed native host, and disposable WAG runtime completed a real ChatGPT `health` flow through extension-owned `Run`. The bounded result reported `status:"ok"` and `executor:"devspace"`. A separate extension-owned diagnostic `hello` also returned protocol version 1 from the installed host.
+
+Current ChatGPT DOM remained compatible with the committed provider hardening: the completed assistant turn used `LI[data-message-role="assistant"][data-message-complete]` and the rendered block used `CODE.language-wag-tool`.
+
+All exact diagnostic browser/profile/output/runtime resources were cleaned up after verification. These diagnostics establish the Attempt 9 root cause and launcher prerequisite only; `SUPPORTED_BROWSER_HOST` remains fail-closed until a fresh Task 10 run completes `workspace.open`, `file.read`, reconnect, and the post-run installation verifier.
