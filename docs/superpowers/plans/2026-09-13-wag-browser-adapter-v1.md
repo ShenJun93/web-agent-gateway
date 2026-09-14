@@ -19,7 +19,7 @@
 - Native host protocol has no shell, generic filesystem, arbitrary URL, raw MCP, or generic proxy operation.
 - ChatGPT Web is the only provider in v1; Gemini/Kimi remain follow-ups.
 - Stable unpacked extension identity is derived from a committed public manifest key; no private signing key is committed.
-- HKCU Native Messaging registration and browser installation are operational acceptance steps requiring separate explicit authorization.
+- Native-host installation is a separate prerequisite gate. Task 10 consumes `NATIVE_HOST_INSTALLATION = PASS` and performs no HKCU registration or native-host installation mutation.
 - Default MCP and Business stdio surfaces remain unchanged.
 
 ---
@@ -207,20 +207,21 @@
 **Files:**
 - Modify receipt after evidence: `docs/benchmarks/2026-09-13-browser-adapter-v1.md`.
 
-- [ ] **Step 1: Stop at the operational setup gate and obtain separate explicit authorization before changing per-user browser/native-host installation state.** Code/spec approval is not installation approval.
-- [ ] **Step 2: After authorization, fresh-read the browser automation policy, preflight live sessions, and allocate only an owned disposable session/profile.**
-- [ ] **Step 3: Activate only the generated WAG native-host/extension artifacts in that disposable environment and verify the loaded extension identity matches the committed identity snapshot.**
+- [ ] **Step 1: Require `NATIVE_HOST_INSTALLATION = PASS` before browser automation starts.** Task 10 consumes the separately verified installed state and performs no registry or native-host installation mutation.
+- [ ] **Step 2: Fresh-read the browser automation policy, run its required global inventory preflight, and allocate only an owned disposable session/profile/output directory.** If inventory is blocked, fails, or is ambiguous, stop fail-closed.
+- [ ] **Step 3: Launch the supported Playwright-bundled Chromium path with only the committed WAG extension enabled, consume the already-installed native host, and verify the runtime extension identity matches the committed identity snapshot.**
 - [ ] **Step 4: Run supported-host read-only acceptance:** ChatGPT produces a valid WAG structured call; the extension queues it; extension-owned UI executes it; Native Messaging reaches WAG; `workspace.open` and `file.read` return expected values. No SuperAssistant or browser-to-local proxy participates.
 - [ ] **Step 5: Reconnect only the owned browser adapter session and prove the still-running WAG runtime accepts a new native-host connection and can read the same workspace id.**
 - [ ] **Step 6: If browser-control safety blocks any action, stop fail-closed and record the exact blocker.** A direct MCP/native shortcut cannot substitute for supported-host evidence.
-- [ ] **Step 7: Clean up only exact resources created for this acceptance run under the authorization granted for that run.**
-- [ ] **Step 8: Record `SUPPORTED_BROWSER_HOST = PASS` only after the complete path succeeds; otherwise record a bounded fail-closed status and leave later mutation enablement closed.**
-- [ ] **Step 9: Commit the supported-host receipt.**
+- [ ] **Step 7: Re-run the committed read-only native-host installation verifier after the browser flow.** Require the same receipt-bound executable/manifest hashes and exact registration match; any installation drift invalidates the supported-host run.
+- [ ] **Step 8: Clean up only exact browser session/profile/output resources created for this acceptance run.** Do not change the separately accepted native-host installation or its registration as Task 10 cleanup.
+- [ ] **Step 9: Record `SUPPORTED_BROWSER_HOST = PASS` only after the complete path succeeds and the post-run installation verification remains exact; otherwise record a bounded fail-closed status and leave later mutation enablement closed.**
+- [ ] **Step 10: Commit the supported-host receipt.**
 
 ## Plan Self-Review
 
 - Spec coverage: Tasks 1–10 cover protocol, Native Messaging framing, private local link, thin native host, stable MV3 identity, extension-owned UI, ChatGPT provider parsing, Windows native-host artifact, local end-to-end gate, reconnect semantics and the separate supported-host gate.
 - Intentional deferrals: WebMCP implementation, Gemini/Kimi adapters, automatic ChatGPT result submission, durable mutation browser tools, generic job/PTY/Git mutation, named-pipe replacement, production Business mutation and historical `file.patch` cleanup.
 - Dependency rationale: `esbuild` and `postject` are build-only for the Windows SEA artifact; runtime dependencies remain unchanged.
-- Authority check: no task before Task 10 changes browser/native-host installation state or grants browser code local approval authority.
-- Acceptance rule: local framed/native-host tests cannot substitute for the separately authorized supported-host gate.
+- Authority check: Tasks 1–9 in this plan do not change browser/native-host installation state. Task 10 also performs no installation; it starts only after the separate installation gate is PASS and grants browser code no local approval authority.
+- Acceptance rule: local framed/native-host tests cannot substitute for either the separate installation PASS gate or the supported-host browser gate.
