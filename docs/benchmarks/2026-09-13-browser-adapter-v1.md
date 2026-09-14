@@ -184,3 +184,23 @@ A fresh post-block committed installation verification again returned the same e
 `SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
 
 `BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host attempt 9
+
+Attempt 9 started as a fresh Task 10 run from evidence HEAD `af54a962709681fa34faf4bc922f72037934eb5a`. Canonical Git state and both external handoffs were fresh-read. The committed installation verifier returned registration `MATCH` with the accepted executable and manifest hashes before browser automation.
+
+The mandatory `playwright-cli list --all --json` preflight succeeded and showed only unrelated worker `cgpt-n09-provenance-0913`; it was not touched. A brand-new owned worker `wag-task10-0915-a9` was allocated with exact profile/output ownership, and a disposable exact-pinned DevSpace plus read-only WAG runtime started successfully against a fixture whose `note.txt` contained `alpha`, `beta`, `gamma`.
+
+Playwright-bundled Chromium loaded only the committed WAG extension. ChatGPT loaded normally. A real ChatGPT response produced one completed rendered `wag-tool` code block for `workspace.open`, and the extension sidepanel queued exactly that call. This is live evidence that provider hardening commit `6bf100eb47dffa7088532bc49bb1668b9e784956` observes the current completed ChatGPT turn shape correctly.
+
+The extension-owned `Run` action consumed the pending call and initiated Native Messaging, but no bounded WAG result appeared. After a short wait, runtime-owned process observation showed no surviving `wag-native-host.exe`. Reloading the sidepanel produced fresh state `Native host disconnected` with no pending call and `Last result: None`. No direct native/MCP call was used as substitute evidence.
+
+Attempt 9 therefore stopped fail-closed at the installed native-host launch/response boundary before any accepted `workspace.open` result, `file.read`, or reconnect evidence. Exact-owned cleanup succeeded: the browser closed, the disposable runtime returned `status:"stopped"`, final global Playwright inventory was empty, and the exact a9 profile/output directories were deleted. The unrelated worker had disappeared independently by final inventory; no cleanup action targeted it.
+
+Post-run installation verification again returned exact registration `MATCH` and the same receipt-bound executable/manifest hashes.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
