@@ -138,6 +138,33 @@ export function createNativeHostRegistrationDescriptor(
   });
 }
 
+export type NativeHostRegistrationClassification = 'ABSENT' | 'MATCH' | 'DRIFT';
+
+export function classifyNativeHostRegistration(
+  observedValue: string | null | undefined,
+  receiptValue: NativeHostInstallReceipt,
+): NativeHostRegistrationClassification {
+  const receipt = parseNativeHostInstallReceipt(receiptValue);
+  if (observedValue === null || observedValue === undefined) return 'ABSENT';
+  return observedValue === receipt.registration.defaultValue ? 'MATCH' : 'DRIFT';
+}
+
+export type NativeHostOwnedCleanupDecision =
+  | 'BLOCK_DRIFT'
+  | 'FILES_ONLY'
+  | 'REGISTRATION_THEN_FILES';
+
+export function decideNativeHostOwnedCleanup(
+  observedValue: string | null | undefined,
+  receipt: NativeHostInstallReceipt,
+  ownedFilesMatch: boolean,
+): NativeHostOwnedCleanupDecision {
+  if (!ownedFilesMatch) return 'BLOCK_DRIFT';
+  const registration = classifyNativeHostRegistration(observedValue, receipt);
+  if (registration === 'DRIFT') return 'BLOCK_DRIFT';
+  return registration === 'ABSENT' ? 'FILES_ONLY' : 'REGISTRATION_THEN_FILES';
+}
+
 export interface NativeHostInstallationInput {
   distributionDirectory: string;
   localAppData: string;
