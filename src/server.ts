@@ -9,6 +9,8 @@ import { FilePatchController, type FilePatchBinding, type FilePatchInput } from 
 import type { PatchApprovalStore } from './patch-approval.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
+import { resolveVerifyProfile, type VerifyProfile } from './verify-profile.js';
+export type { VerifyProfile } from './verify-profile.js';
 import {
   DEVSPACE_PROTOCOL_VERSION,
   DevspaceReadLimitError,
@@ -18,7 +20,6 @@ import {
 
 interface WorkspaceBinding { devspaceWorkspaceId: string; canonicalRoot: string; }
 interface SnapshotOptions { maxFiles?: number; }
-export interface VerifyProfile { argv: readonly string[]; timeoutMs?: number; maxOutputTokens?: number; env?: Readonly<Record<string, string>>; }
 
 const SNAPSHOT_COMMAND = [
   'git --no-optional-locks -c core.fsmonitor=false status --short --branch --ignore-submodules=all',
@@ -98,14 +99,16 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
         const scoped = await trace.phase('policyMs', () => {
           const profile = verifyProfiles[profileName];
           if (!profile) throw new Error('Gateway denied verify profile');
-          return { profile, devspaceWorkspaceId: binding(workspaceId).devspaceWorkspaceId };
+          return { profile: resolveVerifyProfile(profile), devspaceWorkspaceId: binding(workspaceId).devspaceWorkspaceId };
         });
-        const command = buildVerifyCommand(scoped.profile);
-        const timeoutMs = Math.min(Math.max(scoped.profile.timeoutMs ?? 10_000, 100), 30_000);
-        const maxOutputTokens = Math.min(Math.max(scoped.profile.maxOutputTokens ?? 4_000, 100), 10_000);
-        const result = await trace.phase('executorMs', () => executor.execCommand(scoped.devspaceWorkspaceId, command, maxOutputTokens, timeoutMs));
+        const result = await trace.phase('executorMs', () => executor.execCommand(
+          scoped.devspaceWorkspaceId,
+          scoped.profile.command,
+          scoped.profile.maxOutputTokens,
+          scoped.profile.timeoutMs,
+        ));
         if (result.running) {
-          if (result.sessionId !== undefined) await trace.phase('executorMs', () => executor.interruptCommand(scoped.devspaceWorkspaceId, result.sessionId!, maxOutputTokens));
+          if (result.sessionId !== undefined) await trace.phase('executorMs', () => executor.interruptCommand(scoped.devspaceWorkspaceId, result.sessionId!, scoped.profile.maxOutputTokens));
           throw new Error('Gateway verification timed out');
         }
         const value = await trace.phase('aggregationMs', () => ({ profile: profileName, exitCode: result.exitCode ?? -1, output: result.output.trimEnd() }));
@@ -251,20 +254,6 @@ function toolErrorResult(error: unknown) {
 }
 
 
-
-function buildVerifyCommand(profile: VerifyProfile): string {
-  if (profile.argv.length < 1 || profile.argv.length > 16) throw new Error('Invalid verify profile argv');
-  const safeArg = /^[A-Za-z0-9_./:\\+=@-]{1,512}$/;
-  if (!profile.argv.every((arg) => safeArg.test(arg))) throw new Error('Invalid verify profile argv');
-  const env = Object.entries(profile.env ?? {});
-  if (env.length > 16) throw new Error('Invalid verify profile env');
-  if (env.some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !safeArg.test(value) || /(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY|CREDENTIAL)/i.test(key))) throw new Error('Invalid verify profile env');
-  const scrub = process.platform === 'win32' ? 'set "DEVSPACE_OAUTH_OWNER_TOKEN="' : 'unset DEVSPACE_OAUTH_OWNER_TOKEN';
-  const profileEnv = process.platform === 'win32'
-    ? env.map(([key, value]) => 'set "' + key + '=' + value + '"').join(' && ')
-    : env.map(([key, value]) => key + '=' + value).join(' ');
-  return [scrub, profileEnv, profile.argv.join(' ')].filter(Boolean).join(process.platform === 'win32' ? ' && ' : ' ');
-}
 
 function parseSnapshot(output: string) {
   const normalized = output.replace(/\r\n/g, '\n').split('\n').map((line) => line.trimEnd()).join('\n');
