@@ -9,6 +9,7 @@ import { FilePatchController, type FilePatchBinding, type FilePatchInput } from 
 import type { PatchApprovalStore } from './patch-approval.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
+import type { AdmittedWorkspaceService } from './admitted-workspace.js';
 import { resolveVerifyProfile, type VerifyProfile } from './verify-profile.js';
 export type { VerifyProfile } from './verify-profile.js';
 import {
@@ -154,6 +155,35 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
 
 
 export type GatewayApi = ReturnType<typeof createGateway>;
+
+export interface BrowserAdmittedMcpContext {
+  callerContext: GatewayCallerContext;
+  workspaces: Pick<AdmittedWorkspaceService, 'open' | 'read'>;
+}
+
+export function createBrowserAdmittedMcpServer(
+  gateway: Pick<GatewayApi, 'health'>,
+  context: BrowserAdmittedMcpContext,
+): McpServer {
+  const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
+  server.registerTool('health', {
+    description: 'Check gateway and executor compatibility.',
+    annotations: { readOnlyHint: true },
+  }, async () => toolResult(await gateway.health()));
+  server.registerTool('workspace.open', {
+    description: 'Open one approved local workspace and return an opaque workspace id.',
+    inputSchema: { path: z.string().min(1) },
+    annotations: { readOnlyHint: true },
+  }, async ({ path }) => toolResult(await context.workspaces.open(context.callerContext, path)));
+  server.registerTool('file.read', {
+    description: 'Read bounded text from an opened workspace.',
+    inputSchema: { workspace_id: z.string().min(1), path: z.string().min(1) },
+    annotations: { readOnlyHint: true },
+  }, async ({ workspace_id, path }) => toolResult(await context.workspaces.read(
+    context.callerContext, workspace_id, path,
+  )));
+  return server;
+}
 
 export interface MutationMcpContext {
   callerContext: GatewayCallerContext;
