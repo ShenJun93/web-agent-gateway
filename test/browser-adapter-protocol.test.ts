@@ -33,10 +33,15 @@ test('browser adapter protocol allows only the three read-only browser tools', (
     version: 1, type: 'tool.call', requestId: rid, sessionId: sid,
     tool: 'mutation.preview', arguments: {},
   }));
-  assert.throws(() => parseBrowserAdapterRequest({
-    version: 1, type: 'tool.call', requestId: rid, sessionId: sid,
-    tool: 'file.read', arguments: { workspace_id: 'ws_123', path: 'note.txt', owner_id: 'nope' },
-  }));
+  for (const extra of [
+    { owner_id: 'owner' }, { session_id: 'session' }, { adapter_id: 'adapter' },
+    { provider: 'chatgpt' }, { client_id: 'client' }, { conversation_ref: 'conv' },
+  ]) {
+    assert.throws(() => parseBrowserAdapterRequest({
+      version: 1, type: 'tool.call', requestId: rid, sessionId: sid,
+      tool: 'file.read', arguments: { workspace_id: 'ws_123', path: 'note.txt', ...extra },
+    }));
+  }
 });
 
 test('browser adapter protocol is strict about version, ids and extra keys', () => {

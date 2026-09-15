@@ -53,7 +53,7 @@ export async function startDurableMutationBrowserSpike(options: {
     http = await startGatewayHttpServer({
       gateway: privateRuntime.gateway,
       bearerToken,
-      mutationContext: { caller: options.caller, coordinator },
+      mutationContext: { callerContext: options.caller, coordinator },
     });
     let closed = false;
     return {

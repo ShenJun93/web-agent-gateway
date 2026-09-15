@@ -7,7 +7,8 @@ import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import { FilePatchController, type FilePatchBinding, type FilePatchInput } from './file-patch.js';
 import type { PatchApprovalStore } from './patch-approval.js';
-import type { DurableMutationCoordinator, MutationCaller } from './durable-mutation.js';
+import type { GatewayCallerContext } from './caller-context.js';
+import type { DurableMutationCoordinator } from './durable-mutation.js';
 import {
   DEVSPACE_PROTOCOL_VERSION,
   DevspaceReadLimitError,
@@ -152,7 +153,7 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
 export type GatewayApi = ReturnType<typeof createGateway>;
 
 export interface MutationMcpContext {
-  caller: MutationCaller;
+  callerContext: GatewayCallerContext;
   coordinator: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
 }
 
@@ -203,7 +204,7 @@ export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new In
       inputSchema: previewInput,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     }, async ({ workspace_id, path, base_sha256, before, after }) => toolResult(await mutationContext.coordinator.preview(
-      mutationContext.caller,
+      mutationContext.callerContext,
       workspace_id,
       { path, baseSha256: base_sha256, before, after },
     )));
@@ -211,7 +212,7 @@ export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new In
       description: 'Read the durable state and bounded result metadata for one mutation.',
       inputSchema: z.object({ mutation_id: z.string().min(1) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, async ({ mutation_id }) => toolResult(mutationContext.coordinator.result(mutationContext.caller, mutation_id)));
+    }, async ({ mutation_id }) => toolResult(mutationContext.coordinator.result(mutationContext.callerContext, mutation_id)));
   }
   if (enableFilePatch) {
     const patchInput = z.object({
