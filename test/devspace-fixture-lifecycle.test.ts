@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { startPinnedDevspace } from './devspace-fixture.js';
+import { DEVSPACE_DEFAULT_STARTUP_TIMEOUT_MS, startPinnedDevspace } from './devspace-fixture.js';
+
+test('DevSpace fixture default startup timeout tolerates slow pinned startup', () => {
+  assert.equal(DEVSPACE_DEFAULT_STARTUP_TIMEOUT_MS, 30_000);
+});
 
 test('DevSpace fixture cleans up the child when readiness times out', async (t) => {
   let spawnedPid: number | undefined;

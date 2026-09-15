@@ -10,6 +10,7 @@ import { sanitizeDevspaceEnvironment } from '../src/environment-policy.js';
 const execFileAsync = promisify(execFile);
 
 export const DEVSPACE_TEST_OWNER_TOKEN = 'web-agent-gateway-test-owner-token-long-enough';
+export const DEVSPACE_DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 
 export interface DevspaceFixture {
   baseUrl: string;
@@ -81,7 +82,7 @@ export async function startPinnedDevspace(options: StartPinnedDevspaceOptions = 
   options.onSpawn?.(childPid);
   let accessToken: string;
   try {
-    await waitForServer(baseUrl, child, logs, options.startupTimeoutMs ?? 15_000);
+    await waitForServer(baseUrl, child, logs, options.startupTimeoutMs ?? DEVSPACE_DEFAULT_STARTUP_TIMEOUT_MS);
     accessToken = await issueAccessToken(baseUrl, ownerToken, resourceUrl);
   } catch (error) {
     await stopDevspaceProcess(child).catch(() => undefined);
