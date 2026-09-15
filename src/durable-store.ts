@@ -1,25 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import type { GatewayAuthority } from './caller-context.js';
 
 export type MutationState =
   | 'PENDING_APPROVAL' | 'QUEUED' | 'EXECUTING'
   | 'SUCCEEDED' | 'FAILED' | 'OUTCOME_UNKNOWN'
   | 'REJECTED' | 'EXPIRED';
 
-export interface MutationIdentity {
-  ownerId: string;
-  sessionId: string;
-  adapterId: string;
-}
-
-export interface WorkspaceRecord extends MutationIdentity {
+export interface WorkspaceRecord extends GatewayAuthority {
   workspaceId: string;
   canonicalRoot: string;
   backendKind: string;
   createdAt: number;
 }
 
-export interface MutationRecord extends MutationIdentity {
+export interface MutationRecord extends GatewayAuthority {
   mutationId: string;
   workspaceId: string;
   backendKind: string;
@@ -42,13 +37,13 @@ export interface MutationRecord extends MutationIdentity {
   errorClass?: string;
 }
 
-export interface CreateWorkspaceRecord extends MutationIdentity {
+export interface CreateWorkspaceRecord extends GatewayAuthority {
   canonicalRoot: string;
   backendKind: string;
   createdAt: number;
 }
 
-export interface CreateMutationRecord extends MutationIdentity {
+export interface CreateMutationRecord extends GatewayAuthority {
   workspaceId: string;
   backendKind: string;
   path: string;

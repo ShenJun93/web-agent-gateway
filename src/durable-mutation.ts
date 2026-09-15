@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { assertReadTarget, validateReadPath } from './path-policy.js';
+import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
-import type { MutationIdentity, MutationRecord, SqliteDurableStore } from './durable-store.js';
+import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
 
 const MAX_FRAGMENT_BYTES = 32 * 1024;
 const MAX_FILE_BYTES = 64 * 1024;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 
-export interface MutationCaller extends MutationIdentity {}
+export type MutationCaller = GatewayCallerContext;
 export interface DurableMutationInput {
   path: string;
   baseSha256: string;
@@ -66,7 +67,7 @@ export class DurableMutationCoordinator {
     this.admissionTtlMs = boundedTtl(options.admissionTtlMs ?? 60_000);
   }
 
-  async preview(caller: MutationCaller, workspaceId: string, input: DurableMutationInput): Promise<MutationPreview> {
+  async preview(caller: GatewayCallerContext, workspaceId: string, input: DurableMutationInput): Promise<MutationPreview> {
     const workspace = this.options.store.getWorkspace(workspaceId);
     if (!workspace) throw new Error('Unknown workspace_id');
     assertIdentity(caller, workspace);
@@ -95,7 +96,7 @@ export class DurableMutationCoordinator {
     return toPreview(record);
   }
 
-  result(caller: MutationCaller, mutationId: string): MutationResultView {
+  result(caller: GatewayCallerContext, mutationId: string): MutationResultView {
     const record = this.options.store.getMutation(mutationId);
     if (!record) throw new Error('Unknown mutation_id');
     assertIdentity(caller, record);
@@ -299,7 +300,7 @@ function lineCount(value: string): number {
   return value.split(/\r?\n/).length - (value.endsWith('\n') ? 1 : 0);
 }
 
-function assertIdentity(expected: MutationCaller, actual: MutationIdentity): void {
+function assertIdentity(expected: GatewayCallerContext, actual: GatewayAuthority): void {
   if (expected.ownerId !== actual.ownerId || expected.sessionId !== actual.sessionId || expected.adapterId !== actual.adapterId) {
     throw new Error('Gateway denied mutation identity');
   }

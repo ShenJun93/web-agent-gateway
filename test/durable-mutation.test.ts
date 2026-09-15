@@ -6,10 +6,11 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import type { FileMutationBackend } from '../src/file-mutation-backend.js';
-import { DurableMutationCoordinator, type MutationCaller } from '../src/durable-mutation.js';
+import { createGatewayCallerContext } from '../src/caller-context.js';
+import { DurableMutationCoordinator } from '../src/durable-mutation.js';
 
 const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
-const caller: MutationCaller = { ownerId: 'owner-a', sessionId: 'session-a', adapterId: 'adapter-a' };
+const caller = createGatewayCallerContext({ ownerId: 'owner-a', sessionId: 'session-a', adapterId: 'adapter-a' });
 
 async function setup(t: test.TestContext, nowRef = { value: 1_000 }) {
   const root = await mkdtemp(join(tmpdir(), 'wag-durable-mutation-'));
@@ -34,7 +35,13 @@ test('preview persists an immutable plan and result enforces caller identity', a
   assert.match(preview.mutationId, /^mut_/);
   assert.equal(store.getMutation(preview.mutationId)?.after, 'BETA');
   assert.equal(coordinator.result(caller, preview.mutationId).state, 'PENDING_APPROVAL');
-  assert.throws(() => coordinator.result({ ...caller, ownerId: 'other' }, preview.mutationId), /identity/);
+  for (const denied of [
+    createGatewayCallerContext({ ...caller, ownerId: 'owner-b' }),
+    createGatewayCallerContext({ ...caller, sessionId: 'session-b' }),
+    createGatewayCallerContext({ ...caller, adapterId: 'adapter-b' }),
+  ]) {
+    assert.throws(() => coordinator.result(denied, preview.mutationId), /identity/);
+  }
   assert.equal(await readFile(join(root, 'note.txt'), 'utf8'), original);
 });
 
