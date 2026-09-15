@@ -1,25 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import type { GatewayAuthority } from './caller-context.js';
 
 export type MutationState =
   | 'PENDING_APPROVAL' | 'QUEUED' | 'EXECUTING'
   | 'SUCCEEDED' | 'FAILED' | 'OUTCOME_UNKNOWN'
   | 'REJECTED' | 'EXPIRED';
 
-export interface MutationIdentity {
-  ownerId: string;
-  sessionId: string;
-  adapterId: string;
-}
+export type VerifyJobState = 'QUEUED' | 'EXECUTING' | 'SUCCEEDED' | 'FAILED' | 'OUTCOME_UNKNOWN';
+export type VerifyJobErrorClass =
+  | 'DISPATCH_DEADLINE_EXPIRED' | 'WORKSPACE_MISSING' | 'WORKSPACE_OWNERSHIP_MISMATCH'
+  | 'UNSUPPORTED_BACKEND' | 'PROFILE_MISSING' | 'PROFILE_PLAN_DRIFT'
+  | 'RESTART_RESUME_DISABLED' | 'RESTART_EXECUTION_UNVERIFIABLE'
+  | 'EXECUTION_TIMEOUT_UNCONFIRMED' | 'EXECUTION_PORT_ERROR_UNCONFIRMED';
 
-export interface WorkspaceRecord extends MutationIdentity {
+export interface WorkspaceRecord extends GatewayAuthority {
   workspaceId: string;
   canonicalRoot: string;
   backendKind: string;
   createdAt: number;
 }
 
-export interface MutationRecord extends MutationIdentity {
+export interface MutationRecord extends GatewayAuthority {
   mutationId: string;
   workspaceId: string;
   backendKind: string;
@@ -42,13 +44,13 @@ export interface MutationRecord extends MutationIdentity {
   errorClass?: string;
 }
 
-export interface CreateWorkspaceRecord extends MutationIdentity {
+export interface CreateWorkspaceRecord extends GatewayAuthority {
   canonicalRoot: string;
   backendKind: string;
   createdAt: number;
 }
 
-export interface CreateMutationRecord extends MutationIdentity {
+export interface CreateMutationRecord extends GatewayAuthority {
   workspaceId: string;
   backendKind: string;
   path: string;
@@ -72,6 +74,36 @@ export interface AuditEvent {
   path: string;
   additions: number;
   removals: number;
+}
+export interface CreateVerifyJobRecord extends GatewayAuthority {
+  workspaceId: string;
+  backendKind: string;
+  profileName: string;
+  planSha256: string;
+  createdAt: number;
+  dispatchDeadline: number;
+}
+
+export interface VerifyJobRecord extends CreateVerifyJobRecord {
+  jobId: string;
+  state: VerifyJobState;
+  attemptId?: string;
+  executionStartedAt?: number;
+  completedAt?: number;
+  exitCode?: number;
+  output?: string;
+  outputTruncated?: boolean;
+  errorClass?: VerifyJobErrorClass;
+}
+
+export interface VerifyJobEvent {
+  sequence: number;
+  jobId: string;
+  observedAt: number;
+  fromState?: VerifyJobState;
+  toState: VerifyJobState;
+  attemptId?: string;
+  errorClass?: VerifyJobErrorClass;
 }
 
 export class SqliteDurableStore {
@@ -134,6 +166,42 @@ export class SqliteDurableStore {
         FOREIGN KEY(mutation_id) REFERENCES mutations(mutation_id)
       );
       CREATE INDEX IF NOT EXISTS idx_mutations_state ON mutations(state, created_at);
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS verify_jobs (
+        job_id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        backend_kind TEXT NOT NULL,
+        profile_name TEXT NOT NULL,
+        plan_sha256 TEXT NOT NULL,
+        state TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        dispatch_deadline INTEGER NOT NULL,
+        attempt_id TEXT,
+        execution_started_at INTEGER,
+        completed_at INTEGER,
+        exit_code INTEGER,
+        output_text TEXT,
+        output_truncated INTEGER,
+        error_class TEXT,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_verify_jobs_state ON verify_jobs(state, created_at);
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS verify_job_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        observed_at INTEGER NOT NULL,
+        from_state TEXT,
+        to_state TEXT NOT NULL,
+        attempt_id TEXT,
+        error_class TEXT,
+        FOREIGN KEY(job_id) REFERENCES verify_jobs(job_id)
+      );
     `);
   }
 
@@ -246,6 +314,77 @@ export class SqliteDurableStore {
     return rows.map((row) => auditFromRow(row as Record<string, unknown>));
   }
 
+  createVerifyJob(input: CreateVerifyJobRecord): VerifyJobRecord {
+    const record: VerifyJobRecord = {
+      jobId: `job_${randomUUID()}`,
+      ...input,
+      state: 'QUEUED',
+    };
+    this.db.prepare(`INSERT INTO verify_jobs (
+      job_id, owner_id, session_id, adapter_id, workspace_id, backend_kind,
+      profile_name, plan_sha256, state, created_at, dispatch_deadline
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(record.jobId, record.ownerId, record.sessionId, record.adapterId,
+        record.workspaceId, record.backendKind, record.profileName, record.planSha256,
+        record.state, record.createdAt, record.dispatchDeadline);
+    this.appendVerifyJobEvent(record, undefined, 'QUEUED', record.createdAt);
+    return record;
+  }
+
+  getVerifyJob(jobId: string): VerifyJobRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM verify_jobs WHERE job_id = ?').get(jobId);
+    return row ? verifyJobFromRow(row as Record<string, unknown>) : undefined;
+  }
+
+  claimVerifyJob(jobId: string, now: number, attemptId: string): VerifyJobRecord | undefined {
+    return this.transitionVerifyJob(jobId, 'QUEUED', 'EXECUTING', now, () => {
+      const result = this.db.prepare(`UPDATE verify_jobs
+        SET state = 'EXECUTING', attempt_id = ?, execution_started_at = ?
+        WHERE job_id = ? AND state = 'QUEUED' AND dispatch_deadline > ?`)
+        .run(attemptId, now, jobId, now);
+      return Number(result.changes) === 1;
+    });
+  }
+
+  failQueuedVerifyJob(jobId: string, now: number, errorClass: VerifyJobErrorClass): boolean {
+    return Boolean(this.transitionVerifyJob(jobId, 'QUEUED', 'FAILED', now, () => {
+      const result = this.db.prepare(`UPDATE verify_jobs
+        SET state = 'FAILED', completed_at = ?, error_class = ?
+        WHERE job_id = ? AND state = 'QUEUED'`)
+        .run(now, errorClass, jobId);
+      return Number(result.changes) === 1;
+    }));
+  }
+
+  finishVerifyJob(
+    jobId: string,
+    state: Extract<VerifyJobState, 'SUCCEEDED' | 'OUTCOME_UNKNOWN'>,
+    now: number,
+    result?: { exitCode: number; output: string; outputTruncated: boolean },
+    errorClass?: VerifyJobErrorClass,
+  ): boolean {
+    if (state === 'SUCCEEDED' && result === undefined) throw new Error('Verify job success requires result');
+    if (state === 'OUTCOME_UNKNOWN' && errorClass === undefined) throw new Error('Verify job unknown outcome requires error class');
+    return Boolean(this.transitionVerifyJob(jobId, 'EXECUTING', state, now, () => {
+      const updated = this.db.prepare(`UPDATE verify_jobs
+        SET state = ?, completed_at = ?, exit_code = ?, output_text = ?, output_truncated = ?, error_class = ?
+        WHERE job_id = ? AND state = 'EXECUTING'`)
+        .run(state, now, result?.exitCode ?? null, result?.output ?? null,
+          result === undefined ? null : (result.outputTruncated ? 1 : 0), errorClass ?? null, jobId);
+      return Number(updated.changes) === 1;
+    }));
+  }
+
+  listRecoverableVerifyJobs(): VerifyJobRecord[] {
+    const rows = this.db.prepare("SELECT * FROM verify_jobs WHERE state IN ('QUEUED','EXECUTING') ORDER BY created_at").all();
+    return rows.map((row) => verifyJobFromRow(row as Record<string, unknown>));
+  }
+
+  listVerifyJobEvents(jobId: string): VerifyJobEvent[] {
+    const rows = this.db.prepare('SELECT * FROM verify_job_events WHERE job_id = ? ORDER BY sequence').all(jobId);
+    return rows.map((row) => verifyJobEventFromRow(row as Record<string, unknown>));
+  }
+
   close(): void {
     this.db.close();
   }
@@ -274,6 +413,31 @@ export class SqliteDurableStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(record.mutationId, observedAt, fromState ?? null, toState,
         record.fingerprint, record.path, record.additions, record.removals);
+  }
+  private transitionVerifyJob(jobId: string, fromState: VerifyJobState, toState: VerifyJobState, observedAt: number, apply: () => boolean): VerifyJobRecord | undefined {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const before = this.getVerifyJob(jobId);
+      if (!before || before.state !== fromState || !apply()) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      const after = this.getVerifyJob(jobId)!;
+      this.appendVerifyJobEvent(after, fromState, toState, observedAt);
+      this.db.exec('COMMIT');
+      return after;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  private appendVerifyJobEvent(record: VerifyJobRecord, fromState: VerifyJobState | undefined, toState: VerifyJobState, observedAt: number): void {
+    this.db.prepare(`INSERT INTO verify_job_events
+      (job_id, observed_at, from_state, to_state, attempt_id, error_class)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(record.jobId, observedAt, fromState ?? null, toState,
+        record.attemptId ?? null, record.errorClass ?? null);
   }
 }
 
@@ -314,5 +478,39 @@ function auditFromRow(row: Record<string, unknown>): AuditEvent {
     toState: String(row.to_state) as MutationState,
     fingerprint: String(row.fingerprint), path: String(row.path),
     additions: Number(row.additions), removals: Number(row.removals),
+  };
+}
+
+function verifyJobFromRow(row: Record<string, unknown>): VerifyJobRecord {
+  return {
+    jobId: String(row.job_id),
+    ownerId: String(row.owner_id),
+    sessionId: String(row.session_id),
+    adapterId: String(row.adapter_id),
+    workspaceId: String(row.workspace_id),
+    backendKind: String(row.backend_kind),
+    profileName: String(row.profile_name),
+    planSha256: String(row.plan_sha256),
+    state: String(row.state) as VerifyJobState,
+    createdAt: Number(row.created_at),
+    dispatchDeadline: Number(row.dispatch_deadline),
+    ...(row.attempt_id === null ? {} : { attemptId: String(row.attempt_id) }),
+    ...(row.execution_started_at === null ? {} : { executionStartedAt: Number(row.execution_started_at) }),
+    ...(row.completed_at === null ? {} : { completedAt: Number(row.completed_at) }),
+    ...(row.exit_code === null ? {} : { exitCode: Number(row.exit_code) }),
+    ...(row.output_text === null ? {} : { output: String(row.output_text) }),
+    ...(row.output_truncated === null ? {} : { outputTruncated: Number(row.output_truncated) === 1 }),
+    ...(row.error_class === null ? {} : { errorClass: String(row.error_class) as VerifyJobErrorClass }),
+  };
+}
+function verifyJobEventFromRow(row: Record<string, unknown>): VerifyJobEvent {
+  return {
+    sequence: Number(row.sequence),
+    jobId: String(row.job_id),
+    observedAt: Number(row.observed_at),
+    ...(row.from_state === null ? {} : { fromState: String(row.from_state) as VerifyJobState }),
+    toState: String(row.to_state) as VerifyJobState,
+    ...(row.attempt_id === null ? {} : { attemptId: String(row.attempt_id) }),
+    ...(row.error_class === null ? {} : { errorClass: String(row.error_class) as VerifyJobErrorClass }),
   };
 }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
 
@@ -67,15 +68,21 @@ test('opt-in durable mutation MCP exposes preview/result without remote approval
   t.after(() => rm(root, { recursive: true, force: true }));
   const original = 'alpha\nbeta\n';
   await writeFile(join(root, 'note.txt'), original);
-  const caller = { ownerId: 'owner_test', sessionId: 'session_test', adapterId: 'adapter_test' };
+  const callerContext = createGatewayCallerContext({
+    ownerId: 'owner_test', sessionId: 'session_test', adapterId: 'adapter_test',
+    correlation: { provider: 'chatgpt', clientId: 'test-client' },
+  });
   const store = new SqliteDurableStore(':memory:');
   t.after(() => store.close());
-  const workspace = store.openWorkspaceRecord({ ...caller, canonicalRoot: root, backendKind: 'fake', createdAt: 1 });
+  const workspace = store.openWorkspaceRecord({
+    ownerId: callerContext.ownerId, sessionId: callerContext.sessionId, adapterId: callerContext.adapterId,
+    canonicalRoot: root, backendKind: 'fake', createdAt: 1,
+  });
   const backend = { kind: 'fake', readExact: async () => original, updateExisting: async () => undefined };
   const coordinator = new DurableMutationCoordinator({ store, backends: [backend] });
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
   const gateway = createGateway({ executor, allowedRoots: [root] });
-  const server = createGatewayMcpServer(gateway, { mutationContext: { caller, coordinator } });
+  const server = createGatewayMcpServer(gateway, { mutationContext: { callerContext, coordinator } });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'durable-mutation-test', version: '1.0.0' }, { capabilities: {} });
   await server.connect(serverTransport);
@@ -92,11 +99,24 @@ test('opt-in durable mutation MCP exposes preview/result without remote approval
   });
   assert.equal(resultTool?.annotations?.readOnlyHint, true);
   const schemas = JSON.stringify([previewTool?.inputSchema, resultTool?.inputSchema]);
-  for (const forbidden of ['approval_id', 'phase', 'patch', 'canonical_root', 'owner_id', 'session_id', 'adapter_id']) {
+  for (const forbidden of [
+    'approval_id', 'phase', 'patch', 'canonical_root',
+    'owner_id', 'session_id', 'adapter_id', 'ownerId', 'sessionId', 'adapterId',
+    'provider', 'client_id', 'clientId', 'conversation_ref', 'conversationRef',
+  ]) {
     assert.doesNotMatch(schemas, new RegExp(`"${forbidden}"`), `durable mutation schema must omit ${forbidden}`);
   }
 
   const baseSha256 = createHash('sha256').update(original, 'utf8').digest('hex');
+  const injectedIdentity = await client.callTool({
+    name: 'mutation.preview',
+    arguments: {
+      workspace_id: workspace.workspaceId, path: 'note.txt', base_sha256: baseSha256,
+      before: 'beta', after: 'BETA', owner_id: 'attacker-selected-owner',
+    },
+  });
+  assert.equal(injectedIdentity.isError, true);
+  assert.match(JSON.stringify(injectedIdentity.content), /Invalid arguments for tool mutation\.preview/);
   const preview = await client.callTool({ name: 'mutation.preview', arguments: {
     workspace_id: workspace.workspaceId, path: 'note.txt', base_sha256: baseSha256, before: 'beta', after: 'BETA',
   } });

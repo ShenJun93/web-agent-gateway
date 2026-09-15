@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { startGatewayHttpServer } from '../src/http-server.js';
 import { createGateway } from '../src/server.js';
@@ -55,8 +56,11 @@ test('HTTP MCP forwards opt-in durable mutation context without changing default
     executor: new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' }),
     allowedRoots: [process.cwd()],
   });
+  const callerContext = createGatewayCallerContext({
+    ownerId: 'owner_http', sessionId: 'session_http', adapterId: 'adapter_http',
+  });
   const mutationContext = {
-    caller: { ownerId: 'owner_http', sessionId: 'session_http', adapterId: 'adapter_http' },
+    callerContext,
     coordinator: {
       preview: async () => { throw new Error('not called'); },
       result: () => { throw new Error('not called'); },

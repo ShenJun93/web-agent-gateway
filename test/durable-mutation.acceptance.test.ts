@@ -8,7 +8,8 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { DurableMutationCoordinator, type MutationCaller } from '../src/durable-mutation.js';
+import { createGatewayCallerContext } from '../src/caller-context.js';
+import { DurableMutationCoordinator } from '../src/durable-mutation.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import type { FileMutationBackend } from '../src/file-mutation-backend.js';
 import { startDurableMutationBrowserSpike } from '../scripts/durable-mutation-browser-spike.js';
@@ -16,7 +17,11 @@ import { DEVSPACE_TEST_OWNER_TOKEN, startPinnedDevspace } from './devspace-fixtu
 
 const execFileAsync = promisify(execFile);
 const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
-const caller: MutationCaller = { ownerId: 'owner_accept', sessionId: 'session_accept', adapterId: 'browser_accept' };
+const caller = createGatewayCallerContext({
+  ownerId: 'owner_accept',
+  sessionId: 'session_accept',
+  adapterId: 'browser_accept',
+});
 const MCP_TOKEN = 'durable-acceptance-token-0123456789abcdef0123456789abcdef';
 
 function cookiePair(value: string | null): string {
