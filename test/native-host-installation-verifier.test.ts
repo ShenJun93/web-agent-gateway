@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -23,7 +23,6 @@ import {
 import {
   BROWSER_ADAPTER_EXTENSION_ID,
   NATIVE_HOST_APPLICATION_NAME,
-  NATIVE_HOST_FILENAME,
 } from '../src/browser-adapter/native-host-distribution.js';
 import { createNativeHostManifest } from '../src/browser-adapter/native-host-manifest.js';
 
@@ -65,44 +64,39 @@ function validReceipt() {
   });
 }
 
-let acceptedBuildRoot: string | undefined;
-let acceptedExecutable: string | undefined;
-let acceptedExecutablePromise: Promise<string> | undefined;
+const syntheticExecutableBytes = Buffer.from('WAG native host verifier synthetic fixture v1\n', 'utf8');
+const syntheticExecutableSha256 = sha256(syntheticExecutableBytes);
 
-async function ensureAcceptedExecutable(): Promise<string> {
-  if (acceptedExecutable) return acceptedExecutable;
-  acceptedExecutablePromise ??= (async () => {
-    acceptedBuildRoot = await mkdtemp(join(tmpdir(), 'wag-native-install-verifier-bin-'));
-    const tsxCli = fileURLToPath(import.meta.resolve('tsx/cli'));
-    await execFileAsync(process.execPath, [tsxCli, 'scripts/build-native-host.ts', '--output', acceptedBuildRoot], { cwd: process.cwd() });
-    acceptedExecutable = join(acceptedBuildRoot, NATIVE_HOST_FILENAME);
-    assert.equal(sha256(await readFile(acceptedExecutable)), NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256);
-    return acceptedExecutable;
-  })();
-  return acceptedExecutablePromise;
+async function createFixtureVerifier(t: TestContext): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'wag-native-install-verifier-script-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = await readFile(verifierPath, 'utf8');
+  const needle = `$expectedExecutableSha256 = '${NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256}'`;
+  assert.equal(source.split(needle).length - 1, 1, 'committed verifier must contain one accepted executable hash pin');
+  const fixturePath = join(root, 'verify-native-host-installation.ps1');
+  await writeFile(fixturePath, source.replace(needle, `$expectedExecutableSha256 = '${syntheticExecutableSha256}'`), 'utf8');
+  return fixturePath;
 }
-
-test.after(async () => {
-  if (acceptedBuildRoot) await rm(acceptedBuildRoot, { recursive: true, force: true });
-});
 
 interface PreparedFixture {
   localAppData: string;
   paths: ReturnType<typeof buildNativeHostInstallPaths>;
   manifest: Record<string, unknown>;
   receipt: Record<string, unknown>;
+  verifierPath: string;
+  executableSha256: string;
 }
 
 async function createPreparedFixture(
   t: TestContext,
   localAppDataOverride?: string,
 ): Promise<PreparedFixture> {
-  const fixtureExecutable = await ensureAcceptedExecutable();
+  const fixtureVerifierPath = await createFixtureVerifier(t);
   const localAppData = localAppDataOverride ?? await mkdtemp(join(tmpdir(), 'wag-native-install-localapp-'));
   if (!localAppDataOverride) t.after(() => rm(localAppData, { recursive: true, force: true }));
   const paths = buildNativeHostInstallPaths(localAppData, NATIVE_HOST_ACCEPTED_SOURCE_SHA);
   await mkdir(paths.root, { recursive: true });
-  await copyFile(fixtureExecutable, paths.executable);
+  await writeFile(paths.executable, syntheticExecutableBytes);
   const manifest = createNativeHostManifest({
     executablePath: paths.executable,
     extensionId: BROWSER_ADAPTER_EXTENSION_ID,
@@ -115,7 +109,7 @@ async function createPreparedFixture(
     sourceSha: NATIVE_HOST_ACCEPTED_SOURCE_SHA,
     workflowRunId: NATIVE_HOST_ACCEPTED_WORKFLOW_RUN_ID,
     runAttempt: NATIVE_HOST_ACCEPTED_RUN_ATTEMPT,
-    executableSha256: NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256,
+    executableSha256: syntheticExecutableSha256,
     nativeApplicationName: NATIVE_HOST_APPLICATION_NAME,
     extensionId: BROWSER_ADAPTER_EXTENSION_ID,
     executablePath: paths.executable,
@@ -126,7 +120,7 @@ async function createPreparedFixture(
   };
   await writeFile(paths.receipt, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
   await writeFile(paths.registrationArtifact, registrationArtifact(paths.manifest));
-  return { localAppData, paths, manifest, receipt };
+  return { localAppData, paths, manifest, receipt, verifierPath: fixtureVerifierPath, executableSha256: syntheticExecutableSha256 };
 }
 
 async function writeReceipt(fixture: PreparedFixture, receipt: Record<string, unknown>): Promise<void> {
@@ -175,7 +169,7 @@ async function runVerifier(
       WAG_EXPECTED_REGISTRY_PATH: expectedRegistryPath,
       WAG_TEST_REGISTRATION_MODE: mode,
       WAG_TEST_REGISTRATION_VALUE: fixture.paths.manifest,
-      WAG_VERIFIER: verifierPath,
+      WAG_VERIFIER: fixture.verifierPath,
       WAG_RECEIPT: fixture.paths.receipt,
     },
   });
@@ -216,6 +210,14 @@ test('cleanup decisions fail closed on registration or owned-file drift', () => 
   );
   assert.equal(decideNativeHostOwnedCleanup(null, receipt, false), 'BLOCK_DRIFT');
   assert.equal(decideNativeHostOwnedCleanup(receipt.manifestPath, receipt, false), 'BLOCK_DRIFT');
+});
+
+test('committed verifier stays pinned to the historical accepted distribution identity', async () => {
+  const source = await readFile(verifierPath, 'utf8');
+  const sourcePin = `$expectedSourceSha = '${NATIVE_HOST_ACCEPTED_SOURCE_SHA}'`;
+  const executablePin = `$expectedExecutableSha256 = '${NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256}'`;
+  assert.equal(source.split(sourcePin).length - 1, 1);
+  assert.equal(source.split(executablePin).length - 1, 1);
 });
 
 test('PowerShell verifier AST stays inside the positive read-only capability allowlist', {
@@ -266,7 +268,7 @@ test('Windows verifier rejects a valid prepared installation under a 32-bit Powe
   );
   await assert.rejects(
     () => execFileAsync(powershell32, [
-      '-NoLogo', '-NoProfile', '-NonInteractive', '-File', verifierPath,
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-File', fixture.verifierPath,
       '-ReceiptPath', fixture.paths.receipt,
     ], { env: { ...process.env, LOCALAPPDATA: fixture.localAppData } }),
     (error: unknown) => {
@@ -288,7 +290,7 @@ test('Windows verifier reports hermetic ABSENT, MATCH, and DRIFT classifications
     assert.equal(result.stdout.trim().split(/\r?\n/).length, 1);
     assert.deepEqual(JSON.parse(result.stdout), {
       sourceSha: NATIVE_HOST_ACCEPTED_SOURCE_SHA,
-      executableSha256: NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256,
+      executableSha256: fixture.executableSha256,
       manifestSha256: fixture.receipt.manifestSha256,
       registration: mode,
     });
