@@ -147,3 +147,98 @@ Post-attempt committed read-only installation verification remained exact: regis
 `SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
 
 `BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host attempt 7
+
+Attempt 7 used committed provider hardening `6bf100eb47dffa7088532bc49bb1668b9e784956`. Before browser control, canonical WAG state and both local handoffs were fresh-read. The committed installation verifier returned registration `MATCH`, executable SHA-256 `0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf`, and manifest SHA-256 `706a38b97b51102f886dcbb94de76e62bb7243d664dca65deaae3c8bcd5aa3ca`.
+
+The mandatory first browser-control command, `playwright-cli list --all --json`, completed successfully. Only unrelated worker `cgpt-n09-provenance-0913` was present and it was left untouched. The owned worker was `wag-task10-0914-a7` with brand-new profile/output paths and an `OWNER.json` binding the exact session/profile.
+
+A disposable exact-pinned DevSpace and read-only WAG browser runtime started successfully against a task-owned fixture containing `note.txt` with `alpha`, `beta`, `gamma`. Playwright-bundled Chromium opened headed with only the committed WAG extension from the `6bf100e` worktree. Loading `chrome-extension://nnhhhppkpogkedpjnijeagcbfjaoogec/sidepanel.html` proved the runtime extension identity and rendered the WAG Browser Adapter UI; pending calls were initially empty and native connection remained lazy/disconnected before execution.
+ChatGPT loaded normally and the anonymous composer was available. The cookie dialog was closed through a snapshot/ref interaction. The next browser-control action attempted to fill the composer with the canonical `workspace.open` prompt. The OpenAI safety layer blocked that `fill` command before execution. Under Task 10 step 6, the attempt stopped fail-closed; the prompt was not retried, reformulated, injected through page script/eval, or routed through direct MCP/native calls.
+
+Exact-owned cleanup then succeeded. Fresh global inventory correlated `wag-task10-0914-a7` with its exact profile, the owned browser was closed, the disposable runtime stopped through its owned stop marker, and a final inventory showed only unrelated `cgpt-n09-provenance-0913`. The exact owned a7 profile/output directories were deleted. Post-run installation verification again returned the same registration `MATCH` and receipt-bound executable/manifest hashes.
+
+No ChatGPT-produced WAG call reached the extension queue, so no supported-host `workspace.open`, `file.read`, reconnect, or same-workspace evidence is claimed.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host attempt 8
+
+Attempt 8 started as a fresh read-only Task 10 acceptance attempt from branch HEAD `5007437fef2b42ebe1ee35ce844ef108ab1bb1c7`, whose provider code remains committed at `6bf100eb47dffa7088532bc49bb1668b9e784956`. Canonical Git state, `AGENTS.md`, `README.md`, the browser-adapter spec, ADR-0013/0014, the Task 10 plan, both external handoffs, and the latest receipt were fresh-read before any owned browser-resource allocation.
+
+The committed native-host installation verifier returned exact registration `MATCH`, executable SHA-256 `0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf`, and manifest SHA-256 `706a38b97b51102f886dcbb94de76e62bb7243d664dca65deaae3c8bcd5aa3ca`. The canonical Playwright policy was then fresh-read immediately before browser control.
+
+The mandatory first browser-control command, `playwright-cli list --all --json`, was blocked by the OpenAI safety layer before execution. Per Task 10 step 2/6 and the canonical browser policy, Attempt 8 stopped fail-closed immediately. The blocked inventory was not retried, reformulated, or obtained through another browser-control route.
+
+Because inventory ownership could not be established, `wag-task10-0914-a8` was never allocated or opened. Its intended profile and output paths remained absent, no browser or disposable WAG runtime was started, no provider prompt was sent, and no direct MCP/native shortcut was used.
+
+A fresh post-block committed installation verification again returned the same exact registration `MATCH` and receipt-bound executable/manifest hashes.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-installation supported-host attempt 9
+
+Attempt 9 started as a fresh Task 10 run from evidence HEAD `af54a962709681fa34faf4bc922f72037934eb5a`. Canonical Git state and both external handoffs were fresh-read. The committed installation verifier returned registration `MATCH` with the accepted executable and manifest hashes before browser automation.
+
+The mandatory `playwright-cli list --all --json` preflight succeeded and showed only unrelated worker `cgpt-n09-provenance-0913`; it was not touched. A brand-new owned worker `wag-task10-0915-a9` was allocated with exact profile/output ownership, and a disposable exact-pinned DevSpace plus read-only WAG runtime started successfully against a fixture whose `note.txt` contained `alpha`, `beta`, `gamma`.
+
+Playwright-bundled Chromium loaded only the committed WAG extension. ChatGPT loaded normally. A real ChatGPT response produced one completed rendered `wag-tool` code block for `workspace.open`, and the extension sidepanel queued exactly that call. This is live evidence that provider hardening commit `6bf100eb47dffa7088532bc49bb1668b9e784956` observes the current completed ChatGPT turn shape correctly.
+
+The extension-owned `Run` action consumed the pending call and initiated Native Messaging, but no bounded WAG result appeared. After a short wait, runtime-owned process observation showed no surviving `wag-native-host.exe`. Reloading the sidepanel produced fresh state `Native host disconnected` with no pending call and `Last result: None`. No direct native/MCP call was used as substitute evidence.
+
+Attempt 9 therefore stopped fail-closed at the installed native-host launch/response boundary before any accepted `workspace.open` result, `file.read`, or reconnect evidence. Exact-owned cleanup succeeded: the browser closed, the disposable runtime returned `status:"stopped"`, final global Playwright inventory was empty, and the exact a9 profile/output directories were deleted. The unrelated worker had disappeared independently by final inventory; no cleanup action targeted it.
+
+Post-run installation verification again returned exact registration `MATCH` and the same receipt-bound executable/manifest hashes.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = BLOCKED_FAIL_CLOSED`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`
+
+## Post-attempt 9 Native Messaging launch diagnostic
+
+A bounded diagnostic investigated why Attempt 9 consumed a real queued `workspace.open` request but returned no WAG result. Chromium was relaunched in an exact-owned disposable profile with native-messaging logging enabled; this diagnostic is not Task 10 acceptance evidence and did not substitute a direct local call for the supported-host path.
+
+Chromium logged the exact launch failure: `COMSPEC is not set`, followed by `Error launching process ...\wag-native-host.exe` and `Failed to start native messaging host.` The Desktop Commander execution environment independently reported `COMSPEC = null` while `SystemRoot` and `WINDIR` were present.
+
+The installed executable itself was not stale or broken: native-host/local-link/build sources had no diff between installed source SHA `fd60c602dfe84ddf05b7e1575e77f45eb2c56b9d` and current main `f0be5ac4270eeca36ea1f444e0ad3d47e50ecbb3`, and the exact installed executable remained alive when launched manually against the same disposable discovery runtime.
+
+The launcher fix was verified without changing user or machine environment. `COMSPEC` was set only in the process executing `playwright-cli open`, to `$env:SystemRoot\System32\cmd.exe`, so Chromium inherited the existing parent environment plus that missing Windows variable. No partial `browser.launchOptions.env` object was used.
+
+With that process-local environment, the same Playwright-bundled Chromium, committed extension, installed native host, and disposable WAG runtime completed a real ChatGPT `health` flow through extension-owned `Run`. The bounded result reported `status:"ok"` and `executor:"devspace"`. A separate extension-owned diagnostic `hello` also returned protocol version 1 from the installed host.
+
+Current ChatGPT DOM remained compatible with the committed provider hardening: the completed assistant turn used `LI[data-message-role="assistant"][data-message-complete]` and the rendered block used `CODE.language-wag-tool`.
+
+All exact diagnostic browser/profile/output/runtime resources were cleaned up after verification. These diagnostics establish the Attempt 9 root cause and launcher prerequisite only; `SUPPORTED_BROWSER_HOST` remains fail-closed until a fresh Task 10 run completes `workspace.open`, `file.read`, reconnect, and the post-run installation verifier.
+
+## Post-installation supported-host attempt 10
+
+Attempt 10 completed the authorized read-only Task 10 acceptance path on 2026-09-15. Canonical Git state and both external handoffs were fresh-read first, and the committed installation verifier returned exact registration `MATCH` with executable SHA-256 `0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf` and manifest SHA-256 `706a38b97b51102f886dcbb94de76e62bb7243d664dca65deaae3c8bcd5aa3ca`.
+
+The canonical Playwright policy was fresh-read immediately before browser control. The mandatory first browser-control command, `playwright-cli list --all --json`, completed successfully and ownership was established for the exact disposable worker `wag-task10-0915-a10`, profile `E:\AI-BROWSER\profiles\wag-task10-0915-a10`, and matching output directory. Its `OWNER.json` bound that session/profile to Task 10 Attempt 10.
+
+A disposable exact-pinned read-only WAG/DevSpace runtime served a fixture whose `note.txt` contained `alpha`, `beta`, `gamma`. Playwright-bundled Chromium loaded only the committed WAG extension, whose runtime id was `nnhhhppkpogkedpjnijeagcbfjaoogec`. `COMSPEC` was set only on each exact `playwright-cli open` process to `$env:SystemRoot\System32\cmd.exe`; no persistent/global environment mutation and no partial `browser.launchOptions.env` override was used.
+
+A real ChatGPT response produced `workspace.open`; the extension-owned sidepanel executed it through Chromium Native Messaging, the exact installed native host, and WAG, returning opaque workspace id `ws_cb3a4e1c-9fb1-4c9a-b167-33c797087cc2`. For the controlled read gate, a fresh ChatGPT conversation produced exactly one pending `file.read` request for that same opaque id and `note.txt`. Extension-owned `Run` returned exactly `alpha\nbeta\ngamma`.
+
+The reconnect requirement then closed only `wag-task10-0915-a10`; fresh global inventory showed no remaining Playwright browser/server worker. The WAG runtime remained alive while the exact same proven-owned profile was reopened with process-local `COMSPEC`. Before the reconnect `Run`, the sidepanel showed `Native host disconnected`; executing one newly queued real ChatGPT `file.read` created a new Native Messaging connection, changed the sidepanel to `Native host connected`, and the same workspace id again returned exactly `alpha\nbeta\ngamma`.
+
+The committed installation verifier after the acceptance run again returned exact registration `MATCH` with the same executable and manifest hashes. No direct MCP/native call was used as acceptance evidence and no discovery bearer was exposed.
+
+Exact-owned cleanup then closed the browser, terminated the provenance-verified Attempt 10 WAG runtime and its child DevSpace, confirmed both owned listener ports were gone, and removed only the Attempt 10 discovery file, profile, output directory, and temporary runtime artifact. Unrelated browser profiles/artifacts were not targeted.
+
+`NATIVE_HOST_INSTALLATION = PASS`
+
+`SUPPORTED_BROWSER_HOST = PASS`
+
+`BROWSER_MUTATION_ENABLEMENT = NOT_AUTHORIZED`

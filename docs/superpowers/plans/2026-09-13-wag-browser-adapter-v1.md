@@ -134,14 +134,14 @@
 - Create: `test/chatgpt-provider.test.ts`
 
 **Interfaces:**
-- Produces: `parseChatGptToolCall(text): ParsedProviderCall | undefined` for the exact WAG JSON function-call format.
-- Content script sends only bounded `{ type: 'provider.observed_text', text, conversationHint }` messages; it never sends native messages directly.
+- Produces: strict `parseChatGptToolCall(text)` plus `parseChatGptObservation(value)` for rendered ChatGPT observations; the strict parser remains authoritative for the exact WAG JSON function-call format.
+- Content script sends only bounded `{ type: 'provider.observed_text', text, codeBlocks, conversationHint }` observations. `codeBlocks` contains at most two non-empty rendered code blocks with bounded language/text metadata so the service worker can preserve the exact-one-block decision after Markdown rendering; it never sends native messages directly.
 
 - [ ] **Step 1: Write failing parser tests** from saved assistant-text fixtures. Accept one complete structured call for `health`, `workspace.open`, or `file.read`; reject incomplete blocks, duplicate parameters, unknown tools, malformed JSON, nested/oversized values, and calls mixed with conflicting tool names.
 - [ ] **Step 2: Run `npx tsx --test test/chatgpt-provider.test.ts`; verify RED.**
 - [ ] **Step 3: Implement the parser as a pure browser ESM module inside the extension package.** Node tests import this exact runtime module and cross-check each accepted call by constructing trusted request/session ids and passing the resulting envelope through Task 1 `parseBrowserAdapterRequest`; the native host remains the authoritative protocol validator.
-- [ ] **Step 4: Implement the content script as a bounded observer.** Inspect only ChatGPT assistant-message containers, forward newly observed text once per DOM node/version, cap each observation below the protocol limit, and derive only a non-authoritative conversation hint from the page URL.
-- [ ] **Step 5: Wire ChatGPT observations into `service-worker.js`.** Validate `MessageSender.url` and `sender.tab.id`, parse observed text with `parseChatGptToolCall`, then queue only a validated read-only request in the extension core.
+- [ ] **Step 4: Implement the content script as a bounded observer.** When the live ChatGPT schema `[data-message-role="assistant"]` exists, fail closed to that schema and accept only turns whose `data-message-complete` value is empty or `true`; missing, `false`, or any other value must not queue and must not fall through to compatibility selectors. Retain the older assistant selectors only when the live schema is absent, observe the completion attribute so streaming turns are not queued early, forward each completed DOM node/version once, cap each observation below the protocol limit, and derive only a non-authoritative conversation hint from the page URL.
+- [ ] **Step 5: Wire ChatGPT observations into `service-worker.js`.** Validate `MessageSender.url` and `sender.tab.id`, normalize rendered observations with `parseChatGptObservation` and delegate accepted calls to strict `parseChatGptToolCall`, then queue only a validated read-only request in the extension core.
 - [ ] **Step 6: Keep v1 result delivery extension-owned.** The side panel renders the bounded tool result for the user; v1 does not auto-submit text into the ChatGPT composer. Chaining `workspace.open -> file.read` in acceptance may use an explicit user relay of the returned opaque workspace id.
 - [ ] **Step 7: Run provider, extension-core, and protocol tests; verify GREEN.**
 - [ ] **Step 8: Commit `feat: add chatgpt browser provider adapter`.**
