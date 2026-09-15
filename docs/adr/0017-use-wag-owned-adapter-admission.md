@@ -96,3 +96,17 @@ The design intentionally accepts that the current Windows discovery/bootstrap to
 This ADR does not authorize durable verify projection, mutation projection, public `job.*`, cancellation, process reattachment, arbitrary commands, PTY, Git writes, browser automation/mutation, provider account identity, cross-machine identity, browser-restart session recovery, SDK migration, or Remote Desktop Commander replacement.
 
 Changing identity provenance, browser capability profile, workspace ownership semantics, credential-class separation, or the Windows bootstrap trust assumption requires a new reviewed decision and acceptance evidence.
+
+## Candidate native-host refresh amendment — 2026-09-16
+
+Full candidate verification exposed a direct dependency that the original design treated as avoidable: bind-time admission changes the native-host executable bytes. Research receipt: `docs/research/2026-09-16-trusted-adapter-admission-native-host-refresh.md`.
+
+The existing `NATIVE_HOST_DISTRIBUTION = PASS` and `NATIVE_HOST_INSTALLATION = PASS` receipts remain historical facts for source `fd60c602dfe84ddf05b7e1575e77f45eb2c56b9d`. Admission v1 does not rewrite or silently supersede them.
+
+For an admission candidate whose native-host bundle inputs differ from the last accepted distribution, use `CURRENT_CANDIDATE_NATIVE_HOST_DISTRIBUTION = REACCEPT_REQUIRED`. A local or feature-branch executable hash is evidence only and cannot become accepted distribution identity.
+
+Source implementation may be accepted as `TRUSTED_ADAPTER_ADMISSION_V1 = IMPLEMENTED_AWAITING_NATIVE_HOST_REFRESH` after full source/security verification and independent review. Final `TRUSTED_ADAPTER_ADMISSION_V1 = PASS` additionally requires a successor exact-main distribution receipt, successor installation verification after separately authorized registration, and supported-browser-host reacceptance against that installed binary.
+
+Repository regression tests may test installation-verifier behavior with hermetic synthetic fixtures. They must not modify the committed production verifier or accepted installation constants merely to make current-source builds match historical artifact identity.
+
+This amendment does not authorize registry mutation, host replacement, browser mutation, or any broader capability. Distribution, installation, and supported-host gates remain fail-closed and sequential.

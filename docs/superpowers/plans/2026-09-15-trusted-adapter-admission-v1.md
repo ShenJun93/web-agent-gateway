@@ -594,22 +594,53 @@ Give the reviewer only `6d1a9c9...$CANDIDATE_SHA`, ADR-0017, the design spec, an
 
 Acceptance condition: zero Critical and zero Important findings. Minor findings may be retained only when they do not weaken a locked invariant and are recorded in the receipt.
 
-- [ ] **Step 6: Create acceptance receipt from observed evidence only**
+- [ ] **Steps 6-7: Superseded by the 2026-09-16 Task 9 amendment below**
 
-Write `docs/benchmarks/2026-09-15-trusted-adapter-admission-v1.md` containing exact design base, exact candidate SHA, focused/full gate counts, build/typecheck/Business/diff results, diff-scope audit, independent-review outcome, Windows/native-host acceptance evidence, and every retained Minor finding.
+Do not create or commit a final PASS receipt at this point. Continue with Task 9A-9D below.
 
-The receipt must explicitly record that Windows discovery/bootstrap is same-user trust only, Browser Adapter v1 remains exactly three read-only tools, durable verify/mutation/process/Git/browser mutation remain unauthorized, and no SDK/dependency upgrade occurred.
+### Task 9 Amendment — Split Source Acceptance from Native-Host Reacceptance (2026-09-16)
 
-- [ ] **Step 7: Self-check and commit the receipt only**
+This amendment supersedes original Task 9 Steps 3, 6, and 7 wherever they conflict. Research: `docs/research/2026-09-16-trusted-adapter-admission-native-host-refresh.md`.
 
-Stage only the receipt. Run `git diff --cached --check`, inspect `git diff --cached --name-status`, and verify the last non-empty line is exactly:
+Historical distribution and installation receipts remain PASS for their exact artifact. The admission candidate must not overwrite those identities with a local build hash.
 
-```text
-TRUSTED_ADAPTER_ADMISSION_V1 = PASS
-```
+#### Task 9A: Correct regression fixtures
 
-Commit:
+Scope: update the installation-verifier test fixture only. Production acceptance constants and verifier behavior remain unchanged.
 
-```powershell
-git commit -m "bench: verify trusted adapter admission v1"
-```
+The previously observed full-suite failure is the RED evidence for this correction.
+
+- Replace the current-source executable rebuild used by execution fixtures with deterministic synthetic executable bytes in a test-owned temporary directory.
+- Create a test-owned temporary verifier copy that differs only in the expected executable hash for that synthetic fixture; require exactly one replacement.
+- Keep static and AST checks pointed at the committed verifier, not the temporary copy.
+- Add a static assertion that the committed verifier still pins the same historical source/hash as the production installation constants.
+- Re-run `test/native-host-installation-verifier.test.ts`; all verifier behavior tests must pass without changing production acceptance identity.
+
+#### Task 9B: Re-freeze and complete source acceptance
+
+After the fixture correction commit, freeze a new source candidate SHA. Re-run the focused admission/security gate, full repository tests, typecheck, build, Business acceptance, and diff-check on that exact SHA.
+
+Run the authority/surface audit and exact-diff independent review. Acceptance still requires zero Critical and zero Important findings.
+
+Create `docs/benchmarks/2026-09-16-trusted-adapter-admission-v1-source.md` from observed evidence only. It must state that the candidate still requires native-host distribution/install/host reacceptance and must not use the final PASS label.
+
+The source-phase receipt ends with `TRUSTED_ADAPTER_ADMISSION_V1 = IMPLEMENTED_AWAITING_NATIVE_HOST_REFRESH` and records the candidate distribution state as reacceptance-required.
+
+#### Task 9C: Post-merge successor distribution checkpoint
+
+This task starts only after explicit merge/push authority exists and the source-phase branch has been integrated to `main`.
+
+- Observe the exact `main` merge SHA and its Native Host Distribution workflow run.
+- Require the workflow to succeed and publish the exact source-SHA/run-attempt artifact under the existing immutable naming contract.
+- Download and verify the artifact with the existing distribution verifier; record repository, source SHA, run id, attempt, executable hash, extension id, and application name from observed evidence.
+- Do not accept a feature-branch/local build as a substitute.
+
+#### Task 9D: Successor acceptance metadata and installed-host reacceptance
+
+After the successor artifact identity exists, create a narrow follow-up change that pins only the observed successor distribution/install metadata and read-only verifier expectations. Prove that this follow-up does not change native-host bundle inputs or SEA packaging behavior.
+
+After that metadata change is reviewed/integrated, prepare the successor per-user installation from the verified artifact. Registry switching remains a separately authorized operational action; repository automation must not perform it.
+
+Re-run read-only installation verification and then supported-browser-host acceptance against the successor installed binary. Only after both gates pass may the final admission receipt end with `TRUSTED_ADAPTER_ADMISSION_V1 = PASS`.
+
+Browser mutation remains unauthorized throughout this sequence.

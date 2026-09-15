@@ -284,3 +284,25 @@ Durable verify projection may be designed separately after admission if needed, 
 The HTTP admission endpoint does not claim to cryptographically attest the Chrome extension against arbitrary same-user Windows code. Exact extension-origin validation occurs at the Chrome Native Messaging/native-host boundary; `/adapter/admit` authenticates possession of the runtime bootstrap credential within the accepted same-user local trust domain.
 
 This distinction is why Browser Adapter v1 remains read-only and server-side capability-limited. Future consequential authority must not reuse bootstrap possession as if it were stronger OS-level caller attestation.
+## Native-host distribution refresh amendment — 2026-09-16
+
+Full verification of candidate `8bfd17928649e2c3bbaf2b20852342e9c9fd5227` proved that bind-time admission necessarily changes native-host executable bytes. The original expectation that distribution/installation identity would remain unchanged is superseded by this amendment. See `docs/research/2026-09-16-trusted-adapter-admission-native-host-refresh.md`.
+
+Historical distribution and installation receipts remain valid only for their exact accepted source and artifact. They are never rewritten to name a feature-branch or locally rebuilt executable.
+When admission changes native-host bundle inputs, acceptance becomes two-phase.
+
+Source phase: focused/full repository verification, authority audit, and independent review may establish `TRUSTED_ADAPTER_ADMISSION_V1 = IMPLEMENTED_AWAITING_NATIVE_HOST_REFRESH`.
+
+Release/host phase: after merge, the exact `main` push must publish and verify a successor native-host distribution. Installation must then be reaccepted after a separately authorized registration switch, and supported-browser-host acceptance must run against that successor installation before final PASS.
+
+Until the release/host phase completes, record `CURRENT_CANDIDATE_NATIVE_HOST_DISTRIBUTION = REACCEPT_REQUIRED` and do not claim `TRUSTED_ADAPTER_ADMISSION_V1 = PASS`.
+
+Repository regression tests must separate verifier logic from release freshness. Installation-verifier execution tests may use a hermetic synthetic fixture and a temporary verifier copy whose expected executable hash is changed only for that fixture. The committed verifier, accepted distribution/install constants, and their static/AST safety checks remain unchanged.
+
+A feature-branch/local executable hash is never sufficient release provenance. Only the existing main-push distribution workflow may produce the successor artifact identity consumed by the later installation gate.
+
+This amendment authorizes no HKCU mutation, installed-host replacement, cleanup, browser mutation, or capability widening. Those remain separate fail-closed checkpoints.
+
+The successor workflow run id, attempt, and executable hash are observed only after the feature source is merged and the `main` push workflow completes. A narrow follow-up reacceptance change may then pin those observed values into installation acceptance constants, the committed read-only verifier, and a successor receipt.
+
+That reacceptance change must not modify `native-host.ts`, `native-host-main.ts`, `local-link.ts`, their bundled dependencies, the SEA builder, or other native-host bundle inputs. If it does, the successor artifact no longer represents the code being accepted and distribution must be reconsidered again.
