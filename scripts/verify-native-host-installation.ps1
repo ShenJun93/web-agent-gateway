@@ -9,9 +9,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $expectedRepository = 'ShenJun93/web-agent-gateway'
-$expectedSourceSha = 'fd60c602dfe84ddf05b7e1575e77f45eb2c56b9d'
-$expectedWorkflowRunId = '34757274244'
-$expectedExecutableSha256 = '0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf'
+$expectedSourceSha = '9c7fb2881d3641354104f6a20257284d5629ef1c'
+$expectedWorkflowRunId = '35027172925'
+$expectedExecutableSha256 = '4f0869078357cf8b8ae00e4d27adbef0b905921bdd5202aca38ca10c1b055ebb'
 $expectedApplicationName = 'com.openai.web_agent_gateway'
 $expectedExtensionId = 'nnhhhppkpogkedpjnijeagcbfjaoogec'
 $expectedSubkey = 'SOFTWARE\Chromium\NativeMessagingHosts\com.openai.web_agent_gateway'

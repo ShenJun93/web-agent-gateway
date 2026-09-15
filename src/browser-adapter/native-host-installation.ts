@@ -15,10 +15,10 @@ import { createNativeHostManifest } from './native-host-manifest.js';
 
 export const NATIVE_HOST_INSTALLATION_SCHEMA_VERSION = 1 as const;
 export const NATIVE_HOST_ACCEPTED_REPOSITORY = 'ShenJun93/web-agent-gateway' as const;
-export const NATIVE_HOST_ACCEPTED_SOURCE_SHA = 'fd60c602dfe84ddf05b7e1575e77f45eb2c56b9d' as const;
+export const NATIVE_HOST_ACCEPTED_SOURCE_SHA = '9c7fb2881d3641354104f6a20257284d5629ef1c' as const;
 export const NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256 =
-  '0349fbe41bc31c9685bd0f64431a517b34f600f614123d94582a47dc8e8a40cf' as const;
-export const NATIVE_HOST_ACCEPTED_WORKFLOW_RUN_ID = '34757274244' as const;
+  '4f0869078357cf8b8ae00e4d27adbef0b905921bdd5202aca38ca10c1b055ebb' as const;
+export const NATIVE_HOST_ACCEPTED_WORKFLOW_RUN_ID = '35027172925' as const;
 export const NATIVE_HOST_ACCEPTED_RUN_ATTEMPT = 1 as const;
 
 const MANIFEST_FILENAME = `${NATIVE_HOST_APPLICATION_NAME}.json` as const;
