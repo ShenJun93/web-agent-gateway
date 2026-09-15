@@ -8,7 +8,7 @@ import {
   type BrowserAdapterRequest,
   type BrowserAdapterResponse,
 } from './protocol.js';
-import { McpLocalAdapterLink, type AdapterDiscovery, type LocalAdapterLink } from './local-link.js';
+import type { AdapterDiscovery, LocalAdapterLink } from './local-link.js';
 
 const EXTENSION_ORIGIN = /^chrome-extension:\/\/[a-p]{32}\/$/;
 
@@ -33,35 +33,33 @@ export function parseNativeHostInvocation(argv: readonly string[], env: NodeJS.P
   }
   return { expectedOrigin: origins[0]!, discoveryPath };
 }
+
 export async function loadAdapterDiscovery(path: string): Promise<AdapterDiscovery> {
   let value: unknown;
-  try {
-    value = JSON.parse(await readFile(path, 'utf8'));
-  } catch {
-    throw new Error('Browser adapter discovery unavailable');
-  }
+  try { value = JSON.parse(await readFile(path, 'utf8')); }
+  catch { throw new Error('Browser adapter discovery unavailable'); }
   if (!value || typeof value !== 'object') throw new Error('Browser adapter discovery unavailable');
   const record = value as Record<string, unknown>;
-  if (typeof record.mcpUrl !== 'string' || typeof record.bearerToken !== 'string') {
+  if (Object.keys(record).sort().join(',') !== 'admissionUrl,bootstrapToken') {
     throw new Error('Browser adapter discovery unavailable');
   }
-  return { mcpUrl: record.mcpUrl, bearerToken: record.bearerToken };
-}
-
-export async function connectNativeHostLink(discoveryPath: string): Promise<LocalAdapterLink> {
-  return McpLocalAdapterLink.connect(await loadAdapterDiscovery(discoveryPath));
+  if (typeof record.admissionUrl !== 'string' || typeof record.bootstrapToken !== 'string') {
+    throw new Error('Browser adapter discovery unavailable');
+  }
+  return { admissionUrl: record.admissionUrl, bootstrapToken: record.bootstrapToken };
 }
 
 export async function runNativeHost(options: {
   input: Readable;
   output: Writable;
-  link: LocalAdapterLink;
+  linkFactory(correlationId: string): Promise<LocalAdapterLink>;
   expectedOrigin: string;
 }): Promise<void> {
-  const { input, output, link, expectedOrigin } = options;
+  const { input, output, linkFactory, expectedOrigin } = options;
   const decoder = new NativeMessageDecoder();
   const seen = new Set<string>();
   let boundSession: string | undefined;
+  let link: LocalAdapterLink | undefined;
 
   try {
     if (!EXTENSION_ORIGIN.test(expectedOrigin)) throw new Error('Invalid native host caller origin');
@@ -75,33 +73,35 @@ export async function runNativeHost(options: {
       }
     }
   } finally {
-    await link.close().catch(() => undefined);
+    await link?.close().catch(() => undefined);
   }
+
   async function handleRequest(request: BrowserAdapterRequest): Promise<BrowserAdapterResponse> {
     if (seen.has(request.requestId)) return hostError(request.requestId, 'DUPLICATE_REQUEST', 'Duplicate request id');
     seen.add(request.requestId);
 
-    if (request.type === 'hello') {
-      return hostResult(request.requestId, { protocolVersion: 1 });
-    }
+    if (request.type === 'hello') return hostResult(request.requestId, { protocolVersion: 1 });
     if (request.type === 'session.bind') {
       if (boundSession !== undefined) return hostError(request.requestId, 'SESSION_ALREADY_BOUND', 'A session is already bound');
+      let admitted: LocalAdapterLink;
+      try { admitted = await linkFactory(request.sessionId); }
+      catch { return hostError(request.requestId, 'SESSION_ADMISSION_FAILED', 'Local WAG admission failed'); }
+      link = admitted;
       boundSession = request.sessionId;
       return hostResult(request.requestId, { sessionId: request.sessionId, provider: request.provider });
     }
-    if (boundSession !== request.sessionId) {
+    if (boundSession !== request.sessionId || link === undefined) {
       return hostError(request.requestId, 'SESSION_NOT_BOUND', 'Request session is not bound');
     }
     if (request.type === 'session.unbind') {
+      const current = link;
+      link = undefined;
       boundSession = undefined;
+      await current.close().catch(() => undefined);
       return hostResult(request.requestId, { unbound: true });
     }
-    if (request.type === 'tools.list') {
-      return hostResult(request.requestId, { tools: await link.listTools() });
-    }
-    if (request.type === 'ping') {
-      return hostResult(request.requestId, { alive: true });
-    }
+    if (request.type === 'tools.list') return hostResult(request.requestId, { tools: await link.listTools() });
+    if (request.type === 'ping') return hostResult(request.requestId, { alive: true });
     return link.call(request);
   }
 }

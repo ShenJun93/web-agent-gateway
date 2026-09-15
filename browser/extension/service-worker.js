@@ -1,8 +1,8 @@
-import { createBrowserExtensionCore } from './service-worker-core.js';
+import { createBrowserExtensionCore, createSessionCorrelationStore } from './service-worker-core.js';
 import { parseChatGptObservation } from './chatgpt-call-parser.js';
 
 const core = createBrowserExtensionCore();
-const sessionsByTab = new Map();
+const sessionCorrelations = createSessionCorrelationStore(chrome.storage.session, () => crypto.randomUUID());
 let nativePort;
 let nativeBoundSession;
 let helloSent = false;
@@ -17,14 +17,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     const call = parseChatGptObservation({ text: message.text, codeBlocks: message.codeBlocks });
     if (!call) { sendResponse({ queued: false }); return false; }
-    const sessionId = sessionForTab(tabId);
-    const request = {
-      version: 1, type: 'tool.call', requestId: `req_${crypto.randomUUID()}`,
-      sessionId, tool: call.tool, arguments: call.arguments,
-    };
-    const queued = core.queueProviderRequest({ url: senderUrl, tabId }, request);
-    sendResponse({ queued, requestId: queued ? request.requestId : undefined });
-    return false;
+    void sessionCorrelations.forTab(tabId).then((sessionId) => {
+      const request = {
+        version: 1, type: 'tool.call', requestId: `req_${crypto.randomUUID()}`,
+        sessionId, tool: call.tool, arguments: call.arguments,
+      };
+      const queued = core.queueProviderRequest({ url: senderUrl, tabId }, request);
+      sendResponse({ queued, requestId: queued ? request.requestId : undefined });
+    }).catch(() => sendResponse({ queued: false }));
+    return true;
   }
   if (message?.type === 'panel.state') {
     sendResponse({ pending: core.pending(), nativeConnected: Boolean(nativePort) });
@@ -49,14 +50,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-function sessionForTab(tabId) {
-  let value = sessionsByTab.get(tabId);
-  if (!value) {
-    value = `session_${crypto.randomUUID()}`;
-    sessionsByTab.set(tabId, value);
-  }
-  return value;
-}
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void sessionCorrelations.removeTab(tabId).catch(() => undefined);
+});
 
 function isChatGptUrl(value) {
   try { return new URL(value).origin === 'https://chatgpt.com'; }

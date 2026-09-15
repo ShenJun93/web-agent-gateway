@@ -6,9 +6,11 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
+import { SqliteDurableStore } from '../src/durable-store.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { startGatewayHttpServer } from '../src/http-server.js';
-import { createGateway } from '../src/server.js';
+import { createBrowserAdmittedMcpServer, createGateway } from '../src/server.js';
 import { encodeNativeMessage, NativeMessageDecoder } from '../src/browser-adapter/native-framing.js';
 
 const root = process.cwd();
@@ -69,14 +71,28 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   const seaConfig = JSON.parse(await readFile(join(outputDir, 'sea-config.json'), 'utf8')) as { execArgvExtension?: string };
   assert.equal(seaConfig.execArgvExtension, 'none');
 
-  const bearerToken = randomBytes(32).toString('hex');
+  const internalBearer = randomBytes(32).toString('hex');
+  const bootstrapToken = randomBytes(32).toString('hex');
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
   const gateway = createGateway({ executor, allowedRoots: [root] });
-  const http = await startGatewayHttpServer({ gateway, bearerToken });
-  t.after(() => http.close());
+  const store = new SqliteDurableStore(':memory:');
+  const admission = new BrowserAdmissionRegistry(store);
+  const workspaces = {
+    open: async () => ({ workspaceId: 'ws_unused' }),
+    read: async () => ({ content: 'unused' }),
+  };
+  const http = await startGatewayHttpServer({
+    gateway, bearerToken: internalBearer,
+    browserAdmission: {
+      bootstrapToken, admission,
+      browserMcp: (caller) => createBrowserAdmittedMcpServer(gateway, { callerContext: caller, workspaces }),
+    },
+  });
+  t.after(async () => { await http.close(); admission.close(); store.close(); });
+  assert.ok(http.admissionUrl);
 
   const discoveryPath = join(temp, 'browser-adapter.json');
-  await writeFile(discoveryPath, JSON.stringify({ mcpUrl: http.mcpUrl, bearerToken }), 'utf8');
+  await writeFile(discoveryPath, JSON.stringify({ admissionUrl: http.admissionUrl, bootstrapToken }), 'utf8');
   const child = spawn(executable, [extensionOrigin, '--discovery', discoveryPath], {
     cwd: outputDir,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -102,4 +118,8 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   const responses = new NativeMessageDecoder().push(Buffer.concat(stdout)) as Array<{ requestId?: string; result?: { tools?: string[] } }>;
   assert.deepEqual(responses.map((response) => response.requestId), ['req_artifact_hello', 'req_artifact_bind', 'req_artifact_tools']);
   assert.deepEqual(responses[2]?.result?.tools, ['health', 'workspace.open', 'file.read']);
+  const rendered = JSON.stringify(responses);
+  assert.equal(rendered.includes(bootstrapToken), false);
+  assert.equal(rendered.includes(internalBearer), false);
+  assert.equal(rendered.includes(http.admissionUrl), false);
 });

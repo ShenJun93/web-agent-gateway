@@ -26,3 +26,19 @@ export interface BrowserExtensionCore {
 }
 
 export function createBrowserExtensionCore(): BrowserExtensionCore;
+
+export interface SessionStorageArea {
+  get(key: string): Promise<Record<string, unknown>>;
+  set(items: Record<string, string>): Promise<void>;
+  remove(key: string): Promise<void>;
+}
+
+export interface SessionCorrelationStore {
+  forTab(tabId: number): Promise<string>;
+  removeTab(tabId: number): Promise<void>;
+}
+
+export function createSessionCorrelationStore(
+  storageSession: SessionStorageArea,
+  randomUUID: () => string,
+): SessionCorrelationStore;

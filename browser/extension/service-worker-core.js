@@ -50,3 +50,27 @@ function validReadOnlyRequest(request) {
     && typeof request.requestId === 'string' && typeof request.sessionId === 'string'
     && BROWSER_TOOLS.has(request.tool) && request.arguments && typeof request.arguments === 'object';
 }
+
+
+export function createSessionCorrelationStore(storageSession, randomUUID) {
+  const keyForTab = (tabId) => {
+    if (!Number.isInteger(tabId) || tabId < 0) throw new Error('Invalid browser tab id');
+    return `wag.session.tab.${tabId}`;
+  };
+
+  async function forTab(tabId) {
+    const key = keyForTab(tabId);
+    const existing = (await storageSession.get(key))?.[key];
+    if (typeof existing === 'string' && /^session_[0-9a-f-]{36}$/i.test(existing)) return existing;
+    const correlation = `session_${randomUUID()}`;
+    if (!/^session_[0-9a-f-]{36}$/i.test(correlation)) throw new Error('Invalid browser correlation');
+    await storageSession.set({ [key]: correlation });
+    return correlation;
+  }
+
+  async function removeTab(tabId) {
+    await storageSession.remove(keyForTab(tabId));
+  }
+
+  return { forTab, removeTab };
+}
