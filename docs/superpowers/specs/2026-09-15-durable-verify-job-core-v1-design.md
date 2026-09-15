@@ -1,9 +1,10 @@
 # Durable Verify Job Core v1 Design
 
 Date: 2026-09-15
-Status: Proposed for written review
-Decision authority: ADR-0014, ADR-0015, proposed ADR-0016
+Status: Accepted and implemented (internal core only)
+Decision authority: ADR-0014, ADR-0015, ADR-0016
 Research receipt: `docs/research/2026-09-15-durable-verify-job-core.md`
+Acceptance receipt: `docs/benchmarks/2026-09-15-durable-verify-job-core-v1.md`
 Dependency parent: `b1b6dcae175b3f7c2ff704161e9d683afafbee89`
 
 ## Goal

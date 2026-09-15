@@ -21,8 +21,12 @@ COMPOSE, do not fork wholesale:
 - Cloudflare Tunnel: V0 transport candidate.
 - Our code: thin gateway, policy, semantic tools, telemetry, compatibility.
 
-## V0 gate
-Build only a bounded benchmark spike. Continue only if it materially beats Remote Desktop Commander on latency/reliability while preserving strict security boundaries.
+## Current accepted state
+Trusted Caller Context v1 and the internal Durable Verify Job Core v1 have passed their acceptance gates. Trusted Adapter Admission v1 has also passed the successor distribution, installation, and supported-browser-host gates for the read-only Browser Adapter v1 path.
+
+Browser Adapter v1 remains server-side limited to exactly `health`, `workspace.open`, and `file.read`. Durable verify projection, mutation, public jobs, process/PTY, Git writes, and browser mutation remain unauthorized unless a later reviewed gate explicitly enables them.
+
+The next evidence sequence is a bounded MCP v2 / protocol `2026-07-28` compatibility spike followed by a current-market viability re-benchmark. Evidence from those gates, rather than roadmap inertia, selects the next implementation milestone.
 
 ## Business private MCP readiness
 The supported private deployment direction is ChatGPT Business + OpenAI Secure MCP Tunnel + the production-built Gateway stdio command. DevSpace remains a separately supervised loopback-only process; the Gateway does not expose a public listener.

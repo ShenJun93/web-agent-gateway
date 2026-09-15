@@ -1,7 +1,8 @@
 # ADR-0015: Use a Trusted Caller Context for WAG Authority
 
 Date: 2026-09-15
-Status: Proposed
+Status: Accepted
+Acceptance receipt: `docs/benchmarks/2026-09-15-trusted-caller-context-v1.md`
 
 ## Decision
 

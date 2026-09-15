@@ -1,9 +1,10 @@
 # Trusted Caller Context v1 Design
 
 Date: 2026-09-15
-Status: Proposed for written review
-Decision authority: ADR-0014 and proposed ADR-0015
+Status: Accepted and implemented
+Decision authority: ADR-0014 and ADR-0015
 Research receipt: `docs/research/2026-09-15-trusted-caller-context.md`
+Acceptance receipt: `docs/benchmarks/2026-09-15-trusted-caller-context-v1.md`
 
 ## Goal
 

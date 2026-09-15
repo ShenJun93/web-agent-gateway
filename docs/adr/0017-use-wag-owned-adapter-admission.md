@@ -1,9 +1,10 @@
 # ADR-0017: Use WAG-Owned Trusted Adapter Admission
 
 Date: 2026-09-15
-Status: Proposed
+Status: Accepted
 Depends on: ADR-0014, ADR-0015, ADR-0016, `TRUSTED_CALLER_CONTEXT_V1 = PASS`, `DURABLE_VERIFY_JOB_CORE_V1 = PASS`
 Research: `docs/research/2026-09-15-trusted-adapter-admission.md`
+Acceptance receipt: `docs/benchmarks/2026-09-16-trusted-adapter-admission-v1.md`
 
 ## Decision
 
