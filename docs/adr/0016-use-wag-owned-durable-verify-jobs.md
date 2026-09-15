@@ -1,8 +1,9 @@
 # ADR-0016: Use WAG-Owned Durable Verify Jobs
 
 Date: 2026-09-15
-Status: Proposed
+Status: Accepted
 Depends on: ADR-0014, ADR-0015, `TRUSTED_CALLER_CONTEXT_V1 = PASS`
+Acceptance receipt: `docs/benchmarks/2026-09-15-durable-verify-job-core-v1.md`
 
 ## Decision
 

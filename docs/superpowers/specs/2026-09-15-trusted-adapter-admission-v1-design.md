@@ -1,9 +1,10 @@
 # Trusted Adapter Admission v1 Design
 
 Date: 2026-09-15
-Status: Proposed for written review
-Decision authority: ADR-0014, ADR-0015, ADR-0016, proposed ADR-0017
+Status: Accepted and implemented
+Decision authority: ADR-0014, ADR-0015, ADR-0016, ADR-0017
 Research receipt: `docs/research/2026-09-15-trusted-adapter-admission.md`
+Acceptance receipt: `docs/benchmarks/2026-09-16-trusted-adapter-admission-v1.md`
 Design base: `3242746010aaa7f0e93097f2f07aa07169210cb6`
 
 ## Goal
@@ -276,9 +277,9 @@ It also does not claim that the current Windows discovery/bootstrap token resist
 
 ## Follow-up sequence
 
-After `TRUSTED_ADAPTER_ADMISSION_V1 = PASS`, the preferred next design remains **Exact-Owner Process Manager v1**. That milestone must define process identity, inspect/wait/interrupt evidence, restart reconciliation, exact-owner cleanup, and unknown-outcome semantics before any bounded local command capability is activated.
+After `TRUSTED_ADAPTER_ADMISSION_V1 = PASS`, do not automatically promote a process manager or any consequential capability. The immediate evidence-gathering sequence is architecture/docs reconciliation, then a bounded MCP v2 / protocol `2026-07-28` compatibility spike, then a current-market viability re-benchmark. These steps may measure compatibility and product fit, but they do not widen trust or tool authority.
 
-Durable verify projection may be designed separately after admission if needed, but it must not delay or broaden the process-manager trust work required for the self-hosting roadmap. A stronger Windows bootstrap/isolation mechanism is required before Browser Adapter v1 receives any consequential capability.
+Evidence from those gates selects the next implementation milestone. **Exact-Owner Process Manager v1** remains one candidate when measured process ownership/recovery needs justify it; durable verify projection and stronger Windows bootstrap/isolation remain separate candidates. Browser Adapter v1 stays read-only until a separately reviewed consequential-authority gate passes.
 ## Bootstrap trust precision
 
 The HTTP admission endpoint does not claim to cryptographically attest the Chrome extension against arbitrary same-user Windows code. Exact extension-origin validation occurs at the Chrome Native Messaging/native-host boundary; `/adapter/admit` authenticates possession of the runtime bootstrap credential within the accepted same-user local trust domain.
