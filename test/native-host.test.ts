@@ -21,48 +21,51 @@ class FakeLink implements LocalAdapterLink {
   async close() { this.closed = true; }
 }
 
-function decodeAll(buffer: Buffer): unknown[] {
-  return new NativeMessageDecoder().push(buffer);
+function decodeAll(buffer: Buffer): BrowserAdapterResponse[] {
+  return new NativeMessageDecoder().push(buffer) as BrowserAdapterResponse[];
 }
-
-test('native host runs one bound read-only session over framed streams', async () => {
+test('native host creates a local link only after successful session.bind', async () => {
   const input = new PassThrough();
   const output = new PassThrough();
   const chunks: Buffer[] = [];
   output.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
   const link = new FakeLink();
-  const running = runNativeHost({ input, output, link, expectedOrigin: extensionOrigin });
+  const factoryCalls: string[] = [];
+  const running = runNativeHost({
+    input, output, expectedOrigin: extensionOrigin,
+    linkFactory: async (correlationId) => { factoryCalls.push(correlationId); return link; },
+  });
 
   for (const request of [
     { version: 1, type: 'hello', requestId: 'req_hello_001' },
     { version: 1, type: 'session.bind', requestId: 'req_bind_0001', sessionId: sid, provider: 'chatgpt', origin: 'https://chatgpt.com' },
     { version: 1, type: 'tools.list', requestId: 'req_tools_001', sessionId: sid },
     { version: 1, type: 'tool.call', requestId: 'req_call_0001', sessionId: sid, tool: 'health', arguments: {} },
-    { version: 1, type: 'ping', requestId: 'req_ping_0001', sessionId: sid },
     { version: 1, type: 'session.unbind', requestId: 'req_unbind_01', sessionId: sid },
   ]) input.write(encodeNativeMessage(request));
   input.end();
   await running;
 
-  const responses = decodeAll(Buffer.concat(chunks)) as Array<{ type: string; requestId: string }>;
-  assert.deepEqual(responses.map((value) => value.requestId), [
-    'req_hello_001', 'req_bind_0001', 'req_tools_001', 'req_call_0001', 'req_ping_0001', 'req_unbind_01',
-  ]);
-  assert.ok(responses.every((value) => value.type === 'result'));
+  assert.deepEqual(factoryCalls, [sid]);
   assert.equal(link.calls.length, 1);
   assert.equal(link.closed, true);
+  assert.ok(decodeAll(Buffer.concat(chunks)).every((value) => value.type === 'result'));
 });
-
-test('native host rejects duplicate ids and calls outside the bound session', async () => {
+test('native host stays unbound when admission fails', async () => {
   const input = new PassThrough();
   const output = new PassThrough();
   const chunks: Buffer[] = [];
   output.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-  const link = new FakeLink();
-  const running = runNativeHost({ input, output, link, expectedOrigin: extensionOrigin });
+  const running = runNativeHost({
+    input, output, expectedOrigin: extensionOrigin,
+    linkFactory: async () => { throw new Error('secret bootstrap failure'); },
+  });
 
-  input.write(encodeNativeMessage({ version: 1, type: 'hello', requestId: 'req_same_0001' }));
-  input.write(encodeNativeMessage({ version: 1, type: 'hello', requestId: 'req_same_0001' }));
+  input.write(encodeNativeMessage({ version: 1, type: 'hello', requestId: 'req_hello_fail' }));
+  input.write(encodeNativeMessage({
+    version: 1, type: 'session.bind', requestId: 'req_bind_fail1', sessionId: sid,
+    provider: 'chatgpt', origin: 'https://chatgpt.com',
+  }));
   input.write(encodeNativeMessage({
     version: 1, type: 'tool.call', requestId: 'req_call_bad1', sessionId: sid,
     tool: 'health', arguments: {},
@@ -70,31 +73,72 @@ test('native host rejects duplicate ids and calls outside the bound session', as
   input.end();
   await running;
 
-  const responses = decodeAll(Buffer.concat(chunks)) as Array<{ type: string; error?: { code?: string } }>;
+  const responses = decodeAll(Buffer.concat(chunks));
   assert.equal(responses[0]?.type, 'result');
   assert.equal(responses[1]?.type, 'error');
   assert.equal(responses[2]?.type, 'error');
-  assert.equal(link.calls.length, 0);
+  assert.doesNotMatch(JSON.stringify(responses), /secret bootstrap failure/);
+});
+test('native host reconnect admits the same browser correlation through a fresh link', async () => {
+  const factoryCalls: string[] = [];
+  const runOnce = async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const link = new FakeLink();
+    const running = runNativeHost({
+      input, output, expectedOrigin: extensionOrigin,
+      linkFactory: async (correlationId) => { factoryCalls.push(correlationId); return link; },
+    });
+    input.write(encodeNativeMessage({
+      version: 1, type: 'session.bind', requestId: `req_bind_${factoryCalls.length}`, sessionId: sid,
+      provider: 'chatgpt', origin: 'https://chatgpt.com',
+    }));
+    input.end();
+    await running;
+    assert.equal(link.closed, true);
+  };
+  await runOnce();
+  await runOnce();
+  assert.deepEqual(factoryCalls, [sid, sid]);
+});
+
+test('native host rejects duplicate ids and calls before binding without creating a link', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const chunks: Buffer[] = [];
+  output.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+  let factoryCalls = 0;
+  const running = runNativeHost({ input, output, expectedOrigin: extensionOrigin, linkFactory: async () => { factoryCalls += 1; return new FakeLink(); } });
+  input.write(encodeNativeMessage({ version: 1, type: 'hello', requestId: 'req_same_0001' }));
+  input.write(encodeNativeMessage({ version: 1, type: 'hello', requestId: 'req_same_0001' }));
+  input.write(encodeNativeMessage({
+    version: 1, type: 'tool.call', requestId: 'req_call_bad2', sessionId: sid,
+    tool: 'health', arguments: {},
+  }));
+  input.end();
+  await running;
+  const responses = decodeAll(Buffer.concat(chunks));
+  assert.equal(responses[0]?.type, 'result');
+  assert.equal(responses[1]?.type, 'error');
+  assert.equal(responses[2]?.type, 'error');
+  assert.equal(factoryCalls, 0);
 });
 
 test('native host rejects non-extension origins and malformed frames fail closed', async () => {
-  const badOriginLink = new FakeLink();
+  let factoryCalls = 0;
   await assert.rejects(() => runNativeHost({
-    input: new PassThrough(), output: new PassThrough(), link: badOriginLink,
-    expectedOrigin: 'https://chatgpt.com/',
+    input: new PassThrough(), output: new PassThrough(), expectedOrigin: 'https://chatgpt.com/',
+    linkFactory: async () => { factoryCalls += 1; return new FakeLink(); },
   }), /origin/i);
-  assert.equal(badOriginLink.closed, true);
+  assert.equal(factoryCalls, 0);
 
   const input = new PassThrough();
-  const link = new FakeLink();
-  const running = runNativeHost({ input, output: new PassThrough(), link, expectedOrigin: extensionOrigin });
+  const running = runNativeHost({ input, output: new PassThrough(), expectedOrigin: extensionOrigin, linkFactory: async () => new FakeLink() });
   const invalid = Buffer.alloc(4);
   invalid.writeUInt32LE(0, 0);
   input.end(invalid);
   await assert.rejects(running, /length/i);
-  assert.equal(link.closed, true);
 });
-
 test('native host invocation finds one caller origin and requires absolute discovery override', () => {
   assert.deepEqual(parseNativeHostInvocation([
     'node', 'native-host.js', extensionOrigin, '--discovery', 'C:\\temp\\browser-adapter.json',
