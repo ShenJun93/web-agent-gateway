@@ -74,7 +74,7 @@ export class DurableVerifyJobCoordinator {
     for (const record of this.options.store.listRecoverableVerifyJobs()) {
       if (record.state === 'EXECUTING') {
         this.options.store.finishVerifyJob(
-          record.jobId, 'OUTCOME_UNKNOWN', this.now(), undefined, 'RestartExecutionUnknown',
+          record.jobId, 'OUTCOME_UNKNOWN', this.now(), undefined, 'RESTART_EXECUTION_UNVERIFIABLE',
         );
         continue;
       }
@@ -105,7 +105,7 @@ export class DurableVerifyJobCoordinator {
       );
     } catch {
       this.options.store.finishVerifyJob(
-        jobId, 'OUTCOME_UNKNOWN', this.now(), undefined, 'ExecutionPortUnknown',
+        jobId, 'OUTCOME_UNKNOWN', this.now(), undefined, 'EXECUTION_PORT_ERROR_UNCONFIRMED',
       );
     }
   }
@@ -114,22 +114,22 @@ export class DurableVerifyJobCoordinator {
     const record = this.options.store.getVerifyJob(jobId);
     if (!record || record.state !== 'QUEUED') return undefined;
     const now = this.now();
-    if (record.dispatchDeadline <= now) return this.fail(record, 'DispatchDeadlineExpired');
+    if (record.dispatchDeadline <= now) return this.fail(record, 'DISPATCH_DEADLINE_EXPIRED');
     const workspace = this.options.store.getWorkspace(record.workspaceId);
-    if (!workspace) return this.fail(record, 'WorkspaceMissing');
-    if (!sameAuthority(record, workspace)) return this.fail(record, 'WorkspaceIdentityMismatch');
+    if (!workspace) return this.fail(record, 'WORKSPACE_MISSING');
+    if (!sameAuthority(record, workspace)) return this.fail(record, 'WORKSPACE_OWNERSHIP_MISMATCH');
     const port = this.ports.get(record.backendKind);
-    if (workspace.backendKind !== record.backendKind || !port) return this.fail(record, 'BackendUnsupported');
+    if (workspace.backendKind !== record.backendKind || !port) return this.fail(record, 'UNSUPPORTED_BACKEND');
     const sourceProfile = this.options.profiles()[record.profileName];
-    if (!sourceProfile) return this.fail(record, 'ProfileMissing');
+    if (!sourceProfile) return this.fail(record, 'PROFILE_MISSING');
     let profile: ResolvedVerifyProfile;
     try {
       profile = resolveVerifyProfile(sourceProfile);
     } catch {
-      return this.fail(record, 'ProfilePlanDrift');
+      return this.fail(record, 'PROFILE_PLAN_DRIFT');
     }
-    if (profile.planSha256 !== record.planSha256) return this.fail(record, 'ProfilePlanDrift');
-    if (recovered && !profile.resumeQueuedAfterRestart) return this.fail(record, 'RestartResumeDisabled');
+    if (profile.planSha256 !== record.planSha256) return this.fail(record, 'PROFILE_PLAN_DRIFT');
+    if (recovered && !profile.resumeQueuedAfterRestart) return this.fail(record, 'RESTART_RESUME_DISABLED');
     return { record, workspace, profile, port };
   }
 

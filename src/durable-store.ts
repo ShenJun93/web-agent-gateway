@@ -9,10 +9,10 @@ export type MutationState =
 
 export type VerifyJobState = 'QUEUED' | 'EXECUTING' | 'SUCCEEDED' | 'FAILED' | 'OUTCOME_UNKNOWN';
 export type VerifyJobErrorClass =
-  | 'DispatchDeadlineExpired' | 'WorkspaceMissing' | 'WorkspaceIdentityMismatch'
-  | 'BackendUnsupported' | 'ProfileMissing' | 'ProfilePlanDrift'
-  | 'RestartResumeDisabled' | 'RestartExecutionUnknown'
-  | 'ExecutionTimeoutUnknown' | 'ExecutionPortUnknown';
+  | 'DISPATCH_DEADLINE_EXPIRED' | 'WORKSPACE_MISSING' | 'WORKSPACE_OWNERSHIP_MISMATCH'
+  | 'UNSUPPORTED_BACKEND' | 'PROFILE_MISSING' | 'PROFILE_PLAN_DRIFT'
+  | 'RESTART_RESUME_DISABLED' | 'RESTART_EXECUTION_UNVERIFIABLE'
+  | 'EXECUTION_TIMEOUT_UNCONFIRMED' | 'EXECUTION_PORT_ERROR_UNCONFIRMED';
 
 export interface WorkspaceRecord extends GatewayAuthority {
   workspaceId: string;

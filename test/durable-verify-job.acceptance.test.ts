@@ -55,7 +55,7 @@ test('DevSpace verify adapter interrupts only the exact running session and rema
     argv: ['node', 'slow.mjs'], timeoutMs: 100, maxOutputTokens: 500,
   });
   const evidence = await port.execute('E:/fixture', profile);
-  assert.deepEqual(evidence, { status: 'unconfirmed', errorClass: 'ExecutionTimeoutUnknown' });
+  assert.deepEqual(evidence, { status: 'unconfirmed', errorClass: 'EXECUTION_TIMEOUT_UNCONFIRMED' });
   assert.deepEqual(executor.interrupts, [{
     workspaceId: 'devspace-ws', sessionId: 42, maxOutputTokens: 500,
   }]);

@@ -23,6 +23,6 @@ export class DevspaceVerifyExecutionPort implements VerifyExecutionPort {
     if (result.sessionId !== undefined) {
       await this.executor.interruptCommand(workspaceId, result.sessionId, profile.maxOutputTokens).catch(() => undefined);
     }
-    return { status: 'unconfirmed', errorClass: 'ExecutionTimeoutUnknown' };
+    return { status: 'unconfirmed', errorClass: 'EXECUTION_TIMEOUT_UNCONFIRMED' };
   }
 }

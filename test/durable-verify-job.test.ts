@@ -99,14 +99,14 @@ test('initial dispatch fails queued work before the port on deadline or profile 
   const expired = coordinator.enqueue(caller, workspace.workspaceId, 'test');
   nowRef.value = expired.dispatchDeadline;
   await coordinator.dispatch(expired.jobId);
-  assert.equal(coordinator.result(caller, expired.jobId).errorClass, 'DispatchDeadlineExpired');
+  assert.equal(coordinator.result(caller, expired.jobId).errorClass, 'DISPATCH_DEADLINE_EXPIRED');
   assert.equal(port.calls, 0);
   nowRef.value = 10_000;
   setProfiles({ test: { argv: ['node', 'verify.mjs'] } });
   const drifted = coordinator.enqueue(caller, workspace.workspaceId, 'test');
   setProfiles({ test: { argv: ['node', 'changed.mjs'] } });
   await coordinator.dispatch(drifted.jobId);
-  assert.equal(coordinator.result(caller, drifted.jobId).errorClass, 'ProfilePlanDrift');
+  assert.equal(coordinator.result(caller, drifted.jobId).errorClass, 'PROFILE_PLAN_DRIFT');
   assert.equal(port.calls, 0);
 });
 
@@ -122,7 +122,7 @@ test('reconcile resumes only unchanged queued profiles with explicit restart opt
   const disabled = c2.enqueue(caller, ws2.workspaceId, 'test');
   await c2.reconcile();
   assert.equal(p2.calls, 0);
-  assert.equal(c2.result(caller, disabled.jobId).errorClass, 'RestartResumeDisabled');
+  assert.equal(c2.result(caller, disabled.jobId).errorClass, 'RESTART_RESUME_DISABLED');
 });
 test('reconcile fails queued work before execution on missing/drifted profile or ownership drift', async (t) => {
   const a = await setup(t);
@@ -130,7 +130,7 @@ test('reconcile fails queued work before execution on missing/drifted profile or
   const missing = a.coordinator.enqueue(caller, a.workspace.workspaceId, 'test');
   a.setProfiles({});
   await a.coordinator.reconcile();
-  assert.equal(a.coordinator.result(caller, missing.jobId).errorClass, 'ProfileMissing');
+  assert.equal(a.coordinator.result(caller, missing.jobId).errorClass, 'PROFILE_MISSING');
   assert.equal(a.port.calls, 0);
 
   const b = await setup(t);
@@ -138,7 +138,7 @@ test('reconcile fails queued work before execution on missing/drifted profile or
   const drifted = b.coordinator.enqueue(caller, b.workspace.workspaceId, 'test');
   b.setProfiles({ test: { argv: ['node', 'changed.mjs'], resumeQueuedAfterRestart: true } });
   await b.coordinator.reconcile();
-  assert.equal(b.coordinator.result(caller, drifted.jobId).errorClass, 'ProfilePlanDrift');
+  assert.equal(b.coordinator.result(caller, drifted.jobId).errorClass, 'PROFILE_PLAN_DRIFT');
   assert.equal(b.port.calls, 0);
   const c = await setup(t);
   const resumeProfile = { argv: ['node', 'verify.mjs'], resumeQueuedAfterRestart: true } as const;
@@ -150,7 +150,7 @@ test('reconcile fails queued work before execution on missing/drifted profile or
     createdAt: 1_000, dispatchDeadline: 301_000,
   });
   await c.coordinator.reconcile();
-  assert.equal(c.store.getVerifyJob(foreign.jobId)?.errorClass, 'WorkspaceIdentityMismatch');
+  assert.equal(c.store.getVerifyJob(foreign.jobId)?.errorClass, 'WORKSPACE_OWNERSHIP_MISMATCH');
   assert.equal(c.port.calls, 0);
 });
 test('reconcile marks recovered executing work unknown without replay', async (t) => {
@@ -160,21 +160,21 @@ test('reconcile marks recovered executing work unknown without replay', async (t
   await coordinator.reconcile();
   assert.equal(port.calls, 0);
   assert.equal(coordinator.result(caller, job.jobId).state, 'OUTCOME_UNKNOWN');
-  assert.equal(coordinator.result(caller, job.jobId).errorClass, 'RestartExecutionUnknown');
+  assert.equal(coordinator.result(caller, job.jobId).errorClass, 'RESTART_EXECUTION_UNVERIFIABLE');
 });
 
 test('unconfirmed and thrown post-claim execution become distinct unknown outcomes', async (t) => {
   const a = await setup(t);
-  a.port.evidence = { status: 'unconfirmed', errorClass: 'ExecutionTimeoutUnknown' };
+  a.port.evidence = { status: 'unconfirmed', errorClass: 'EXECUTION_TIMEOUT_UNCONFIRMED' };
   const timedOut = a.coordinator.enqueue(caller, a.workspace.workspaceId, 'test');
   await a.coordinator.dispatch(timedOut.jobId);
-  assert.equal(a.coordinator.result(caller, timedOut.jobId).errorClass, 'ExecutionTimeoutUnknown');
+  assert.equal(a.coordinator.result(caller, timedOut.jobId).errorClass, 'EXECUTION_TIMEOUT_UNCONFIRMED');
 
   const b = await setup(t);
   b.port.throwOnExecute = true;
   const thrown = b.coordinator.enqueue(caller, b.workspace.workspaceId, 'test');
   await b.coordinator.dispatch(thrown.jobId);
-  assert.equal(b.coordinator.result(caller, thrown.jobId).errorClass, 'ExecutionPortUnknown');
+  assert.equal(b.coordinator.result(caller, thrown.jobId).errorClass, 'EXECUTION_PORT_ERROR_UNCONFIRMED');
 });
 test('completed output is bounded to 64 KiB without splitting a UTF-8 code point', async (t) => {
   const { workspace, coordinator, port } = await setup(t);

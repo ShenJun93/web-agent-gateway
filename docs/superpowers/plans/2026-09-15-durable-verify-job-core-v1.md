@@ -150,10 +150,10 @@ Run `npx tsx --test test/durable-verify-store.test.ts`. Expected: FAIL because v
 ```ts
 export type VerifyJobState = 'QUEUED' | 'EXECUTING' | 'SUCCEEDED' | 'FAILED' | 'OUTCOME_UNKNOWN';
 export type VerifyJobErrorClass =
-  | 'DispatchDeadlineExpired' | 'WorkspaceMissing' | 'WorkspaceIdentityMismatch'
-  | 'BackendUnsupported' | 'ProfileMissing' | 'ProfilePlanDrift'
-  | 'RestartResumeDisabled' | 'RestartExecutionUnknown'
-  | 'ExecutionTimeoutUnknown' | 'ExecutionPortUnknown';
+  | 'DISPATCH_DEADLINE_EXPIRED' | 'WORKSPACE_MISSING' | 'WORKSPACE_OWNERSHIP_MISMATCH'
+  | 'UNSUPPORTED_BACKEND' | 'PROFILE_MISSING' | 'PROFILE_PLAN_DRIFT'
+  | 'RESTART_RESUME_DISABLED' | 'RESTART_EXECUTION_UNVERIFIABLE'
+  | 'EXECUTION_TIMEOUT_UNCONFIRMED' | 'EXECUTION_PORT_ERROR_UNCONFIRMED';
 ```
 
 Use these exact store method signatures:
@@ -213,7 +213,7 @@ export interface VerifyJobView {
 ```ts
 export type VerifyExecutionEvidence =
   | { status: 'completed'; exitCode: number; output: string }
-  | { status: 'unconfirmed'; errorClass: 'ExecutionTimeoutUnknown' };
+  | { status: 'unconfirmed'; errorClass: 'EXECUTION_TIMEOUT_UNCONFIRMED' };
 export interface VerifyExecutionPort {
   readonly kind: string;
   execute(canonicalRoot: string, profile: ResolvedVerifyProfile): Promise<VerifyExecutionEvidence>;
@@ -261,7 +261,7 @@ if (evidence.status === 'completed') {
 }
 ```
 
-Exact completed evidence writes `SUCCEEDED` even for non-zero exit codes. `boundUtf8Output` must truncate on a valid UTF-8 code-point boundary. A thrown port error becomes `OUTCOME_UNKNOWN` with `ExecutionPortUnknown`. Recovered `EXECUTING` rows become `OUTCOME_UNKNOWN` with `RestartExecutionUnknown` and the port is never invoked.
+Exact completed evidence writes `SUCCEEDED` even for non-zero exit codes. `boundUtf8Output` must truncate on a valid UTF-8 code-point boundary. A thrown port error becomes `OUTCOME_UNKNOWN` with `EXECUTION_PORT_ERROR_UNCONFIRMED`. Recovered `EXECUTING` rows become `OUTCOME_UNKNOWN` with `RESTART_EXECUTION_UNVERIFIABLE` and the port is never invoked.
 
 - [ ] **Step 5: Add recovery/concurrency RED→GREEN coverage**
 
@@ -286,7 +286,7 @@ git commit -m "feat: add durable verify job coordinator"
 **Interfaces:**
 - Produces `DevspaceVerifyExecutionPort implements VerifyExecutionPort` with `kind = 'devspace'`.
 - The adapter reopens only the supplied canonical workspace, executes only the already-resolved trusted command, and never exposes DevSpace workspace/session ids to durable results.
-- A timeout/running result may send the existing same-runtime Ctrl-C attempt, but always returns unconfirmed `ExecutionTimeoutUnknown`; successful Ctrl-C is not treated as cancellation proof.
+- A timeout/running result may send the existing same-runtime Ctrl-C attempt, but always returns unconfirmed `EXECUTION_TIMEOUT_UNCONFIRMED`; successful Ctrl-C is not treated as cancellation proof.
 
 - [ ] **Step 1: Write RED adapter tests with a fake DevSpace executor**
 
@@ -295,7 +295,7 @@ const evidence = await port.execute('E:/fixture', resolvedProfile);
 assert.deepEqual(evidence, { status: 'completed', exitCode: 1, output: 'failed check' });
 ```
 
-Add a running-session case that asserts `interruptCommand` is attempted only for the returned exact session id and evidence remains `{ status: 'unconfirmed', errorClass: 'ExecutionTimeoutUnknown' }`.
+Add a running-session case that asserts `interruptCommand` is attempted only for the returned exact session id and evidence remains `{ status: 'unconfirmed', errorClass: 'EXECUTION_TIMEOUT_UNCONFIRMED' }`.
 
 - [ ] **Step 2: Run RED adapter test**
 
@@ -314,7 +314,7 @@ export class DevspaceVerifyExecutionPort implements VerifyExecutionPort {
     const result = await this.executor.execCommand(workspaceId, profile.command, profile.maxOutputTokens, profile.timeoutMs);
     if (!result.running) return { status: 'completed', exitCode: result.exitCode ?? -1, output: result.output.trimEnd() };
     if (result.sessionId !== undefined) await this.executor.interruptCommand(workspaceId, result.sessionId, profile.maxOutputTokens);
-    return { status: 'unconfirmed', errorClass: 'ExecutionTimeoutUnknown' };
+    return { status: 'unconfirmed', errorClass: 'EXECUTION_TIMEOUT_UNCONFIRMED' };
   }
 }
 ```

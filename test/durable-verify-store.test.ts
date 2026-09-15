@@ -65,10 +65,10 @@ test('verify job pre-execution failure is terminal and cannot be claimed later',
     ...identity, canonicalRoot: 'E:/fixture', backendKind: 'fake', createdAt: 900,
   });
   const job = createJob(store, workspace.workspaceId);
-  assert.equal(store.failQueuedVerifyJob(job.jobId, 1_100, 'ProfileMissing'), true);
+  assert.equal(store.failQueuedVerifyJob(job.jobId, 1_100, 'PROFILE_MISSING'), true);
   assert.equal(store.getVerifyJob(job.jobId)?.state, 'FAILED');
-  assert.equal(store.getVerifyJob(job.jobId)?.errorClass, 'ProfileMissing');
-  assert.equal(store.failQueuedVerifyJob(job.jobId, 1_101, 'ProfilePlanDrift'), false);
+  assert.equal(store.getVerifyJob(job.jobId)?.errorClass, 'PROFILE_MISSING');
+  assert.equal(store.failQueuedVerifyJob(job.jobId, 1_101, 'PROFILE_PLAN_DRIFT'), false);
   assert.equal(store.claimVerifyJob(job.jobId, 1_102, 'attempt_late'), undefined);
 });
 
@@ -83,7 +83,7 @@ test('verify job completion and transition events persist only bounded metadata'
   assert.equal(store.finishVerifyJob(job.jobId, 'SUCCEEDED', 2_100, {
     exitCode: 1, output: 'sentinel-output', outputTruncated: false,
   }), true);
-  assert.equal(store.finishVerifyJob(job.jobId, 'OUTCOME_UNKNOWN', 2_101, undefined, 'ExecutionPortUnknown'), false);
+  assert.equal(store.finishVerifyJob(job.jobId, 'OUTCOME_UNKNOWN', 2_101, undefined, 'EXECUTION_PORT_ERROR_UNCONFIRMED'), false);
 
   const current = store.getVerifyJob(job.jobId)!;
   assert.equal(current.state, 'SUCCEEDED');
