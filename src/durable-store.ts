@@ -14,6 +14,18 @@ export type VerifyJobErrorClass =
   | 'RESTART_RESUME_DISABLED' | 'RESTART_EXECUTION_UNVERIFIABLE'
   | 'EXECUTION_TIMEOUT_UNCONFIRMED' | 'EXECUTION_PORT_ERROR_UNCONFIRMED';
 
+export interface LocalPrincipalRecord {
+  ownerId: string;
+  createdAt: number;
+}
+
+export interface AdapterSessionRecord {
+  sessionId: string;
+  ownerId: string;
+  adapterId: string;
+  correlationSha256: string;
+  createdAt: number;
+}
 export interface WorkspaceRecord extends GatewayAuthority {
   workspaceId: string;
   canonicalRoot: string;
@@ -114,6 +126,21 @@ export class SqliteDurableStore {
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS gateway_identity (
+        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+        owner_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS adapter_sessions (
+        session_id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        correlation_sha256 TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(owner_id, adapter_id, correlation_sha256)
+      );
+    `);
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS workspaces (
         workspace_id TEXT PRIMARY KEY,
         owner_id TEXT NOT NULL,
@@ -205,6 +232,56 @@ export class SqliteDurableStore {
     `);
   }
 
+  getOrCreateLocalPrincipal(now: number): LocalPrincipalRecord {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.db.prepare('SELECT owner_id, created_at FROM gateway_identity WHERE singleton_id = 1').get();
+      if (existing) {
+        this.db.exec('COMMIT');
+        return principalFromRow(existing as Record<string, unknown>);
+      }
+      const record: LocalPrincipalRecord = { ownerId: `owner_${randomUUID()}`, createdAt: now };
+      this.db.prepare('INSERT INTO gateway_identity (singleton_id, owner_id, created_at) VALUES (1, ?, ?)')
+        .run(record.ownerId, record.createdAt);
+      this.db.exec('COMMIT');
+      return record;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  getOrCreateAdapterSession(input: { ownerId: string; adapterId: string; correlationSha256: string; createdAt: number }): AdapterSessionRecord {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.findAdapterSession(input.ownerId, input.adapterId, input.correlationSha256);
+      if (existing) {
+        this.db.exec('COMMIT');
+        return existing;
+      }
+      const record: AdapterSessionRecord = { sessionId: `session_${randomUUID()}`, ...input };
+      this.db.prepare(`INSERT INTO adapter_sessions
+        (session_id, owner_id, adapter_id, correlation_sha256, created_at) VALUES (?, ?, ?, ?, ?)`)
+        .run(record.sessionId, record.ownerId, record.adapterId, record.correlationSha256, record.createdAt);
+      this.db.exec('COMMIT');
+      return record;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  getAdapterSession(sessionId: string): AdapterSessionRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM adapter_sessions WHERE session_id = ?').get(sessionId);
+    return row ? adapterSessionFromRow(row as Record<string, unknown>) : undefined;
+  }
+
+  findAdapterSession(ownerId: string, adapterId: string, correlationSha256: string): AdapterSessionRecord | undefined {
+    const row = this.db.prepare(`SELECT * FROM adapter_sessions
+      WHERE owner_id = ? AND adapter_id = ? AND correlation_sha256 = ?`)
+      .get(ownerId, adapterId, correlationSha256);
+    return row ? adapterSessionFromRow(row as Record<string, unknown>) : undefined;
+  }
   openWorkspaceRecord(input: CreateWorkspaceRecord): WorkspaceRecord {
     const record = { workspaceId: `ws_${randomUUID()}`, ...input };
     this.db.prepare(`INSERT INTO workspaces
@@ -441,6 +518,19 @@ export class SqliteDurableStore {
   }
 }
 
+function principalFromRow(row: Record<string, unknown>): LocalPrincipalRecord {
+  return { ownerId: String(row.owner_id), createdAt: Number(row.created_at) };
+}
+
+function adapterSessionFromRow(row: Record<string, unknown>): AdapterSessionRecord {
+  return {
+    sessionId: String(row.session_id),
+    ownerId: String(row.owner_id),
+    adapterId: String(row.adapter_id),
+    correlationSha256: String(row.correlation_sha256),
+    createdAt: Number(row.created_at),
+  };
+}
 function workspaceFromRow(row: Record<string, unknown>): WorkspaceRecord {
   return {
     workspaceId: String(row.workspace_id), ownerId: String(row.owner_id),
