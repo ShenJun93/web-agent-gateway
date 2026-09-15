@@ -212,7 +212,7 @@ test('cleanup decisions fail closed on registration or owned-file drift', () => 
   assert.equal(decideNativeHostOwnedCleanup(receipt.manifestPath, receipt, false), 'BLOCK_DRIFT');
 });
 
-test('committed verifier stays pinned to the historical accepted distribution identity', async () => {
+test('committed verifier stays pinned to the accepted distribution identity', async () => {
   const source = await readFile(verifierPath, 'utf8');
   const sourcePin = `$expectedSourceSha = '${NATIVE_HOST_ACCEPTED_SOURCE_SHA}'`;
   const executablePin = `$expectedExecutableSha256 = '${NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256}'`;
