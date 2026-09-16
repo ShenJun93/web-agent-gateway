@@ -6,7 +6,6 @@ import { z } from 'zod';
 import type { BrowserAdmissionRegistry } from './adapter-admission.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import { createGatewayMcpServer, type GatewayApi, type MutationMcpContext } from './server.js';
-import { NonCancellingTaskStore } from './task-store.js';
 
 export interface BrowserAdmissionHttpContext {
   bootstrapToken: string;
@@ -58,7 +57,6 @@ async function startHttpServer(options: GatewayHttpServerOptions | BrowserAdmiss
     throw new Error('Browser admission bootstrap token must be at least 32 bytes');
   }
 
-  const taskStore = new NonCancellingTaskStore();
   let listenerPort = 0;
   const server = createServer(browserAdmission ? { requireHostHeader: false } : {}, async (req, res) => {
     res.setHeader('x-request-id', randomUUID());
@@ -84,7 +82,6 @@ async function startHttpServer(options: GatewayHttpServerOptions | BrowserAdmiss
       }
 
       const mcp = createGatewayMcpServer(options.gateway, {
-        taskStore,
         mutationContext: generic.mutationContext,
       });
       await handleMcp(req, res, mcp);
@@ -99,7 +96,7 @@ async function startHttpServer(options: GatewayHttpServerOptions | BrowserAdmiss
     port: listenerPort,
     mcpUrl,
     ...(browserAdmission ? { admissionUrl: `http://${host}:${listenerPort}/adapter/admit` } : {}),
-    close: async () => { taskStore.cleanup(); await closeServer(server); },
+    close: async () => { await closeServer(server); },
   };
 }
 

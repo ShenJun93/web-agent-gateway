@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { InMemoryTaskStore, type TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks';
 import { z } from 'zod';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import type { GatewayCallerContext } from './caller-context.js';
@@ -173,40 +171,17 @@ export interface MutationMcpContext {
   coordinator: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
 }
 
-export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new InMemoryTaskStore(), mutationContext }: { taskStore?: TaskStore; mutationContext?: MutationMcpContext } = {}): McpServer {
-  const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' }, {
-    taskStore,
-    capabilities: { tasks: { requests: { tools: { call: {} } } } },
-  });
+export function createGatewayMcpServer(gateway: GatewayApi, { mutationContext }: { mutationContext?: MutationMcpContext } = {}): McpServer {
+  const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   server.registerTool('health', { description: 'Check gateway and executor compatibility.', annotations: { readOnlyHint: true } }, async () => toolResult(await gateway.health()));
   server.registerTool('workspace.open', { description: 'Open one approved local workspace and return an opaque workspace id.', inputSchema: { path: z.string().min(1) }, annotations: { readOnlyHint: true } }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
   server.registerTool('repo.snapshot', { description: 'Return bounded repository status, HEAD, diff summary, and tracked files.', inputSchema: { workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }, annotations: { readOnlyHint: true } }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
   server.registerTool('file.read', { description: 'Read bounded text from an opened workspace.', inputSchema: { workspace_id: z.string().min(1), path: z.string().min(1) }, annotations: { readOnlyHint: true } }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
-  server.experimental.tasks.registerToolTask('verify.run', {
+  server.registerTool('verify.run', {
     description: 'Run one locally configured verification profile; arbitrary shell input is not accepted.',
     inputSchema: { workspace_id: z.string().min(1), profile: z.string().min(1) },
     annotations: { readOnlyHint: false },
-    execution: { taskSupport: 'optional' },
-  }, {
-    async createTask({ workspace_id, profile }, extra) {
-      if (!extra.taskStore) throw new Error('MCP task store unavailable');
-      const store = extra.taskStore;
-      const task = await store.createTask({ ttl: 300_000, pollInterval: 100 });
-      void gateway.verifyRun(workspace_id, profile).then(
-        (value) => taskStore.storeTaskResult(task.taskId, 'completed', toolResult(value)),
-        (error) => taskStore.storeTaskResult(task.taskId, 'failed', toolErrorResult(error)),
-      );
-      return { task };
-    },
-    async getTask(_args, extra) {
-      if (!extra.taskStore || !extra.taskId) throw new Error('MCP task context unavailable');
-      return extra.taskStore.getTask(extra.taskId);
-    },
-    async getTaskResult(_args, extra) {
-      if (!extra.taskStore || !extra.taskId) throw new Error('MCP task context unavailable');
-      return extra.taskStore.getTaskResult(extra.taskId) as Promise<CallToolResult>;
-    },
-  });
+  }, async ({ workspace_id, profile }) => toolResult(await gateway.verifyRun(workspace_id, profile)));
   if (mutationContext) {
     const previewInput = z.object({
       workspace_id: z.string().min(1),
@@ -238,13 +213,6 @@ export function createGatewayMcpServer(gateway: GatewayApi, { taskStore = new In
 function toolResult(value: object) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> };
 }
-
-function toolErrorResult(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return { content: [{ type: 'text' as const, text: message }], isError: true };
-}
-
-
 
 function parseSnapshot(output: string) {
   const normalized = output.replace(/\r\n/g, '\n').split('\n').map((line) => line.trimEnd()).join('\n');

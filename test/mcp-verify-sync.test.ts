@@ -4,29 +4,21 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { startGatewayHttpServer } from '../src/http-server.js';
-import { NonCancellingTaskStore } from '../src/task-store.js';
 import { createGateway } from '../src/server.js';
 import { startPinnedDevspace } from './devspace-fixture.js';
 
-const TOKEN = 'task-test-token-0123456789abcdef0123456789abcdef';
+const TOKEN = 'sync-verify-token-0123456789abcdef0123456789abcdef';
 
-test('shared task store rejects cancellation until executor interruption exists', async () => {
-  const store = new NonCancellingTaskStore();
-  await assert.rejects(() => store.updateTaskStatus('task-test', 'cancelled'), /not supported/i);
-  store.cleanup();
-});
-
-test('non-task MCP client still receives synchronous verify.run result', async (t) => {
+test('ordinary MCP client receives synchronous verify.run result without Tasks', async (t) => {
   const fixture = await startPinnedDevspace();
   t.after(() => fixture.stop());
   const gateway = createGateway({
-    executor: new DevspaceExecutor(fixture),
-    allowedRoots: [fixture.workspaceRoot],
+    executor: new DevspaceExecutor(fixture), allowedRoots: [fixture.workspaceRoot],
     verifyProfiles: { version: { argv: ['node', '--version'], timeoutMs: 5_000 } },
   });
   const http = await startGatewayHttpServer({ gateway, bearerToken: TOKEN });
   t.after(() => http.close());
-  const client = new Client({ name: 'sync-task-compat', version: '1.0.0' }, { capabilities: {} });
+  const client = new Client({ name: 'sync-verify', version: '1.0.0' }, { capabilities: {} });
   const transport = new StreamableHTTPClientTransport(new URL(http.mcpUrl), {
     requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
   });

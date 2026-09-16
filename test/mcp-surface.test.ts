@@ -22,7 +22,7 @@ test('public MCP exposes only the five V0 semantic tools', async (t) => {
   ]);
   const verify = tools.tools.find((tool) => tool.name === 'verify.run');
   assert.equal(verify?.annotations?.readOnlyHint, false, 'verify.run may execute scripts and must not claim read-only');
-  assert.equal(verify?.execution?.taskSupport, 'optional', 'verify.run must support recoverable MCP task execution');
+  assert.equal(verify?.execution?.taskSupport, 'forbidden', 'verify.run must forbid the retired MCP v1 Tasks contract');
 });
 
 
