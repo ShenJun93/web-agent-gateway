@@ -8,6 +8,11 @@ import { SqliteDurableStore } from '../src/durable-store.js';
 import type { FileMutationBackend } from '../src/file-mutation-backend.js';
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DurableMutationCoordinator } from '../src/durable-mutation.js';
+// @ts-expect-error MutationCaller compatibility alias must remain removed.
+import type { MutationCaller as RetiredMutationCaller } from '../src/durable-mutation.js';
+
+const retiredMutationCallerTypeGuard: RetiredMutationCaller | undefined = undefined;
+void retiredMutationCallerTypeGuard;
 
 const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 const caller = createGatewayCallerContext({ ownerId: 'owner-a', sessionId: 'session-a', adapterId: 'adapter-a' });

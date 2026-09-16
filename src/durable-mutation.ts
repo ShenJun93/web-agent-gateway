@@ -8,7 +8,6 @@ const MAX_FRAGMENT_BYTES = 32 * 1024;
 const MAX_FILE_BYTES = 64 * 1024;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 
-export type MutationCaller = GatewayCallerContext;
 export interface DurableMutationInput {
   path: string;
   baseSha256: string;
