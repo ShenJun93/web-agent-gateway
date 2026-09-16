@@ -33,7 +33,13 @@ if (false) {
     // @ts-expect-error generic bearer mode must not accept browser admission composition.
     browserAdmission: null as never,
   };
-  void genericWithAdmission;
+  void genericWithAdmission;  const genericWithLegacyFilePatch: GatewayHttpServerOptions = {
+    gateway: null as never,
+    bearerToken: 'generic-token-0123456789abcdef0123456789abcdef',
+    // @ts-expect-error historical file.patch projection must not remain configurable.
+    enableFilePatch: true,
+  };
+  void genericWithLegacyFilePatch;
 }
 
 async function fixture(t: test.TestContext) {

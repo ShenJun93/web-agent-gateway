@@ -1,7 +1,7 @@
 # ADR-0011: Use Durable Reviewed Change Records
 
 Date: 2026-09-13
-Status: Proposed
+Status: Accepted — implemented and verified by the Durable Mutation Control Plane acceptance
 
 The browser spike showed that a two-step host workflow is too timing-sensitive.
 
