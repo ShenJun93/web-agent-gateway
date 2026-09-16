@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import { startGatewayHttpServer } from '../src/http-server.js';
+import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
 import type { GatewayApi } from '../src/server.js';
 import { createBrowserAdmittedMcpServer } from '../src/server.js';
 import { McpLocalAdapterLink, type AdapterDiscovery } from '../src/browser-adapter/local-link.js';
@@ -32,9 +32,8 @@ async function admissionFixture(t: test.TestContext) {
       return { content: `content:${path}` };
     },
   };
-  const http = await startGatewayHttpServer({
+  const http = await startBrowserAdmissionHttpServer({
     gateway,
-    bearerToken: 'legacy-token-0123456789abcdef0123456789abcdef',
     browserAdmission: {
       bootstrapToken,
       admission,

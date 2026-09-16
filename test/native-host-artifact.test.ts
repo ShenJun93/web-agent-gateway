@@ -9,7 +9,7 @@ import test from 'node:test';
 import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
-import { startGatewayHttpServer } from '../src/http-server.js';
+import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
 import { createBrowserAdmittedMcpServer, createGateway } from '../src/server.js';
 import { encodeNativeMessage, NativeMessageDecoder } from '../src/browser-adapter/native-framing.js';
 
@@ -71,7 +71,6 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   const seaConfig = JSON.parse(await readFile(join(outputDir, 'sea-config.json'), 'utf8')) as { execArgvExtension?: string };
   assert.equal(seaConfig.execArgvExtension, 'none');
 
-  const internalBearer = randomBytes(32).toString('hex');
   const bootstrapToken = randomBytes(32).toString('hex');
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
   const gateway = createGateway({ executor, allowedRoots: [root] });
@@ -81,8 +80,8 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
     open: async () => ({ workspaceId: 'ws_unused' }),
     read: async () => ({ content: 'unused' }),
   };
-  const http = await startGatewayHttpServer({
-    gateway, bearerToken: internalBearer,
+  const http = await startBrowserAdmissionHttpServer({
+    gateway,
     browserAdmission: {
       bootstrapToken, admission,
       browserMcp: (caller) => createBrowserAdmittedMcpServer(gateway, { callerContext: caller, workspaces }),
@@ -120,6 +119,5 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   assert.deepEqual(responses[2]?.result?.tools, ['health', 'workspace.open', 'file.read']);
   const rendered = JSON.stringify(responses);
   assert.equal(rendered.includes(bootstrapToken), false);
-  assert.equal(rendered.includes(internalBearer), false);
   assert.equal(rendered.includes(http.admissionUrl), false);
 });
