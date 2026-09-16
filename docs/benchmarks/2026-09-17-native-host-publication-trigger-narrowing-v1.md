@@ -70,7 +70,7 @@ PR `#28` held exact head `ecefc14bee68123437f2bb81b5105279d1d35fda`, two changed
 
 PR workflow run `35154425996` completed successfully: checkout, setup, dependency install, typecheck, TypeScript build, focused distribution tests, native-host publish-candidate build, and exact publish-candidate test all passed. Package, verify, and upload were correctly skipped for the pull-request event.
 
-PR `#28` merged with an expected-head guard as `ad6e724df340e24753154a64f5b5a5c42e8ac0fc`.
+PR `#28` merged as `ad6e724df340e24753154a64f5b5a5c42e8ac0fc` after its exact head and two-file scope had been verified.
 
 Because the workflow file itself is an accepted publication input, that merge correctly triggered one final main-push publication run: `35154563950`, run number `45`.
 
