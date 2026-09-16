@@ -53,11 +53,11 @@ The bounded final verify output may be persisted in the job result because resul
 
 ## MCP Tasks boundary
 
-The repository remains on exact-pinned `@modelcontextprotocol/sdk` 1.29.0 during this milestone.
+The repository remains exact-pinned to `@modelcontextprotocol/sdk` 1.29.0 until a separate SDK migration decision changes that dependency.
 
-SDK v1 task ids and `TaskStore` remain compatibility machinery only. This milestone does not rewrite the current MCP task projection or expose a new public job API.
+The historical SDK v1 experimental Tasks projection has been retired. Default and Business `verify.run` remain ordinary synchronous MCP tool calls; durable ownership and restart-safe result semantics belong to the WAG-owned verify-job core, not to transport-scoped `TaskStore` state.
 
-A future reviewed projection may map MCP Tasks extension handles to WAG job ids, but the projection must preserve WAG authority, recovery state, and failure classification and must remain replaceable across SDK versions.
+A future reviewed projection may map a stable MCP Tasks extension to WAG job ids, but that projection must preserve WAG authority, recovery state, and failure classification and remain replaceable across SDK versions. Removing the historical projection does not authorize a new public `job.*` surface.
 
 ## Surface and authority boundary
 
@@ -74,4 +74,4 @@ Queued restart execution is explicit rather than automatic for every profile. Op
 
 Persisting bounded verify output extends its local retention lifetime. This data remains in the local control-plane trust domain and must not be included in audit rows or exposed to a different caller tuple.
 
-Passing the v1 acceptance gate authorizes only the internal durable verify-job core and later reviewed consumers of it. It does not authorize default/Business activation, MCP Tasks replacement, cancellation, process reattachment, terminal/Git authority, browser execution, or Remote Desktop Commander replacement.
+Passing the v1 acceptance gate authorizes only the internal durable verify-job core and later reviewed consumers of it. It does not authorize default/Business durable-job projection, a future MCP Tasks extension projection, cancellation, process reattachment, terminal/Git authority, browser execution, or Remote Desktop Commander replacement.
