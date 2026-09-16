@@ -3,7 +3,7 @@
 Provider-neutral local execution gateway for Web AI clients.
 
 ## Goal
-Use paid Web AI quota (initially ChatGPT Plus Web) as the reasoning surface while keeping repo/files/Git/process execution local, fast, observable, and policy-controlled.
+Provide a provider-neutral, least-authority local trust/capability gateway for AI hosts that need bounded access to local resources, while keeping identity, policy, approvals, secrets, durable ownership, and audit under WAG control.
 
 ## Canonical authority
 1. Git history and tagged evidence.
@@ -18,7 +18,7 @@ COMPOSE, do not fork wholesale:
 - DevSpace: upstream local execution backend/donor.
 - LocalAnt: security/policy/approval donor.
 - Official MCP SDK: protocol boundary.
-- Cloudflare Tunnel: V0 transport candidate.
+- Host-native/local MCP where available; Cloudflare Quick Tunnel remains historical benchmark infrastructure only.
 - Our code: thin gateway, policy, semantic tools, telemetry, compatibility.
 
 ## Current accepted state
@@ -26,7 +26,7 @@ Trusted Caller Context v1 and the internal Durable Verify Job Core v1 have passe
 
 Browser Adapter v1 remains server-side limited to exactly `health`, `workspace.open`, and `file.read`. Durable verify projection, mutation, public jobs, process/PTY, Git writes, and browser mutation remain unauthorized unless a later reviewed gate explicitly enables them.
 
-The next evidence sequence is a bounded MCP v2 / protocol `2026-07-28` compatibility spike followed by a current-market viability re-benchmark. Evidence from those gates, rather than roadmap inertia, selects the next implementation milestone.
+The MCP v2 / protocol `2026-07-28` compatibility spike passed for the core/dual-era path while production migration remains deferred around Tasks. The current-market re-benchmark then found generic local coding and browser automation no longer distinct WAG value propositions. The next milestone is thin-gateway consolidation and host conformance, with no authority or tool-surface widening by default.
 
 ## Business private MCP readiness
 The supported private deployment direction is ChatGPT Business + OpenAI Secure MCP Tunnel + the production-built Gateway stdio command. DevSpace remains a separately supervised loopback-only process; the Gateway does not expose a public listener.
