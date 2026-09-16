@@ -21,7 +21,12 @@ export interface GatewayHttpServerOptions {
   port?: number;
   enableFilePatch?: boolean;
   mutationContext?: MutationMcpContext;
-  browserAdmission?: BrowserAdmissionHttpContext;
+}
+export interface BrowserAdmissionHttpServerOptions {
+  gateway: GatewayApi;
+  browserAdmission: BrowserAdmissionHttpContext;
+  host?: string;
+  port?: number;
 }
 export interface GatewayHttpServer {
   host: string;
@@ -36,30 +41,40 @@ const admissionBodySchema = z.object({
 }).strict();
 
 export async function startGatewayHttpServer(options: GatewayHttpServerOptions): Promise<GatewayHttpServer> {
+  return startHttpServer(options);
+}
+
+export async function startBrowserAdmissionHttpServer(options: BrowserAdmissionHttpServerOptions): Promise<GatewayHttpServer> {
+  return startHttpServer(options);
+}
+
+async function startHttpServer(options: GatewayHttpServerOptions | BrowserAdmissionHttpServerOptions): Promise<GatewayHttpServer> {
+  const generic = 'bearerToken' in options ? options : undefined;
+  const browserAdmission = 'browserAdmission' in options ? options.browserAdmission : undefined;
   const host = options.host ?? '127.0.0.1';
   if (host !== '127.0.0.1' && host !== '::1') throw new Error('Gateway HTTP server must bind loopback in V0');
-  if (options.browserAdmission && host !== '127.0.0.1') throw new Error('Browser admission HTTP must bind IPv4 loopback');
-  if (Buffer.byteLength(options.bearerToken) < 32) throw new Error('Gateway bearer token must be at least 32 bytes');
-  if (options.browserAdmission && Buffer.byteLength(options.browserAdmission.bootstrapToken) < 32) {
+  if (browserAdmission && host !== '127.0.0.1') throw new Error('Browser admission HTTP must bind IPv4 loopback');
+  if (generic && Buffer.byteLength(generic.bearerToken) < 32) throw new Error('Gateway bearer token must be at least 32 bytes');
+  if (browserAdmission && Buffer.byteLength(browserAdmission.bootstrapToken) < 32) {
     throw new Error('Browser admission bootstrap token must be at least 32 bytes');
   }
 
   const taskStore = new NonCancellingTaskStore();
   let listenerPort = 0;
-  const server = createServer(options.browserAdmission ? { requireHostHeader: false } : {}, async (req, res) => {
+  const server = createServer(browserAdmission ? { requireHostHeader: false } : {}, async (req, res) => {
     res.setHeader('x-request-id', randomUUID());
     try {
-      if (options.browserAdmission) {
+      if (browserAdmission) {
         if (req.headers.host !== `${host}:${listenerPort}` || req.headers.origin !== undefined) {
           json(res, 403, { error: 'forbidden' });
           return;
         }
-        await handleBrowserRequest(req, res, options.browserAdmission, host, listenerPort);
+        await handleBrowserRequest(req, res, browserAdmission, host, listenerPort);
         return;
       }
 
       if (req.url !== '/mcp') { res.writeHead(404).end(); return; }
-      if (!authorized(req, options.bearerToken)) {
+      if (!generic || !authorized(req, generic.bearerToken)) {
         res.setHeader('www-authenticate', 'Bearer');
         json(res, 401, { error: 'unauthorized' });
         return;
@@ -71,8 +86,8 @@ export async function startGatewayHttpServer(options: GatewayHttpServerOptions):
 
       const mcp = createGatewayMcpServer(options.gateway, {
         taskStore,
-        enableFilePatch: options.enableFilePatch,
-        mutationContext: options.mutationContext,
+        enableFilePatch: generic.enableFilePatch,
+        mutationContext: generic.mutationContext,
       });
       await handleMcp(req, res, mcp);
     } catch {
@@ -85,7 +100,7 @@ export async function startGatewayHttpServer(options: GatewayHttpServerOptions):
     host,
     port: listenerPort,
     mcpUrl,
-    ...(options.browserAdmission ? { admissionUrl: `http://${host}:${listenerPort}/adapter/admit` } : {}),
+    ...(browserAdmission ? { admissionUrl: `http://${host}:${listenerPort}/adapter/admit` } : {}),
     close: async () => { taskStore.cleanup(); await closeServer(server); },
   };
 }

@@ -4,7 +4,7 @@ import { dirname, isAbsolute } from 'node:path';
 import { AdmittedWorkspaceService } from '../src/admitted-workspace.js';
 import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import { startGatewayHttpServer } from '../src/http-server.js';
+import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
 import { loadPrivateGatewayConfig } from '../src/private-config.js';
 import { bootstrapPrivateGateway } from '../src/private-runtime.js';
 import { createBrowserAdmittedMcpServer } from '../src/server.js';
@@ -27,11 +27,10 @@ export async function startBrowserAdapterRuntime(options: {
   const env = options.env ?? process.env;
   const config = await loadPrivateGatewayConfig(options.configPath);
   const bootstrapToken = randomBytes(32).toString('base64url');
-  const internalBearerToken = randomBytes(32).toString('base64url');
   let store: SqliteDurableStore | undefined;
   let admission: BrowserAdmissionRegistry | undefined;
   let privateRuntime: Awaited<ReturnType<typeof bootstrapPrivateGateway>> | undefined;
-  let http: Awaited<ReturnType<typeof startGatewayHttpServer>> | undefined;
+  let http: Awaited<ReturnType<typeof startBrowserAdmissionHttpServer>> | undefined;
 
   try {
     await mkdir(dirname(options.statePath), { recursive: true });
@@ -45,9 +44,8 @@ export async function startBrowserAdapterRuntime(options: {
       allowedRoots: config.allowedRoots,
     });
 
-    http = await startGatewayHttpServer({
+    http = await startBrowserAdmissionHttpServer({
       gateway: privateRuntime.gateway,
-      bearerToken: internalBearerToken,
       browserAdmission: {
         bootstrapToken,
         admission,

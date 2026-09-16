@@ -5,20 +5,44 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import { startGatewayHttpServer } from '../src/http-server.js';
+import { startBrowserAdmissionHttpServer, type BrowserAdmissionHttpServerOptions, type GatewayHttpServerOptions } from '../src/http-server.js';
 import { createBrowserAdmittedMcpServer, createGateway } from '../src/server.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 
 const BOOTSTRAP = 'bootstrap-0123456789abcdef0123456789abcdef';
+if (false) {
+  const browserOnly: BrowserAdmissionHttpServerOptions = { gateway: null as never, browserAdmission: null as never };
+  void browserOnly;
+  const browserWithBearer: BrowserAdmissionHttpServerOptions = {
+    gateway: null as never,
+    browserAdmission: null as never,
+    // @ts-expect-error browser-admission mode must not accept the generic MCP bearer.
+    bearerToken: 'forbidden',
+  };
+  void browserWithBearer;
+  const browserWithMutation: BrowserAdmissionHttpServerOptions = {
+    gateway: null as never,
+    browserAdmission: null as never,
+    // @ts-expect-error browser-admission mode must not accept generic mutation projection knobs.
+    enableFilePatch: true,
+  };
+  void browserWithMutation;
+  const genericWithAdmission: GatewayHttpServerOptions = {
+    gateway: null as never,
+    bearerToken: 'generic-token-0123456789abcdef0123456789abcdef',
+    // @ts-expect-error generic bearer mode must not accept browser admission composition.
+    browserAdmission: null as never,
+  };
+  void genericWithAdmission;
+}
 
 async function fixture(t: test.TestContext) {
   const store = new SqliteDurableStore(':memory:');
   const admission = new BrowserAdmissionRegistry(store, () => 1_000);
   const gateway = createGateway({ executor: new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' }), allowedRoots: [process.cwd()] });
   const workspaces = { open: async () => ({ workspaceId: 'ws_test' }), read: async () => ({ content: 'ok' }) };
-  const http = await startGatewayHttpServer({
+  const http = await startBrowserAdmissionHttpServer({
     gateway,
-    bearerToken: 'legacy-token-0123456789abcdef0123456789abcdef',
     browserAdmission: { bootstrapToken: BOOTSTRAP, admission, browserMcp: (caller) => createBrowserAdmittedMcpServer(gateway, { callerContext: caller, workspaces }) },
   });
   t.after(async () => { admission.close(); store.close(); await http.close(); });
