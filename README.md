@@ -26,7 +26,7 @@ Trusted Caller Context v1 and the internal Durable Verify Job Core v1 have passe
 
 Browser Adapter v1 remains server-side limited to exactly `health`, `workspace.open`, and `file.read`. Durable verify projection, mutation, public jobs, process/PTY, Git writes, and browser mutation remain unauthorized unless a later reviewed gate explicitly enables them.
 
-The MCP v2 / protocol `2026-07-28` compatibility spike passed for the core/dual-era path while production migration remains deferred around Tasks. The current-market re-benchmark then found generic local coding and browser automation no longer distinct WAG value propositions. The next milestone is thin-gateway consolidation and host conformance, with no authority or tool-surface widening by default.
+The MCP v2 / protocol `2026-07-28` compatibility spike passed for the core/dual-era path while production migration remains deferred around Tasks. The current-market re-benchmark then found generic local coding and browser automation no longer distinct WAG value propositions. Thin-gateway host conformance subsequently passed across the installed Codex, Claude Code, and Gemini CLI without a production delta. Feature growth remains frozen by default; the next evidence step is a separate audit of redundant historical/experimental surfaces before any deletion, consolidation, or authority change.
 
 ## Business private MCP readiness
 The supported private deployment direction is ChatGPT Business + OpenAI Secure MCP Tunnel + the production-built Gateway stdio command. DevSpace remains a separately supervised loopback-only process; the Gateway does not expose a public listener.
