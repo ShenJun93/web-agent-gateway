@@ -19,7 +19,6 @@ export interface GatewayHttpServerOptions {
   bearerToken: string;
   host?: string;
   port?: number;
-  enableFilePatch?: boolean;
   mutationContext?: MutationMcpContext;
 }
 export interface BrowserAdmissionHttpServerOptions {
@@ -86,7 +85,6 @@ async function startHttpServer(options: GatewayHttpServerOptions | BrowserAdmiss
 
       const mcp = createGatewayMcpServer(options.gateway, {
         taskStore,
-        enableFilePatch: generic.enableFilePatch,
         mutationContext: generic.mutationContext,
       });
       await handleMcp(req, res, mcp);

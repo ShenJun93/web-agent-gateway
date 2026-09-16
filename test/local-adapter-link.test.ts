@@ -16,8 +16,6 @@ function fakeGateway(): GatewayApi {
     openWorkspace: async () => ({ workspaceId: 'legacy' }),
     readFile: async () => ({ content: 'legacy' }),
     verifyRun: async () => ({ profile: 'none', exitCode: 0, output: '' }),
-    filePatchPreview: async () => { throw new Error('disabled'); },
-    filePatchApply: async () => { throw new Error('disabled'); },
     repoSnapshot: async () => ({ branch: '', head: '', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false }),
   };
 }

@@ -26,37 +26,21 @@ test('public MCP exposes only the five V0 semantic tools', async (t) => {
 });
 
 
-test('opt-in MCP exposes file.patch without raw patch input', async (t) => {
-  const { PatchApprovalStore } = await import('../src/patch-approval.js');
+test('legacy file.patch opt-in cannot resurrect a removed tool', async (t) => {
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
-  const gateway = createGateway({
-    executor,
-    allowedRoots: [process.cwd()],
-    verifyProfiles: {},
-    patchApprovals: new PatchApprovalStore(),
-  });
-  const server = createGatewayMcpServer(gateway, { enableFilePatch: true });
+  const gateway = createGateway({ executor, allowedRoots: [process.cwd()], verifyProfiles: {} });
+  const server = createGatewayMcpServer(gateway, { enableFilePatch: true } as never);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'gateway-mutation-test', version: '1.0.0' }, { capabilities: {} });
+  const client = new Client({ name: 'gateway-legacy-mutation-test', version: '1.0.0' }, { capabilities: {} });
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   t.after(async () => { await client.close(); await server.close(); });
 
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
-    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'file.patch',
+    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
   ]);
-  const patch = tools.tools.find((tool) => tool.name === 'file.patch');
-  assert.deepEqual(patch?.annotations, {
-    readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false,
-  });
-  const schema = JSON.stringify(patch?.inputSchema ?? {});
-  for (const field of ['phase', 'workspace_id', 'path', 'base_sha256', 'before', 'after', 'approval_id']) {
-    assert.match(schema, new RegExp(`"${field}"`), `file.patch schema must expose ${field}`);
-  }
-  assert.doesNotMatch(schema, /"patch"\s*:/, 'remote callers must not supply raw patch text');
 });
-
 test('opt-in durable mutation MCP exposes preview/result without remote approval fields', async (t) => {
   const { createHash } = await import('node:crypto');
   const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
