@@ -1,6 +1,6 @@
 # ADR-0006: Use MCP Tasks for transport-durable verify results
 
-Status: Accepted
+Status: Superseded — historical MCP v1 experimental Tasks compatibility decision; retired by MCP v1 Tasks Removal v1
 Date: 2026-09-10
 
 ## Context
