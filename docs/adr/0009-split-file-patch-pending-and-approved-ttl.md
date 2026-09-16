@@ -1,7 +1,7 @@
 # ADR-0009: Split `file.patch` Pending and Approved TTL Windows
 
 Date: 2026-09-12
-Status: Accepted for mutation-spike follow-up
+Status: Superseded — historical timing rule for the retired `file.patch` protocol
 Amends: ADR-0008 timing semantics only
 
 ## Context

@@ -1,7 +1,7 @@
 # ADR-0008: Gate `file.patch` Behind Local Single-Use Approval
 
 Date: 2026-09-11
-Status: Accepted for post-V0 mutation spike
+Status: Superseded — historical mutation-spike decision; replaced by ADR-0011/ADR-0014 and the accepted durable mutation control plane
 
 ## Context
 
