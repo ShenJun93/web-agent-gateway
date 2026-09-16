@@ -6,13 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DurableMutationCoordinator } from '../src/durable-mutation.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import type { FileMutationBackend } from '../src/file-mutation-backend.js';
-import { startDurableMutationBrowserSpike } from '../scripts/durable-mutation-browser-spike.js';
+import { startDurableMutationMcpFixture } from './durable-mutation-mcp-fixture.js';
 import { DEVSPACE_TEST_OWNER_TOKEN, startPinnedDevspace } from './devspace-fixture.js';
 
 const execFileAsync = promisify(execFile);
@@ -22,7 +20,6 @@ const caller = createGatewayCallerContext({
   sessionId: 'session_accept',
   adapterId: 'browser_accept',
 });
-const MCP_TOKEN = 'durable-acceptance-token-0123456789abcdef0123456789abcdef';
 
 function cookiePair(value: string | null): string {
   assert.ok(value);
@@ -49,17 +46,12 @@ test('fresh Git fixture completes preview -> local review -> result -> read-back
     verifyProfiles: {},
   }));
 
-  const runtime = await startDurableMutationBrowserSpike({
+  const runtime = await startDurableMutationMcpFixture({
     configPath, statePath, caller,
-    env: { DEVSPACE_OAUTH_OWNER_TOKEN: DEVSPACE_TEST_OWNER_TOKEN, WAG_DURABLE_MUTATION_SPIKE_TOKEN: MCP_TOKEN },
+    env: { DEVSPACE_OAUTH_OWNER_TOKEN: DEVSPACE_TEST_OWNER_TOKEN },
   });
   t.after(() => runtime.close());
-  const client = new Client({ name: 'durable-acceptance', version: '1.0.0' }, { capabilities: {} });
-  const transport = new StreamableHTTPClientTransport(new URL(runtime.mcpUrl), {
-    requestInit: { headers: { authorization: `Bearer ${MCP_TOKEN}` } },
-  });
-  await client.connect(transport);
-  t.after(() => client.close());
+  const client = runtime.client;
 
   const opened = await client.callTool({ name: 'workspace.open', arguments: { path: fixture.workspaceRoot } });
   const workspaceId = (opened.structuredContent as { workspaceId?: string } | undefined)?.workspaceId;

@@ -1,44 +1,36 @@
-import { isAbsolute } from 'node:path';
-import { DevspaceFileMutationBackend } from '../src/executor/devspace-file-mutation.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { type GatewayCallerContext } from '../src/caller-context.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import { DurableMutationCoordinator, type MutationCaller } from '../src/durable-mutation.js';
-import { startGatewayHttpServer } from '../src/http-server.js';
+import { DurableMutationCoordinator } from '../src/durable-mutation.js';
+import { DevspaceFileMutationBackend } from '../src/executor/devspace-file-mutation.js';
 import { startOperatorServer } from '../src/operator-server.js';
 import { loadPrivateGatewayConfig } from '../src/private-config.js';
 import { bootstrapPrivateGateway } from '../src/private-runtime.js';
+import { createGatewayMcpServer } from '../src/server.js';
 
-const TOKEN_ENV = 'WAG_DURABLE_MUTATION_SPIKE_TOKEN';
-
-export interface DurableMutationSpikeRuntime {
-  mcpUrl: string;
+export interface DurableMutationMcpFixture {
+  client: Client;
   operatorOrigin: string;
   operatorBootstrapUrl: string;
   close(): Promise<void>;
 }
 
-export async function startDurableMutationBrowserSpike(options: {
+export async function startDurableMutationMcpFixture(options: {
   configPath: string;
   statePath: string;
-  caller: MutationCaller;
+  caller: GatewayCallerContext;
   env?: NodeJS.ProcessEnv;
-}): Promise<DurableMutationSpikeRuntime> {
-  if (!isAbsolute(options.configPath)) throw new Error('Spike config path must be absolute');
-  if (!isAbsolute(options.statePath)) throw new Error('Spike state path must be absolute');
-  const env = options.env ?? process.env;
-  const bearerToken = env[TOKEN_ENV];
-  if (!bearerToken || Buffer.byteLength(bearerToken) < 32) {
-    throw new Error(`${TOKEN_ENV} must be at least 32 bytes`);
-  }
-  delete env[TOKEN_ENV];
-
+}): Promise<DurableMutationMcpFixture> {
   const config = await loadPrivateGatewayConfig(options.configPath);
   const store = new SqliteDurableStore(options.statePath);
   let privateRuntime: Awaited<ReturnType<typeof bootstrapPrivateGateway>> | undefined;
   let operator: Awaited<ReturnType<typeof startOperatorServer>> | undefined;
-  let http: Awaited<ReturnType<typeof startGatewayHttpServer>> | undefined;
+  let mcp: ReturnType<typeof createGatewayMcpServer> | undefined;
+  let client: Client | undefined;
   try {
     privateRuntime = await bootstrapPrivateGateway(config, {
-      env,
+      env: options.env,
       openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
         ...options.caller,
         canonicalRoot,
@@ -46,31 +38,37 @@ export async function startDurableMutationBrowserSpike(options: {
         createdAt: Date.now(),
       }).workspaceId,
     });
-    const backend = new DevspaceFileMutationBackend(privateRuntime.executor);
-    const coordinator = new DurableMutationCoordinator({ store, backends: [backend] });
+    const coordinator = new DurableMutationCoordinator({
+      store,
+      backends: [new DevspaceFileMutationBackend(privateRuntime.executor)],
+    });
     await coordinator.reconcile();
     operator = await startOperatorServer({ coordinator });
-    http = await startGatewayHttpServer({
-      gateway: privateRuntime.gateway,
-      bearerToken,
+    mcp = createGatewayMcpServer(privateRuntime.gateway, {
       mutationContext: { callerContext: options.caller, coordinator },
     });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    client = new Client({ name: 'durable-mutation-acceptance', version: '1.0.0' }, { capabilities: {} });
+    await mcp.connect(serverTransport);
+    await client.connect(clientTransport);
     let closed = false;
     return {
-      mcpUrl: http.mcpUrl,
+      client,
       operatorOrigin: operator.origin,
       operatorBootstrapUrl: operator.bootstrapUrl,
       async close() {
         if (closed) return;
         closed = true;
-        await http?.close();
-        await operator?.close();
-        await privateRuntime?.close();
+        await client?.close().catch(() => undefined);
+        await mcp?.close().catch(() => undefined);
+        await operator?.close().catch(() => undefined);
+        await privateRuntime?.close().catch(() => undefined);
         store.close();
       },
     };
   } catch (error) {
-    await http?.close().catch(() => undefined);
+    await client?.close().catch(() => undefined);
+    await mcp?.close().catch(() => undefined);
     await operator?.close().catch(() => undefined);
     await privateRuntime?.close().catch(() => undefined);
     store.close();
