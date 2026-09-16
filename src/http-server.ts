@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import type { BrowserAdmissionRegistry } from './adapter-admission.js';
 import type { GatewayCallerContext } from './caller-context.js';
-import { createGatewayMcpServer, type GatewayApi, type MutationMcpContext } from './server.js';
+import type { GatewayApi } from './server.js';
 
 export interface BrowserAdmissionHttpContext {
   bootstrapToken: string;
@@ -13,13 +13,6 @@ export interface BrowserAdmissionHttpContext {
   browserMcp(caller: GatewayCallerContext): McpServer;
 }
 
-export interface GatewayHttpServerOptions {
-  gateway: GatewayApi;
-  bearerToken: string;
-  host?: string;
-  port?: number;
-  mutationContext?: MutationMcpContext;
-}
 export interface BrowserAdmissionHttpServerOptions {
   gateway: GatewayApi;
   browserAdmission: BrowserAdmissionHttpContext;
@@ -38,53 +31,23 @@ const admissionBodySchema = z.object({
   correlation_id: z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/),
 }).strict();
 
-export async function startGatewayHttpServer(options: GatewayHttpServerOptions): Promise<GatewayHttpServer> {
-  return startHttpServer(options);
-}
-
 export async function startBrowserAdmissionHttpServer(options: BrowserAdmissionHttpServerOptions): Promise<GatewayHttpServer> {
-  return startHttpServer(options);
-}
-
-async function startHttpServer(options: GatewayHttpServerOptions | BrowserAdmissionHttpServerOptions): Promise<GatewayHttpServer> {
-  const generic = 'bearerToken' in options ? options : undefined;
-  const browserAdmission = 'browserAdmission' in options ? options.browserAdmission : undefined;
+  const browserAdmission = options.browserAdmission;
   const host = options.host ?? '127.0.0.1';
-  if (host !== '127.0.0.1' && host !== '::1') throw new Error('Gateway HTTP server must bind loopback in V0');
-  if (browserAdmission && host !== '127.0.0.1') throw new Error('Browser admission HTTP must bind IPv4 loopback');
-  if (generic && Buffer.byteLength(generic.bearerToken) < 32) throw new Error('Gateway bearer token must be at least 32 bytes');
-  if (browserAdmission && Buffer.byteLength(browserAdmission.bootstrapToken) < 32) {
+  if (host !== '127.0.0.1') throw new Error('Browser admission HTTP must bind IPv4 loopback');
+  if (Buffer.byteLength(browserAdmission.bootstrapToken) < 32) {
     throw new Error('Browser admission bootstrap token must be at least 32 bytes');
   }
 
   let listenerPort = 0;
-  const server = createServer(browserAdmission ? { requireHostHeader: false } : {}, async (req, res) => {
+  const server = createServer({ requireHostHeader: false }, async (req, res) => {
     res.setHeader('x-request-id', randomUUID());
     try {
-      if (browserAdmission) {
-        if (req.headers.host !== `${host}:${listenerPort}` || req.headers.origin !== undefined) {
-          json(res, 403, { error: 'forbidden' });
-          return;
-        }
-        await handleBrowserRequest(req, res, browserAdmission, host, listenerPort);
+      if (req.headers.host !== `${host}:${listenerPort}` || req.headers.origin !== undefined) {
+        json(res, 403, { error: 'forbidden' });
         return;
       }
-
-      if (req.url !== '/mcp') { res.writeHead(404).end(); return; }
-      if (!generic || !authorized(req, generic.bearerToken)) {
-        res.setHeader('www-authenticate', 'Bearer');
-        json(res, 401, { error: 'unauthorized' });
-        return;
-      }
-      if (req.method !== 'POST') {
-        json(res, 405, { error: 'method_not_allowed' });
-        return;
-      }
-
-      const mcp = createGatewayMcpServer(options.gateway, {
-        mutationContext: generic.mutationContext,
-      });
-      await handleMcp(req, res, mcp);
+      await handleBrowserRequest(req, res, browserAdmission, host, listenerPort);
     } catch {
       if (!res.headersSent) json(res, 500, { error: 'internal_error' });
     }
@@ -95,7 +58,7 @@ async function startHttpServer(options: GatewayHttpServerOptions | BrowserAdmiss
     host,
     port: listenerPort,
     mcpUrl,
-    ...(browserAdmission ? { admissionUrl: `http://${host}:${listenerPort}/adapter/admit` } : {}),
+    admissionUrl: `http://${host}:${listenerPort}/adapter/admit`,
     close: async () => { await closeServer(server); },
   };
 }

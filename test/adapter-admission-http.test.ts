@@ -5,11 +5,21 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import { startBrowserAdmissionHttpServer, type BrowserAdmissionHttpServerOptions, type GatewayHttpServerOptions } from '../src/http-server.js';
+import * as httpServerModule from '../src/http-server.js';
+import { startBrowserAdmissionHttpServer, type BrowserAdmissionHttpServerOptions } from '../src/http-server.js';
 import { createBrowserAdmittedMcpServer, createGateway } from '../src/server.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 
 const BOOTSTRAP = 'bootstrap-0123456789abcdef0123456789abcdef';
+test('HTTP module exposes browser admission mode only', () => {
+  assert.equal('startGatewayHttpServer' in httpServerModule, false);
+});
+type HttpServerExports = typeof import('../src/http-server.js');
+if (false) {
+  // @ts-expect-error generic bearer HTTP starter must not remain exported.
+  const retiredGenericStarter: keyof HttpServerExports = 'startGatewayHttpServer';
+  void retiredGenericStarter;
+}
 if (false) {
   const browserOnly: BrowserAdmissionHttpServerOptions = { gateway: null as never, browserAdmission: null as never };
   void browserOnly;
@@ -27,19 +37,6 @@ if (false) {
     enableFilePatch: true,
   };
   void browserWithMutation;
-  const genericWithAdmission: GatewayHttpServerOptions = {
-    gateway: null as never,
-    bearerToken: 'generic-token-0123456789abcdef0123456789abcdef',
-    // @ts-expect-error generic bearer mode must not accept browser admission composition.
-    browserAdmission: null as never,
-  };
-  void genericWithAdmission;  const genericWithLegacyFilePatch: GatewayHttpServerOptions = {
-    gateway: null as never,
-    bearerToken: 'generic-token-0123456789abcdef0123456789abcdef',
-    // @ts-expect-error historical file.patch projection must not remain configurable.
-    enableFilePatch: true,
-  };
-  void genericWithLegacyFilePatch;
 }
 
 async function fixture(t: test.TestContext) {

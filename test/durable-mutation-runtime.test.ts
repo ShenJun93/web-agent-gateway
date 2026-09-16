@@ -4,13 +4,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import { startDurableMutationBrowserSpike } from '../scripts/durable-mutation-browser-spike.js';
+import { startDurableMutationMcpFixture } from './durable-mutation-mcp-fixture.js';
 import { DEVSPACE_TEST_OWNER_TOKEN, startPinnedDevspace } from './devspace-fixture.js';
 
-const MCP_TOKEN = 'durable-mutation-spike-token-0123456789abcdef0123456789';
 const caller = { ownerId: 'owner_runtime', sessionId: 'session_runtime', adapterId: 'browser_bridge_runtime' };
 const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 
@@ -42,13 +39,9 @@ test('durable mutation runtime reconciles before serving and owns only its local
   });
   before.close();
 
-  const env = {
-    DEVSPACE_OAUTH_OWNER_TOKEN: DEVSPACE_TEST_OWNER_TOKEN,
-    WAG_DURABLE_MUTATION_SPIKE_TOKEN: MCP_TOKEN,
-  };
-  const runtime = await startDurableMutationBrowserSpike({ configPath, statePath, caller, env });
+  const env = { DEVSPACE_OAUTH_OWNER_TOKEN: DEVSPACE_TEST_OWNER_TOKEN };
+  const runtime = await startDurableMutationMcpFixture({ configPath, statePath, caller, env });
   t.after(() => runtime.close());
-  assert.match(runtime.mcpUrl, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
   assert.match(runtime.operatorOrigin, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.match(runtime.operatorBootstrapUrl, /\/bootstrap\?token=/);
   const boot = await fetch(runtime.operatorBootstrapUrl, { redirect: 'manual' });
@@ -57,12 +50,7 @@ test('durable mutation runtime reconciles before serving and owns only its local
   const operatorHtml = await operatorPage.text();
   assert.doesNotMatch(operatorHtml, new RegExp(expired.mutationId));
 
-  const client = new Client({ name: 'durable-runtime-test', version: '1.0.0' }, { capabilities: {} });
-  const transport = new StreamableHTTPClientTransport(new URL(runtime.mcpUrl), {
-    requestInit: { headers: { authorization: ['Bearer', MCP_TOKEN].join(' ') } },
-  });
-  await client.connect(transport);
-  t.after(() => client.close());
+  const client = runtime.client;
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
     'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'mutation.preview', 'mutation.result',
