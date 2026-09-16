@@ -5,6 +5,18 @@ import test from 'node:test';
 
 const workflowPath = join(process.cwd(), '.github', 'workflows', 'native-host-distribution.yml');
 const mainPushCondition = "github.event_name == 'push' && github.ref == 'refs/heads/main'";
+const expectedPushPaths = [
+  '.github/workflows/native-host-distribution.yml',
+  'browser/native-host/**',
+  'src/browser-adapter/**',
+  'scripts/build-native-host.ts',
+  'scripts/package-native-host-distribution.ts',
+  'scripts/verify-native-host-distribution.ts',
+  'package.json',
+  'package-lock.json',
+  'tsconfig.json',
+  'tsconfig.build.json',
+] as const;
 
 async function workflowText(): Promise<string> {
   return readFile(workflowPath, 'utf8');
@@ -21,6 +33,21 @@ test('native host workflow has narrow triggers permissions runner and immutable 
   assert.match(workflow, /node-version:\s*['"]24\.20\.0['"]/);
   assert.match(workflow, /package-manager-cache:\s*false/);
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
+});
+
+test('native host main push matches exact publication inputs while PR validation stays unfiltered', async () => {
+  const workflow = (await workflowText()).replace(/\r\n/g, '\n');
+  assert.match(workflow, /pull_request:\n    branches: \[main\]\n  push:/);
+  const expectedPushTrigger = [
+    '  push:',
+    '    branches: [main]',
+    '    paths:',
+    ...expectedPushPaths.map((path) => `      - '${path}'`),
+  ].join('\n');
+  assert.ok(
+    workflow.includes(`${expectedPushTrigger}\n\npermissions:`),
+    'push trigger must use the exact native-host publication input allowlist',
+  );
 });
 
 test('native host workflow pins researched action commits and forbids floating tags', async () => {
