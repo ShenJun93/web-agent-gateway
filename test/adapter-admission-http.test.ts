@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import test from 'node:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import * as httpServerModule from '../src/http-server.js';

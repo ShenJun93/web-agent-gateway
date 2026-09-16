@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
@@ -22,7 +21,7 @@ test('public MCP exposes only the five V0 semantic tools', async (t) => {
   ]);
   const verify = tools.tools.find((tool) => tool.name === 'verify.run');
   assert.equal(verify?.annotations?.readOnlyHint, false, 'verify.run may execute scripts and must not claim read-only');
-  assert.equal(verify?.execution?.taskSupport, 'forbidden', 'verify.run must forbid the retired MCP v1 Tasks contract');
+  assert.equal(verify?.execution?.taskSupport, undefined, 'v2 core must expose no retired Tasks execution metadata');
 });
 
 

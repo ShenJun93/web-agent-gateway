@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { createBrowserAdmittedMcpServer } from '../src/server.js';
 
@@ -86,14 +85,13 @@ test('broader default tools are unavailable on browser-admitted MCP', async (t) 
   const connected = await connectedBrowserServer();
   t.after(async () => { await connected.client.close(); await connected.server.close(); });
 
-  const snapshot = await connected.client.callTool({
-    name: 'repo.snapshot', arguments: { workspace_id: 'ws_browser' },
-  });
-  const verify = await connected.client.callTool({
-    name: 'verify.run', arguments: { workspace_id: 'ws_browser', profile: 'test' },
-  });
-  assert.equal(snapshot.isError, true);
-  assert.equal(verify.isError, true);
-  assert.match(JSON.stringify(snapshot.content), /Tool repo\.snapshot not found/);
-  assert.match(JSON.stringify(verify.content), /Tool verify\.run not found/);
+  for (const request of [
+    { name: 'repo.snapshot', arguments: { workspace_id: 'ws_browser' } },
+    { name: 'verify.run', arguments: { workspace_id: 'ws_browser', profile: 'test' } },
+  ]) {
+    await assert.rejects(connected.client.callTool(request), (error: unknown) =>
+      error instanceof Error
+      && (error as Error & { code?: number }).code === -32602
+      && error.message === `Tool ${request.name} not found`);
+  }
 });

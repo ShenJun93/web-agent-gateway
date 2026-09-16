@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from 'zod';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
@@ -153,12 +153,12 @@ export function createBrowserAdmittedMcpServer(
   }, async () => toolResult(await gateway.health()));
   server.registerTool('workspace.open', {
     description: 'Open one approved local workspace and return an opaque workspace id.',
-    inputSchema: { path: z.string().min(1) },
+    inputSchema: z.object({ path: z.string().min(1) }),
     annotations: { readOnlyHint: true },
   }, async ({ path }) => toolResult(await context.workspaces.open(context.callerContext, path)));
   server.registerTool('file.read', {
     description: 'Read bounded text from an opened workspace.',
-    inputSchema: { workspace_id: z.string().min(1), path: z.string().min(1) },
+    inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }),
     annotations: { readOnlyHint: true },
   }, async ({ workspace_id, path }) => toolResult(await context.workspaces.read(
     context.callerContext, workspace_id, path,
@@ -174,12 +174,12 @@ export interface MutationMcpContext {
 export function createGatewayMcpServer(gateway: GatewayApi, { mutationContext }: { mutationContext?: MutationMcpContext } = {}): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   server.registerTool('health', { description: 'Check gateway and executor compatibility.', annotations: { readOnlyHint: true } }, async () => toolResult(await gateway.health()));
-  server.registerTool('workspace.open', { description: 'Open one approved local workspace and return an opaque workspace id.', inputSchema: { path: z.string().min(1) }, annotations: { readOnlyHint: true } }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
-  server.registerTool('repo.snapshot', { description: 'Return bounded repository status, HEAD, diff summary, and tracked files.', inputSchema: { workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }, annotations: { readOnlyHint: true } }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
-  server.registerTool('file.read', { description: 'Read bounded text from an opened workspace.', inputSchema: { workspace_id: z.string().min(1), path: z.string().min(1) }, annotations: { readOnlyHint: true } }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
+  server.registerTool('workspace.open', { description: 'Open one approved local workspace and return an opaque workspace id.', inputSchema: z.object({ path: z.string().min(1) }), annotations: { readOnlyHint: true } }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
+  server.registerTool('repo.snapshot', { description: 'Return bounded repository status, HEAD, diff summary, and tracked files.', inputSchema: z.object({ workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }), annotations: { readOnlyHint: true } }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
+  server.registerTool('file.read', { description: 'Read bounded text from an opened workspace.', inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }), annotations: { readOnlyHint: true } }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
   server.registerTool('verify.run', {
     description: 'Run one locally configured verification profile; arbitrary shell input is not accepted.',
-    inputSchema: { workspace_id: z.string().min(1), profile: z.string().min(1) },
+    inputSchema: z.object({ workspace_id: z.string().min(1), profile: z.string().min(1) }),
     annotations: { readOnlyHint: false },
   }, async ({ workspace_id, profile }) => toolResult(await gateway.verifyRun(workspace_id, profile)));
   if (mutationContext) {
