@@ -64,9 +64,9 @@ test('native host installation receipt accepts exactly the recorded provenance, 
   assert.deepEqual(parseNativeHostInstallReceipt(receipt), receipt);
   assert.equal(NATIVE_HOST_INSTALLATION_SCHEMA_VERSION, 1);
   assert.equal(NATIVE_HOST_ACCEPTED_REPOSITORY, 'ShenJun93/web-agent-gateway');
-  assert.equal(NATIVE_HOST_ACCEPTED_SOURCE_SHA, '9c7fb2881d3641354104f6a20257284d5629ef1c');
-  assert.equal(NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256, '4f0869078357cf8b8ae00e4d27adbef0b905921bdd5202aca38ca10c1b055ebb');
-  assert.equal(NATIVE_HOST_ACCEPTED_WORKFLOW_RUN_ID, '35027172925');
+  assert.equal(NATIVE_HOST_ACCEPTED_SOURCE_SHA, '4dcabd0a33de9b2a0685512fd3ab982e657edb0e');
+  assert.equal(NATIVE_HOST_ACCEPTED_EXECUTABLE_SHA256, '62af695a2d8bd219b940c207b4edb7d18f1bc0c3c3cd7f549f35ace407aaf138');
+  assert.equal(NATIVE_HOST_ACCEPTED_WORKFLOW_RUN_ID, '35088504189');
   assert.equal(NATIVE_HOST_ACCEPTED_RUN_ATTEMPT, 1);
   assert.equal(receipt.nativeApplicationName, 'com.openai.web_agent_gateway');
   assert.equal(receipt.extensionId, 'nnhhhppkpogkedpjnijeagcbfjaoogec');
