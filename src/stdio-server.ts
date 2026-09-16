@@ -1,5 +1,5 @@
 import type { Readable, Writable } from 'node:stream';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { createGatewayMcpServer, type GatewayApi } from './server.js';
 
 export interface GatewayStdioServerOptions {

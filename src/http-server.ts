@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from 'zod';
 import type { BrowserAdmissionRegistry } from './adapter-admission.js';
 import type { GatewayCallerContext } from './caller-context.js';
@@ -127,7 +127,7 @@ async function handleAdmittedMcp(req: IncomingMessage, res: ServerResponse, cont
 }
 
 async function handleMcp(req: IncomingMessage, res: ServerResponse, mcp: McpServer): Promise<void> {
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  const transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   try {
     await mcp.connect(transport);
     await transport.handleRequest(req, res);
