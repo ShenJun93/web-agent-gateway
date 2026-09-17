@@ -1,7 +1,7 @@
 # Signed Native Host Candidate v1 — Design
 
 Date: 2026-09-17
-Status: DRAFT FOR USER REVIEW
+Status: APPROVED 2026-09-17; continuity amendment from implementation-plan self-review
 Decision authority: ADR-0013, ADR-0014, ADR-0017, ADR-0018
 Consumes: Browser Inspect v2 implementation through `50809015877e827569fee73bd8c2c13931753712`
 
@@ -47,17 +47,19 @@ No signing identity is assumed to exist today. Provisioning, identity validation
 
 Signing occurs only after the existing SEA builder has completed all byte-changing operations:
 
-`TypeScript bundle -> SEA blob -> copy node.exe -> postject NODE_SEA_BLOB -> final unsigned PE -> Authenticode sign -> signature verify -> SHA-256 -> execution/acceptance -> package/receipt`
+`TypeScript bundle -> SEA blob -> copy node.exe -> postject NODE_SEA_BLOB -> final unsigned PE -> system Authenticode SHA-256 -> Authenticode sign -> signature verify -> same system Authenticode SHA-256 -> flat SHA-256 -> execution/acceptance -> package/receipt`
 
 Signing before `postject` is invalid because SEA injection changes the PE after signature creation. Re-signing or otherwise mutating the binary after the accepted hash is recorded creates a new artifact identity and invalidates downstream evidence.
 
 The signed executable SHA-256 is the authoritative executable hash for every receipt or acceptance result that consumes the signed candidate. The pre-sign hash may be retained only as diagnostic build evidence and MUST NOT be confused with the executable identity used for install or acceptance.
 
+Unsigned-to-signed continuity MUST also use the Windows system-computed Authenticode SHA-256 image hash. Microsoft documents that AppLocker file-hash rules use an Authenticode cryptographic hash and that App Control Authenticode/PE image hashing excludes signature/timestamp certificate data and PE checksum fields. Record this hash before signing and recompute it after signing; the values MUST be identical. This proves the executable content covered by Authenticode is unchanged even though the flat file SHA-256 changes when a signature is embedded.
+
 The existing `scripts/build-native-host.ts` remains the single SEA builder. This milestone MUST NOT create a second native-host bundling implementation.
 
 ## Candidate provenance receipt
 
-Signing begins from a clean committed source SHA. The candidate receipt records repository identity, source SHA, Node version, package-lock SHA-256, builder identity, pre-sign diagnostic SHA-256, post-sign executable SHA-256, signer certificate subject/thumbprint, RSA/signature digest facts, timestamp metadata when present, and verification result.
+Signing begins from a clean committed source SHA. The candidate receipt records repository identity, source SHA, Node version, package-lock SHA-256, builder identity, pre-sign diagnostic flat SHA-256, system-computed Authenticode SHA-256, post-sign executable flat SHA-256, signer certificate subject/thumbprint, RSA/signature digest facts, timestamp metadata when present, and verification result.
 
 The receipt contains no private-key material, tokens, PINs, access credentials, full certificate private data, local usernames, or machine-specific secrets. Local paths are not artifact identity.
 
@@ -73,10 +75,11 @@ Before Task 6 may execute a signed candidate, a read-only verification step MUST
 2. Authenticode status is valid under current Windows trust evaluation;
 3. at least one accepted signature uses an RSA code-signing certificate rather than ECC;
 4. the certificate chains to a Windows-trusted CA without importing a new local root for the test;
-5. the executable SHA-256 is computed after signing;
-6. the signer subject/thumbprint or equivalent bounded certificate identity is recorded without exposing private material;
-7. signature verification produces no trust-policy mutation; and
-8. the verification result is bound to the exact candidate hash handed to Task 6.
+5. the executable flat SHA-256 is computed after signing;
+6. the system Authenticode SHA-256 image hash exactly equals the pre-sign Authenticode SHA-256;
+7. the signer subject/thumbprint or equivalent bounded certificate identity is recorded without exposing private material;
+8. signature verification produces no trust-policy mutation; and
+9. the verification result is bound to the exact candidate hash handed to Task 6.
 
 A successful `Get-AuthenticodeSignature` or SignTool verification alone does not authorize installation, registry changes, Browser execution, or release promotion. It only qualifies bytes for the existing read-only local acceptance gate.
 
@@ -138,7 +141,8 @@ The gate fails closed on any of the following:
 - exact source state is recorded;
 - final SEA bytes are produced by the existing builder and then signed, in that order;
 - the final executable carries a valid CA-trusted RSA Authenticode signature;
-- the post-sign SHA-256 is recorded;
+- the post-sign flat SHA-256 is recorded;
+- the pre/post system Authenticode SHA-256 image hash is identical and recorded;
 - bounded signer/certificate identity is recorded without private material;
 - current Windows trust evaluation accepts the signature without local trust-store or policy mutation;
 - exact signed executable starts on the Smart App Control host without Code Integrity denial;
@@ -179,6 +183,8 @@ Primary sources:
 - Microsoft Smart App Control signing guidance: <https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control>
 - Microsoft Windows code-signing options: <https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options>
 - Microsoft Authenticode timestamp guidance: <https://learn.microsoft.com/en-us/windows/win32/seccrypto/time-stamping-authenticode-signatures>
+- Microsoft AppLocker Authenticode hash rule: <https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/applocker/understanding-the-file-hash-rule-condition-in-applocker>
+- Microsoft PE Authenticode image-hash exclusions: <https://learn.microsoft.com/en-us/windows/win32/debug/pe-format>
 - Azure Artifact Signing quickstart/eligibility: <https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart>
 - Azure Artifact Signing trust models: <https://learn.microsoft.com/en-us/azure/artifact-signing/concept-trust-models>
 - GitHub OIDC reference: <https://docs.github.com/en/actions/reference/security/oidc>
@@ -190,7 +196,7 @@ Primary sources:
 `TRUST_TARGET = WINDOWS_SMART_APP_CONTROL`
 `SIGNATURE = AUTHENTICODE_RSA_SHA256_CA_TRUSTED`
 `TIMESTAMP = RFC3161_SHA256_PREFERRED`
-`SIGN_ORDER = POSTJECT_THEN_SIGN_THEN_HASH`
+`SIGN_ORDER = POSTJECT_THEN_AUTHENTICODE_HASH_THEN_SIGN_THEN_VERIFY_SAME_AUTHENTICODE_HASH_THEN_FLAT_HASH`
 `DEFAULT_PROVIDER_CLASS = OV_CA_PROTECTED_KEY`
 `AZURE_ARTIFACT_SIGNING = CONDITIONAL_ON_LEGAL_IDENTITY_ELIGIBILITY`
 `LOCAL_TRUST_POLICY_MUTATION = FORBIDDEN`
