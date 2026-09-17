@@ -51,6 +51,11 @@ async function main(): Promise<void> {
   await copyFile(join(repoRoot, 'browser', 'native-host', 'sea-config.json'), configPath);
   await run(process.execPath, ['--experimental-sea-config', 'sea-config.json'], outputDir);
   await copyFile(process.execPath, executablePath);
+  await run('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+    join(repoRoot, 'browser', 'native-host', 'remove-source-signature.ps1'),
+    '-ExecutablePath', executablePath,
+  ], outputDir);
 
   const postjectApi = fileURLToPath(import.meta.resolve('postject'));
   const postjectCli = join(dirname(postjectApi), 'cli.js');
