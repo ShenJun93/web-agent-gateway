@@ -120,7 +120,13 @@ export type GatewayApi = ReturnType<typeof createGateway>;
 
 export interface BrowserAdmittedMcpContext {
   callerContext: GatewayCallerContext;
-  workspaces: Pick<AdmittedWorkspaceService, 'open' | 'read'>;
+  workspaces: Pick<AdmittedWorkspaceService, 'open' | 'read' | 'search' | 'snapshot'>;
+}
+
+function validSearchQuery(query: string): boolean {
+  if (query.includes('\0') || query.includes('\r') || query.includes('\n')) return false;
+  if (Buffer.byteLength(query, 'utf8') > 256) return false;
+  return true;
 }
 
 export function createBrowserAdmittedMcpServer(
@@ -130,17 +136,46 @@ export function createBrowserAdmittedMcpServer(
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   server.registerTool('health', {
     description: 'Check gateway and executor compatibility.',
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async () => toolResult(await gateway.health()));
   server.registerTool('workspace.open', {
     description: 'Open one approved local workspace and return an opaque workspace id.',
     inputSchema: z.object({ path: z.string().min(1) }),
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async ({ path }) => toolResult(await context.workspaces.open(context.callerContext, path)));
+
+  server.registerTool('repo.search', {
+    description: 'Search tracked repository files for a literal string.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      query: z.string().min(1).refine(validSearchQuery),
+      ignore_case: z.boolean().optional(),
+      max_results: z.number().int().min(1).max(50).optional(),
+      context_lines: z.number().int().min(0).max(2).optional(),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ workspace_id, query, ignore_case, max_results, context_lines }) => {
+    if (!validSearchQuery(query)) throw new Error('Gateway denied search query');
+    return toolResult(await context.workspaces.search(
+      context.callerContext, workspace_id, query, { ignoreCase: ignore_case, maxResults: max_results, contextLines: context_lines }
+    ));
+  });
+
+  server.registerTool('repo.snapshot', {
+    description: 'Return bounded repository status, HEAD, diff summary, and tracked files.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1),
+      max_files: z.number().int().min(1).max(200).optional(),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ workspace_id, max_files }) => toolResult(await context.workspaces.snapshot(
+    context.callerContext, workspace_id, { maxFiles: max_files }
+  )));
+
   server.registerTool('file.read', {
     description: 'Read bounded text from an opened workspace.',
     inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }),
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async ({ workspace_id, path }) => toolResult(await context.workspaces.read(
     context.callerContext, workspace_id, path,
   )));
