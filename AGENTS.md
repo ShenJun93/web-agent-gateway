@@ -31,5 +31,12 @@
 - Instrument latency and failure spans before optimizing.
 - Keep changes small, reviewable, reversible, and testable.
 
+## Block / gate / failure resolution
+- A block, gate, failed benchmark, or failed acceptance test is a research trigger, not a reason to lower the target or silently stop.
+- First classify the blocker from live evidence: missing capability, trust/policy gate, provider/model behavior, tool failure, environment prerequisite, protocol contamination, or external hard constraint.
+- Research current official/upstream sources before selecting a workaround or architecture change; prefer the smallest standards-based or proven composition that preserves the mission.
+- Never bypass provider safety controls, OS/browser security boundaries, WAG admission/approval gates, or benchmark contamination rules merely to obtain a pass.
+- Try compliant alternatives and targeted diagnostics until the blocker is resolved or evidence shows it is an external hard constraint. Record failed approaches and the evidence supporting the final disposition.
+- A workaround is successful only if the intended user workflow remains direct and practical; recurring manual prompt relay, hidden DC fallback, or browser-automation dependence is not an acceptable production success state.
 ## Scope
 V0 is a benchmark spike, not a general agent platform. Do not add browser scraping, A2A, ACP orchestration, marketplace, or multi-device broker unless a later approved spec requires them.
