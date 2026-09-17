@@ -240,3 +240,23 @@ Post-run fixture verification remained clean on branch `main` at HEAD `b3ca9b3bb
 `R1_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_CONTENT_SEARCH`
 
 This DC completion does not promote Tier R because the WAG R1 side is not yet executed and R2 remains outstanding.
+
+## R2 DC repository state result
+
+The exact owned DC browser profile was revalidated against fresh Playwright inventory before observation. The canonical R2 prompt was submitted unchanged in a fresh ChatGPT conversation against `E:\AI-BROWSER\output\wag-dc-bench-0917-dc-r2-a1\workspace`.
+
+The transcript reported branch `main`, full HEAD `b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d`, changed tracked file `docs/status-note.txt`, no staged changes, no untracked files, and bounded diff `STATUS=clean` -> `STATUS=dirty` with one insertion and one deletion.
+
+DC server-side history recorded the actual Git inspection path. The first compound PowerShell command failed from quoting before yielding repository evidence; ChatGPT then retried with simpler read-only `git -C` calls for branch, HEAD, tracked status, full status, and diff stat. The failed call is retained in accounting and did not mutate the repository.
+
+Post-run verification still shows branch `main`, the exact baseline HEAD/tree, and exactly one tracked modification: `docs/status-note.txt` with the expected one-line diff. No additional tracked or untracked residue was introduced.
+
+`R2_DC_ATTEMPT_1 = COMPLETE`
+`R2_DC_BRANCH = main`
+`R2_DC_HEAD = b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d`
+`R2_DC_CHANGED_TRACKED = docs/status-note.txt`
+`R2_DC_DIFF = STATUS=clean -> STATUS=dirty`
+`R2_DC_FAILED_LOCAL_CALLS = 1_QUOTING_ERROR_RETAINED`
+`R2_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_READ_ONLY_GIT`
+
+R0, R1, and R2 now establish the DC Tier-R reference outcomes for Attempt 1. They do not establish WAG Tier R because the WAG side remains unproven/contaminated for this attempt.
