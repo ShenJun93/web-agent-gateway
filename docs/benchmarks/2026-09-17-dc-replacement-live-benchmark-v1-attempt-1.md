@@ -1,0 +1,160 @@
+# DC Replacement Workflow Benchmark v1 — Live Attempt 1
+
+Date: 2026-09-17
+Status: BLOCKED_ENVIRONMENT_AUTH — no WebChat workflow result claimed
+Repository base: `7950151a41c9cceca2f285b584482130b3702bbd`
+Design: `docs/superpowers/specs/2026-09-17-dc-replacement-workflow-benchmark-suite-v1-design.md`
+
+## Decision
+
+The first authorized live execution reached `https://chatgpt.com/` headless with page title `Just a moment...` and HTTP status `403` before any benchmark prompt was submitted. That preflight is retained as `ENVIRONMENT_FAILURE`.
+
+After the user directed the benchmark to use modern PowerShell, all new benchmark shell work moved to PowerShell Core `7.6.6`. The same exact-owned persistent browser profile was then reopened in headed mode without attaching to any normal user browser. ChatGPT rendered normally, but the fresh benchmark profile was unauthenticated and stopped at the `Log in or sign up` dialog.
+
+The current Layer B blocker is therefore the user authentication boundary, not WAG or Remote Desktop Commander. No credential, cookie, token, or authentication material was copied from another profile, and no benchmark prompt has been submitted.
+
+No R0/R1/R2/V1/C1/D1 Layer B attempt is counted. No replacement tier is promoted or rejected from this run.
+
+Model-free Layer A diagnostics did execute and are recorded separately below. They remain non-replacement evidence by design.
+
+`DC_REPLACEMENT_WORKFLOW_BENCHMARK_V1_ATTEMPT_1 = BLOCKED_ENVIRONMENT_AUTH`
+
+`END_TO_END_WEBCHAT_PROMPTS_SUBMITTED = 0`
+
+`AUTHORITY_WIDENING = NONE`
+## Canonical preflight
+
+Canonical Git was fresh-read before browser work:
+
+- `HEAD = origin/main = 7950151a41c9cceca2f285b584482130b3702bbd`;
+- only the pre-existing untracked `.playwright-cli/` directory was present;
+- no source/package/workflow mutation was made.
+
+`E:\AI-BROWSER\PLAYWRIGHT_HANDOFF.md` was fresh-read immediately before browser automation. The first Playwright command was exactly:
+
+`playwright-cli list --all --json`
+
+The global inventory contained one unrelated pre-existing worker, `cgpt-eastwest-skill-0915`, using `E:\AI-BROWSER\profiles\cgpt-eastwest-skill-0915`. It was not attached, closed, modified, or used as ownership evidence.
+
+The benchmark allocated only a brand-new owned worker:
+
+- session: `wag-dc-bench-0917-a1`;
+- profile: `E:\AI-BROWSER\profiles\wag-dc-bench-0917-a1`;
+- output: `E:\AI-BROWSER\output\wag-dc-bench-0917-a1`;
+- purpose: DC replacement benchmark v1 live execution.
+
+A partial setup command exposed Windows PowerShell 5.1 quoting/encoding limitations (`utf8NoBOM` unavailable). No benchmark result was accepted from the failed setup commands. PowerShell Core `7.6.6` was then located and all subsequent benchmark shell commands use that executable.
+## Fixture and local runtime identity
+
+The committed v1 fixture was copied into the owned output and materialized exactly as specified.
+
+- fixture manifest SHA-256: `eb465cc898b879ffe4df9dfe157f06e68236c29169fbadc2b38d5e0567a7bed2`;
+- deterministic baseline HEAD: `b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d`;
+- deterministic tree: `e276f7b0d6ea9e606ac9c3683e27781d354f8ce9`;
+- branch: `main`;
+- fixture status before and after the attempt: clean.
+
+A task-owned pinned DevSpace plus WAG Browser Admission runtime was started for that exact workspace. The first runtime used DevSpace PID `12736`; a short second diagnostic runtime used PID `39680`. Both were owned by this run and both exited cleanly through the runtime stop marker.
+
+The accepted installed native-host identity was not changed:
+
+- source SHA `4dcabd0a33de9b2a0685512fd3ab982e657edb0e`;
+- executable SHA-256 `62af695a2d8bd219b940c207b4edb7d18f1bc0c3c3cd7f549f35ace407aaf138`;
+- manifest SHA-256 `814a1f5f5129c2883e6797d275e2b75ce9b1c13f0db137384f15a4ed451e246c`;
+- extension id `nnhhhppkpogkedpjnijeagcbfjaoogec`.
+
+The committed installation verifier returned `registration = MATCH` and exit code `0` after the live attempt.
+## Layer B WebChat preflight result
+
+The owned browser was first opened headless with the committed WAG extension only and process-local `COMSPEC`, using the benchmark Playwright config. Global inventory proved the exact session/profile pair was live and separate from the unrelated worker.
+
+The first ChatGPT snapshot returned URL `https://chatgpt.com/`, title `Just a moment...`, HTTP status `403`, and no usable conversation UI. That headless preflight is retained as `ENVIRONMENT_FAILURE`.
+
+After switching shell work to PowerShell Core `7.6.6`, the same exact-owned persistent profile was reopened in headed mode. The same URL rendered the normal ChatGPT UI successfully, proving the earlier 403 was not a WAG runtime failure. The fresh benchmark profile was not authenticated and displayed the `Log in or sign up` dialog.
+
+No login credential, MFA value, cookie, token, or authentication material was entered, copied, extracted, or imported by the benchmark. The user's normal Chrome/Edge profiles were not attached. The WAG/DevSpace runtime was stopped cleanly while this user-controlled authentication prerequisite remains unresolved; the exact-owned headed benchmark browser remains open at the login dialog.
+
+Because no task prompt has been submitted, both comparison paths remain unmeasured at Layer B. It would be invalid to attribute this prerequisite to WAG or DC or to substitute the logged-out WebChat model for the target authenticated account/plan.
+
+`LAYER_B_DISPOSITION = ENVIRONMENT_AUTH_REQUIRED`
+`HEADLESS_PREFLIGHT = ENVIRONMENT_FAILURE_403`
+`HEADED_PREFLIGHT = CHATGPT_UI_READY_UNAUTHENTICATED`
+
+`R0_LAYER_B = NOT_RUN`
+`R1_LAYER_B = NOT_RUN`
+`R2_LAYER_B = NOT_RUN`
+`V1_LAYER_B = NOT_RUN`
+`C1_LAYER_B = NOT_RUN`
+`D1_LAYER_B = NOT_RUN`
+## Layer A WAG diagnostics
+
+The first auxiliary installed-native-host probe was invalid because its test harness used request ids shorter than the v1 protocol minimum. It was corrected before any metric was accepted.
+
+The corrected installed-native-host path used the accepted SEA executable, default discovery path, Browser Admission, and the exact synthetic workspace. Tool inventory was exactly:
+
+`health`, `workspace.open`, `file.read`
+
+After one excluded warm-up, ten recorded `file.read` samples in milliseconds were:
+
+`42.6731, 34.9994, 53.1320, 34.8308, 52.3857, 42.6439, 46.2582, 36.9702, 37.7211, 44.8256`
+
+- median: `42.6585 ms`;
+- nearest-rank sample p95: `53.1320 ms`;
+- min: `34.8308 ms`;
+- max: `53.1320 ms`;
+- returned sentinel: `SENTINEL=WAG-DC-BENCH-V1`;
+- native-host stderr: empty.
+
+A second admitted-link-only diagnostic, excluding Native Messaging framing/process overhead, recorded median `28.5760 ms`, sample p95 `35.5083 ms`, min `17.2754 ms`, max `35.5083 ms`, with the same exact tool inventory and sentinel.
+
+These Layer A values are diagnostic only and cannot establish a WebChat replacement tier.
+## Layer A Remote Desktop Commander diagnostics
+
+The existing connected Remote Desktop Commander reported version `0.2.50` on Node `24.20.0`. No install, update, re-pair, re-authentication, or configuration mutation was performed.
+
+Its current configuration reported `allowedDirectories = []`; under the tool's documented configuration semantics this permits filesystem access across the machine rather than providing a sandbox boundary. The existing command blocklist was left unchanged.
+
+Using the exact same sentinel file, two diagnostic batches were retained rather than selecting the faster one.
+
+Batch A, after one excluded warm-up, recorded ten local tool-history durations in milliseconds:
+
+`95, 53, 38, 39, 40, 46, 78, 41, 115, 39`
+
+- median: `43.5 ms`;
+- nearest-rank sample p95: `115 ms`;
+- min/max: `38 / 115 ms`.
+
+Batch B was recorded after the PowerShell 7 continuation. Its excluded warm-up was `117 ms`; ten recorded durations were:
+
+`43, 49, 214, 69, 79, 55, 98, 66, 77, 59`
+
+- median: `67.5 ms`;
+- nearest-rank sample p95: `214 ms`;
+- min/max: `43 / 214 ms`.
+
+Every retained read in both batches returned exact `SENTINEL=WAG-DC-BENCH-V1`. The `214 ms` sample is retained; no outlier was deleted and the two batches are not pooled into a synthetic headline number.
+
+The WAG and DC Layer A timings are not promoted to a speed ranking because they were measured through different diagnostic surfaces and clocks. Their valid use is capability/overhead diagnosis before a proper paired Layer B WebChat run.
+
+No conclusion about R/V/C/D replacement follows from these timings.
+## Cleanup and containment
+
+All task-owned WAG/DevSpace runtimes used by the attempt are stopped and the Browser Adapter discovery file is absent. The benchmark fixture remains clean on branch `main` at the deterministic baseline commit.
+
+The owned Playwright worker `wag-dc-bench-0917-a1` is intentionally still open in headed mode at the ChatGPT login dialog so authentication, if the user chooses to perform it, occurs directly inside the exact-owned benchmark profile. Fresh global inventory proves it is distinct from the unrelated pre-existing worker `cgpt-eastwest-skill-0915`.
+
+No normal user Chrome/Edge session was attached. No unrelated process, browser worker, profile, repository, or file was used as a cleanup target. No local WAG runtime remains running while credentials are pending.
+
+The owned profile/output directories are retained for continuation of this exact benchmark attempt. They must not be treated as authority for any other workflow.
+
+## Interpretation
+
+Attempt 1 proves that the benchmark harness, deterministic fixture, accepted WAG runtime, accepted native host, and existing DC 0.2.50 connector can all be prepared without authority growth. It also proves that the initial headless ChatGPT 403 can be avoided with the same exact-owned profile in headed mode.
+
+It does **not** prove even Tier R replacement because the benchmark profile is not yet authenticated and no formal WebChat task has been submitted.
+
+The next valid step is user-controlled authentication inside `wag-dc-bench-0917-a1`. After authentication, execution must fresh-read global Playwright inventory, verify the exact same owned profile, restart only the task-owned WAG runtime, and begin paired Layer B scenarios from fresh chats/fixture copies. It must not attach or import state from an unrelated/user browser profile.
+
+`NEXT_ACTION = USER_AUTHENTICATES_EXACT_OWNED_BENCHMARK_PROFILE_THEN_CONTINUE_LAYER_B`
+
+No production capability should be selected from Attempt 1 before Layer B evidence exists.
