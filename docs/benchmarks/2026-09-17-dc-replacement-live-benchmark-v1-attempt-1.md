@@ -158,3 +158,23 @@ The next valid step is user-controlled authentication inside `wag-dc-bench-0917-
 `NEXT_ACTION = USER_AUTHENTICATES_EXACT_OWNED_BENCHMARK_PROFILE_THEN_CONTINUE_LAYER_B`
 
 No production capability should be selected from Attempt 1 before Layer B evidence exists.
+
+## Continuation after authenticated WAG-profile bootstrap
+
+The user completed login manually in the exact owned WAG browser profile `wag-dc-bench-0917-a1`. Authentication was then revalidated from the live ChatGPT UI before continuing the benchmark.
+
+A fresh R0 WAG Layer B attempt used the canonical prompt with the task-owned fixture root. ChatGPT did not emit a WAG `wag-tool` request. Instead, the turn entered provider plugin/web-search behavior, including visible searches for Web Agent Gateway / installed repositories. The turn was stopped after the wrong path was established.
+
+The WAG extension sidepanel was then inspected in the same owned browser. It showed `Pending calls` empty, `Last result = None`, and native host disconnected. Therefore no WAG local call was queued or executed for this attempt.
+
+`R0_WAG_CONTINUATION = CONTAMINATED_RUN`
+
+This result is retained exactly as required by the taxonomy. It is not relabeled as model failure, tool failure, or capability failure, and no prompt hint or direct local call was used to rescue it.
+
+For the paired DC path, a separate brand-new worker/profile `wag-dc-bench-0917-dc-r0-a1` was allocated with no WAG extension. Its fresh fixture copy was verified at baseline HEAD `b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d`, tree `e276f7b0d6ea9e606ac9c3683e27781d354f8ce9`, clean status, and exact synthetic outside-canary content.
+
+The DC browser reached ChatGPT but the brand-new profile is unauthenticated and is currently stopped at the visible `Log in or sign up` boundary. Browser policy forbids copying authentication material between active profiles, so no cookie/storage transfer was attempted.
+
+`R0_DC_CONTINUATION = BLOCKED_ENVIRONMENT_AUTH_PENDING_USER`
+
+No R0 paired comparison or replacement-tier conclusion is claimed yet.
