@@ -235,6 +235,13 @@ test('parseNativeHostSignatureInspection rejects missing authenticodeSha256', ()
   assert.throws(() => parseNativeHostSignatureInspection({ status: 'NotSigned' }));
 });
 
+test('parseNativeHostSignatureInspection rejects extra keys on Valid branch', () => {
+  // signedInspectionSchema must be strict; extra keys must be rejected
+  assert.throws(() =>
+    parseNativeHostSignatureInspection({ ...validSignatureFacts(), authenticodeSha256: hashA, extra: true }),
+  );
+});
+
 // ── isNativeHostBuildInput: positives ────────────────────────────────────────
 
 test('isNativeHostBuildInput positives', () => {

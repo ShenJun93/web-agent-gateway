@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { NATIVE_HOST_FILENAME, sha256File as _sha256File } from './native-host-distribution.js';
+import { NATIVE_HOST_FILENAME } from './native-host-distribution.js';
 
 // Re-export sha256File for consumers that need it from this module
 export { sha256File } from './native-host-distribution.js';
@@ -57,7 +57,7 @@ const notSignedSchema = z.object({
 
 const signedInspectionSchema = signatureFactsSchema.extend({
   authenticodeSha256: sha256,
-});
+}).strict();
 
 const signatureInspectionSchema = z.union([notSignedSchema, signedInspectionSchema]);
 
@@ -90,11 +90,14 @@ export function parseNativeHostUnsignedCandidateReceipt(value: unknown): NativeH
 // ── NativeHostSignedCandidateReceipt ─────────────────────────────────────────
 
 /**
- * The signed receipt extends unsigned provenance.  Cross-field invariants:
- *   - artifact.sha256 !== preSignSha256  (signing changes flat bytes)
- *   - authenticodeSha256 === unsigned.authenticodeSha256  (PE content unchanged)
+ * The signed receipt extends unsigned provenance.
  *
- * We enforce these with a superRefine after base schema validation.
+ * Cross-field invariant enforced by superRefine (single-document):
+ *   - artifact.sha256 !== preSignSha256  (signing must change the flat bytes)
+ *
+ * Cross-document invariant NOT enforced here:
+ *   - authenticodeSha256 continuity (signed receipt == unsigned receipt value)
+ *     is verified by Task 4, which holds both documents.
  */
 const signedReceiptBaseSchema = unsignedReceiptSchema.extend({
   artifact: z.object({
