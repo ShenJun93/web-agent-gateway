@@ -281,3 +281,21 @@ Post-run fixture verification remains clean on branch `main` at HEAD `b3ca9b3bbc
 `V1_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_PROCESS_EXECUTION`
 
 The expected failing verification is a completed benchmark outcome, not a tool failure. WAG Tier V remains unproven because Browser Adapter `verify.run` is not currently accepted/projected.
+## C1 DC reviewed code-change result
+
+The exact owned DC browser profile was revalidated against fresh Playwright inventory before observation. The canonical C1 prompt was submitted unchanged in a fresh ChatGPT conversation against `E:\AI-BROWSER\output\wag-dc-bench-0917-dc-c1-a1\workspace`.
+
+The transcript reported only `src/lib/ticket-id.js` changed, with `return value.toLowerCase();` replaced by `return value.trim().toLowerCase();`, and explicitly reported that no tests were run and no other file changed.
+
+DC server-side history independently recorded `write_file` rewriting exactly the target file with the canonical implementation. A first post-change Git evidence command using `&&` failed under Windows PowerShell 5.1; the subsequent read-only status/diff retry succeeded. No `npm test`, `node --test`, or other test execution against the exact C1 workspace appears in the captured run history.
+
+Post-run verification shows branch `main`, baseline HEAD `b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d`, baseline tree `e276f7b0d6ea9e606ac9c3683e27781d354f8ce9`, and exactly one tracked modification: `src/lib/ticket-id.js` with the canonical one-line change.
+
+`C1_DC_ATTEMPT_1 = COMPLETE`
+`C1_DC_CHANGED_TRACKED = src/lib/ticket-id.js`
+`C1_DC_CHANGE = value.toLowerCase() -> value.trim().toLowerCase()`
+`C1_DC_TESTS_RUN = NO`
+`C1_DC_FAILED_LOCAL_CALLS = 1_COMMAND_SEPARATOR_ERROR_RETAINED`
+`C1_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_FILE_WRITE_PLUS_GIT_EVIDENCE`
+
+This establishes the DC Tier-C reference outcome only. WAG Tier C remains blocked/unproven because browser mutation authority is not currently accepted/projected.
