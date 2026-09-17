@@ -208,3 +208,17 @@ Post-run fixture verification remained clean at HEAD `b3ca9b3bbc5da5a1cd8ad46f18
 `R0_PAIR_STATUS = NON_COMPARABLE_WAG_CONTAMINATED_DC_COMPLETE`
 
 R0 does not promote Tier R because R1 and R2 remain unexecuted and the WAG side of the pair is contaminated.
+
+## Blocker research and production-path constraint
+
+After the R0 automation-host pre-submit block, current OpenAI official documentation was rechecked on 2026-09-17 rather than treating manual prompt relay as an acceptable end state.
+
+OpenAI currently documents that ChatGPT custom MCP apps are supported through Developer Mode on eligible plans, including full MCP write/modify rollout for Business/Enterprise/Edu. ChatGPT does not connect directly to a local MCP server; private/on-premises/developer-machine MCP servers are expected to use Secure MCP Tunnel rather than public exposure.
+
+Therefore the manual browser prompt relay used to preserve the benchmark prompt is a benchmark-only transport workaround. It is not acceptable production success for WAG. The intended production path remains a supported ChatGPT app/MCP integration plus WAG-owned admission/policy/local execution, with browser automation limited to acceptance/diagnostics unless separately justified.
+
+Official evidence: `https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt` and `https://help.openai.com/en/articles/12515353-build-with-the-apps-sdk`.
+
+`AUTOMATION_HOST_PRE_SUBMIT_BLOCK = RESEARCHED_EXTERNAL_TOOLING_GATE`
+`MANUAL_PROMPT_RELAY = BENCHMARK_WORKAROUND_ONLY`
+`PRODUCTION_TARGET = SUPPORTED_CHATGPT_MCP_APP_PATH`
