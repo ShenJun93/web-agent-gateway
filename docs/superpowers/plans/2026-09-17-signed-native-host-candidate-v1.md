@@ -149,6 +149,8 @@ git commit -m "feat: define signed native host candidate receipts"
 ### Task 2: Read-only Windows Authenticode inspector
 
 **Files:**
+- Create: `browser/native-host/remove-source-signature.ps1`
+- Modify: `scripts/build-native-host.ts`
 - Create: `scripts/inspect-native-host-signature.ps1`
 - Create: `test/native-host-signature.test.ts`
 
@@ -160,6 +162,11 @@ git commit -m "feat: define signed native host candidate receipts"
 - `Unsigned` success JSON contains exactly `status=NotSigned` and normalized lowercase `authenticodeSha256` from `Get-AppLockerFileInformation`.
 - `Valid` success JSON uses the exact normalized signature-facts shape from Task 1 plus the same normalized system Authenticode SHA-256 field.
 
+- [ ] **Step 0: Normalize the copied Node PE before postject**
+
+The official Node Windows SEA sequence removes the source executable signature before injection. The current builder copies signed `node.exe` and injects directly; on the current host this leaves stale certificate-table metadata and `Get-AppLockerFileInformation` fails with `BadImageFormatException` on the final unsigned SEA. Add `browser/native-host/remove-source-signature.ps1` using Windows `ImageEnumerateCertificates` + `ImageRemoveCertificate` from `Imagehlp.dll`, and call it after copying `node.exe` but before `postject`. The helper mutates only the copied build-output executable, accepts zero or more certificate entries, verifies no certificate entries remain, and requires no SignTool/SDK install. `browser/native-host/**` is already in `NATIVE_HOST_BUILD_INPUTS`.
+
+Extend the Task 2 behavior test to prove the existing builder now produces a real postject WAG SEA that is `NotSigned` and accepted by `Get-AppLockerFileInformation`. This existing failing behavior test is the RED evidence for the builder correction.
 - [ ] **Step 1: Write AST and behavior RED tests**
 
 The test must parse the committed PowerShell AST and require the exact unique command set `Set-StrictMode`, `Resolve-Path`, `Get-Item`, `Get-AuthenticodeSignature`, `Get-AppLockerFileInformation`, and `ConvertTo-Json`. Permit only the member calls `Equals`, `GetFullPath`, and `ToLowerInvariant`, plus `Write` only when its receiver is exactly `[System.Console]::Error` and its argument is the fixed failure sentinel; implement EKU inspection with a normal `foreach` rather than `Where-Object`. Microsoft documents the AppLocker file hash as a system-computed Authenticode cryptographic hash, so this is the continuity primitive rather than a custom PE parser. Any additional command or invoked member fails the AST test.
@@ -209,7 +216,7 @@ Expected: PASS on the current Windows host; zero mutation commands in the AST re
 - [ ] **Step 5: Commit Task 2**
 
 ```powershell
-git add scripts/inspect-native-host-signature.ps1 test/native-host-signature.test.ts
+git add browser/native-host/remove-source-signature.ps1 scripts/build-native-host.ts scripts/inspect-native-host-signature.ps1 test/native-host-signature.test.ts
 git commit -m "feat: inspect native host Authenticode trust"
 ```
 

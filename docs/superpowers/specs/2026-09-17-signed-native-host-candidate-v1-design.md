@@ -47,7 +47,7 @@ No signing identity is assumed to exist today. Provisioning, identity validation
 
 Signing occurs only after the existing SEA builder has completed all byte-changing operations:
 
-`TypeScript bundle -> SEA blob -> copy node.exe -> postject NODE_SEA_BLOB -> final unsigned PE -> system Authenticode SHA-256 -> Authenticode sign -> signature verify -> same system Authenticode SHA-256 -> flat SHA-256 -> execution/acceptance -> package/receipt`
+`TypeScript bundle -> SEA blob -> copy node.exe -> remove copied Node certificates with Windows ImageHlp -> postject NODE_SEA_BLOB -> final unsigned PE -> system Authenticode SHA-256 -> Authenticode sign -> signature verify -> same system Authenticode SHA-256 -> flat SHA-256 -> execution/acceptance -> package/receipt`
 
 Signing before `postject` is invalid because SEA injection changes the PE after signature creation. Re-signing or otherwise mutating the binary after the accepted hash is recorded creates a new artifact identity and invalidates downstream evidence.
 
@@ -56,6 +56,8 @@ The signed executable SHA-256 is the authoritative executable hash for every rec
 Unsigned-to-signed continuity MUST also use the Windows system-computed Authenticode SHA-256 image hash. Microsoft documents that AppLocker file-hash rules use an Authenticode cryptographic hash and that App Control Authenticode/PE image hashing excludes signature/timestamp certificate data and PE checksum fields. Record this hash before signing and recompute it after signing; the values MUST be identical. This proves the executable content covered by Authenticode is unchanged even though the flat file SHA-256 changes when a signature is embedded.
 
 The existing `scripts/build-native-host.ts` remains the single SEA builder. This milestone MUST NOT create a second native-host bundling implementation.
+
+Before `postject`, the builder MUST remove any Authenticode certificate entries inherited from the copied `node.exe`. Node's Windows SEA sequence removes the source executable signature before injection; retaining stale certificate-table metadata causes the resulting postject binary to fail Windows AppLocker file-information parsing on the current host. The repository uses the Windows ImageHlp certificate APIs on the copied build output rather than requiring an external Windows SDK SignTool installation or implementing a custom PE certificate-table parser.
 
 ## Candidate provenance receipt
 
