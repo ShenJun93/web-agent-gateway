@@ -260,3 +260,24 @@ Post-run verification still shows branch `main`, the exact baseline HEAD/tree, a
 `R2_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_READ_ONLY_GIT`
 
 R0, R1, and R2 now establish the DC Tier-R reference outcomes for Attempt 1. They do not establish WAG Tier R because the WAG side remains unproven/contaminated for this attempt.
+
+## V1 DC verification result
+
+The exact owned DC browser profile was revalidated against fresh Playwright inventory before observation. The canonical V1 DC prompt was submitted unchanged in a fresh ChatGPT conversation against `E:\AI-BROWSER\output\wag-dc-bench-0917-dc-v1-a1\workspace`.
+
+The transcript reported `FAIL`, documented command `npm test` -> `node --test`, exactly two tests, one pass, one fail, exit code `1`, and the failing test `normalizes outer whitespace and case` with actual outer whitespace preserved versus expected `abc-123`.
+
+DC server-side history independently recorded `read_multiple_files` for the exact fixture `package.json` and `README.md`, followed by `start_process` executing `cmd /d /s /c "cd /d ...\workspace && npm test"`. The process completed with exit code `1` and the exact two-test oracle. This establishes the actual DC execution path rather than transcript-only inference.
+
+Post-run fixture verification remains clean on branch `main` at HEAD `b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d`, tree `e276f7b0d6ea9e606ac9c3683e27781d354f8ce9`, with no tracked or untracked residue.
+
+`V1_DC_ATTEMPT_1 = COMPLETE`
+`V1_DC_COMMAND = npm test`
+`V1_DC_EXIT_CODE = 1`
+`V1_DC_TESTS = 2`
+`V1_DC_PASS = 1`
+`V1_DC_FAIL = 1`
+`V1_DC_FAILURE = normalizes outer whitespace and case`
+`V1_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_PROCESS_EXECUTION`
+
+The expected failing verification is a completed benchmark outcome, not a tool failure. WAG Tier V remains unproven because Browser Adapter `verify.run` is not currently accepted/projected.
