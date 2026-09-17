@@ -299,3 +299,28 @@ Post-run verification shows branch `main`, baseline HEAD `b3ca9b3bbc5da5a1cd8ad4
 `C1_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_FILE_WRITE_PLUS_GIT_EVIDENCE`
 
 This establishes the DC Tier-C reference outcome only. WAG Tier C remains blocked/unproven because browser mutation authority is not currently accepted/projected.
+## D1 DC integrated coding-loop result
+
+The exact owned DC browser profile was revalidated against fresh Playwright inventory before observation. The canonical D1 prompt was submitted unchanged in a fresh ChatGPT conversation against `E:\AI-BROWSER\output\wag-dc-bench-0917-dc-d1-a1\workspace`.
+
+The transcript diagnosed the mismatch between `src/lib/ticket-id.js` and `test/ticket-id.test.js`, reproduced the baseline failure with `npm test` (2 tests, 1 pass, 1 fail), applied the smallest code-only fix `return value.trim().toLowerCase();`, reran `npm test`, and reported 2 tests passed, 0 failed, exit code `0`.
+
+DC server-side history independently recorded the exact D1 workspace inspection, the baseline failing test run, mutation attempts, post-change diff/status, and final verification. Two mutation commands failed before any successful change: one from PowerShell quoting/variable stripping and one from an incorrect occurrence-count guard. A third bounded replacement succeeded. Both failed calls are retained in accounting.
+
+The formal final verification recorded `npm test` 2/2 pass with `TEST_EXIT=0`, `git diff --check` with `DIFF_CHECK_EXIT=0`, branch `main`, unchanged baseline HEAD `b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d`, and exactly one changed tracked file: `src/lib/ticket-id.js`.
+
+Independent post-run verification repeated `npm test` successfully and confirmed baseline tree `e276f7b0d6ea9e606ac9c3683e27781d354f8ce9`, no untracked residue, and the exact canonical implementation.
+
+`D1_DC_ATTEMPT_1 = COMPLETE`
+`D1_DC_DIAGNOSIS = OUTER_WHITESPACE_NOT_TRIMMED`
+`D1_DC_CHANGED_TRACKED = src/lib/ticket-id.js`
+`D1_DC_CHANGE = value.toLowerCase() -> value.trim().toLowerCase()`
+`D1_DC_TESTS = 2`
+`D1_DC_PASS = 2`
+`D1_DC_FAIL = 0`
+`D1_DC_EXIT_CODE = 0`
+`D1_DC_DIFF_CHECK_EXIT = 0`
+`D1_DC_FAILED_MUTATION_CALLS = 2_RETAINED`
+`D1_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_PROCESS_EXECUTION_AND_BOUNDED_FILE_MUTATION_VIA_SHELL`
+
+This establishes the DC Tier-D reference outcome for Attempt 1 only. It does not establish WAG Tier D because the current Browser Adapter lacks accepted search/state/verify/mutation capabilities required for the integrated loop.
