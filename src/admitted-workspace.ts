@@ -80,8 +80,8 @@ export class AdmittedWorkspaceService {
       canonicalRoot: record.canonicalRoot,
       query,
       ignoreCase: options.ignoreCase ?? false,
-      maxResults: options.maxResults ?? 20,
-      contextLines: options.contextLines ?? 1,
+      maxResults: Math.min(Math.max(options.maxResults ?? 20, 1), 50),
+      contextLines: Math.min(Math.max(options.contextLines ?? 1, 0), 2),
     });
   }
 
@@ -91,7 +91,8 @@ export class AdmittedWorkspaceService {
     options: RepoSnapshotOptions = {},
   ): Promise<RepoSnapshotResult> {
     const { binding } = await this.getAuthorizedBinding(caller, workspaceId);
-    return this.options.inspection.snapshot(binding.devspaceWorkspaceId, options);
+    const maxFiles = Math.min(Math.max(options.maxFiles ?? 100, 1), 200);
+    return this.options.inspection.snapshot(binding.devspaceWorkspaceId, { maxFiles });
   }
 
   private async resolveBinding(record: WorkspaceRecord): Promise<RuntimeBinding> {

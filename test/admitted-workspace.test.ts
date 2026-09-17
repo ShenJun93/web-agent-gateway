@@ -27,16 +27,16 @@ class FakeWorkspaceExecutor {
 }
 
 class FakeInspectionBackend {
-  searches: Array<{ devspaceWorkspaceId: string; canonicalRoot: string; query: string }> = [];
-  snapshots: Array<{ devspaceWorkspaceId: string }> = [];
+  searches: Array<{ devspaceWorkspaceId: string; canonicalRoot: string; query: string; ignoreCase: boolean; maxResults: number; contextLines: number }> = [];
+  snapshots: Array<{ devspaceWorkspaceId: string; options?: { maxFiles?: number } }> = [];
 
   async search(input: { devspaceWorkspaceId: string; canonicalRoot: string; query: string; ignoreCase: boolean; maxResults: number; contextLines: number }) {
     this.searches.push(input);
     return { matches: [], truncated: false };
   }
 
-  async snapshot(devspaceWorkspaceId: string) {
-    this.snapshots.push({ devspaceWorkspaceId });
+  async snapshot(devspaceWorkspaceId: string, options?: { maxFiles?: number }) {
+    this.snapshots.push({ devspaceWorkspaceId, options });
     return { branch: 'main', head: 'abc', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false };
   }
 }
@@ -181,4 +181,20 @@ test('unsupported backend and canonical-root drift fail before backend access', 
   assert.equal(f.executor.opens.length, 0);
   assert.deepEqual(f.store.getWorkspace(unsupported.workspaceId), unsupportedBefore);
   assert.deepEqual(f.store.getWorkspace(drifted.workspaceId), driftedBefore);
+});
+
+test('search and snapshot options are clamped before backend delegation', async (t) => {
+  const f = await fixture();
+  t.after(async () => { f.store.close(); await rm(f.dir, { recursive: true, force: true }); });
+  const opened = await f.service.open(callerA, f.root);
+
+  await f.service.search(callerA, opened.workspaceId, 'needle', { maxResults: 999, contextLines: 99 });
+  await f.service.snapshot(callerA, opened.workspaceId, { maxFiles: 999 });
+
+  assert.equal(f.inspection.searches.length, 1);
+  assert.equal(f.inspection.searches[0].maxResults, 50);
+  assert.equal(f.inspection.searches[0].contextLines, 2);
+
+  assert.equal(f.inspection.snapshots.length, 1);
+  assert.equal(f.inspection.snapshots[0].options?.maxFiles, 200);
 });
