@@ -1,6 +1,6 @@
-export type V1BrowserAdapterRequest =
+export type V2BrowserAdapterRequest =
   | {
-      version: 1;
+      version: 2;
       type: 'tool.call';
       requestId: string;
       sessionId: string;
@@ -8,7 +8,7 @@ export type V1BrowserAdapterRequest =
       arguments: Record<string, never>;
     }
   | {
-      version: 1;
+      version: 2;
       type: 'tool.call';
       requestId: string;
       sessionId: string;
@@ -16,7 +16,32 @@ export type V1BrowserAdapterRequest =
       arguments: { path: string };
     }
   | {
-      version: 1;
+      version: 2;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'repo.search';
+      arguments: {
+        workspace_id: string;
+        query: string;
+        ignore_case?: boolean;
+        max_results?: number;
+        context_lines?: number;
+      };
+    }
+  | {
+      version: 2;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'repo.snapshot';
+      arguments: {
+        workspace_id: string;
+        max_files?: number;
+      };
+    }
+  | {
+      version: 2;
       type: 'tool.call';
       requestId: string;
       sessionId: string;
@@ -24,9 +49,14 @@ export type V1BrowserAdapterRequest =
       arguments: { workspace_id: string; path: string };
     };
 
-export type V1BrowserAdapterResponse =
-  | { version: 1; type: 'result'; requestId: string; result: unknown }
-  | { version: 1; type: 'error'; requestId: string; error: { code: string; message: string } };
+export type BrowserAdapterRequest = V2BrowserAdapterRequest;
+
+export type V2BrowserAdapterResponse =
+  | { version: 2; type: 'result'; requestId: string; result: unknown }
+  | { version: 2; type: 'error'; requestId: string; error: { code: string; message: string } };
+
+export type BrowserAdapterResponse = V2BrowserAdapterResponse;
+
 export interface ProviderSender {
   url?: string;
   tabId?: number;
@@ -35,24 +65,26 @@ export interface ProviderSender {
 export interface PendingBrowserRequest {
   requestId: string;
   tabId: number;
-  request: V1BrowserAdapterRequest;
+  request: V2BrowserAdapterRequest;
 }
 
 export interface DeliveredBrowserResponse {
   tabId: number;
   requestId: string;
-  response: V1BrowserAdapterResponse;
+  response: V2BrowserAdapterResponse;
 }
 
 export interface BrowserExtensionCore {
-  queueProviderRequest(sender: ProviderSender, request: V1BrowserAdapterRequest): boolean;
+  queueProviderRequest(sender: ProviderSender, request: V2BrowserAdapterRequest): boolean;
   pending(): PendingBrowserRequest[];
-  takeForExecution(requestId: string, actor: string): V1BrowserAdapterRequest | undefined;
-  acceptNativeResponse(response: V1BrowserAdapterResponse): DeliveredBrowserResponse | undefined;
+  peekForExecution(requestId: string, actor: string): V2BrowserAdapterRequest | undefined;
+  takeForExecution(requestId: string, actor: string): V2BrowserAdapterRequest | undefined;
+  acceptNativeResponse(response: V2BrowserAdapterResponse): DeliveredBrowserResponse | undefined;
   dismiss(requestId: string, actor: string): boolean;
 }
 
 export function createBrowserExtensionCore(): BrowserExtensionCore;
+
 export interface SessionStorageArea {
   get(key: string): Promise<Record<string, unknown>>;
   set(items: Record<string, string>): Promise<void>;

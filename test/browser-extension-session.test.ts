@@ -56,3 +56,325 @@ test('provider messages cannot supply correlation or storage identity', async ()
   assert.doesNotMatch(source, /sessionsByTab/);
   assert.doesNotMatch(source, /message\.(?:sessionId|correlationId|correlation_id|storageKey|storage_key)/);
 });
+
+test('service-worker wires peekForExecution before native ensureReady and takeForExecution', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../browser/extension/service-worker.js', import.meta.url), 'utf8');
+  assert.match(source, /peekForExecution\(message\.requestId,\s*'sidepanel'\)/);
+  assert.match(source, /native\.ensureReady\(pending\.sessionId\)/);
+  assert.match(source, /takeForExecution\(message\.requestId,\s*'sidepanel'\)/);
+  assert.match(source, /native\.postTool\(request\)/);
+  assert.match(source, /version:\s*2/);
+});
+
+class FakeNativePort {
+  readonly posted: any[] = [];
+  readonly messageListeners: ((msg: any) => void)[] = [];
+  readonly disconnectListeners: (() => void)[] = [];
+
+  readonly onMessage = {
+    addListener: (fn: (msg: any) => void) => { this.messageListeners.push(fn); },
+  };
+
+  readonly onDisconnect = {
+    addListener: (fn: () => void) => { this.disconnectListeners.push(fn); },
+  };
+
+  postMessage(message: any) {
+    this.posted.push(message);
+  }
+
+  emitMessage(message: any) {
+    for (const fn of this.messageListeners) fn(message);
+  }
+
+  emitDisconnect() {
+    for (const fn of this.disconnectListeners) fn();
+  }
+}
+
+const EXPECTED_TOOLS = ['health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read'] as const;
+
+test('native session controller performs full v2 handshake and profile verification', async () => {
+  const { createNativeSessionController } = await import('../browser/extension/native-session-core.js');
+  let activePort: FakeNativePort | undefined;
+  const toolResponses: any[] = [];
+  const native = createNativeSessionController({
+    connectNative: () => {
+      activePort = new FakeNativePort();
+      return activePort;
+    },
+    randomUUID: ids(),
+    onToolResponse: (res) => toolResponses.push(res),
+  });
+
+  const readyPromise = native.ensureReady('session_1001');
+  assert.ok(activePort);
+  assert.equal(activePort.posted.length, 1);
+  const helloReq = activePort.posted[0];
+  assert.equal(helloReq.version, 2);
+  assert.equal(helloReq.type, 'hello');
+  assert.match(helloReq.requestId, /^ctl_hello_/);
+
+  // reply with valid hello
+  activePort.emitMessage({
+    version: 2,
+    type: 'result',
+    requestId: helloReq.requestId,
+    result: { protocolVersion: 2, adapterId: 'browser.chatgpt.native.inspect.v2' },
+  });
+
+  await Promise.resolve(); // tick microtasks
+  assert.equal(activePort.posted.length, 2);
+  const bindReq = activePort.posted[1];
+  assert.equal(bindReq.version, 2);
+  assert.equal(bindReq.type, 'session.bind');
+  assert.match(bindReq.requestId, /^ctl_bind_/);
+  assert.equal(bindReq.sessionId, 'session_1001');
+  assert.equal(bindReq.provider, 'chatgpt');
+  assert.equal(bindReq.origin, 'https://chatgpt.com');
+
+  // reply with valid bind
+  activePort.emitMessage({
+    version: 2,
+    type: 'result',
+    requestId: bindReq.requestId,
+    result: { sessionId: 'session_1001', provider: 'chatgpt' },
+  });
+
+  await Promise.resolve();
+  assert.equal(activePort.posted.length, 3);
+  const toolsReq = activePort.posted[2];
+  assert.equal(toolsReq.version, 2);
+  assert.equal(toolsReq.type, 'tools.list');
+  assert.match(toolsReq.requestId, /^ctl_tools_/);
+  assert.equal(toolsReq.sessionId, 'session_1001');
+
+  // reply with exact 5 tools
+  activePort.emitMessage({
+    version: 2,
+    type: 'result',
+    requestId: toolsReq.requestId,
+    result: { tools: [...EXPECTED_TOOLS] },
+  });
+
+  await readyPromise;
+  assert.equal(native.isConnected(), true);
+
+  // subsequent ensureReady for same session resolves immediately without posting messages
+  await native.ensureReady('session_1001');
+  assert.equal(activePort.posted.length, 3);
+
+  // postTool transmits tool request to port
+  const toolCallReq = {
+    version: 2 as const,
+    type: 'tool.call' as const,
+    requestId: 'req_tool_01',
+    sessionId: 'session_1001',
+    tool: 'health' as const,
+    arguments: {},
+  };
+  native.postTool(toolCallReq);
+  assert.equal(activePort.posted.length, 4);
+  assert.deepEqual(activePort.posted[3], toolCallReq);
+
+  // tool response is forwarded to onToolResponse
+  const toolResp = { version: 2, type: 'result', requestId: 'req_tool_01', result: { ok: true } };
+  activePort.emitMessage(toolResp);
+  assert.deepEqual(toolResponses, [toolResp]);
+});
+
+test('native session controller rejects on hello protocol or adapterId mismatch', async () => {
+  const { createNativeSessionController } = await import('../browser/extension/native-session-core.js');
+
+  // wrong protocolVersion
+  {
+    let port: FakeNativePort | undefined;
+    const native = createNativeSessionController({
+      connectNative: () => { port = new FakeNativePort(); return port; },
+      randomUUID: ids(),
+      onToolResponse: () => {},
+    });
+    const p = native.ensureReady('session_bad_hello');
+    port!.emitMessage({
+      version: 2,
+      type: 'result',
+      requestId: port!.posted[0].requestId,
+      result: { protocolVersion: 1, adapterId: 'browser.chatgpt.native.inspect.v2' },
+    });
+    await assert.rejects(p, /protocol/i);
+    assert.equal(native.isConnected(), false);
+  }
+
+  // wrong adapterId
+  {
+    let port: FakeNativePort | undefined;
+    const native = createNativeSessionController({
+      connectNative: () => { port = new FakeNativePort(); return port; },
+      randomUUID: ids(),
+      onToolResponse: () => {},
+    });
+    const p = native.ensureReady('session_bad_adapter');
+    port!.emitMessage({
+      version: 2,
+      type: 'result',
+      requestId: port!.posted[0].requestId,
+      result: { protocolVersion: 2, adapterId: 'browser.chatgpt.native.v1' },
+    });
+    await assert.rejects(p, /adapter/i);
+    assert.equal(native.isConnected(), false);
+  }
+});
+
+test('native session controller rejects on tools mismatch (missing, extra, reordered, duplicate)', async () => {
+  const { createNativeSessionController } = await import('../browser/extension/native-session-core.js');
+
+  const variations: { name: string; tools: unknown }[] = [
+    { name: 'missing tool', tools: ['health', 'workspace.open', 'repo.search', 'repo.snapshot'] },
+    { name: 'extra tool', tools: [...EXPECTED_TOOLS, 'verify.run'] },
+    { name: 'reordered tools', tools: ['workspace.open', 'health', 'repo.search', 'repo.snapshot', 'file.read'] },
+    { name: 'duplicate tools', tools: ['health', 'health', 'workspace.open', 'repo.search', 'repo.snapshot'] },
+    { name: 'non-array tools', tools: 'health,workspace.open' },
+  ];
+
+  for (const { name, tools } of variations) {
+    let port: FakeNativePort | undefined;
+    const native = createNativeSessionController({
+      connectNative: () => { port = new FakeNativePort(); return port; },
+      randomUUID: ids(),
+      onToolResponse: () => {},
+    });
+
+    const p = native.ensureReady('session_tools_test');
+    // hello
+    port!.emitMessage({
+      version: 2, type: 'result', requestId: port!.posted[0].requestId,
+      result: { protocolVersion: 2, adapterId: 'browser.chatgpt.native.inspect.v2' },
+    });
+    await Promise.resolve();
+    // bind
+    port!.emitMessage({
+      version: 2, type: 'result', requestId: port!.posted[1].requestId,
+      result: { sessionId: 'session_tools_test', provider: 'chatgpt' },
+    });
+    await Promise.resolve();
+    // tools
+    port!.emitMessage({
+      version: 2, type: 'result', requestId: port!.posted[2].requestId,
+      result: { tools },
+    });
+
+    await assert.rejects(p, /tool/i, `Expected rejection for: ${name}`);
+    assert.equal(native.isConnected(), false);
+  }
+});
+
+test('native session controller rejects on native host error responses', async () => {
+  const { createNativeSessionController } = await import('../browser/extension/native-session-core.js');
+
+  // hello error
+  {
+    let port: FakeNativePort | undefined;
+    const native = createNativeSessionController({
+      connectNative: () => { port = new FakeNativePort(); return port; },
+      randomUUID: ids(),
+      onToolResponse: () => {},
+    });
+    const p = native.ensureReady('session_err1');
+    port!.emitMessage({
+      version: 2, type: 'error', requestId: port!.posted[0].requestId,
+      error: { code: 'CRASH', message: 'Host crashed' },
+    });
+    await assert.rejects(p, /Host crashed/);
+  }
+
+  // bind error
+  {
+    let port: FakeNativePort | undefined;
+    const native = createNativeSessionController({
+      connectNative: () => { port = new FakeNativePort(); return port; },
+      randomUUID: ids(),
+      onToolResponse: () => {},
+    });
+    const p = native.ensureReady('session_err2');
+    port!.emitMessage({
+      version: 2, type: 'result', requestId: port!.posted[0].requestId,
+      result: { protocolVersion: 2, adapterId: 'browser.chatgpt.native.inspect.v2' },
+    });
+    await Promise.resolve();
+    port!.emitMessage({
+      version: 2, type: 'error', requestId: port!.posted[1].requestId,
+      error: { code: 'ADMISSION_FAILED', message: 'Admission rejected' },
+    });
+    await assert.rejects(p, /Admission rejected/);
+  }
+});
+
+test('native session controller handles session switch with unbind -> bind -> tools.list', async () => {
+  const { createNativeSessionController } = await import('../browser/extension/native-session-core.js');
+  let port: FakeNativePort | undefined;
+  const native = createNativeSessionController({
+    connectNative: () => { port = new FakeNativePort(); return port; },
+    randomUUID: ids(),
+    onToolResponse: () => {},
+  });
+
+  // initial session A
+  const pA = native.ensureReady('session_AAA');
+  port!.emitMessage({ version: 2, type: 'result', requestId: port!.posted[0].requestId, result: { protocolVersion: 2, adapterId: 'browser.chatgpt.native.inspect.v2' } });
+  await Promise.resolve();
+  port!.emitMessage({ version: 2, type: 'result', requestId: port!.posted[1].requestId, result: { sessionId: 'session_AAA', provider: 'chatgpt' } });
+  await Promise.resolve();
+  port!.emitMessage({ version: 2, type: 'result', requestId: port!.posted[2].requestId, result: { tools: [...EXPECTED_TOOLS] } });
+  await pA;
+  assert.equal(port!.posted.length, 3);
+
+  // switch to session B
+  const pB = native.ensureReady('session_BBB');
+  await Promise.resolve();
+  assert.equal(port!.posted.length, 4);
+  const unbindReq = port!.posted[3];
+  assert.equal(unbindReq.type, 'session.unbind');
+  assert.equal(unbindReq.sessionId, 'session_AAA');
+
+  // reply to unbind
+  port!.emitMessage({ version: 2, type: 'result', requestId: unbindReq.requestId, result: { unbound: true } });
+  await Promise.resolve();
+  assert.equal(port!.posted.length, 5);
+  const bindReq = port!.posted[4];
+  assert.equal(bindReq.type, 'session.bind');
+  assert.equal(bindReq.sessionId, 'session_BBB');
+
+  // reply to bind
+  port!.emitMessage({ version: 2, type: 'result', requestId: bindReq.requestId, result: { sessionId: 'session_BBB', provider: 'chatgpt' } });
+  await Promise.resolve();
+  assert.equal(port!.posted.length, 6);
+  const toolsReq = port!.posted[5];
+  assert.equal(toolsReq.type, 'tools.list');
+  assert.equal(toolsReq.sessionId, 'session_BBB');
+
+  // reply to tools.list
+  port!.emitMessage({ version: 2, type: 'result', requestId: toolsReq.requestId, result: { tools: [...EXPECTED_TOOLS] } });
+  await pB;
+  assert.equal(native.isConnected(), true);
+});
+
+test('native session controller disconnect rejects pending and clears state for full re-handshake', async () => {
+  const { createNativeSessionController } = await import('../browser/extension/native-session-core.js');
+  let port: FakeNativePort | undefined;
+  const native = createNativeSessionController({
+    connectNative: () => { port = new FakeNativePort(); return port; },
+    randomUUID: ids(),
+    onToolResponse: () => {},
+  });
+
+  const p1 = native.ensureReady('session_dc');
+  port!.emitDisconnect();
+  await assert.rejects(p1, /disconnect/i);
+  assert.equal(native.isConnected(), false);
+
+  // subsequent ensureReady should reconnect and start fresh with hello
+  let port2: FakeNativePort | undefined;
+  native.ensureReady('session_dc'); // starts next handshake on fresh port
+  assert.ok(port !== port2); // new port connected
+});

@@ -5,7 +5,7 @@ import test from 'node:test';
 import { createBrowserExtensionCore } from '../browser/extension/service-worker-core.js';
 
 const health = {
-  version: 1 as const,
+  version: 2 as const,
   type: 'tool.call' as const,
   requestId: 'req_health_001',
   sessionId: 'session_12345678',
@@ -28,9 +28,58 @@ test('only side panel may execute queued requests and native responses correlate
   assert.equal(core.takeForExecution(health.requestId, 'content'), undefined);
   assert.deepEqual(core.takeForExecution(health.requestId, 'sidepanel'), health);
   assert.equal(core.takeForExecution(health.requestId, 'sidepanel'), undefined);
-  const delivered = core.acceptNativeResponse({ version: 1, type: 'result', requestId: health.requestId, result: { status: 'ok' } });
-  assert.deepEqual(delivered, { tabId: 9, requestId: health.requestId, response: { version: 1, type: 'result', requestId: health.requestId, result: { status: 'ok' } } });
-  assert.equal(core.acceptNativeResponse({ version: 1, type: 'result', requestId: 'req_unknown_01', result: {} }), undefined);
+  const delivered = core.acceptNativeResponse({ version: 2, type: 'result', requestId: health.requestId, result: { status: 'ok' } });
+  assert.deepEqual(delivered, { tabId: 9, requestId: health.requestId, response: { version: 2, type: 'result', requestId: health.requestId, result: { status: 'ok' } } });
+  assert.equal(core.acceptNativeResponse({ version: 2, type: 'result', requestId: 'req_unknown_01', result: {} }), undefined);
+});
+
+test('peekForExecution preserves queued state without moving to inflight and restricts to sidepanel', () => {
+  const core = createBrowserExtensionCore();
+  core.queueProviderRequest({ url: 'https://chatgpt.com/', tabId: 9 }, health);
+
+  // non-sidepanel actor gets undefined
+  assert.equal(core.peekForExecution(health.requestId, 'content'), undefined);
+  assert.equal(core.peekForExecution(health.requestId, 'unknown'), undefined);
+
+  // unknown requestId returns undefined
+  assert.equal(core.peekForExecution('req_missing', 'sidepanel'), undefined);
+
+  // sidepanel peek returns the request
+  assert.deepEqual(core.peekForExecution(health.requestId, 'sidepanel'), health);
+
+  // verify multiple peeks do not consume or move the request
+  assert.deepEqual(core.peekForExecution(health.requestId, 'sidepanel'), health);
+  assert.deepEqual(core.pending(), [{ requestId: health.requestId, tabId: 9, request: health }]);
+
+  // only takeForExecution transitions queued -> inflight
+  assert.deepEqual(core.takeForExecution(health.requestId, 'sidepanel'), health);
+
+  // once consumed, peek and take both return undefined
+  assert.equal(core.peekForExecution(health.requestId, 'sidepanel'), undefined);
+  assert.equal(core.takeForExecution(health.requestId, 'sidepanel'), undefined);
+  assert.deepEqual(core.pending(), []);
+});
+
+test('extension core strictly enforces v2 and exact five allowed tools', () => {
+  const core = createBrowserExtensionCore();
+  const sender = { url: 'https://chatgpt.com/', tabId: 1 };
+
+  // v1 request rejected
+  assert.equal(core.queueProviderRequest(sender, { ...health, version: 1 as any }), false);
+
+  // exactly 5 v2 tools accepted
+  const tools = ['health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read'] as const;
+  for (const tool of tools) {
+    const req = { ...health, requestId: `req_${tool}`, tool: tool as any };
+    assert.equal(core.queueProviderRequest(sender, req), true, `tool ${tool} should be accepted`);
+  }
+
+  // consequential / unknown tools rejected
+  const rejected = ['file.patch', 'verify.run', 'mutation.preview', 'terminal.exec', 'random'];
+  for (const tool of rejected) {
+    const req = { ...health, requestId: `req_${tool}`, tool: tool as any };
+    assert.equal(core.queueProviderRequest(sender, req), false, `tool ${tool} should be rejected`);
+  }
 });
 test('extension manifest is narrowly scoped and has stable identity', async () => {
   const raw = await readFile(new URL('../browser/extension/manifest.json', import.meta.url), 'utf8');

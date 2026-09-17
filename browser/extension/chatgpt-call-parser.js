@@ -25,6 +25,37 @@ export function parseChatGptToolCall(text) {
     if (!exactKeys(value.arguments, ['path']) || !boundedString(value.arguments.path, 1, 4096)) return undefined;
     return { tool: 'workspace.open', arguments: { path: value.arguments.path } };
   }
+  if (value.tool === 'repo.search') {
+    if (!allowedKeys(value.arguments, ['workspace_id', 'query'], ['ignore_case', 'max_results', 'context_lines'])) return undefined;
+    const { workspace_id, query, ignore_case, max_results, context_lines } = value.arguments;
+    if (!boundedString(workspace_id, 1, 256)) return undefined;
+    if (typeof query !== 'string' || query.length < 1 || /[\0\r\n]/.test(query) || decoder.encode(query).byteLength > 256) return undefined;
+    const args = { workspace_id, query };
+    if (ignore_case !== undefined) {
+      if (typeof ignore_case !== 'boolean') return undefined;
+      args.ignore_case = ignore_case;
+    }
+    if (max_results !== undefined) {
+      if (!Number.isInteger(max_results) || max_results < 1 || max_results > 50) return undefined;
+      args.max_results = max_results;
+    }
+    if (context_lines !== undefined) {
+      if (!Number.isInteger(context_lines) || context_lines < 0 || context_lines > 2) return undefined;
+      args.context_lines = context_lines;
+    }
+    return { tool: 'repo.search', arguments: args };
+  }
+  if (value.tool === 'repo.snapshot') {
+    if (!allowedKeys(value.arguments, ['workspace_id'], ['max_files'])) return undefined;
+    const { workspace_id, max_files } = value.arguments;
+    if (!boundedString(workspace_id, 1, 256)) return undefined;
+    const args = { workspace_id };
+    if (max_files !== undefined) {
+      if (!Number.isInteger(max_files) || max_files < 1 || max_files > 200) return undefined;
+      args.max_files = max_files;
+    }
+    return { tool: 'repo.snapshot', arguments: args };
+  }
   if (value.tool === 'file.read') {
     if (!exactKeys(value.arguments, ['workspace_id', 'path'])) return undefined;
     if (!boundedString(value.arguments.workspace_id, 1, 256) || !boundedString(value.arguments.path, 1, 4096)) return undefined;
@@ -72,6 +103,13 @@ function compactJson(value) {
 function exactKeys(value, expected) {
   const keys = Object.keys(value);
   return keys.length === expected.length && expected.every((key) => keys.includes(key));
+}
+
+function allowedKeys(value, required, optional = []) {
+  const keys = Object.keys(value);
+  const allowed = new Set([...required, ...optional]);
+  if (!required.every((key) => keys.includes(key))) return false;
+  return keys.every((key) => allowed.has(key));
 }
 
 function plainObject(value) {
