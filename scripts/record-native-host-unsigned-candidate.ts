@@ -147,8 +147,8 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file:///${process.argv[1].replaceAll('\\', '/')}`).href) {
-  main().catch((error) => {
-    process.stderr.write(`wag-native-host-candidate-record: ${error instanceof Error ? error.message : 'failed'}\n`);
+  main().catch(() => {
+    process.stderr.write('wag-native-host-candidate-record: failed\n');
     process.exitCode = 1;
   });
 }
