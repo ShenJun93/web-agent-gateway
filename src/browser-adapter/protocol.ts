@@ -1,9 +1,14 @@
 import { z } from 'zod';
 
-export const BROWSER_ADAPTER_PROTOCOL_VERSION = 1 as const;
+export const BROWSER_ADAPTER_PROTOCOL_VERSION = 2 as const;
 export const BROWSER_ADAPTER_MAX_BYTES = 256 * 1024;
 
-export type BrowserToolName = 'health' | 'workspace.open' | 'file.read';
+export type BrowserToolName =
+  | 'health'
+  | 'workspace.open'
+  | 'repo.search'
+  | 'repo.snapshot'
+  | 'file.read';
 
 const requestId = z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 const sessionId = z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
@@ -60,6 +65,29 @@ const openWorkspaceCall = z.object({
   arguments: z.object({ path: pathValue }).strict(),
 }).strict();
 
+const repoSearchCall = z.object({
+  ...sessionRequestBase,
+  type: z.literal('tool.call'),
+  tool: z.literal('repo.search'),
+  arguments: z.object({
+    workspace_id: workspaceId,
+    query: z.string().min(1).refine(val => !/[\0\r\n]/.test(val) && Buffer.byteLength(val, 'utf8') <= 256, { message: 'Query too long or contains invalid characters' }),
+    ignore_case: z.boolean().optional(),
+    max_results: z.number().int().min(1).max(50).optional(),
+    context_lines: z.number().int().min(0).max(2).optional(),
+  }).strict(),
+}).strict();
+
+const repoSnapshotCall = z.object({
+  ...sessionRequestBase,
+  type: z.literal('tool.call'),
+  tool: z.literal('repo.snapshot'),
+  arguments: z.object({
+    workspace_id: workspaceId,
+    max_files: z.number().int().min(1).max(200).optional(),
+  }).strict(),
+}).strict();
+
 const readFileCall = z.object({
   ...sessionRequestBase,
   type: z.literal('tool.call'),
@@ -75,6 +103,8 @@ const requestSchema = z.union([
   pingRequest,
   healthCall,
   openWorkspaceCall,
+  repoSearchCall,
+  repoSnapshotCall,
   readFileCall,
 ]);
 

@@ -1,5 +1,32 @@
-import type { BrowserAdapterRequest, BrowserAdapterResponse } from '../../src/browser-adapter/protocol.js';
+export type V1BrowserAdapterRequest =
+  | {
+      version: 1;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'health';
+      arguments: Record<string, never>;
+    }
+  | {
+      version: 1;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'workspace.open';
+      arguments: { path: string };
+    }
+  | {
+      version: 1;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'file.read';
+      arguments: { workspace_id: string; path: string };
+    };
 
+export type V1BrowserAdapterResponse =
+  | { version: 1; type: 'result'; requestId: string; result: unknown }
+  | { version: 1; type: 'error'; requestId: string; error: { code: string; message: string } };
 export interface ProviderSender {
   url?: string;
   tabId?: number;
@@ -8,25 +35,24 @@ export interface ProviderSender {
 export interface PendingBrowserRequest {
   requestId: string;
   tabId: number;
-  request: BrowserAdapterRequest;
+  request: V1BrowserAdapterRequest;
 }
 
 export interface DeliveredBrowserResponse {
   tabId: number;
   requestId: string;
-  response: BrowserAdapterResponse;
+  response: V1BrowserAdapterResponse;
 }
 
 export interface BrowserExtensionCore {
-  queueProviderRequest(sender: ProviderSender, request: BrowserAdapterRequest): boolean;
+  queueProviderRequest(sender: ProviderSender, request: V1BrowserAdapterRequest): boolean;
   pending(): PendingBrowserRequest[];
-  takeForExecution(requestId: string, actor: string): BrowserAdapterRequest | undefined;
-  acceptNativeResponse(response: BrowserAdapterResponse): DeliveredBrowserResponse | undefined;
+  takeForExecution(requestId: string, actor: string): V1BrowserAdapterRequest | undefined;
+  acceptNativeResponse(response: V1BrowserAdapterResponse): DeliveredBrowserResponse | undefined;
   dismiss(requestId: string, actor: string): boolean;
 }
 
 export function createBrowserExtensionCore(): BrowserExtensionCore;
-
 export interface SessionStorageArea {
   get(key: string): Promise<Record<string, unknown>>;
   set(items: Record<string, string>): Promise<void>;

@@ -6,6 +6,8 @@ import test from 'node:test';
 import { McpLocalAdapterLink, type AdapterDiscovery } from '../src/browser-adapter/local-link.js';
 import { startBrowserAdapterRuntime } from '../scripts/browser-adapter-runtime.js';
 import { DEVSPACE_TEST_OWNER_TOKEN, startPinnedDevspace } from './devspace-fixture.js';
+import { BROWSER_INSPECT_ADAPTER_ID } from '../src/adapter-admission.js';
+import { BROWSER_ADAPTER_PROTOCOL_VERSION } from '../src/browser-adapter/protocol.js';
 
 const correlationA = 'session_runtime_A';
 const correlationB = 'session_runtime_B';
@@ -66,20 +68,22 @@ test('browser runtime isolates sessions and recovers owned workspace across WAG 
   });  t.after(() => runtimeA.close());
 
   const discoveryA = JSON.parse(await readFile(discoveryPath, 'utf8')) as AdapterDiscovery;
-  assert.deepEqual(Object.keys(discoveryA).sort(), ['admissionUrl', 'bootstrapToken']);
+  assert.deepEqual(Object.keys(discoveryA).sort(), ['adapterId', 'admissionUrl', 'bootstrapToken', 'protocolVersion']);
+  assert.equal(discoveryA.protocolVersion, BROWSER_ADAPTER_PROTOCOL_VERSION);
+  assert.equal(discoveryA.adapterId, BROWSER_INSPECT_ADAPTER_ID);
   assert.match(discoveryA.admissionUrl, /^http:\/\/127\.0\.0\.1:\d+\/adapter\/admit$/);
   assert.ok(Buffer.byteLength(discoveryA.bootstrapToken, 'utf8') >= 32);
   const renderedDiscovery = JSON.stringify(discoveryA);
   assert.equal(renderedDiscovery.includes(statePath), false);
   assert.equal(renderedDiscovery.includes(fixture.workspaceRoot), false);
-  assert.doesNotMatch(renderedDiscovery, /owner_|adapter_|\/mcp"/);
+  assert.doesNotMatch(renderedDiscovery, /owner_|\/mcp"/);
 
   const linkA = await McpLocalAdapterLink.admit(discoveryA, correlationA);
   t.after(() => linkA.close());
   const linkB = await McpLocalAdapterLink.admit(discoveryA, correlationB);
   t.after(() => linkB.close());
   const openedA = await linkA.call({
-    version: 1, type: 'tool.call', requestId: 'req_runtime_open_A', sessionId: correlationA,
+    version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_runtime_open_A', sessionId: correlationA,
     tool: 'workspace.open', arguments: { path: fixture.workspaceRoot },
   });
   assert.equal(openedA.type, 'result');
@@ -87,7 +91,7 @@ test('browser runtime isolates sessions and recovers owned workspace across WAG 
   assert.match(workspaceA ?? '', /^ws_/);
 
   const openedB = await linkB.call({
-    version: 1, type: 'tool.call', requestId: 'req_runtime_open_B', sessionId: correlationB,
+    version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_runtime_open_B', sessionId: correlationB,
     tool: 'workspace.open', arguments: { path: fixture.workspaceRoot },
   });
   assert.equal(openedB.type, 'result');
@@ -96,7 +100,7 @@ test('browser runtime isolates sessions and recovers owned workspace across WAG 
   assert.notEqual(workspaceB, workspaceA);
 
   const crossRead = await linkB.call({
-    version: 1, type: 'tool.call', requestId: 'req_runtime_cross', sessionId: correlationB,
+    version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_runtime_cross', sessionId: correlationB,
     tool: 'file.read', arguments: { workspace_id: workspaceA!, path: 'note.txt' },
   });
   assert.equal(crossRead.type, 'error');
@@ -119,7 +123,7 @@ test('browser runtime isolates sessions and recovers owned workspace across WAG 
   const recovered = await McpLocalAdapterLink.admit(discoveryB, correlationA);
   t.after(() => recovered.close());
   const read = await recovered.call({
-    version: 1, type: 'tool.call', requestId: 'req_runtime_recover', sessionId: correlationA,
+    version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_runtime_recover', sessionId: correlationA,
     tool: 'file.read', arguments: { workspace_id: workspaceA!, path: 'note.txt' },
   });
   assert.equal(read.type, 'result');

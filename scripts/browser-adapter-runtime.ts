@@ -9,6 +9,7 @@ import { loadPrivateGatewayConfig } from '../src/private-config.js';
 import { bootstrapPrivateGateway } from '../src/private-runtime.js';
 import { createBrowserAdmittedMcpServer } from '../src/server.js';
 import { DevspaceRepositoryInspectionBackend } from '../src/repository-inspection.js';
+import { BROWSER_ADAPTER_PROTOCOL_VERSION } from '../src/browser-adapter/protocol.js';
 
 export interface BrowserAdapterRuntime {
   admissionUrl: string;
@@ -63,6 +64,8 @@ export async function startBrowserAdapterRuntime(options: {
     await writeFile(options.discoveryPath, JSON.stringify({
       admissionUrl: http.admissionUrl,
       bootstrapToken,
+      protocolVersion: BROWSER_ADAPTER_PROTOCOL_VERSION,
+      adapterId: BROWSER_INSPECT_ADAPTER_ID,
     }), { encoding: 'utf8', mode: 0o600 });
 
     let closed = false;

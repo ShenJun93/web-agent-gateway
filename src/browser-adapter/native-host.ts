@@ -5,10 +5,12 @@ import { NativeMessageDecoder, encodeNativeMessage } from './native-framing.js';
 import {
   parseBrowserAdapterRequest,
   parseBrowserAdapterResponse,
+  BROWSER_ADAPTER_PROTOCOL_VERSION,
   type BrowserAdapterRequest,
   type BrowserAdapterResponse,
 } from './protocol.js';
-import type { AdapterDiscovery, LocalAdapterLink } from './local-link.js';
+import { parseAdapterDiscovery, type AdapterDiscovery, type LocalAdapterLink } from './local-link.js';
+import { BROWSER_INSPECT_ADAPTER_ID } from '../adapter-admission.js';
 
 const EXTENSION_ORIGIN = /^chrome-extension:\/\/[a-p]{32}\/$/;
 
@@ -38,15 +40,7 @@ export async function loadAdapterDiscovery(path: string): Promise<AdapterDiscove
   let value: unknown;
   try { value = JSON.parse(await readFile(path, 'utf8')); }
   catch { throw new Error('Browser adapter discovery unavailable'); }
-  if (!value || typeof value !== 'object') throw new Error('Browser adapter discovery unavailable');
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).sort().join(',') !== 'admissionUrl,bootstrapToken') {
-    throw new Error('Browser adapter discovery unavailable');
-  }
-  if (typeof record.admissionUrl !== 'string' || typeof record.bootstrapToken !== 'string') {
-    throw new Error('Browser adapter discovery unavailable');
-  }
-  return { admissionUrl: record.admissionUrl, bootstrapToken: record.bootstrapToken };
+  return parseAdapterDiscovery(value);
 }
 
 export async function runNativeHost(options: {
@@ -80,7 +74,7 @@ export async function runNativeHost(options: {
     if (seen.has(request.requestId)) return hostError(request.requestId, 'DUPLICATE_REQUEST', 'Duplicate request id');
     seen.add(request.requestId);
 
-    if (request.type === 'hello') return hostResult(request.requestId, { protocolVersion: 1 });
+    if (request.type === 'hello') return hostResult(request.requestId, { protocolVersion: BROWSER_ADAPTER_PROTOCOL_VERSION, adapterId: BROWSER_INSPECT_ADAPTER_ID });
     if (request.type === 'session.bind') {
       if (boundSession !== undefined) return hostError(request.requestId, 'SESSION_ALREADY_BOUND', 'A session is already bound');
       let admitted: LocalAdapterLink;
@@ -107,12 +101,12 @@ export async function runNativeHost(options: {
 }
 
 function hostResult(requestId: string, result: unknown): BrowserAdapterResponse {
-  return parseBrowserAdapterResponse({ version: 1, type: 'result', requestId, result });
+  return parseBrowserAdapterResponse({ version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'result', requestId, result });
 }
 
 function hostError(requestId: string, code: string, message: string): BrowserAdapterResponse {
   return parseBrowserAdapterResponse({
-    version: 1,
+    version: BROWSER_ADAPTER_PROTOCOL_VERSION,
     type: 'error',
     requestId,
     error: { code, message },
