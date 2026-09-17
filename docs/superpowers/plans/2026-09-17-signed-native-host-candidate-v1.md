@@ -162,7 +162,7 @@ git commit -m "feat: define signed native host candidate receipts"
 
 - [ ] **Step 1: Write AST and behavior RED tests**
 
-The test must parse the committed PowerShell AST and require the exact unique command set `Set-StrictMode`, `Resolve-Path`, `Get-Item`, `Get-AuthenticodeSignature`, `Get-AppLockerFileInformation`, and `ConvertTo-Json`. Permit only the member calls `Equals`, `GetFullPath`, and `ToLowerInvariant`; implement EKU inspection with a normal `foreach` rather than `Where-Object`. Microsoft documents the AppLocker file hash as a system-computed Authenticode cryptographic hash, so this is the continuity primitive rather than a custom PE parser. Any additional command or invoked member fails the AST test.
+The test must parse the committed PowerShell AST and require the exact unique command set `Set-StrictMode`, `Resolve-Path`, `Get-Item`, `Get-AuthenticodeSignature`, `Get-AppLockerFileInformation`, and `ConvertTo-Json`. Permit only the member calls `Equals`, `GetFullPath`, and `ToLowerInvariant`, plus `Write` only when its receiver is exactly `[System.Console]::Error` and its argument is the fixed failure sentinel; implement EKU inspection with a normal `foreach` rather than `Where-Object`. Microsoft documents the AppLocker file hash as a system-computed Authenticode cryptographic hash, so this is the continuity primitive rather than a custom PE parser. Any additional command or invoked member fails the AST test.
 
 Add Windows behavior tests:
 
