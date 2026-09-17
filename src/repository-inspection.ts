@@ -195,25 +195,20 @@ export class DevspaceRepositoryInspectionBackend implements RepositoryInspection
 
   async snapshot(devspaceWorkspaceId: string, options?: RepoSnapshotOptions): Promise<RepoSnapshotResult> {
     const maxFiles = Math.min(Math.max(options?.maxFiles ?? 100, 1), 500);
-    const result = await this.executor.execCommand(devspaceWorkspaceId, SNAPSHOT_COMMAND, undefined, 5000);
+    const result = await this.executor.execCommand(devspaceWorkspaceId, SNAPSHOT_COMMAND);
     if (result.running) {
       if (result.sessionId) await this.executor.interruptCommand(devspaceWorkspaceId, result.sessionId);
       throw new Error('repo.snapshot command unexpectedly remained running');
     }
     if (result.exitCode !== 0) throw new Error(`repo.snapshot command failed with exit code ${result.exitCode ?? 'unknown'}`);
 
-    let parsed: ReturnType<typeof parseSnapshot>;
-    try {
-      parsed = parseSnapshot(result.output);
-    } catch {
-      throw new Error('Gateway search failed');
-    }
+    const parsed = parseSnapshot(result.output);
 
     const files = parsed.files.slice(0, maxFiles);
     const snapshotResult = { ...parsed, files, filesTruncated: parsed.files.length > files.length };
 
     if (Buffer.byteLength(JSON.stringify(snapshotResult), 'utf8') > 65536) {
-      throw new Error('Gateway search failed');
+      throw new Error('repo.snapshot result exceeded 64 KiB size limit');
     }
 
     return snapshotResult;

@@ -146,6 +146,8 @@ test('repo.search - security tests', async (t) => {
       `$(touch ../marker.txt)`,
       `\`touch ../marker.txt\``,
       `& touch ../marker.txt`,
+      // literal parentheses — plan Step 2 explicitly requires this case
+      `find_me()`,
     ];
 
     for (const query of maliciousQueries) {
@@ -163,7 +165,7 @@ test('repo.search - security tests', async (t) => {
     }
   });
 
-  await t.test('sensitive path exclusion', async () => {
+  await t.test('sensitive path exclusion and allowed control', async () => {
     const result = await inspection.search({
       devspaceWorkspaceId,
       canonicalRoot: fixture.workspaceRoot,
@@ -172,8 +174,51 @@ test('repo.search - security tests', async (t) => {
       maxResults: 20,
       contextLines: 1,
     });
-    // .env.local should be blocked by validateReadPath.
-    // What about .git-adjacent? The policy might not block it, but .env.local is definitely blocked.
-    assert.deepEqual(result.matches.filter(m => m.path === '.env.local'), []);
+    // .env.local must be blocked by path policy (sensitive segment).
+    assert.deepEqual(result.matches.filter(m => m.path === '.env.local'), [],
+      '.env.local must be excluded by path policy');
+    // .git-adjacent is NOT a sensitive segment (policy blocks exact .git, not .git-* names).
+    // It must appear as a normal allowed match — explicit positive control.
+    assert.ok(result.matches.some(m => m.path === '.git-adjacent/secret.txt'),
+      '.git-adjacent/secret.txt must be an allowed match (policy does not block .git-adjacent)');
   });
+});
+
+test('repo.search - NUL/CR/LF query rejection', async (t) => {
+  // Validation happens before any executor call; use a no-op stub executor.
+  const stubExecutor = {
+    execCommand: async () => { throw new Error('execCommand must not be called for rejected queries'); },
+    interruptCommand: async () => {},
+  } as unknown as import('../src/executor/devspace.js').DevspaceExecutor;
+  const inspection = new DevspaceRepositoryInspectionBackend(stubExecutor);
+
+  const rejectedQueries: Array<[string, string]> = [
+    ['NUL byte', 'foo\0bar'],
+    ['CR only', 'foo\rbar'],
+    ['LF only', 'foo\nbar'],
+    ['CR+LF', 'foo\r\nbar'],
+    ['leading NUL', '\0foo'],
+    ['trailing LF', 'foo\n'],
+  ];
+
+  for (const [label, query] of rejectedQueries) {
+    await t.test(`rejects query with ${label}`, async () => {
+      await assert.rejects(
+        () => inspection.search({
+          devspaceWorkspaceId: 'stub-ws',
+          canonicalRoot: '/stub',
+          query,
+          ignoreCase: false,
+          maxResults: 20,
+          contextLines: 1,
+        }),
+        (err: unknown) => {
+          assert.ok(err instanceof Error, 'expected Error');
+          assert.equal(err.message, 'Gateway denied search query');
+          return true;
+        },
+        `query with ${label} should throw 'Gateway denied search query'`,
+      );
+    });
+  }
 });
