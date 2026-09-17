@@ -7,7 +7,7 @@ import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { recordUnsignedNativeHostCandidate, type RecordUnsignedCandidateDependencies } from '../scripts/record-native-host-unsigned-candidate.js';
-import { probeNativeHostStart, productionVerifySignedCandidateDependencies, verifySignedNativeHostCandidate, type VerifySignedCandidateDependencies } from '../scripts/verify-signed-native-host-candidate.js';
+import { probeNativeHostStart, productionVerifySignedCandidateDependencies, settleOwnedProbeChildAtDeadline, verifySignedNativeHostCandidate, type VerifySignedCandidateDependencies } from '../scripts/verify-signed-native-host-candidate.js';
 
 const execFile = promisify(execFileCb);
 const root = process.cwd();
@@ -280,6 +280,51 @@ test('signed candidate rejects Authenticode mismatch, unchanged/tampered flat by
     await assert.rejects(() => verifySignedNativeHostCandidate({ ...paths, output: existingOutput, signingDigest: 'SHA256' }, verifyDeps()));
     assert.equal(await readFile(existingOutput, 'utf8'), 'existing-evidence');
   } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('owned start-probe deadline tolerates exit/kill race and fails closed if the owned child remains live', async () => {
+  const racedChild = {
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    kill: () => {
+      setImmediate(() => { racedChild.exitCode = 0; });
+      return false;
+    },
+  };
+  await settleOwnedProbeChildAtDeadline(racedChild);
+
+  const stuckChild = {
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    kill: () => false,
+  };
+  await assert.rejects(
+    () => settleOwnedProbeChildAtDeadline(stuckChild),
+    /could not be terminated after start probe/,
+  );
+});
+
+test('signed candidate CLI rejects relative paths with bounded failure output', async () => {
+  const tsxCli = fileURLToPath(import.meta.resolve('tsx/cli'));
+  const verifier = join(root, 'scripts', 'verify-signed-native-host-candidate.ts');
+  const child = spawn(process.execPath, [
+    tsxCli, verifier,
+    '--build-dir', 'relative-build',
+    '--unsigned-receipt', 'relative-unsigned.json',
+    '--output', 'relative-signed.json',
+    '--signing-digest', 'SHA256',
+  ], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
+  child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  assert.equal(code, 1);
+  assert.equal(Buffer.concat(stdout).toString('utf8'), '');
+  assert.equal(Buffer.concat(stderr).toString('utf8'), 'wag-native-host-candidate-verify: failed\n');
 });
 
 test('signed candidate requires exact WAG filename and production Windows dependencies parse/start a trusted system executable', async (t) => {

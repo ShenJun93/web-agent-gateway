@@ -44,6 +44,36 @@ async function inspectValid(executablePath: string): Promise<NativeHostSignature
   return parseNativeHostSignatureInspection(JSON.parse(stdout.trim()));
 }
 
+export interface OwnedProbeChildAtDeadline {
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  kill(): boolean;
+}
+
+function ownedProbeChildHasExited(child: OwnedProbeChildAtDeadline): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function deferProbeStateCheck(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+export async function settleOwnedProbeChildAtDeadline(child: OwnedProbeChildAtDeadline): Promise<void> {
+  if (ownedProbeChildHasExited(child)) return;
+  try {
+    if (child.kill()) return;
+  } catch (error) {
+    await deferProbeStateCheck();
+    if (ownedProbeChildHasExited(child)) return;
+    throw error instanceof Error
+      ? error
+      : new Error('Candidate process could not be terminated after start probe');
+  }
+  await deferProbeStateCheck();
+  if (ownedProbeChildHasExited(child)) return;
+  throw new Error('Candidate process could not be terminated after start probe');
+}
+
 export function probeNativeHostStart(executablePath: string): Promise<'STARTED'> {
   return new Promise((resolve, reject) => {
     let child;
@@ -79,20 +109,12 @@ export function probeNativeHostStart(executablePath: string): Promise<'STARTED'>
         finish(new Error('Candidate process creation timed out'));
         return;
       }
-      if (child.exitCode !== null || child.signalCode !== null) {
-        finish();
-        return;
-      }
-      try {
-        if (!child.kill()) {
-          finish(new Error('Candidate process could not be terminated after start probe'));
-          return;
-        }
-      } catch (error) {
-        finish(error instanceof Error ? error : new Error('Candidate process could not be terminated after start probe'));
-        return;
-      }
-      finish();
+      void settleOwnedProbeChildAtDeadline(child).then(
+        () => finish(),
+        (error) => finish(error instanceof Error
+          ? error
+          : new Error('Candidate process could not be terminated after start probe')),
+      );
     }, 5_000);
   });
 }
