@@ -324,3 +324,23 @@ Independent post-run verification repeated `npm test` successfully and confirmed
 `D1_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_PROCESS_EXECUTION_AND_BOUNDED_FILE_MUTATION_VIA_SHELL`
 
 This establishes the DC Tier-D reference outcome for Attempt 1 only. It does not establish WAG Tier D because the current Browser Adapter lacks accepted search/state/verify/mutation capabilities required for the integrated loop.
+## WAG Browser capability precheck after DC Tier-D reference
+
+Before spending additional Layer-B runs on scenarios whose authority is known absent, the current Browser Adapter production surface was fresh-read from code and regression-tested without changing production state.
+
+Current extension code fixes `BROWSER_TOOLS` to exactly `health`, `workspace.open`, and `file.read`. Browser-admitted MCP tests likewise require exactly those three read-only tools and explicitly require `repo.snapshot` and `verify.run` to return tool-not-found.
+
+Focused regression evidence ran `browser-adapter-protocol`, `browser-admitted-mcp`, and `browser-extension-core`: 12 tests passed, 0 failed. The first test command was unavailable because this docs worktree has no `node_modules`; the same committed tests were then run with the canonical repo's existing exact dependency installation, with no dependency installation or mutation.
+
+This is a capability-availability precheck, not a substitute for Layer-B WebChat replacement evidence. It establishes that current Browser Adapter authority cannot validly satisfy R1 repository discovery, R2 repository state inspection, V1 verification, C1 reviewed mutation, or D1 integrated coding without a separately accepted capability change.
+
+`WAG_BROWSER_TOOLS_PRECHECK = health,workspace.open,file.read`
+`WAG_R1_REQUIRED_GAP = BOUNDED_REPOSITORY_DISCOVERY_SEARCH`
+`WAG_R2_REQUIRED_GAP = REPO_SNAPSHOT_NOT_PROJECTED`
+`WAG_V1_REQUIRED_GAP = VERIFY_RUN_NOT_PROJECTED`
+`WAG_C1_REQUIRED_GAP = REVIEWED_MUTATION_NOT_PROJECTED`
+`WAG_D1_REQUIRED_GAPS = R1+R2+V1+C1`
+`WAG_CAPABILITY_PRECHECK_TESTS = 12_PASS_0_FAIL`
+`WAG_LAYER_B_STATUS = NO_NEW_WAG_ATTEMPT_RECORDED_BY_THIS_PRECHECK`
+
+Per the benchmark contract, missing authority must not be bypassed through DC or arbitrary shell. The next engineering decision should address the smallest measured read-only inspect gap first; consequential verify/mutation authority remains behind its separate admission/isolation gate.
