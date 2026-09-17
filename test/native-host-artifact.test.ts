@@ -9,6 +9,7 @@ import test from 'node:test';
 import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
+import { BROWSER_ADAPTER_V1_ID } from '../src/adapter-admission.js';
 import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
 import { createBrowserAdmittedMcpServer, createGateway } from '../src/server.js';
 import { encodeNativeMessage, NativeMessageDecoder } from '../src/browser-adapter/native-framing.js';
@@ -75,10 +76,12 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
   const gateway = createGateway({ executor, allowedRoots: [root] });
   const store = new SqliteDurableStore(':memory:');
-  const admission = new BrowserAdmissionRegistry(store);
+  const admission = new BrowserAdmissionRegistry(BROWSER_ADAPTER_V1_ID, store);
   const workspaces = {
     open: async () => ({ workspaceId: 'ws_unused' }),
     read: async () => ({ content: 'unused' }),
+    search: async () => ({ matches: [], truncated: false }),
+    snapshot: async () => ({ branch: 'main', head: '1234', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false }),
   };
   const http = await startBrowserAdmissionHttpServer({
     gateway,

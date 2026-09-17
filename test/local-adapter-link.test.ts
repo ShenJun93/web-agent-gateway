@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
+import { BrowserAdmissionRegistry, BROWSER_ADAPTER_V1_ID } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
 import type { GatewayApi } from '../src/server.js';
@@ -21,7 +21,7 @@ function fakeGateway(): GatewayApi {
 }
 async function admissionFixture(t: test.TestContext) {
   const store = new SqliteDurableStore(':memory:');
-  const admission = new BrowserAdmissionRegistry(store, () => 1_000);
+  const admission = new BrowserAdmissionRegistry(BROWSER_ADAPTER_V1_ID, store, () => 1_000);
   const gateway = fakeGateway();
   const workspaces = {
     open: async (_caller: unknown, path: string) => ({ workspaceId: `ws_${path.length}` }),
@@ -29,6 +29,8 @@ async function admissionFixture(t: test.TestContext) {
       if (path === 'fail.txt') throw new Error(`do-not-leak ${bootstrapToken} http://127.0.0.1:9999/mcp`);
       return { content: `content:${path}` };
     },
+    search: async () => ({ matches: [], truncated: false }),
+    snapshot: async () => ({ branch: '', head: '', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false }),
   };
   const http = await startBrowserAdmissionHttpServer({
     gateway,
