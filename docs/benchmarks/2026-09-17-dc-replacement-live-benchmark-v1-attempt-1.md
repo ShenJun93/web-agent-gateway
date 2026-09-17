@@ -192,3 +192,19 @@ DC local identity was pinned from the live device agent: version `0.2.50`, Node 
 `DC_VERSION = 0.2.50`
 `DC_ALLOWED_DIRECTORIES = []`
 `NEXT_LIVE_STEP = USER_COMPLETES_CHATGPT_LOGIN_IN_DC_BENCHMARK_PROFILE`
+## R0 DC authenticated execution result
+
+The user completed ChatGPT authentication manually in the exact owned DC profile `wag-dc-bench-0917-dc-r0-a1`. The profile remained isolated from the WAG extension.
+
+Because the automation host blocked the canonical R0 prompt before browser submission, the user pasted and submitted the exact canonical prompt manually. This was a transport workaround only; the benchmark prompt itself was unchanged.
+
+DC server-side tool history then recorded a `read_file` call against the exact benchmark target `E:\AI-BROWSER\output\wag-dc-bench-0917-dc-r0-a1\workspace\docs\sentinel.txt`. The returned content was exactly `SENTINEL=WAG-DC-BENCH-V1`.
+
+Post-run fixture verification remained clean at HEAD `b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d` and tree `e276f7b0d6ea9e606ac9c3683e27781d354f8ce9`; no tracked/untracked residue was introduced.
+
+`R0_DC_ATTEMPT_1 = COMPLETE`
+`R0_DC_ORACLE = WAG-DC-BENCH-V1`
+`R0_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_READ_FILE`
+`R0_PAIR_STATUS = NON_COMPARABLE_WAG_CONTAMINATED_DC_COMPLETE`
+
+R0 does not promote Tier R because R1 and R2 remain unexecuted and the WAG side of the pair is contaminated.
