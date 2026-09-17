@@ -8,6 +8,7 @@ import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
 import { loadPrivateGatewayConfig } from '../src/private-config.js';
 import { bootstrapPrivateGateway } from '../src/private-runtime.js';
 import { createBrowserAdmittedMcpServer } from '../src/server.js';
+import { DevspaceRepositoryInspectionBackend } from '../src/repository-inspection.js';
 
 export interface BrowserAdapterRuntime {
   admissionUrl: string;
@@ -38,9 +39,11 @@ export async function startBrowserAdapterRuntime(options: {
     store = new SqliteDurableStore(options.statePath);
     admission = new BrowserAdmissionRegistry(store);
     privateRuntime = await bootstrapPrivateGateway(config, { env });
+    const inspection = new DevspaceRepositoryInspectionBackend(privateRuntime.executor);
     const workspaces = new AdmittedWorkspaceService({
       store,
       executor: privateRuntime.executor,
+      inspection,
       allowedRoots: config.allowedRoots,
     });
 

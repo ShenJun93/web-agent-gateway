@@ -1,6 +1,7 @@
 import type { GatewayCallerContext } from './caller-context.js';
 import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
 import { DevspaceReadLimitError, type DevspaceExecutor } from './executor/devspace.js';
+import type { RepositoryInspectionBackend, RepoSearchOptions, RepoSearchResult, RepoSnapshotOptions, RepoSnapshotResult } from './repository-inspection.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 
 interface RuntimeBinding {
@@ -11,6 +12,7 @@ interface RuntimeBinding {
 export interface AdmittedWorkspaceServiceOptions {
   store: SqliteDurableStore;
   executor: Pick<DevspaceExecutor, 'openWorkspace' | 'readFile'>;
+  inspection: RepositoryInspectionBackend;
   allowedRoots: readonly string[];
   now?: () => number;
 }
@@ -39,10 +41,7 @@ export class AdmittedWorkspaceService {
   }
 
   async read(caller: GatewayCallerContext, workspaceId: string, path: string): Promise<{ content: string }> {
-    const record = this.options.store.getWorkspace(workspaceId);
-    if (!record || !sameAuthority(record, caller)) throw new Error('Gateway denied workspace');
-
-    const binding = await this.resolveBinding(record);
+    const { record, binding } = await this.getAuthorizedBinding(caller, workspaceId);
     const safePath = validateReadPath(path);
     await assertReadTarget(record.canonicalRoot, safePath);
 
@@ -60,6 +59,39 @@ export class AdmittedWorkspaceService {
       throw new Error('Gateway rejected oversized content');
     }
     return { content: normalized };
+  }
+
+  private async getAuthorizedBinding(caller: GatewayCallerContext, workspaceId: string): Promise<{ record: WorkspaceRecord; binding: RuntimeBinding }> {
+    const record = this.options.store.getWorkspace(workspaceId);
+    if (!record || !sameAuthority(record, caller)) throw new Error('Gateway denied workspace');
+    const binding = await this.resolveBinding(record);
+    return { record, binding };
+  }
+
+  async search(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    query: string,
+    options: RepoSearchOptions = {},
+  ): Promise<RepoSearchResult> {
+    const { record, binding } = await this.getAuthorizedBinding(caller, workspaceId);
+    return this.options.inspection.search({
+      devspaceWorkspaceId: binding.devspaceWorkspaceId,
+      canonicalRoot: record.canonicalRoot,
+      query,
+      ignoreCase: options.ignoreCase ?? false,
+      maxResults: options.maxResults ?? 20,
+      contextLines: options.contextLines ?? 1,
+    });
+  }
+
+  async snapshot(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    options: RepoSnapshotOptions = {},
+  ): Promise<RepoSnapshotResult> {
+    const { binding } = await this.getAuthorizedBinding(caller, workspaceId);
+    return this.options.inspection.snapshot(binding.devspaceWorkspaceId, options);
   }
 
   private async resolveBinding(record: WorkspaceRecord): Promise<RuntimeBinding> {

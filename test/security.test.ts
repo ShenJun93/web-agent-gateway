@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { access, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join, parse } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
@@ -8,6 +8,11 @@ import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { validateReadPath } from '../src/path-policy.js';
 import { createGateway } from '../src/server.js';
 import { startPinnedDevspace } from './devspace-fixture.js';
+import { AdmittedWorkspaceService } from '../src/admitted-workspace.js';
+import { createGatewayCallerContext } from '../src/caller-context.js';
+import { SqliteDurableStore } from '../src/durable-store.js';
+import { DevspaceRepositoryInspectionBackend } from '../src/repository-inspection.js';
+import { tmpdir } from 'node:os';
 
 const execFileAsync = promisify(execFile);
 
@@ -96,6 +101,54 @@ test('repo.snapshot disables repository-configured fsmonitor commands', async (t
   await rm(marker, { force: true });
   await gateway.repoSnapshot(workspaceId);
   assert.equal(await exists(marker), false, 'repo.snapshot must not execute repository-configured fsmonitor commands');
+});
+
+
+test('search through admitted service filters sensitive and escaped paths', async (t) => {
+  const fixture = await startPinnedDevspace();
+  t.after(() => fixture.stop());
+
+  await writeFile(join(fixture.workspaceRoot, '.env.local'), 'needle\n');
+  await writeFile(join(fixture.workspaceRoot, 'safe.txt'), 'needle\n');
+
+  const outsideDir = join(dirname(fixture.workspaceRoot), 'outside2');
+  const linkDir = join(fixture.workspaceRoot, 'escape2');
+  await mkdir(outsideDir);
+  await writeFile(join(outsideDir, 'secret.txt'), 'needle\n');
+  try {
+    await symlink(outsideDir, linkDir, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES') { t.skip(`symlink/junction unsupported: ${code}`); return; }
+    throw error;
+  }
+
+  // Need to track the files in git so search will find them
+  await execFileAsync('git', ['-C', fixture.workspaceRoot, 'init']);
+  await execFileAsync('git', ['-C', fixture.workspaceRoot, 'config', 'user.email', 'fixture@example.invalid']);
+  await execFileAsync('git', ['-C', fixture.workspaceRoot, 'config', 'user.name', 'Fixture']);
+  await execFileAsync('git', ['-C', fixture.workspaceRoot, 'add', '.env.local', 'safe.txt', 'escape2/secret.txt']);
+
+  const executor = new DevspaceExecutor(fixture);
+  const inspection = new DevspaceRepositoryInspectionBackend(executor);
+  const dir = await mkdtemp(join(tmpdir(), 'wag-security-'));
+  const store = new SqliteDurableStore(join(dir, 'state.sqlite'));
+  t.after(async () => { store.close(); await rm(dir, { recursive: true, force: true }); });
+
+  const service = new AdmittedWorkspaceService({
+    store,
+    executor,
+    inspection,
+    allowedRoots: [fixture.workspaceRoot]
+  });
+
+  const caller = createGatewayCallerContext({ ownerId: 'owner', sessionId: 'session', adapterId: 'browser.chatgpt.native.inspect.v2' });
+  const { workspaceId } = await service.open(caller, fixture.workspaceRoot);
+
+  const result = await service.search(caller, workspaceId, 'needle', {});
+  const paths = result.matches.map(m => m.path).sort();
+
+  assert.deepEqual(paths, ['safe.txt']);
 });
 
 
