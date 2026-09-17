@@ -178,3 +178,17 @@ The DC browser reached ChatGPT but the brand-new profile is unauthenticated and 
 `R0_DC_CONTINUATION = BLOCKED_ENVIRONMENT_AUTH_PENDING_USER`
 
 No R0 paired comparison or replacement-tier conclusion is claimed yet.
+
+### DC R0 authentication re-check and environment pin
+
+Continuation revalidated exact browser ownership for `wag-dc-bench-0917-dc-r0-a1` against `OWNER.json` and the global Playwright inventory. The worker remained open on its dedicated profile and had no WAG extension launch argument.
+
+The ChatGPT page still rendered the anonymous state plus `Log in or sign up`; therefore the formal DC Layer B prompt was not submitted. This remains a browser/account prerequisite failure, not a DC capability result.
+
+DC local identity was pinned from the live device agent: version `0.2.50`, Node `24.20.0`, authenticated/online device agent. `allowedDirectories=[]` was unchanged, which in current DC configuration means ambient full-filesystem access. No config value, pairing, connector, or account state was changed by the benchmark operator.
+
+`R0_WAG_ATTEMPT_1 = CONTAMINATED_RUN`
+`R0_DC_ATTEMPT_1 = ENVIRONMENT_FAILURE_AUTH_PENDING`
+`DC_VERSION = 0.2.50`
+`DC_ALLOWED_DIRECTORIES = []`
+`NEXT_LIVE_STEP = USER_COMPLETES_CHATGPT_LOGIN_IN_DC_BENCHMARK_PROFILE`
