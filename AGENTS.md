@@ -13,6 +13,14 @@
 4. latest research receipt in `docs/research/`
 5. benchmark evidence in `docs/benchmarks/`
 
+## Mission guardrails
+- Advance one or both normative goals in ADR-0018: replace DC on selected WebChat -> local workflows; enable WebChat local coding outcomes comparable to Claude Code/Codex through WAG.
+- Measure coding parity by outcomes, not by copying low-level tool catalogs. A competitor feature is never sufficient justification by itself.
+- ChatGPT Web is the reference provider; provider-neutral core semantics must remain reusable by later WebChat providers.
+- Prefer provider-native remote/private MCP or another stable standard path before building a provider browser adapter.
+- Do not promote a capability unless a concrete WebChat workflow gap and an acceptance test are identified first.
+- Product mission never overrides ADR-0014/0017 trust gates; consequential Browser Adapter authority remains separately gated.
+
 ## Engineering constraints
 - Reuse order: NATIVE -> STANDARD -> PROVEN OSS/SERVICE -> COMPOSE -> WRAP -> EXTEND -> BUILD.
 - Keep provider adapters thin; no provider-specific execution logic in core.

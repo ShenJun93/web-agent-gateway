@@ -5,6 +5,15 @@ Provider-neutral local execution gateway for Web AI clients.
 ## Goal
 Provide a provider-neutral, least-authority local trust/capability gateway for AI hosts that need bounded access to local resources, while keeping identity, policy, approvals, secrets, durable ownership, and audit under WAG control.
 
+## Product mission lock
+WAG has two normative product goals:
+
+1. Replace Remote Desktop Commander on selected WebChat -> local development workflows. Replacement is workflow-scoped; WAG is not a clone of Desktop Commander's generic remote-machine surface.
+2. Give WebChat agents local development outcomes comparable to Claude Code/Codex where WAG grants capability: inspect, locate, read, make reviewable changes, verify/build/test, inspect results, and only separately reviewed Git/process effects when a measured workflow requires them.
+
+ChatGPT Web is the current reference provider and first direct DC-replacement target. Provider neutrality is architectural: future WebChat providers must reuse the same WAG authority/capability contracts through the best available native/standard adapter. "Claude Code/Codex-like" means outcome parity, not raw-shell or agent-platform parity.
+
+Approved mission design: `docs/superpowers/specs/2026-09-17-webchat-local-coding-mission-lock-design.md`. Normative ADR: `docs/adr/0018-lock-webchat-local-coding-mission.md`. Dated evidence base: `docs/research/2026-09-17-wag-webchat-local-coding-mission-lock.md`.
 ## Canonical authority
 1. Git history and tagged evidence.
 2. `docs/superpowers/specs/` approved designs.
