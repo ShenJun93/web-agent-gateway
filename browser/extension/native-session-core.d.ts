@@ -2,7 +2,7 @@ import type { V2BrowserAdapterRequest, V2BrowserAdapterResponse } from './servic
 
 export interface NativePort {
   postMessage(message: unknown): void;
-  disconnect?(): void;
+  disconnect(): void;
   onMessage: {
     addListener(listener: (message: any) => void): void;
     removeListener?(listener: (message: any) => void): void;

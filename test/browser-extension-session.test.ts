@@ -71,6 +71,7 @@ class FakeNativePort {
   readonly posted: any[] = [];
   readonly messageListeners: ((msg: any) => void)[] = [];
   readonly disconnectListeners: (() => void)[] = [];
+  disconnected = false;
 
   readonly onMessage = {
     addListener: (fn: (msg: any) => void) => { this.messageListeners.push(fn); },
@@ -81,6 +82,7 @@ class FakeNativePort {
   };
 
   postMessage(message: any) {
+    if (this.disconnected) throw new Error('Port is disconnected');
     this.posted.push(message);
   }
 
@@ -90,6 +92,11 @@ class FakeNativePort {
 
   emitDisconnect() {
     for (const fn of this.disconnectListeners) fn();
+  }
+
+  disconnect() {
+    this.disconnected = true;
+    this.emitDisconnect();
   }
 }
 
@@ -374,7 +381,76 @@ test('native session controller disconnect rejects pending and clears state for 
   assert.equal(native.isConnected(), false);
 
   // subsequent ensureReady should reconnect and start fresh with hello
-  let port2: FakeNativePort | undefined;
-  native.ensureReady('session_dc'); // starts next handshake on fresh port
-  assert.ok(port !== port2); // new port connected
+  const firstPort = port;
+  const retry = native.ensureReady('session_dc');
+  const retryPort = port;
+  retryPort!.emitDisconnect();
+  await assert.rejects(retry, /disconnect/i);
+  assert.ok(retryPort !== firstPort);
+  assert.equal(retryPort!.posted[0].type, 'hello')
+});
+
+test('native session controller rejects control response with invalid protocol version', async () => {
+  const { createNativeSessionController } = await import('../browser/extension/native-session-core.js');
+  let activePort: FakeNativePort | undefined;
+  const native = createNativeSessionController({
+    connectNative: () => { activePort = new FakeNativePort(); return activePort; },
+    randomUUID: ids(),
+    onToolResponse: () => {},
+  });
+
+  const p = native.ensureReady('session_bad_version');
+
+  activePort!.emitMessage({
+    version: 1,
+    type: 'result',
+    requestId: activePort!.posted[0].requestId,
+    result: { protocolVersion: 2, adapterId: 'browser.chatgpt.native.inspect.v2' },
+  });
+
+  await Promise.resolve();
+  activePort!.emitDisconnect();
+  await assert.rejects(p, /version/i);
+  assert.equal(native.isConnected(), false);
+});
+
+test('native session controller disconnects and resets state when tools.list handshake fails', async () => {
+  const { createNativeSessionController } = await import('../browser/extension/native-session-core.js');
+  let activePort: FakeNativePort | undefined;
+  const native = createNativeSessionController({
+    connectNative: () => { activePort = new FakeNativePort(); return activePort; },
+    randomUUID: ids(),
+    onToolResponse: () => {},
+  });
+
+  const p = native.ensureReady('session_fail_tools');
+  const firstPort = activePort!;
+
+  firstPort.emitMessage({
+    version: 2, type: 'result', requestId: firstPort.posted[0].requestId,
+    result: { protocolVersion: 2, adapterId: 'browser.chatgpt.native.inspect.v2' },
+  });
+  await Promise.resolve();
+
+  firstPort.emitMessage({
+    version: 2, type: 'result', requestId: firstPort.posted[1].requestId,
+    result: { sessionId: 'session_fail_tools', provider: 'chatgpt' },
+  });
+  await Promise.resolve();
+
+  firstPort.emitMessage({
+    version: 2, type: 'result', requestId: firstPort.posted[2].requestId,
+    result: { tools: ['health'] },
+  });
+
+  await assert.rejects(p, /tool/i);
+  assert.equal(firstPort.disconnected, true);
+  assert.equal(native.isConnected(), false);
+
+  const retry = native.ensureReady('session_fail_tools');
+  const retryPort = activePort!;
+  retryPort.emitDisconnect();
+  await assert.rejects(retry, /disconnect/i);
+  assert.ok(retryPort !== firstPort);
+  assert.equal(retryPort.posted[0].type, 'hello');
 });

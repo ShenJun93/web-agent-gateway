@@ -20,7 +20,9 @@ export function createNativeSessionController({ connectNative, randomUUID, onToo
     if (typeof requestId === 'string' && pendingControl.has(requestId)) {
       const { resolve, reject } = pendingControl.get(requestId);
       pendingControl.delete(requestId);
-      if (message.type === 'error') {
+      if (message.version !== BROWSER_ADAPTER_PROTOCOL_VERSION) {
+        reject(new Error(`Invalid protocol version: expected ${BROWSER_ADAPTER_PROTOCOL_VERSION}`));
+      } else if (message.type === 'error') {
         reject(new Error(message.error?.message || 'Control request failed'));
       } else if (message.type === 'result') {
         resolve(message.result);
@@ -120,6 +122,10 @@ export function createNativeSessionController({ connectNative, randomUUID, onToo
     handshakeInProgress = handshake;
     try {
       await handshake;
+    } catch (err) {
+      if (port && typeof port.disconnect === 'function') port.disconnect();
+      handleDisconnect();
+      throw err;
     } finally {
       if (handshakeInProgress === handshake) {
         handshakeInProgress = null;
