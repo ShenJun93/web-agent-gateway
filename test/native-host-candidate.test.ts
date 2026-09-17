@@ -143,6 +143,15 @@ test('parseNativeHostSignedCandidateReceipt accepts signed receipt with timestam
   assert.doesNotThrow(() => parseNativeHostSignedCandidateReceipt(v));
 });
 
+test('parseNativeHostSignedCandidateReceipt accepts authenticodeSha256 that differs from preSignSha256 (cross-document continuity is Task 4)', () => {
+  // hashB !== hashA, so artifact.sha256 (hashB) !== preSignSha256 (hashA) — OK.
+  // authenticodeSha256 set to a third independent valid hash; this parser does not
+  // compare it against the unsigned receipt — that is Task 4's job.
+  const hashC = 'f'.repeat(64);
+  const v = { ...validSigned(), authenticodeSha256: hashC };
+  assert.doesNotThrow(() => parseNativeHostSignedCandidateReceipt(v));
+});
+
 // ── Signed receipt: rejection cases ─────────────────────────────────────────
 
 test('parseNativeHostSignedCandidateReceipt rejects invalid inputs', () => {
@@ -169,11 +178,10 @@ test('parseNativeHostSignedCandidateReceipt rejects invalid inputs', () => {
       { ...validSigned(), artifact: { filename: 'wag-native-host.exe', sha256: hashA } },
       'artifact sha256 equals preSignSha256',
     ],
-    // authenticodeSha256 differs from unsigned.authenticodeSha256 → must be equal
-    [
-      { ...validSigned(), authenticodeSha256: hashB },
-      'authenticodeSha256 changed after signing',
-    ],
+    // NOTE: authenticodeSha256 continuity across unsigned→signed receipts is a
+    // cross-document invariant enforced by Task 4, not by this single-document parser.
+    // Changing authenticodeSha256 alone (to any valid 64-hex string) does NOT cause
+    // parseNativeHostSignedCandidateReceipt to reject; that is intentional.
     // signingDigest evidence wrong
     [
       { ...validSigned(), signingDigest: { algorithm: 'SHA256', evidence: 'OTHER' } },

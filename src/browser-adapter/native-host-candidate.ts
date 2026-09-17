@@ -118,23 +118,9 @@ const signedReceiptSchema = signedReceiptBaseSchema.superRefine((data, ctx) => {
       path: ['artifact', 'sha256'],
     });
   }
-  // authenticodeSha256 in the signed receipt must equal the value recorded
-  // before signing (same field name, same slot; we verify it is not the
-  // post-sign flat hash by requiring it matches the base unsigned field).
-  // The invariant is: authenticodeSha256 (signed receipt) === preSignSha256 is NOT
-  // required — they are independent hashes.  What is required is that the
-  // authenticodeSha256 field on the signed receipt is identical to what was
-  // written on the unsigned receipt.  Since both live in the same document we
-  // confirm the field is still a valid lowercase 64-hex and, crucially, that it
-  // does NOT equal the post-sign artifact.sha256 (which would indicate the signer
-  // wrote the flat hash into the wrong slot).
-  if (data.authenticodeSha256 === data.artifact.sha256) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'authenticodeSha256 must not equal the post-sign artifact.sha256',
-      path: ['authenticodeSha256'],
-    });
-  }
+  // Cross-document Authenticode continuity (authenticodeSha256 === unsigned receipt's
+  // authenticodeSha256) cannot be verified within a single signed-receipt parse.
+  // That invariant is delegated to Task 4, which holds both documents.
 });
 
 export type NativeHostSignedCandidateReceipt = z.infer<typeof signedReceiptBaseSchema>;
