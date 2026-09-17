@@ -222,3 +222,21 @@ Official evidence: `https://help.openai.com/en/articles/12584461-developer-mode-
 `AUTOMATION_HOST_PRE_SUBMIT_BLOCK = RESEARCHED_EXTERNAL_TOOLING_GATE`
 `MANUAL_PROMPT_RELAY = BENCHMARK_WORKAROUND_ONLY`
 `PRODUCTION_TARGET = SUPPORTED_CHATGPT_MCP_APP_PATH`
+
+## R1 DC repository discovery result
+
+The exact owned DC browser profile was revalidated against fresh Playwright inventory before observation. The R1 prompt was submitted unchanged in a fresh ChatGPT conversation, using fixture root `E:\AI-BROWSER\output\wag-dc-bench-0917-dc-r1-a1\workspace`.
+
+The ChatGPT transcript returned exactly the expected implementation path `src/lib/ticket-id.js`, test path `test/ticket-id.test.js`, and stated that outer whitespace should be trimmed, case lowercased, and internal punctuation preserved.
+
+DC server-side history independently recorded `start_search` for literal `canonicalizeTicketId` against the exact R1 workspace, followed by `get_more_search_results`. The result contained both target files and the relevant test lines. This establishes that the local answer came through Remote Desktop Commander rather than prompt-only inference.
+
+Post-run fixture verification remained clean on branch `main` at HEAD `b3ca9b3bbc5da5a1cd8ad46f188905ebaaf53c8d`, tree `e276f7b0d6ea9e606ac9c3683e27781d354f8ce9`, with no tracked or untracked residue.
+
+`R1_DC_ATTEMPT_1 = COMPLETE`
+`R1_DC_IMPLEMENTATION = src/lib/ticket-id.js`
+`R1_DC_TEST = test/ticket-id.test.js`
+`R1_DC_EXPECTED_BEHAVIOR = TRIM_OUTER_WHITESPACE_LOWERCASE_PRESERVE_INTERNAL_PUNCTUATION`
+`R1_DC_LOCAL_TOOL_PATH = REMOTE_DESKTOP_COMMANDER_CONTENT_SEARCH`
+
+This DC completion does not promote Tier R because the WAG R1 side is not yet executed and R2 remains outstanding.
