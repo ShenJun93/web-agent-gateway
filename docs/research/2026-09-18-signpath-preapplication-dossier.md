@@ -188,7 +188,7 @@ As of 2026-09-18:
 - immutable releases: disabled (`enabled: false`, `enforced_by_owner: false` from the read-only repository endpoint);
 - 32 unexpired Actions artifacts exist in the latest pre-public audit, including the exact `0.1.0` candidate-evidence, signing-input, and distribution artifacts;
 - the current `0.1.0` candidate artifacts expire on 2026-10-02; older historical artifacts expire earlier;
-- Gitleaks 8.30.1 scanned 258 commits from exact current `origin/main` and reported five `generic-api-key` detections, all triaged as public/non-secret provenance material or the stable Chromium extension public key; no credential/private-key finding was identified;
+- SHA-anchored Gitleaks evidence: exact `b1576de8e1d74ef6894621d53df9b0309dd6685f` scanned 258 commits; fresh full-clone and all-ref scans at exact `31e76668139e4cc5c742520482fe6743bd91f7e8` each scanned 259 commits; all scans reported the same five `generic-api-key` detections, triaged as public/non-secret provenance material or the stable Chromium extension public key, with no credential/private-key finding;
 - repository Actions retention setting is 90 days, while these uploaded artifacts carry shorter per-artifact expiry.
 
 GitHub documents that private-to-public conversion makes code and Actions history/logs visible to everyone. Artifact metadata for public repositories can be listed without authentication; downloading workflow artifacts uses the artifact download endpoint and authentication/Actions access rules documented by GitHub.

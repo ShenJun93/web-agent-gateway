@@ -87,13 +87,14 @@ Historical unsigned Actions artifacts remain unsupported build evidence. They ar
 
 The pre-public exposure counts above are the preparation-time snapshot and remain part of this historical receipt. After PR #36 merged, exact remote `main` became `b1576de8e1d74ef6894621d53df9b0309dd6685f`.
 
-Current read-only reconciliation on 2026-09-18:
-- 32 unexpired Actions artifacts, with the exact `c1eb195f` candidate/evidence/signing-input artifacts still expiring on 2026-10-02;
-- Gitleaks 8.30.1 scanned 258 commits from exact current `origin/main` and reported five `generic-api-key` detections;
+SHA-anchored read-only reconciliation on 2026-09-18:
+- at audit baseline `b1576de8e1d74ef6894621d53df9b0309dd6685f`, 32 unexpired Actions artifacts were present, with the exact `c1eb195f` candidate/evidence/signing-input artifacts still expiring on 2026-10-02;
+- Gitleaks 8.30.1 on exact `b1576de8e1d74ef6894621d53df9b0309dd6685f` scanned 258 commits and reported five `generic-api-key` detections;
+- after the evidence-reconciliation merge, fresh full-clone and all-ref scans anchored at `31e76668139e4cc5c742520482fe6743bd91f7e8` each scanned 259 commits and reported the same five detections;
 - three detections are the same public preview Authenticode SHA-256 in release metadata/tests, one is a historical Authenticode SHA-256, and one is the stable Chromium extension public key;
 - no credential or private-key finding was identified.
 
-This reconciliation does not change the frozen preview tag target, source candidate, ZIP bytes, hashes, release notes, or release identity.
+These counts are intentionally tied to immutable commit SHAs rather than described as the dynamic current branch state. This reconciliation does not change the frozen preview tag target, source candidate, ZIP bytes, hashes, release notes, or release identity.
 
 ## Remaining gates before SignPath application
 
