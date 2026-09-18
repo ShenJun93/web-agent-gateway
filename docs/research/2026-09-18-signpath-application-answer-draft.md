@@ -274,6 +274,14 @@ Action before application:
 
 Do not widen the current GitHub token scope solely to populate this draft.
 
+## Reputation timing
+
+SignPath publishes no numeric reputation threshold. A sample of comparable accepted executable projects shows public repository ages ranging from roughly two months to well over a year when first observed on the Foundation project list; low-star AMIGOpy had substantially longer history, while shorter-history AI projects had strong visible traction.
+
+WAG is only 9 days old on 2026-09-18. Submitting immediately after repository publication is possible once hard requirements are met, but carries elevated discretionary rejection risk. Prefer to establish a real public preview release and ordinary maintenance evidence first rather than manufacturing popularity or waiting for an invented fixed duration.
+
+See `docs/research/2026-09-18-signpath-reputation-timing.md`.
+
 ## Current blockers before submission
 
 1. Explicitly select the public product version.
