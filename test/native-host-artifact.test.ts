@@ -6,13 +6,13 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
+import { BROWSER_INSPECT_ADAPTER_ID, BrowserAdmissionRegistry } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
-import { BROWSER_ADAPTER_V1_ID } from '../src/adapter-admission.js';
 import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
 import { createBrowserAdmittedMcpServer, createGateway } from '../src/server.js';
 import { encodeNativeMessage, NativeMessageDecoder } from '../src/browser-adapter/native-framing.js';
+import { BROWSER_ADAPTER_PROTOCOL_VERSION } from '../src/browser-adapter/protocol.js';
 
 const root = process.cwd();
 const extensionOrigin = 'chrome-extension://nnhhhppkpogkedpjnijeagcbfjaoogec/';
@@ -76,7 +76,7 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
   const gateway = createGateway({ executor, allowedRoots: [root] });
   const store = new SqliteDurableStore(':memory:');
-  const admission = new BrowserAdmissionRegistry(BROWSER_ADAPTER_V1_ID, store);
+  const admission = new BrowserAdmissionRegistry(BROWSER_INSPECT_ADAPTER_ID, store);
   const workspaces = {
     open: async () => ({ workspaceId: 'ws_unused' }),
     read: async () => ({ content: 'unused' }),
@@ -94,7 +94,12 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   assert.ok(http.admissionUrl);
 
   const discoveryPath = join(temp, 'browser-adapter.json');
-  await writeFile(discoveryPath, JSON.stringify({ admissionUrl: http.admissionUrl, bootstrapToken }), 'utf8');
+  await writeFile(discoveryPath, JSON.stringify({
+    admissionUrl: http.admissionUrl,
+    bootstrapToken,
+    protocolVersion: BROWSER_ADAPTER_PROTOCOL_VERSION,
+    adapterId: BROWSER_INSPECT_ADAPTER_ID,
+  }), 'utf8');
   const child = spawn(executable, [extensionOrigin, '--discovery', discoveryPath], {
     cwd: outputDir,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -106,9 +111,9 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
 
   const sessionId = 'session_artifact_01';
   for (const message of [
-    { version: 1, type: 'hello', requestId: 'req_artifact_hello' },
-    { version: 1, type: 'session.bind', requestId: 'req_artifact_bind', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
-    { version: 1, type: 'tools.list', requestId: 'req_artifact_tools', sessionId },
+    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'hello', requestId: 'req_artifact_hello' },
+    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_artifact_bind', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
+    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tools.list', requestId: 'req_artifact_tools', sessionId },
   ]) child.stdin.write(encodeNativeMessage(message));
   child.stdin.end();
   const code = await new Promise<number | null>((resolve, reject) => {
@@ -119,7 +124,7 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   assert.equal(code, 0, Buffer.concat(stderr).toString('utf8'));
   const responses = new NativeMessageDecoder().push(Buffer.concat(stdout)) as Array<{ requestId?: string; result?: { tools?: string[] } }>;
   assert.deepEqual(responses.map((response) => response.requestId), ['req_artifact_hello', 'req_artifact_bind', 'req_artifact_tools']);
-  assert.deepEqual(responses[2]?.result?.tools, ['health', 'workspace.open', 'file.read']);
+  assert.deepEqual(responses[2]?.result?.tools, ['health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read']);
   const rendered = JSON.stringify(responses);
   assert.equal(rendered.includes(bootstrapToken), false);
   assert.equal(rendered.includes(http.admissionUrl), false);

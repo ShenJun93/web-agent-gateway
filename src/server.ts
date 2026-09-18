@@ -107,7 +107,7 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       const trace = startTrace('repo.snapshot', telemetry); trace.markIngress();
       try {
         const workspace = binding(workspaceId);
-        const value = await inspection.snapshot(workspace.devspaceWorkspaceId, options);
+        const value = await trace.phase('executorMs', () => inspection.snapshot(workspace.devspaceWorkspaceId, options));
         trace.finish(true); return value;
       } catch (error) { trace.finish(false, error); throw error; }
     },
