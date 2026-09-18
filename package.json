@@ -11,6 +11,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "build:native-host": "tsx scripts/build-native-host.ts",
+    "record:native-host-candidate": "tsx scripts/record-native-host-unsigned-candidate.ts",
+    "verify:native-host-candidate": "tsx scripts/verify-signed-native-host-candidate.ts",
     "test:business": "npm run build && tsx --test --test-concurrency=1 test/business-stdio.acceptance.ts"
   },
   "dependencies": {

@@ -16,20 +16,11 @@ import {
 } from './executor/devspace.js';
 
 interface WorkspaceBinding { devspaceWorkspaceId: string; canonicalRoot: string; }
-interface SnapshotOptions { maxFiles?: number; }
-
-const SNAPSHOT_COMMAND = [
-  'git --no-optional-locks -c core.fsmonitor=false status --short --branch --ignore-submodules=all',
-  'echo __WAG_HEAD__',
-  'git --no-optional-locks -c core.fsmonitor=false rev-parse HEAD',
-  'echo __WAG_DIFF__',
-  'git --no-optional-locks -c core.fsmonitor=false diff --no-ext-diff --no-textconv --ignore-submodules=all --stat -- .',
-  'echo __WAG_FILES__',
-  'git --no-optional-locks -c core.fsmonitor=false ls-files',
-].join(' && ');
+import { DevspaceRepositoryInspectionBackend, type RepoSnapshotOptions } from './repository-inspection.js';
 
 export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, openWorkspaceId }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string> }) {
   const workspaces = new Map<string, WorkspaceBinding>();
+  const inspection = new DevspaceRepositoryInspectionBackend(executor);
 
   function binding(workspaceId: string): WorkspaceBinding {
     const value = workspaces.get(workspaceId);
@@ -112,21 +103,11 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       } catch (error) { trace.finish(false, error); throw error; }
     },
 
-    async repoSnapshot(workspaceId: string, options: SnapshotOptions = {}) {
+    async repoSnapshot(workspaceId: string, options: RepoSnapshotOptions = {}) {
       const trace = startTrace('repo.snapshot', telemetry); trace.markIngress();
       try {
-        const scoped = await trace.phase('policyMs', () => ({
-          maxFiles: Math.min(Math.max(options.maxFiles ?? 100, 1), 500),
-          devspaceWorkspaceId: binding(workspaceId).devspaceWorkspaceId,
-        }));
-        const result = await trace.phase('executorMs', () => executor.execCommand(scoped.devspaceWorkspaceId, SNAPSHOT_COMMAND));
-        const value = await trace.phase('aggregationMs', () => {
-          if (result.running) throw new Error('repo.snapshot command unexpectedly remained running');
-          if (result.exitCode !== 0) throw new Error(`repo.snapshot command failed with exit code ${result.exitCode ?? 'unknown'}`);
-          const parsed = parseSnapshot(result.output);
-          const files = parsed.files.slice(0, scoped.maxFiles);
-          return { ...parsed, files, filesTruncated: parsed.files.length > files.length };
-        });
+        const workspace = binding(workspaceId);
+        const value = await trace.phase('executorMs', () => inspection.snapshot(workspace.devspaceWorkspaceId, options));
         trace.finish(true); return value;
       } catch (error) { trace.finish(false, error); throw error; }
     },
@@ -139,7 +120,13 @@ export type GatewayApi = ReturnType<typeof createGateway>;
 
 export interface BrowserAdmittedMcpContext {
   callerContext: GatewayCallerContext;
-  workspaces: Pick<AdmittedWorkspaceService, 'open' | 'read'>;
+  workspaces: Pick<AdmittedWorkspaceService, 'open' | 'read' | 'search' | 'snapshot'>;
+}
+
+function validSearchQuery(query: string): boolean {
+  if (query.includes('\0') || query.includes('\r') || query.includes('\n')) return false;
+  if (Buffer.byteLength(query, 'utf8') > 256) return false;
+  return true;
 }
 
 export function createBrowserAdmittedMcpServer(
@@ -149,17 +136,46 @@ export function createBrowserAdmittedMcpServer(
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   server.registerTool('health', {
     description: 'Check gateway and executor compatibility.',
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async () => toolResult(await gateway.health()));
   server.registerTool('workspace.open', {
     description: 'Open one approved local workspace and return an opaque workspace id.',
     inputSchema: z.object({ path: z.string().min(1) }),
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async ({ path }) => toolResult(await context.workspaces.open(context.callerContext, path)));
+
+  server.registerTool('repo.search', {
+    description: 'Search tracked repository files for a literal string.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      query: z.string().min(1).refine(validSearchQuery),
+      ignore_case: z.boolean().optional(),
+      max_results: z.number().int().min(1).max(50).optional(),
+      context_lines: z.number().int().min(0).max(2).optional(),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ workspace_id, query, ignore_case, max_results, context_lines }) => {
+    if (!validSearchQuery(query)) throw new Error('Gateway denied search query');
+    return toolResult(await context.workspaces.search(
+      context.callerContext, workspace_id, query, { ignoreCase: ignore_case, maxResults: max_results, contextLines: context_lines }
+    ));
+  });
+
+  server.registerTool('repo.snapshot', {
+    description: 'Return bounded repository status, HEAD, diff summary, and tracked files.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1),
+      max_files: z.number().int().min(1).max(200).optional(),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ workspace_id, max_files }) => toolResult(await context.workspaces.snapshot(
+    context.callerContext, workspace_id, { maxFiles: max_files }
+  )));
+
   server.registerTool('file.read', {
     description: 'Read bounded text from an opened workspace.',
     inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }),
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async ({ workspace_id, path }) => toolResult(await context.workspaces.read(
     context.callerContext, workspace_id, path,
   )));
@@ -212,24 +228,4 @@ export function createGatewayMcpServer(gateway: GatewayApi, { mutationContext }:
 
 function toolResult(value: object) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> };
-}
-
-function parseSnapshot(output: string) {
-  const normalized = output.replace(/\r\n/g, '\n').split('\n').map((line) => line.trimEnd()).join('\n');
-  const [statusPart, afterHead] = normalized.split('__WAG_HEAD__\n');
-  const [headPart, afterDiff] = (afterHead ?? '').split('__WAG_DIFF__\n');
-  const [diffPart, filesPart = ''] = (afterDiff ?? '').split('__WAG_FILES__\n');
-  if (afterHead === undefined || afterDiff === undefined) throw new Error('repo.snapshot markers missing from executor output');
-  const statusLines = statusPart.trimEnd().split('\n').filter(Boolean);
-  const branchLine = statusLines[0] ?? '';
-  const branch = branchLine.startsWith('## ') ? branchLine.slice(3).split('...')[0].trim() : '';
-  const files = filesPart.split('\n').map((line) => line.trim()).filter(Boolean).sort();
-  return {
-    branch,
-    head: headPart.trim(),
-    dirty: statusLines.slice(branchLine.startsWith('## ') ? 1 : 0).length > 0,
-    status: statusLines,
-    diffStat: diffPart.trim(),
-    files,
-  };
 }

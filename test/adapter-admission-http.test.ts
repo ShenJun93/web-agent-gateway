@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import test from 'node:test';
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
+import { BrowserAdmissionRegistry, BROWSER_ADAPTER_V1_ID } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import * as httpServerModule from '../src/http-server.js';
 import { startBrowserAdmissionHttpServer, type BrowserAdmissionHttpServerOptions } from '../src/http-server.js';
@@ -40,9 +40,14 @@ if (false) {
 
 async function fixture(t: test.TestContext) {
   const store = new SqliteDurableStore(':memory:');
-  const admission = new BrowserAdmissionRegistry(store, () => 1_000);
+  const admission = new BrowserAdmissionRegistry(BROWSER_ADAPTER_V1_ID, store, () => 1_000);
   const gateway = createGateway({ executor: new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' }), allowedRoots: [process.cwd()] });
-  const workspaces = { open: async () => ({ workspaceId: 'ws_test' }), read: async () => ({ content: 'ok' }) };
+  const workspaces = {
+    open: async () => ({ workspaceId: 'ws_test' }),
+    read: async () => ({ content: 'ok' }),
+    search: async () => ({ matches: [], truncated: false }),
+    snapshot: async () => ({ branch: 'main', head: '1234', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false }),
+  };
   const http = await startBrowserAdmissionHttpServer({
     gateway,
     browserAdmission: { bootstrapToken: BOOTSTRAP, admission, browserMcp: (caller) => createBrowserAdmittedMcpServer(gateway, { callerContext: caller, workspaces }) },
@@ -145,7 +150,7 @@ test('admitted MCP bearer exposes only browser tools and release revokes it', as
   const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), { requestInit: { headers: bearer(token) } });
   await client.connect(transport);
   const tools = await client.listTools();
-  assert.deepEqual(tools.tools.map((tool) => tool.name), ['health', 'workspace.open', 'file.read']);
+  assert.deepEqual(tools.tools.map((tool) => tool.name), ['health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read']);
   await client.close();
 
   const released = await raw(`http://127.0.0.1:${http.port}/adapter/release`, { headers: { ...bearer(token), host: exactHost } });

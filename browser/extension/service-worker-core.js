@@ -1,5 +1,5 @@
 const CHATGPT_ORIGIN = 'https://chatgpt.com';
-const BROWSER_TOOLS = new Set(['health', 'workspace.open', 'file.read']);
+const BROWSER_TOOLS = new Set(['health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read']);
 
 export function createBrowserExtensionCore() {
   const queued = new Map();
@@ -14,6 +14,13 @@ export function createBrowserExtensionCore() {
 
   function pending() {
     return [...queued.values()].map(({ tabId, request }) => ({ requestId: request.requestId, tabId, request }));
+  }
+
+  function peekForExecution(requestId, actor) {
+    if (actor !== 'sidepanel') return undefined;
+    const item = queued.get(requestId);
+    if (!item) return undefined;
+    return item.request;
   }
 
   function takeForExecution(requestId, actor) {
@@ -36,7 +43,7 @@ export function createBrowserExtensionCore() {
     return queued.delete(requestId);
   }
 
-  return { queueProviderRequest, pending, takeForExecution, acceptNativeResponse, dismiss };
+  return { queueProviderRequest, pending, peekForExecution, takeForExecution, acceptNativeResponse, dismiss };
 }
 
 function trustedSender(sender) {
@@ -46,7 +53,7 @@ function trustedSender(sender) {
 }
 
 function validReadOnlyRequest(request) {
-  return request && request.version === 1 && request.type === 'tool.call'
+  return request && request.version === 2 && request.type === 'tool.call'
     && typeof request.requestId === 'string' && typeof request.sessionId === 'string'
     && BROWSER_TOOLS.has(request.tool) && request.arguments && typeof request.arguments === 'object';
 }

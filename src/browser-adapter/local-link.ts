@@ -1,6 +1,8 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { BROWSER_INSPECT_ADAPTER_ID } from '../adapter-admission.js';
 import {
   parseBrowserAdapterResponse,
+  BROWSER_ADAPTER_PROTOCOL_VERSION,
   type BrowserAdapterRequest,
   type BrowserAdapterResponse,
   type BrowserToolName,
@@ -9,6 +11,8 @@ import {
 export interface AdapterDiscovery {
   admissionUrl: string;
   bootstrapToken: string;
+  protocolVersion: typeof BROWSER_ADAPTER_PROTOCOL_VERSION;
+  adapterId: typeof BROWSER_INSPECT_ADAPTER_ID;
 }
 
 interface AdmissionResponse {
@@ -22,7 +26,7 @@ export interface LocalAdapterLink {
   close(): Promise<void>;
 }
 
-const BROWSER_TOOLS: readonly BrowserToolName[] = ['health', 'workspace.open', 'file.read'];
+const BROWSER_TOOLS: readonly BrowserToolName[] = ['health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read'];
 type ToolCallRequest = Extract<BrowserAdapterRequest, { type: 'tool.call' }>;
 export class McpLocalAdapterLink implements LocalAdapterLink {
   #closed = false;
@@ -32,7 +36,7 @@ export class McpLocalAdapterLink implements LocalAdapterLink {
     private admittedBearer: string | undefined,
   ) {}
 
-  static async admit(discoveryValue: AdapterDiscovery, correlationId: string): Promise<McpLocalAdapterLink> {
+  static async admit(discoveryValue: unknown, correlationId: string): Promise<McpLocalAdapterLink> {
     const discovery = parseAdapterDiscovery(discoveryValue);
     let admitted: AdmissionResponse;
     try {
@@ -66,14 +70,18 @@ export class McpLocalAdapterLink implements LocalAdapterLink {
 
   async listTools(): Promise<readonly BrowserToolName[]> {
     this.#assertOpen();
+    let actual: string[];
     try {
       const result = await this.client.listTools();
-      const names = new Set(result.tools.map((tool) => tool.name));
-      if (!BROWSER_TOOLS.every((name) => names.has(name))) throw new Error('required browser tool missing');
-      return [...BROWSER_TOOLS];
+      actual = result.tools.map((tool) => tool.name).sort();
     } catch {
       throw new Error('Local WAG tool discovery failed');
     }
+    const expected = [...BROWSER_TOOLS].sort();
+    if (actual.length !== expected.length || actual.some((name, index) => name !== expected[index])) {
+      throw new Error('browser tool profile mismatch');
+    }
+    return [...BROWSER_TOOLS];
   }
 
   async call(request: BrowserAdapterRequest): Promise<BrowserAdapterResponse> {
@@ -86,7 +94,7 @@ export class McpLocalAdapterLink implements LocalAdapterLink {
     try {
       const result = await this.client.callTool({ name: request.tool, arguments: request.arguments });
       if (result.isError || result.structuredContent === undefined) return localError(request.requestId);
-      return parseBrowserAdapterResponse({ version: 1, type: 'result', requestId: request.requestId, result: result.structuredContent });
+      return parseBrowserAdapterResponse({ version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'result', requestId: request.requestId, result: result.structuredContent });
     } catch {
       return localError(request.requestId);
     }
@@ -109,17 +117,21 @@ export class McpLocalAdapterLink implements LocalAdapterLink {
 
 function localError(requestId: string): BrowserAdapterResponse {
   return parseBrowserAdapterResponse({
-    version: 1, type: 'error', requestId,
+    version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'error', requestId,
     error: { code: 'LOCAL_WAG_FAILED', message: 'Local WAG request failed' },
   });
 }
 
-function parseAdapterDiscovery(value: AdapterDiscovery): AdapterDiscovery {
-  const record = value as unknown as Record<string, unknown>;
-  if (Object.keys(record).sort().join(',') !== 'admissionUrl,bootstrapToken') {
+export function parseAdapterDiscovery(value: unknown): AdapterDiscovery {
+  if (!value || typeof value !== 'object') throw new Error('Invalid browser adapter discovery');
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(',') !== 'adapterId,admissionUrl,bootstrapToken,protocolVersion') {
     throw new Error('Invalid browser adapter discovery');
   }
   if (typeof record.admissionUrl !== 'string' || typeof record.bootstrapToken !== 'string') {
+    throw new Error('Invalid browser adapter discovery');
+  }
+  if (record.protocolVersion !== BROWSER_ADAPTER_PROTOCOL_VERSION || record.adapterId !== BROWSER_INSPECT_ADAPTER_ID) {
     throw new Error('Invalid browser adapter discovery');
   }
   if (Buffer.byteLength(record.bootstrapToken, 'utf8') < 32) {
@@ -128,7 +140,7 @@ function parseAdapterDiscovery(value: AdapterDiscovery): AdapterDiscovery {
   let url: URL;
   try { url = parseLoopbackUrl(record.admissionUrl, '/adapter/admit'); }
   catch { throw new Error('Invalid browser adapter discovery'); }
-  return { admissionUrl: url.toString(), bootstrapToken: record.bootstrapToken };
+  return { admissionUrl: url.toString(), bootstrapToken: record.bootstrapToken, protocolVersion: BROWSER_ADAPTER_PROTOCOL_VERSION, adapterId: BROWSER_INSPECT_ADAPTER_ID };
 }
 
 function parseAdmissionResponse(value: unknown, admissionUrl: string): AdmissionResponse {

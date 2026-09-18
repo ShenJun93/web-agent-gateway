@@ -1,4 +1,61 @@
-import type { BrowserAdapterRequest, BrowserAdapterResponse } from '../../src/browser-adapter/protocol.js';
+export type V2BrowserAdapterRequest =
+  | {
+      version: 2;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'health';
+      arguments: Record<string, never>;
+    }
+  | {
+      version: 2;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'workspace.open';
+      arguments: { path: string };
+    }
+  | {
+      version: 2;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'repo.search';
+      arguments: {
+        workspace_id: string;
+        query: string;
+        ignore_case?: boolean;
+        max_results?: number;
+        context_lines?: number;
+      };
+    }
+  | {
+      version: 2;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'repo.snapshot';
+      arguments: {
+        workspace_id: string;
+        max_files?: number;
+      };
+    }
+  | {
+      version: 2;
+      type: 'tool.call';
+      requestId: string;
+      sessionId: string;
+      tool: 'file.read';
+      arguments: { workspace_id: string; path: string };
+    };
+
+export type BrowserAdapterRequest = V2BrowserAdapterRequest;
+
+export type V2BrowserAdapterResponse =
+  | { version: 2; type: 'result'; requestId: string; result: unknown }
+  | { version: 2; type: 'error'; requestId: string; error: { code: string; message: string } };
+
+export type BrowserAdapterResponse = V2BrowserAdapterResponse;
 
 export interface ProviderSender {
   url?: string;
@@ -8,20 +65,21 @@ export interface ProviderSender {
 export interface PendingBrowserRequest {
   requestId: string;
   tabId: number;
-  request: BrowserAdapterRequest;
+  request: V2BrowserAdapterRequest;
 }
 
 export interface DeliveredBrowserResponse {
   tabId: number;
   requestId: string;
-  response: BrowserAdapterResponse;
+  response: V2BrowserAdapterResponse;
 }
 
 export interface BrowserExtensionCore {
-  queueProviderRequest(sender: ProviderSender, request: BrowserAdapterRequest): boolean;
+  queueProviderRequest(sender: ProviderSender, request: V2BrowserAdapterRequest): boolean;
   pending(): PendingBrowserRequest[];
-  takeForExecution(requestId: string, actor: string): BrowserAdapterRequest | undefined;
-  acceptNativeResponse(response: BrowserAdapterResponse): DeliveredBrowserResponse | undefined;
+  peekForExecution(requestId: string, actor: string): V2BrowserAdapterRequest | undefined;
+  takeForExecution(requestId: string, actor: string): V2BrowserAdapterRequest | undefined;
+  acceptNativeResponse(response: V2BrowserAdapterResponse): DeliveredBrowserResponse | undefined;
   dismiss(requestId: string, actor: string): boolean;
 }
 

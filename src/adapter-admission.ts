@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
 import { SqliteDurableStore } from './durable-store.js';
 
-export const BROWSER_ADAPTER_ID = 'browser.chatgpt.native.v1' as const;
+export const BROWSER_ADAPTER_V1_ID = 'browser.chatgpt.native.v1' as const;
+export const BROWSER_INSPECT_ADAPTER_ID = 'browser.chatgpt.native.inspect.v2' as const;
 
 const correlationId = z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 
@@ -17,6 +18,7 @@ export class BrowserAdmissionRegistry {
   private readonly activeDigestBySession = new Map<string, string>();
 
   constructor(
+    private readonly adapterId: string,
     private readonly store: SqliteDurableStore,
     private readonly now: () => number = Date.now,
   ) {}
@@ -26,8 +28,8 @@ export class BrowserAdmissionRegistry {
     const principal = this.store.getOrCreateLocalPrincipal(this.now());
     const session = this.store.getOrCreateAdapterSession({
       ownerId: principal.ownerId,
-      adapterId: BROWSER_ADAPTER_ID,
-      correlationSha256: correlationSha256(principal.ownerId, BROWSER_ADAPTER_ID, validatedCorrelation),
+      adapterId: this.adapterId,
+      correlationSha256: correlationSha256(principal.ownerId, this.adapterId, validatedCorrelation),
       createdAt: this.now(),
     });
     const callerContext = createGatewayCallerContext({

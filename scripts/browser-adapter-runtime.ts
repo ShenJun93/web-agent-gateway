@@ -2,12 +2,14 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import { AdmittedWorkspaceService } from '../src/admitted-workspace.js';
-import { BrowserAdmissionRegistry } from '../src/adapter-admission.js';
+import { BrowserAdmissionRegistry, BROWSER_INSPECT_ADAPTER_ID } from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
 import { loadPrivateGatewayConfig } from '../src/private-config.js';
 import { bootstrapPrivateGateway } from '../src/private-runtime.js';
 import { createBrowserAdmittedMcpServer } from '../src/server.js';
+import { DevspaceRepositoryInspectionBackend } from '../src/repository-inspection.js';
+import { BROWSER_ADAPTER_PROTOCOL_VERSION } from '../src/browser-adapter/protocol.js';
 
 export interface BrowserAdapterRuntime {
   admissionUrl: string;
@@ -36,11 +38,13 @@ export async function startBrowserAdapterRuntime(options: {
     await mkdir(dirname(options.statePath), { recursive: true });
     await mkdir(dirname(options.discoveryPath), { recursive: true });
     store = new SqliteDurableStore(options.statePath);
-    admission = new BrowserAdmissionRegistry(store);
+    admission = new BrowserAdmissionRegistry(BROWSER_INSPECT_ADAPTER_ID, store);
     privateRuntime = await bootstrapPrivateGateway(config, { env });
+    const inspection = new DevspaceRepositoryInspectionBackend(privateRuntime.executor);
     const workspaces = new AdmittedWorkspaceService({
       store,
       executor: privateRuntime.executor,
+      inspection,
       allowedRoots: config.allowedRoots,
     });
 
@@ -60,6 +64,8 @@ export async function startBrowserAdapterRuntime(options: {
     await writeFile(options.discoveryPath, JSON.stringify({
       admissionUrl: http.admissionUrl,
       bootstrapToken,
+      protocolVersion: BROWSER_ADAPTER_PROTOCOL_VERSION,
+      adapterId: BROWSER_INSPECT_ADAPTER_ID,
     }), { encoding: 'utf8', mode: 0o600 });
 
     let closed = false;
