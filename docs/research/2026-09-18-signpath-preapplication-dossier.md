@@ -42,7 +42,7 @@ The remote default branch now contains:
 - exact bundled npm dependency license material;
 - fail-closed native-host license-compliance verification.
 
-GitHub currently detects Apache-2.0 on the private default branch. The repository is still private, so the public license URL remains unavailable until a separately authorized visibility change.
+GitHub detects Apache-2.0 on the public default branch. The public license URL is https://github.com/ShenJun93/web-agent-gateway/blob/main/LICENSE.
 ### Project description
 
 Suggested concise description for application review:
@@ -180,20 +180,24 @@ At the readiness checkpoint:
 
 ## Current GitHub publication surface
 
-As of 2026-09-18:
-- repository visibility: private;
+Post-public reconciliation on 2026-09-19, anchored to remote `main=b83ba368b990d7518ef430929e77f30d99ca89d5`:
+- repository visibility: public;
 - GitHub-reported license on remote default branch: Apache-2.0;
 - GitHub Releases: none;
-- repository rulesets: none;
-- immutable releases: disabled (`enabled: false`, `enforced_by_owner: false` from the read-only repository endpoint);
-- 32 unexpired Actions artifacts exist in the latest pre-public audit, including the exact `0.1.0` candidate-evidence, signing-input, and distribution artifacts;
-- the current `0.1.0` candidate artifacts expire on 2026-10-02; older historical artifacts expire earlier;
-- SHA-anchored Gitleaks evidence: exact `b1576de8e1d74ef6894621d53df9b0309dd6685f` scanned 258 commits; fresh full-clone and all-ref scans at exact `31e76668139e4cc5c742520482fe6743bd91f7e8` each scanned 259 commits; all scans reported the same five `generic-api-key` detections, triaged as public/non-secret provenance material or the stable Chromium extension public key, with no credential/private-key finding;
-- repository Actions retention setting is 90 days, while these uploaded artifacts carry shorter per-artifact expiry.
+- Git tags: none;
+- immutable releases: enabled (`enabled: true`, `enforced_by_owner: false`);
+- active ruleset `Protect main history` targets `refs/heads/main` and blocks branch deletion and non-fast-forward updates only;
+- private vulnerability reporting: enabled;
+- Dependabot alerts: enabled with zero open alerts at reconciliation time; automated Dependabot security-update PRs remain disabled;
+- secret scanning and repository push protection: enabled, with zero open secret-scanning alerts at reconciliation time;
+- fork-PR workflow approval policy: `all_external_contributors`;
+- 32 unexpired Actions artifacts remain build evidence, including the exact `0.1.0` candidate-evidence, signing-input, and distribution artifacts;
+- the exact `c1eb195f54864dee1a8997c9baeb0475ce627da6` candidate artifacts expire on 2026-10-02;
+- SHA-anchored Gitleaks evidence remains historical audit evidence: exact `b1576de8e1d74ef6894621d53df9b0309dd6685f` scanned 258 commits; full-clone/all-ref scans at exact `31e76668139e4cc5c742520482fe6743bd91f7e8` each scanned 259 commits with the same five triaged public/non-secret detections;
+- a later full all-ref post-merge audit at `b83ba368b990d7518ef430929e77f30d99ca89d5` scanned 260 commits and reported the same five detections, with no credential/private-key finding;
+- all 69 historical Actions run logs were separately scanned after publication; Gitleaks reported zero leaks and explicit high-risk token/private-key patterns were absent.
 
-GitHub documents that private-to-public conversion makes code and Actions history/logs visible to everyone. Artifact metadata for public repositories can be listed without authentication; downloading workflow artifacts uses the artifact download endpoint and authentication/Actions access rules documented by GitHub.
-
-The 32 current/historical Actions artifacts are build evidence, not release assets, and the repository/source will itself become public. After the credential/history audit found no secret material, their remaining risk is primarily user confusion and accidental treatment as supported binaries, not confidentiality. Therefore artifact expiry/deletion is a **preferred pre-public cleanup**, not an independent hard publication blocker, provided the README and code-signing policy continue to state that Actions artifacts are not supported releases and no current release is Authenticode-trusted.
+Actions artifacts are build evidence, not release assets. The repository is now public, so their remaining risk is user confusion rather than source confidentiality. README and code-signing policy continue to state that Actions artifacts are not supported releases and no current release is Authenticode-trusted.
 
 Official GitHub sources:
 - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility
@@ -202,15 +206,19 @@ Official GitHub sources:
 
 ### Public repository URL
 
-Known URL, but the repository is still private.
+Public URL: https://github.com/ShenJun93/web-agent-gateway
 
-State: BLOCKED_PUBLICATION_SEQUENCE
+Anonymous access was verified after the 2026-09-19 visibility cutover.
+
+State: PASS_PUBLICATION
 
 ### License URL
 
-The remote default branch has Apache-2.0, but an anonymously accessible public license URL cannot be supplied until the repository is public.
+Public Apache-2.0 license URL: https://github.com/ShenJun93/web-agent-gateway/blob/main/LICENSE
 
-State: BLOCKED_GIT_PUBLICATION
+Anonymous access was verified after publication.
+
+State: PASS_GIT_PUBLICATION
 
 ### Download / release URL
 
@@ -251,12 +259,13 @@ State: REQUIRES_EXPLICIT_EXTERNAL_AUTHORITY
 Do not submit yet.
 
 Submit only after:
-1. repository is public and public docs/license links resolve;
-2. a real release/download URL exists for the Windows artifact form;
-3. MFA requirement is explicitly confirmed;
-4. application facts are refreshed from live GitHub evidence.
+1. a real release/download URL exists for the Windows artifact form;
+2. MFA requirement is explicitly confirmed;
+3. application facts are refreshed from the live public release evidence.
 
-Historical unsigned Actions artifacts should preferably be expired or explicitly deleted before publication, but they are no longer treated as a hard eligibility blocker after the exposure audit. If publication happens while they still exist, keep them clearly non-release and unsupported.
+Repository publication and anonymous public docs/license verification are complete.
+
+Historical unsigned Actions artifacts were a preferred pre-public cleanup, not a hard eligibility blocker after the exposure audit. The repository is now public while they remain active; keep them clearly non-release and unsupported until they expire naturally or are separately deleted under explicit authority.
 
 Because SignPath requires a certain verifiable reputation for executable applications but publishes no numeric threshold, application acceptance remains discretionary. If the project is declined for insufficient public history, continue ordinary public development/releases and reapply later rather than manufacturing stars, downloads, contributors, or activity.
 
@@ -264,7 +273,7 @@ Because SignPath requires a certain verifiable reputation for executable applica
 
 This dossier does not authorize:
 - Git push or merge;
-- repository visibility change;
+- further repository security/settings changes;
 - artifact/run deletion;
 - tag or release creation;
 - SignPath contact/application/account/project creation;

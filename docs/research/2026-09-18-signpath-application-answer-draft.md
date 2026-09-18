@@ -40,21 +40,20 @@ Project name:
 Repository:
 - `https://github.com/ShenJun93/web-agent-gateway`
 
-Repository state at draft time:
-- private
-- publication authorized in principle but not executed
+Current repository state:
+- public since the authorized cutover on 2026-09-19;
+- anonymous access to the repository, Apache-2.0 license, README, security policy, privacy policy, code-signing policy, and native-host installation/removal documentation has been verified.
 
 License:
-- Apache-2.0 on the remote default branch
-- public license URL unavailable until the repository is public
+- Apache-2.0 on the public default branch
+- public license URL: https://github.com/ShenJun93/web-agent-gateway/blob/main/LICENSE
 
 Project homepage:
-- recommended initial homepage: the public GitHub repository README
-- UNKNOWN_PUBLIC_URL until repository publication is complete
+- https://github.com/ShenJun93/web-agent-gateway
 
 Download/release page:
-- UNKNOWN_PUBLIC_URL
-- no official GitHub Release exists yet
+- public release index: https://github.com/ShenJun93/web-agent-gateway/releases
+- no official GitHub Release exists yet, so there is not yet a release-specific download URL
 
 ## Project description
 
@@ -133,8 +132,8 @@ Policy:
 - non-committer contributions require maintainer review before merge
 - WAG does not invent a second maintainer or self-review requirement
 
-Public policy location after publication:
-- `docs/policies/code-signing-policy.md`
+Public policy location:
+- https://github.com/ShenJun93/web-agent-gateway/blob/main/docs/policies/code-signing-policy.md
 - linked from README under the exact heading `Code signing policy`
 
 Required attribution already prepared conditionally:
@@ -228,7 +227,7 @@ Do not argue with SignPath if they interpret the policy differently. Treat their
 
 ## GitHub / origin-verification plan
 
-Future SignPath project repository URL:
+SignPath project repository URL:
 - `https://github.com/ShenJun93/web-agent-gateway`
 
 Release signing branch:
@@ -279,26 +278,30 @@ Do not widen the current GitHub token scope solely to populate this draft.
 
 SignPath publishes no numeric reputation threshold. A sample of comparable accepted executable projects shows public repository ages ranging from roughly two months to well over a year when first observed on the Foundation project list; low-star AMIGOpy had substantially longer history, while shorter-history AI projects had strong visible traction.
 
-WAG is only 9 days old on 2026-09-18. Submitting immediately after repository publication is possible once hard requirements are met, but carries elevated discretionary rejection risk. Prefer to establish a real public preview release and ordinary maintenance evidence first rather than manufacturing popularity or waiting for an invented fixed duration.
+WAG was created on 2026-09-09 and became public on 2026-09-19. Its public-history profile is therefore still very young. Submission is possible once the documented hard requirements are met, but provider acceptance remains discretionary. Prefer to establish the real public preview release and ordinary maintenance evidence rather than manufacturing popularity or waiting for an invented fixed duration.
 
 See `docs/research/2026-09-18-signpath-reputation-timing.md`.
 
 ## Current blockers before submission
 
-1. Make the repository public under separate authority after the exposure gate passes.
-2. Verify public README/license/security/privacy/code-signing/install links anonymously.
-3. Confirm GitHub MFA.
-4. Under separate release authority, create `v0.1.0-preview.1` at `c1eb195f54864dee1a8997c9baeb0475ce627da6` and publish the prepared unsigned prerelease asset if the public-release sequence is chosen.
-5. Refresh all application facts from live public GitHub state and the public release URL.
-6. Only then submit the SignPath Foundation application under separate authority.
+Completed publication prerequisites:
+- repository is public;
+- public README/license/security/privacy/code-signing/install links were verified anonymously;
+- immutable releases are enabled before the first public binary release;
+- private vulnerability reporting, Dependabot alerts, secret scanning, push protection, stricter fork-PR approval, and a minimal `main` history-protection ruleset are enabled.
+
+Remaining blockers:
+1. Confirm GitHub MFA.
+2. Under separate release authority, create `v0.1.0-preview.1` at `c1eb195f54864dee1a8997c9baeb0475ce627da6` and publish the prepared unsigned prerelease asset.
+3. Refresh release/download facts from the live public release URL.
+4. Only then submit the SignPath Foundation application under separate authority.
 
 ## Explicitly not authorized by this draft
 
 - further product-version or stable-tag selection
 - Git commit amendment/rebase of accepted history
 - Git push/merge
-- repository visibility change
-- GitHub ruleset or immutable-release setting changes
+- further repository security/settings changes
 - tag/release creation
 - SignPath contact/submission
 - account/project creation
