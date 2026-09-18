@@ -158,7 +158,7 @@ If authority is later granted and live refs remain compatible:
 
 1. fresh-read canonical Git + remote state;
 2. complete/confirm Browser Inspect v2 acceptance at `e19d577` or its reviewed successor;
-3. review the 14 readiness commits with priority on `e296da1` and `eb5393f`;
+3. review the current readiness delta, with priority on the trust-critical commits identified in this document;
 4. rerun full regression/license/typecheck on exact readiness HEAD;
 5. fast-forward the accepted Browser Inspect feature line to readiness HEAD;
 6. push that branch;
@@ -192,17 +192,22 @@ Subsequent local-only readiness commits are:
 2a3d145 fix: bind release readiness to candidate evidence
 8bcd249 docs: record candidate evidence gate
 fda6a3f fix: align native host CI trigger coverage
+e0b4e7f docs: record native host CI trigger coverage
+751d40e feat: publish unsigned signing input artifact
+b98b3b7 docs: add SignPath native host artifact config
 ```
 
-At `fda6a3f` the current linear counts are:
+At `b98b3b7` the current linear counts are:
 
 ```text
-Browser Inspect v2 e19d577 -> readiness = 18 commits
-main 7950151 -> readiness                 = 56 commits
+Browser Inspect v2 e19d577 -> readiness = 21 commits
+main 7950151 -> readiness                 = 59 commits
 ```
 
-None of these four commits rewrites ancestry. The fast-forward topology conclusion therefore remains valid as long as the target branches have not moved before actual integration.
+None of these seven commits rewrites ancestry. The fast-forward topology conclusion therefore remains valid as long as the target branches have not moved before actual integration.
 
 Additional implementation review priority:
 - `2a3d145`: release readiness now requires exact unsigned-candidate receipt + EXE evidence rather than a hardcoded/operator-supplied source SHA;
-- `fda6a3f`: main-push workflow paths now cover every `NATIVE_HOST_BUILD_INPUTS` root, including `.gitattributes` and all `src/**`.
+- `fda6a3f`: main-push workflow paths now cover every `NATIVE_HOST_BUILD_INPUTS` root, including `.gitattributes` and all `src/**`;
+- `751d40e`: main-push workflow records an unsigned candidate and uploads a dedicated EXE-only signing-input artifact, but does not submit it to any signer;
+- `b98b3b7`: local SignPath artifact-configuration draft restricts the exact WAG PE and SHA-256 Authenticode; provider IDs/credentials remain absent.

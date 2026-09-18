@@ -243,5 +243,6 @@ Each item below still requires explicit authority:
 - create/publish GitHub Releases;
 - submit SignPath application;
 - create/configure SignPath resources;
-- install SignPath GitHub integration;
+- create/configure SignPath credentials, organization/project/policy IDs or slugs;
+- install/wire the SignPath GitHub submit-signing-request integration;
 - sign binaries.

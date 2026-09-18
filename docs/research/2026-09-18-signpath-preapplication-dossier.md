@@ -130,10 +130,14 @@ Current native-host workflow:
 - exact native-host candidate build;
 - independent PE VersionInfo verification;
 - exact artifact execution test;
-- strict distribution packaging and verification;
-- no signing credentials in the current workflow.
+- strict unsigned-candidate receipt recording on exact `main` pushes;
+- dedicated GitHub Actions signing-input artifact containing only `wag-native-host.exe`;
+- strict distribution packaging and verification kept separate from the signing input;
+- no signing credentials and no SignPath submission step in the current workflow.
 
-SignPath Open Source Code Signing requires trusted-build verification and origin verification. The future integration should extend this workflow, not replace it.
+A local SignPath artifact-configuration draft now exists at `.signpath/artifact-configurations/native-host.xml`. It models the GitHub Actions artifact ZIP, permits exactly `wag-native-host.exe`, restricts WAG PE identity/version fields, and requests SHA-256 Authenticode. The draft validates against SignPath's current official v1 XSD, but it has not been uploaded/configured provider-side.
+
+SignPath Open Source Code Signing requires trusted-build verification and origin verification. The future authorized provider integration should extend this workflow, not replace it.
 
 Intended origin restrictions:
 - repository URL must equal the public WAG repository;
