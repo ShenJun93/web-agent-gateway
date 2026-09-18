@@ -7,8 +7,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/native-host-distribution.yml'
+      - '.gitattributes'
       - 'browser/native-host/**'
-      - 'src/browser-adapter/**'
+      - 'src/**'
       - 'scripts/build-native-host.ts'
       - 'scripts/native-host-pe-metadata.ts'
       - 'scripts/verify-native-host-version-info.ps1'

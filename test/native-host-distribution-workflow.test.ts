@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
+import { NATIVE_HOST_BUILD_INPUTS } from '../src/browser-adapter/native-host-candidate.js';
 
 const workflowPath = join(process.cwd(), '.github', 'workflows', 'native-host-distribution.yml');
 const mainPushCondition = "github.event_name == 'push' && github.ref == 'refs/heads/main'";
 const expectedPushPaths = [
   '.github/workflows/native-host-distribution.yml',
+  '.gitattributes',
   'browser/native-host/**',
-  'src/browser-adapter/**',
+  'src/**',
   'scripts/build-native-host.ts',
   'scripts/native-host-pe-metadata.ts',
   'scripts/verify-native-host-version-info.ps1',
@@ -24,6 +26,10 @@ const expectedPushPaths = [
   'tsconfig.json',
   'tsconfig.build.json',
 ] as const;
+
+function workflowPatternForBuildInput(input: string): string {
+  return input.endsWith('/') ? `${input}**` : input;
+}
 
 async function workflowText(): Promise<string> {
   return readFile(workflowPath, 'utf8');
@@ -57,6 +63,14 @@ test('native host main push matches exact publication inputs while PR validation
     workflow.includes(`${expectedPushTrigger}\n\npermissions:`),
     'push trigger must use the exact native-host publication input allowlist',
   );
+});
+
+test('native host main push covers every native-host build-input root', () => {
+  const pushPathSet = new Set<string>(expectedPushPaths);
+  const uncovered = NATIVE_HOST_BUILD_INPUTS
+    .map(workflowPatternForBuildInput)
+    .filter((pattern) => !pushPathSet.has(pattern));
+  assert.deepEqual(uncovered, []);
 });
 
 test('native host workflow pins researched action commits and forbids floating tags', async () => {
