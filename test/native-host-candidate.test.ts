@@ -266,6 +266,8 @@ test('isNativeHostBuildInput negatives', () => {
   // Outside build input roots
   assert.equal(isNativeHostBuildInput('test/a.test.ts'), false);
   assert.equal(isNativeHostBuildInput('docs/x.md'), false);
+  assert.equal(isNativeHostBuildInput('scripts/package-native-host-release.ts'), false);
+  assert.equal(isNativeHostBuildInput('scripts/write-deterministic-zip.ps1'), false);
   // Extension does not match exact entry
   assert.equal(isNativeHostBuildInput('scripts/build-native-host.ts.bak'), false);
   // Directory prefix must be exact — 'src' without slash does not match 'src/'

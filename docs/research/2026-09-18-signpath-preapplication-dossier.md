@@ -222,7 +222,9 @@ Do not manufacture reputation evidence.
 
 SignPath terms require MFA for all relevant SignPath and source-repository accounts.
 
-Current GitHub MFA status was not inspected or recorded in this dossier.
+Current GitHub MFA status remains unverified. A read-only `gh api user` query authenticated as `ShenJun93`, but the active OAuth token has `repo`, `workflow`, `read:org`, and `gist` scopes and lacks `read:user`; GitHub therefore returned no private `two_factor_authentication` value. Per GitHub's REST documentation, `read:user` (or broader `user`) is required for that private field.
+
+Do not infer enabled or disabled from the missing field, and do not widen the token scope merely for this dossier.
 
 State: REQUIRES_MAINTAINER_CONFIRMATION_BEFORE_APPLICATION
 
