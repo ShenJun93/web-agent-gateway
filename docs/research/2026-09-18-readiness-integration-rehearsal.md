@@ -226,3 +226,63 @@ This changes the integration review interpretation:
 - no Browser branch mutation or readiness integration was performed by this refresh.
 
 Therefore the future gate should first resolve the stale v1 acceptance fixture through an explicitly reviewed Browser-line change or as an explicitly reviewed part of readiness integration, then evaluate the signed-candidate trust requirement separately.
+
+## Browser Inspect v2 exact local-gate reconciliation — 2026-09-18 13:55 +07:00
+
+A fresh full gate on the untouched Browser Inspect v2 branch at `e19d577` produced:
+
+```text
+typecheck  = PASS
+build      = PASS
+diff-check = PASS
+tests      = 268/271 PASS
+failures   = 3
+```
+
+The complete failure set was:
+
+1. `test/browser-adapter.acceptance.test.ts`
+   - still sent Browser protocol `version: 1` to the v2 native host;
+   - production protocol is already `BROWSER_ADAPTER_PROTOCOL_VERSION = 2`.
+2. `test/native-host-artifact.test.ts`
+   - still created the historical two-field discovery record;
+   - still used the v1 admission identity/protocol;
+   - still expected the three-tool v1 inventory instead of the exact five-tool Browser Inspect v2 inventory.
+3. `src/server.ts` / `test/telemetry.test.ts`
+   - default/private `repo.snapshot` delegated directly to `inspection.snapshot(...)`;
+   - the semantic telemetry contract requires that backend phase to be recorded as `executorMs`;
+   - the missing `trace.phase('executorMs', ...)` caused the telemetry acceptance assertion to fail.
+
+All three corrections already exist together in readiness commit `e296da1`, but they are Browser Inspect v2 correctness fixes rather than SignPath/provider behavior.
+
+A temp clone was created from exact `e19d577` and received only the current readiness versions of these three files:
+
+```text
+src/server.ts                           |  2 +-
+test/browser-adapter.acceptance.test.ts | 25 +++++++++++++------------
+test/native-host-artifact.test.ts       | 21 +++++++++++++--------
+3 files changed, 27 insertions(+), 21 deletions(-)
+```
+
+No SignPath configuration, license, PE-metadata, release, workflow, package, version, provider, or signing file was included in that rehearsal patch.
+
+Exact temp-clone verification:
+
+```text
+git diff --check = PASS
+npm run typecheck = PASS
+npm run build = PASS
+npm test = 271/271 PASS
+```
+
+The three formerly failing gates each passed:
+- Browser reconnect acceptance: PASS;
+- Windows SEA v2 artifact/protocol acceptance: PASS;
+- semantic telemetry phase coverage: PASS.
+
+The temp clone was deleted after the green run.
+
+Implication:
+- Browser Inspect v2 has a minimal three-file local-gate repair that can be reviewed independently from SignPath readiness;
+- the current Browser branch itself remains unchanged at `e19d577` and therefore remains 268/271 until that repair is explicitly authorized and applied;
+- this evidence does not authorize changing `feat/browser-inspect-v2`, integrating readiness, pushing, merging, version selection, publication, release, provider mutation, or signing.
