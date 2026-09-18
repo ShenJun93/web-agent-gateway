@@ -92,21 +92,26 @@ function assertBoundedFailure(result: RunResult): void {
 }
 test('native host signature inspector PowerShell AST is read-only and narrowly allowlisted', async (t) => {
   if (process.platform !== 'win32') return t.skip('Windows Authenticode inspector');
-  await readFile(inspectorPath, 'utf8');
+  const inspector = await readFile(inspectorPath, 'utf8');
+  assert.match(inspector, /CryptCATAdminAcquireContext2/);
+  assert.match(inspector, /CryptCATAdminCalcHashFromFileHandle2/);
+  assert.match(inspector, /CryptCATAdminReleaseContext/);
+  assert.match(inspector, /"SHA256"/);
+  assert.doesNotMatch(inspector, /Get-AppLockerFileInformation/);
   const ast = await inspectAst();
   assert.equal(ast.parseErrors, 0);
 
   const commands = [...new Set(ast.commands)].sort();
   assert.deepEqual(commands, [
+    'Add-Type',
     'ConvertTo-Json',
-    'Get-AppLockerFileInformation',
     'Get-AuthenticodeSignature',
     'Get-Item',
     'Resolve-Path',
     'Set-StrictMode',
   ]);
 
-  const allowedMembers = new Set(['Equals', 'GetFullPath', 'ToLowerInvariant', 'Write']);
+  const allowedMembers = new Set(['Equals', 'GetFullPath', 'Sha256', 'ToLowerInvariant', 'Write']);
   assert.ok(ast.members.length > 0);
   for (const member of ast.members) {
     assert.equal(allowedMembers.has(member.member), true, `unexpected member invocation: ${member.member}`);
@@ -116,7 +121,7 @@ test('native host signature inspector PowerShell AST is read-only and narrowly a
     }
   }
   assert.deepEqual([...new Set(ast.members.map((member) => member.member))].sort(), [
-    'Equals', 'GetFullPath', 'ToLowerInvariant', 'Write',
+    'Equals', 'GetFullPath', 'Sha256', 'ToLowerInvariant', 'Write',
   ]);
 });
 test('inspector accepts a real unsigned WAG SEA only as Unsigned', async (t) => {

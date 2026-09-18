@@ -47,8 +47,6 @@ test('native host workflow has narrow triggers permissions runner and immutable 
   assert.match(workflow, /persist-credentials:\s*false/);
   assert.match(workflow, /node-version:\s*['"]24\.20\.0['"]/);
   assert.match(workflow, /package-manager-cache:\s*false/);
-  assert.match(workflow, /name:\s*Start Application Identity/);
-  assert.match(workflow, /Start-Service -Name AppIDSvc -ErrorAction Stop/);
   assert.match(workflow, /run:\s*npm run verify:native-host-licenses/);
   assert.match(workflow, /scripts\/verify-native-host-version-info\.ps1/);
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);

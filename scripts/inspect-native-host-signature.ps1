@@ -25,13 +25,73 @@ if ($item.PSIsContainer) { throw 'executable path must be a file' }
 if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
   throw 'reparse points are not accepted'
 }
-$appLocker = Get-AppLockerFileInformation -Path $resolved.Path
-if ($null -eq $appLocker) { throw 'missing AppLocker file information' }
-$hashText = [string]$appLocker.Hash
-if ($hashText -notmatch '^SHA256 0x([0-9A-Fa-f]{64})$') {
+
+$catalogHashSource = @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+
+public static class WagAuthenticodeCatalogHash
+{
+  [DllImport("wintrust.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool CryptCATAdminAcquireContext2(
+    out IntPtr phCatAdmin,
+    IntPtr pgSubsystem,
+    string pwszHashAlgorithm,
+    IntPtr pStrongHashPolicy,
+    uint dwFlags);
+
+  [DllImport("wintrust.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool CryptCATAdminCalcHashFromFileHandle2(
+    IntPtr hCatAdmin,
+    IntPtr hFile,
+    ref uint pcbHash,
+    byte[] pbHash,
+    uint dwFlags);
+
+  [DllImport("wintrust.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool CryptCATAdminReleaseContext(IntPtr hCatAdmin, uint dwFlags);
+
+  public static string Sha256(string path)
+  {
+    IntPtr catalogAdmin;
+    if (!CryptCATAdminAcquireContext2(out catalogAdmin, IntPtr.Zero, "SHA256", IntPtr.Zero, 0)) {
+      throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    try {
+      using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+        IntPtr handle = file.SafeFileHandle.DangerousGetHandle();
+        uint size = 0;
+        if (!CryptCATAdminCalcHashFromFileHandle2(catalogAdmin, handle, ref size, null, 0)) {
+          throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        if (size != 32) throw new InvalidOperationException("unexpected SHA-256 catalog hash size");
+
+        byte[] hash = new byte[size];
+        if (!CryptCATAdminCalcHashFromFileHandle2(catalogAdmin, handle, ref size, hash, 0)) {
+          throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        if (size != 32) throw new InvalidOperationException("unexpected SHA-256 catalog hash size");
+        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+      }
+    }
+    finally {
+      CryptCATAdminReleaseContext(catalogAdmin, 0);
+    }
+  }
+}
+'@
+
+Add-Type -TypeDefinition $catalogHashSource -Language CSharp
+$authenticodeSha256 = [WagAuthenticodeCatalogHash]::Sha256($resolved.Path)
+if ($authenticodeSha256 -notmatch '^[0-9a-f]{64}$') {
   throw 'unexpected Authenticode hash representation'
 }
-$authenticodeSha256 = $Matches[1].ToLowerInvariant()
 
 $signature = Get-AuthenticodeSignature -LiteralPath $resolved.Path
 if ($ExpectedState -eq 'Unsigned') {
@@ -81,7 +141,6 @@ if (
 ) {
   throw 'invalid certificate signature algorithm OID'
 }
-
 $timestamp = $null
 if ($null -ne $signature.TimeStamperCertificate) {
   $timestampCertificate = $signature.TimeStamperCertificate
