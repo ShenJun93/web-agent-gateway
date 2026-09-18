@@ -6,6 +6,10 @@ Web Agent Gateway is preparing an application to SignPath Foundation for free Wi
 
 If the application is accepted, the project will use the program-required attribution: **Free code signing provided by SignPath.io, certificate by SignPath Foundation.** This statement describes the intended signing arrangement and does not claim that WAG has already been accepted.
 
+## Privacy
+
+WAG's public privacy disclosure is `docs/policies/privacy.md`. It describes local data processing, provider-mediated transmission, telemetry, installation metadata, and the review requirement for material policy changes. This code-signing policy incorporates that privacy policy by reference.
+
 ## Signing scope
 
 Only WAG-owned release artifacts may be submitted for WAG signing.

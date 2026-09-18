@@ -53,7 +53,12 @@ Project homepage:
 
 Download/release page:
 - public release index: https://github.com/ShenJun93/web-agent-gateway/releases
-- no official GitHub Release exists yet, so there is not yet a release-specific download URL
+- immutable unsigned preview: https://github.com/ShenJun93/web-agent-gateway/releases/tag/v0.1.0-preview.1
+- release ID: `391834069`
+- tag: `v0.1.0-preview.1` at `c1eb195f54864dee1a8997c9baeb0475ce627da6`
+- published asset: `web-agent-gateway-native-host-windows-x64-0.1.0-preview.1-UNSIGNED.zip`
+- asset SHA-256: `3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733`
+- GitHub release and asset attestations: independently verified after publication
 
 ## Project description
 
@@ -177,10 +182,11 @@ Project status:
 - very young public-history profile
 
 Current official public releases:
-- none
+- `v0.1.0-preview.1` - immutable unsigned GitHub prerelease, release ID `391834069`
 
-Current honest public binary download count:
-- none / not yet applicable
+Current public asset counter:
+- GitHub currently reports `3` downloads for the preview ZIP at this reconciliation checkpoint
+- these include project-owner verification downloads performed during release validation and must not be represented as external-user adoption or reputation evidence
 
 Do not manufacture:
 - stars
@@ -194,10 +200,13 @@ SignPath states that executable applications require a certain verifiable reputa
 
 ## First-release plan
 
-Selected/prepared:
+Selected/published:
 - product version: `0.1.0` - merged on `main`;
-- unsigned preview tag name: `v0.1.0-preview.1` - selected but not created;
+- unsigned preview tag: `v0.1.0-preview.1` - published as immutable prerelease;
 - preview source/tag target: `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- GitHub release ID: `391834069`;
+- release asset SHA-256: `3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733`;
+- GitHub release/asset attestation verification: PASS;
 - later signed stable tag: not selected (`v0.1.0` remains the recommendation).
 
 Current unsigned candidate:
@@ -290,11 +299,13 @@ Completed publication prerequisites:
 - immutable releases are enabled before the first public binary release;
 - private vulnerability reporting, Dependabot alerts, secret scanning, push protection, stricter fork-PR approval, and a minimal `main` history-protection ruleset are enabled.
 
-Remaining blockers:
+Remaining pre-submission blocker:
 1. Confirm GitHub MFA.
-2. Under separate release authority, create `v0.1.0-preview.1` at `c1eb195f54864dee1a8997c9baeb0475ce627da6` and publish the prepared unsigned prerelease asset.
-3. Refresh release/download facts from the live public release URL.
-4. Only then submit the SignPath Foundation application under separate authority.
+
+Provider-discretion question to carry into eligibility/application review:
+- obtain SignPath's project-specific interpretation of whether WAG's Node SEA executable is WAG's own application binary or falls under the modified-upstream visible-fork condition.
+
+The public release/download facts are now refreshed from the immutable release. SignPath submission still requires separate explicit authority.
 
 ## Explicitly not authorized by this draft
 

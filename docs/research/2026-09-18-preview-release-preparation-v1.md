@@ -115,12 +115,26 @@ Live public state after the authorized cutover and security hardening:
 
 The pre-public snapshots above remain historical receipts and are intentionally not rewritten. No post-public setting change altered the frozen preview tag target, source candidate, ZIP bytes, hashes, release notes, or release identity.
 
+### Post-release reconciliation - 2026-09-19
+
+Live release state:
+- remote `main=c37e1e1977d3cd5ed0edb276eb407112a539606e` before this reconciliation branch;
+- tag `v0.1.0-preview.1` exists at exact `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- GitHub release ID `391834069` is published as an immutable prerelease;
+- release ZIP SHA-256 is `3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733`;
+- release and asset attestations independently verify the exact tag commit and ZIP digest;
+- the published release notes identify the preview as unsigned and not Authenticode-trusted;
+- the supported download is the immutable GitHub Release asset, not an Actions artifact;
+- the live asset counter includes project-owner verification downloads and is not treated as external-user/reputation evidence.
+
 ## Remaining gates before SignPath application
 
-Hard/publication gates:
-1. GitHub MFA confirmation;
-2. creation/publication of the selected preview tag/release under separate authority;
-3. refresh application facts from the live public release/download URL.
+Hard pre-submission gate:
+1. GitHub MFA confirmation.
+
+Application/provider gates:
+1. separate explicit authority for SignPath submission;
+2. neutral provider determination of the Node SEA own-binary versus modified-upstream question.
 
 Provider-discretion risks:
 - SignPath publishes no numeric executable-project reputation threshold;

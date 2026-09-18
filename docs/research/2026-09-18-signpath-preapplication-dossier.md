@@ -180,11 +180,13 @@ At the readiness checkpoint:
 
 ## Current GitHub publication surface
 
-Post-public reconciliation on 2026-09-19, anchored to remote `main=b83ba368b990d7518ef430929e77f30d99ca89d5`:
+Post-release reconciliation on 2026-09-19, anchored to remote `main=c37e1e1977d3cd5ed0edb276eb407112a539606e`:
 - repository visibility: public;
 - GitHub-reported license on remote default branch: Apache-2.0;
-- GitHub Releases: none;
-- Git tags: none;
+- immutable GitHub prerelease `v0.1.0-preview.1`: published as release ID `391834069`;
+- release tag target: `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- release ZIP SHA-256: `3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733`;
+- GitHub release and asset attestations: independently verified;
 - immutable releases: enabled (`enabled: true`, `enforced_by_owner: false`);
 - active ruleset `Protect main history` targets `refs/heads/main` and blocks branch deletion and non-fast-forward updates only;
 - private vulnerability reporting: enabled;
@@ -222,19 +224,26 @@ State: PASS_GIT_PUBLICATION
 
 ### Download / release URL
 
-No GitHub Release exists. SignPath terms say the project must already be released in the form that should be signed.
+Public immutable prerelease:
+- https://github.com/ShenJun93/web-agent-gateway/releases/tag/v0.1.0-preview.1
+- release ID: `391834069`
+- tag target: `c1eb195f54864dee1a8997c9baeb0475ce627da6`
+- asset: `web-agent-gateway-native-host-windows-x64-0.1.0-preview.1-UNSIGNED.zip`
+- asset SHA-256: `3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733`
+- release state: prerelease, published, immutable
+- GitHub release/asset attestation verification: PASS
 
-The `0.1.0` candidate and preview tag name `v0.1.0-preview.1` are selected and prepared, but no tag object or GitHub Release exists. The preview and later signed stable release must keep distinct release/tag identities rather than replacing published unsigned bytes.
+The preview and any future signed stable release must keep distinct release/tag identities rather than replacing the published unsigned bytes.
 
-State: BLOCKED_PUBLICATION_AND_RELEASE_CREATION_AUTHORITY
+State: PASS_PUBLIC_RELEASE
 
-Do not invent a download URL and do not use historical Actions artifacts as the official release.
+Historical Actions artifacts remain build evidence and are not the official release.
 
 ### Download counts / user evidence
 
-No public release exists, so there is no honest public binary download count.
+GitHub currently reports `3` downloads for the preview ZIP at this reconciliation checkpoint. Project-owner verification downloads were performed during draft/post-publication validation, so this counter must not be represented as external-user adoption or reputation evidence.
 
-State: ZERO / NOT_YET_APPLICABLE
+State: OPERATOR_VERIFICATION_CONTAMINATED / NOT_REPUTATION_EVIDENCE
 
 Do not manufacture reputation evidence.
 
@@ -259,11 +268,10 @@ State: REQUIRES_EXPLICIT_EXTERNAL_AUTHORITY
 Do not submit yet.
 
 Submit only after:
-1. a real release/download URL exists for the Windows artifact form;
-2. MFA requirement is explicitly confirmed;
-3. application facts are refreshed from the live public release evidence.
+1. GitHub MFA is explicitly confirmed;
+2. separate explicit authority is granted for SignPath submission.
 
-Repository publication and anonymous public docs/license verification are complete.
+Repository publication, anonymous public docs/license verification, the real immutable release/download URL, and live release-fact refresh are complete. Carry the unresolved Node SEA ownership classification as a neutral provider question; do not manufacture a policy answer.
 
 Historical unsigned Actions artifacts were a preferred pre-public cleanup, not a hard eligibility blocker after the exposure audit. The repository is now public while they remain active; keep them clearly non-release and unsupported until they expire naturally or are separately deleted under explicit authority.
 
