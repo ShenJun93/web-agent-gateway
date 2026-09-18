@@ -144,6 +144,10 @@ Intended origin restrictions:
 - manual SignPath approval for every signing request.
 ## Existing local unsigned-candidate evidence
 
+This candidate is readiness evidence only. Its package/PE product version is the placeholder `0.0.0` / `0.0.0.0`; it should not be published as WAG's first public binary release. Selecting a real product version modifies `package.json`, which is a native-host build input and therefore requires a new candidate/receipt.
+
+Current release research recommends `0.1.0` as the first product-version candidate and a separate unsigned preview release identity such as `v0.1.0-preview.1`, but neither is selected or authorized. See `docs/research/2026-09-18-first-public-release-sequencing.md`.
+
 Readiness checkpoint:
 - commit: `e296da18400d0f994fb8f086e36936ccd4c6305b`
 - local commit message: `feat: prepare native host for trusted signing`
@@ -177,6 +181,7 @@ As of 2026-09-18:
 - GitHub-reported license on remote default branch: none;
 - GitHub Releases: none;
 - repository rulesets: none;
+- immutable releases: disabled (`enabled: false`, `enforced_by_owner: false` from the read-only repository endpoint);
 - 23 unexpired historical native-host Actions artifacts exist;
 - those artifacts expire between 2026-09-27 and 2026-09-30;
 - repository Actions retention setting is 90 days, while these uploaded artifacts carry shorter per-artifact expiry.
@@ -206,7 +211,9 @@ State: BLOCKED_GIT_PUBLICATION
 
 No GitHub Release exists. SignPath terms say the project must already be released in the form that should be signed.
 
-State: BLOCKED_FIRST_RELEASE_AUTHORITY
+The eventual unsigned preview must be a real public release artifact produced from an authorized non-placeholder product version, not the current local `0.0.0` readiness candidate. The preview and later signed stable release should use distinct release/tag identities rather than replacing published unsigned bytes.
+
+State: BLOCKED_VERSION_AND_FIRST_RELEASE_AUTHORITY
 
 Do not invent a download URL and do not use historical Actions artifacts as the official release.
 
