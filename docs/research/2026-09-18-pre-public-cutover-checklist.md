@@ -40,6 +40,16 @@ Refresh sources:
 - https://github.com/electron/rcedit/issues/184
 - https://git-scm.com/docs/gitattributes
 
+Post-merge evidence reconciliation — 2026-09-18:
+- remote `main` is `b1576de8e1d74ef6894621d53df9b0309dd6685f`; repository visibility remains private;
+- Git tags: none; GitHub Releases: none; immutable releases remain disabled;
+- 32 unexpired Actions artifacts are present; the exact `c1eb195f` candidate/evidence/signing-input artifacts still expire on 2026-10-02;
+- Gitleaks 8.30.1 scanned 258 commits from exact current `origin/main` and reported five `generic-api-key` detections;
+- triage: three detections are the same public Authenticode SHA-256 repeated in preview release metadata/tests, one is a historical Authenticode SHA-256, and one is the stable Chromium extension public key;
+- no credential or private-key finding was identified, so this count increase is scanner/evidence drift rather than a new secret-exposure blocker.
+
+The earlier 13:00 snapshot above remains historical evidence and is intentionally not rewritten.
+
 Checkout-normalization implementation checkpoint:
 - `eb5393ff2cb2e07e195f2851be76b73b98aa0038`
 - vendored third-party license files retain upstream bytes; path-specific Git whitespace rules suppress only the exact upstream whitespace diagnostics observed in the Node and `pkce-challenge` license files so range `git diff --check` remains meaningful without altering license text.
