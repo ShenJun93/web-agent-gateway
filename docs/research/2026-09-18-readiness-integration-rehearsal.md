@@ -286,3 +286,37 @@ Implication:
 - Browser Inspect v2 has a minimal three-file local-gate repair that can be reviewed independently from SignPath readiness;
 - the current Browser branch itself remains unchanged at `e19d577` and therefore remains 268/271 until that repair is explicitly authorized and applied;
 - this evidence does not authorize changing `feat/browser-inspect-v2`, integrating readiness, pushing, merging, version selection, publication, release, provider mutation, or signing.
+
+## Browser-repair topology rehearsal — 2026-09-18
+
+Because the three Browser local-gate fixes already exist inside readiness commit `e296da1`, applying them first as a dedicated Browser repair commit would make the current readiness branch no longer a strict descendant of the repaired Browser tip. A temp-clone topology rehearsal therefore tested the intended follow-up rebase without changing live refs.
+
+Rehearsal sequence:
+
+1. start from exact Browser base `e19d577`;
+2. create one temporary Browser repair commit containing only:
+   - `src/server.ts`;
+   - `test/browser-adapter.acceptance.test.ts`;
+   - `test/native-host-artifact.test.ts`;
+3. rebase the complete current readiness stack from `e19d577` onto that repair commit;
+4. compare the rebased readiness tree to live readiness `f880ce6`.
+
+Result:
+
+```text
+rebase                         = PASS
+rebased readiness commits     = 25
+browser repair is ancestor     = PASS
+repair..rebased diff-check     = PASS
+old readiness tree             = 3ba07a24e22f8a2487ed979d8716e62c5fed02f1
+rebased readiness tree         = 3ba07a24e22f8a2487ed979d8716e62c5fed02f1
+tree equality                  = EXACT
+```
+
+The first diagnostic attempt also completed the 25-commit rebase and produced an identical tree, but two trailing PowerShell diagnostics were malformed; those diagnostics are discarded. The result above comes from the corrected rehearsal.
+
+Implication:
+- the Browser correctness repair can be committed independently first;
+- after separate authority, readiness can be rebased onto that repaired Browser commit with no final-tree content change if live refs have not moved;
+- because the rebase rewrites readiness commit identities, actual rebase execution remains a separate Git-authority action and must not be inferred from this rehearsal;
+- no live Browser ref, readiness ref, remote ref, version, publication state, release, provider resource, or signing state was changed by the rehearsal.
