@@ -121,7 +121,7 @@ test('native host signature inspector PowerShell AST is read-only and narrowly a
 });
 test('inspector accepts a real unsigned WAG SEA only as Unsigned', async (t) => {
   if (process.platform !== 'win32') return t.skip('Windows Authenticode inspector');
-  const temp = await mkdtemp(join(tmpdir(), 'wag-native-host-signature-'));
+  const temp = await mkdtemp(join(root, '.wag-native-host-signature-'));
   t.after(() => rm(temp, { recursive: true, force: true }));
   const executable = await buildUnsignedNativeHost(join(temp, 'unsigned-wag'));
 

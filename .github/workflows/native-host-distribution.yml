@@ -45,6 +45,17 @@ jobs:
           node-version: '24.20.0'
           package-manager-cache: false
 
+      - name: Start Application Identity
+        shell: powershell
+        run: |
+          $service = Get-Service -Name AppIDSvc -ErrorAction Stop
+          if ($service.Status -ne 'Running') {
+            Start-Service -Name AppIDSvc -ErrorAction Stop
+          }
+          if ((Get-Service -Name AppIDSvc -ErrorAction Stop).Status -ne 'Running') {
+            throw 'Application Identity service is not running'
+          }
+
       - name: Install dependencies
         run: npm ci
 
