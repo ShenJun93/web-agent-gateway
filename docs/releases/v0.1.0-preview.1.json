@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "releaseClass": "unsigned-preview",
+  "productVersion": "0.1.0",
+  "windowsVersion": "0.1.0.0",
+  "tag": "v0.1.0-preview.1",
+  "tagTargetSha": "c1eb195f54864dee1a8997c9baeb0475ce627da6",
+  "tagCreated": false,
+  "releaseCreated": false,
+  "prerelease": true,
+  "repository": "ShenJun93/web-agent-gateway",
+  "sourceSha": "c1eb195f54864dee1a8997c9baeb0475ce627da6",
+  "workflowRunId": "35345822405",
+  "workflowRunAttempt": 1,
+  "releaseTitle": "Web Agent Gateway Native Host 0.1.0 Preview - UNSIGNED",
+  "outerZip": {
+    "filename": "web-agent-gateway-native-host-windows-x64-0.1.0-preview.1-UNSIGNED.zip",
+    "sha256": "3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733",
+    "sizeBytes": 35173661,
+    "entryCount": 18,
+    "entries": [
+      "docs/native-host-installation.md",
+      "docs/policies/code-signing-policy.md",
+      "docs/policies/privacy.md",
+      "LICENSE",
+      "native-host/build-receipt.json",
+      "native-host/wag-native-host.exe",
+      "native-host/wag-native-host.exe.sha256",
+      "README.md",
+      "SECURITY.md",
+      "third_party/native-host/NODE-v24.20.0-LICENSE",
+      "third_party/native-host/npm/@modelcontextprotocol/client/LICENSE",
+      "third_party/native-host/npm/@modelcontextprotocol/core/LICENSE",
+      "third_party/native-host/npm/eventsource/LICENSE",
+      "third_party/native-host/npm/eventsource-parser/LICENSE",
+      "third_party/native-host/npm/jose/LICENSE.md",
+      "third_party/native-host/npm/pkce-challenge/LICENSE",
+      "third_party/native-host/npm/zod/LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ]
+  },
+  "nativeHost": {
+    "filename": "wag-native-host.exe",
+    "flatSha256": "3a07d599b5ee06d9eaa90a83e9b81f58386f55f383d0d04f5fa04038d02ac8e2",
+    "preSignSha256": "3a07d599b5ee06d9eaa90a83e9b81f58386f55f383d0d04f5fa04038d02ac8e2",
+    "authenticodeSha256": "73de2fbbfe7569478b75ce4ecffdc39503107b47145c792e53ada5cf61ea525d",
+    "signatureState": "NotSigned"
+  },
+  "workflowArtifacts": {
+    "candidateEvidence": {
+      "id": 10546094325,
+      "name": "wag-native-host-candidate-evidence-c1eb195f54864dee1a8997c9baeb0475ce627da6-attempt-1",
+      "digest": "sha256:8d29063f619868db3696c766e6c308315a6bd3667af8165cc0afb05c90d1cf88"
+    },
+    "signingInput": {
+      "id": 10545804630,
+      "name": "wag-native-host-signing-input-c1eb195f54864dee1a8997c9baeb0475ce627da6-attempt-1",
+      "digest": "sha256:4a71705fd74824022507b01b526ed225b522b6304ffb254965ac3cd9bf0b5420"
+    },
+    "distribution": {
+      "id": 10545824818,
+      "name": "wag-native-host-windows-x64-c1eb195f54864dee1a8997c9baeb0475ce627da6-attempt-1",
+      "digest": "sha256:c90c404b3ff0b224f8d92742f5cf3e908861888bac9b4613aa4832ef72acfd8d"
+    }
+  }
+}

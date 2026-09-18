@@ -106,7 +106,7 @@ Version rule:
 - Windows numeric metadata uses a deterministic four-component mapping such as `X.Y.Z.0`;
 - every PE signed in one release uses the same product-version value.
 
-Implementation status update (2026-09-18): under separate explicit authority, the release-candidate branch selects product version `0.1.0`; `main` adoption remains pending PR merge. This does not select a release tag or authorize publication.
+Implementation status update (2026-09-18): product version `0.1.0` is merged on `main` at `c1eb195f54864dee1a8997c9baeb0475ce627da6`. A later explicit preparation authority selected preview tag name `v0.1.0-preview.1`, but no tag or release has been created and publication remains unauthorized.
 
 ### Metadata implementation choice
 
@@ -200,7 +200,7 @@ The outer package must not cause the existing inner verifier to accept extra fil
 
 SignPath supports a ZIP root artifact with nested `pe-file` signing, but WAG must **not** submit its already-finalized three-file distribution for nested signing. Authenticode changes `wag-native-host.exe` bytes, which would invalidate the adjacent checksum and distribution receipt. The signing input therefore remains a separate pre-sign candidate artifact. Only after the returned executable passes WAG's signed-candidate verifier may the pipeline create a new final inner distribution whose checksum/receipt bind the signed executable, then wrap that verified distribution in the outer release ZIP.
 
-The numeric product version `0.1.0` is now explicitly selected for the release-candidate branch under separate authority. The exact preview/stable tag identities and any release publication remain unauthorized.
+The numeric product version `0.1.0` is merged on `main`. Preview tag name `v0.1.0-preview.1` is selected for the exact `c1eb195f54864dee1a8997c9baeb0475ce627da6` candidate, but the tag object is not created. The future stable tag identity and all release publication remain unauthorized.
 
 Because publishing an unsigned executable can create user confusion, do not create an unsigned release solely to satisfy the word "Released" until the SignPath interpretation is clarified.
 

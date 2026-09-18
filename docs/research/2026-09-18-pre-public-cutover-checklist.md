@@ -23,7 +23,7 @@ Fresh review refresh — 2026-09-18 13:00 +07:00:
 - readiness remains a strict descendant of Browser Inspect v2 with no merge conflict;
 - GitHub remains private with no releases, no rulesets, no Actions secrets, and no Actions variables;
 - 32 remote branches remain; only `docs/dc-replacement-live-benchmark-a1` is not merged into `origin/main`, and it is already an ancestor of readiness;
-- 23 historical Actions artifacts remain, expiring from 2026-09-27 through 2026-09-30;
+- 29 unexpired Actions artifacts are present in the refreshed pre-public audit; the current `0.1.0` candidate/evidence/signing-input artifacts expire on 2026-10-02 while older historical artifacts expire earlier;
 - Gitleaks 8.30.1 scanned 240 reachable commits and reported two generic-key candidates; manual triage identified the stable Chromium extension public key and a provenance hash, not credentials/private keys;
 - `npm audit` reports zero known vulnerabilities for both production-only and complete dependency sets;
 - current SignPath Foundation terms still require an existing released form, OSS licensing, documented policy/privacy/system changes/uninstall, MFA, signing roles, verifiable build provenance, and manual signing approval;
@@ -153,28 +153,26 @@ If visibility changes before expiry:
 
 ## Product-version gate
 
-Current `0.0.0` is a placeholder.
+Current `main` product version is `0.1.0`; Windows PE Product/FileVersion is `0.1.0.0`.
 
 Internal repository history already contains a completed “V0.1” milestone from 2026-09-10, so `0.1.0` is semantically consistent with project history as a first public pre-1.0 product line.
 
-Recommended candidate:
-- product version: `0.1.0`
-- unsigned preview tag: `v0.1.0-preview.1`
-- future signed stable tag: `v0.1.0`
+Selected/current identities:
+- product version: `0.1.0` - merged on `main` at `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- unsigned preview tag name: `v0.1.0-preview.1` - selected, not created;
+- preview tag target: `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- future signed stable tag: not selected (`v0.1.0` remains the recommendation only).
 
-Selection status:
-- `0.1.0` was explicitly selected on 2026-09-18 for the release-candidate branch; adoption on `main` remains pending PR merge.
-- no preview tag or GitHub Release is selected or authorized by the version decision.
+Current release-candidate evidence:
+- main workflow run `35345822405` - SUCCESS;
+- PE Product/FileVersion `0.1.0.0` - PASS;
+- exact candidate execution - PASS;
+- durable unsigned-candidate receipt - present;
+- candidate continuity - PASS;
+- exact main readiness with downloaded receipt + EXE - `publicationReady=true`, `releaseReady=true`, `blockers=[]`;
+- deterministic preview outer ZIP rehearsal - 18 entries, 35,173,661 bytes, SHA-256 `3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733`.
 
-The `e296da1` executable candidate is already stale for release continuity after the `eb5393f` checkout-normalization hardening. Selecting `0.1.0` additionally modifies `package.json`, another native-host build input, and therefore requires:
-1. version change;
-2. typecheck/build/full tests;
-3. native-host license compliance;
-4. clean committed source;
-5. fresh native-host build;
-6. independent VersionInfo verification for `0.1.0.0`;
-7. exact SEA execution;
-8. fresh unsigned-candidate receipt.
+The old `e296da1` candidate remains historical evidence only and must not be promoted.
 
 ## Repository-setting recommendations
 

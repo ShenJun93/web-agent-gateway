@@ -33,16 +33,16 @@ Project status: actively developed, but very young. Do not inflate age, users, s
 
 ### License
 
-Intended project license: Apache-2.0.
+Project license: Apache-2.0.
 
-The local readiness branch contains:
+The remote default branch now contains:
 - root `LICENSE`;
 - `package.json` / lockfile Apache-2.0 metadata;
 - exact Node 24.20.0 license material;
 - exact bundled npm dependency license material;
 - fail-closed native-host license-compliance verification.
 
-Important: as of this dossier, the GitHub repository is still private and its remote default branch does not yet contain the readiness commit, so GitHub still reports no repository license. Do not claim the public repository is Apache-2.0 until the readiness work is actually merged/pushed and visible.
+GitHub currently detects Apache-2.0 on the private default branch. The repository is still private, so the public license URL remains unavailable until a separately authorized visibility change.
 ### Project description
 
 Suggested concise description for application review:
@@ -146,24 +146,24 @@ Intended origin restrictions:
 - unsigned artifact must be the artifact produced by the verified build;
 - no untrusted pull-request signing;
 - manual SignPath approval for every signing request.
-## Existing local unsigned-candidate evidence
+## Current unsigned release-candidate evidence
 
-This candidate is historical readiness evidence only. Its package/PE product version is the placeholder `0.0.0` / `0.0.0.0`; it should not be published or signed. Commit `eb5393f` later made repository checkout normalization an explicit native-host build input, so continuity from `e296da1` is intentionally stale. Selecting a real product version also modifies `package.json`, another native-host build input. The eventual release source therefore requires a fresh candidate/receipt.
+Current candidate:
+- source commit: `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- product/PE version: `0.1.0` / `0.1.0.0`;
+- main workflow run: `35345822405` attempt `1` - SUCCESS;
+- flat/pre-sign SHA-256: `3a07d599b5ee06d9eaa90a83e9b81f58386f55f383d0d04f5fa04038d02ac8e2`;
+- Authenticode/catalog SHA-256: `73de2fbbfe7569478b75ce4ecffdc39503107b47145c792e53ada5cf61ea525d`;
+- signature state: `NotSigned`;
+- exact main readiness with downloaded receipt + EXE: `publicationReady=true`, `releaseReady=true`, `blockers=[]`.
 
-Current release research recommends `0.1.0` as the first product-version candidate and a separate unsigned preview release identity such as `v0.1.0-preview.1`, but neither is selected or authorized. See `docs/research/2026-09-18-first-public-release-sequencing.md`.
+Selected preview identity:
+- tag name: `v0.1.0-preview.1`;
+- intended tag target/source candidate: `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- tag object: not created;
+- GitHub Release: not created.
 
-Readiness checkpoint:
-- commit: `e296da18400d0f994fb8f086e36936ccd4c6305b`
-- local commit message: `feat: prepare native host for trusted signing`
-
-Strict unsigned receipt:
-- external local evidence file: `E:\AI-RESEARCH\WAG_UNSIGNED_NATIVE_HOST_CANDIDATE_e296da1.json`
-- schema version: 1
-- flat SHA-256: `fc98786b9accdabf86079e65b32f492f025fd26448230dd86164160a319d2151`
-- Authenticode SHA-256: `fccc88d515d5044d2beff8a34ee2224e825f8d78b6f96ceff5b8711e8056754c`
-- signature state at recording checkpoint: `NotSigned`
-
-The receipt is local historical evidence only. It is not a current signing candidate after `eb5393f`. Do not publish the machine-specific receipt path as a user-facing download location.
+Historical `e296da1` / `0.0.0` candidate evidence remains superseded and must not be published or signed.
 
 ## Verification evidence
 
@@ -182,17 +182,17 @@ At the readiness checkpoint:
 
 As of 2026-09-18:
 - repository visibility: private;
-- GitHub-reported license on remote default branch: none;
+- GitHub-reported license on remote default branch: Apache-2.0;
 - GitHub Releases: none;
 - repository rulesets: none;
 - immutable releases: disabled (`enabled: false`, `enforced_by_owner: false` from the read-only repository endpoint);
-- 23 unexpired historical native-host Actions artifacts exist;
-- those artifacts expire between 2026-09-27 and 2026-09-30;
+- 29 unexpired Actions artifacts exist in the refreshed pre-public audit, including the exact `0.1.0` candidate-evidence, signing-input, and distribution artifacts;
+- the current `0.1.0` candidate artifacts expire on 2026-10-02; older historical artifacts expire earlier;
 - repository Actions retention setting is 90 days, while these uploaded artifacts carry shorter per-artifact expiry.
 
 GitHub documents that private-to-public conversion makes code and Actions history/logs visible to everyone. Artifact metadata for public repositories can be listed without authentication; downloading workflow artifacts uses the artifact download endpoint and authentication/Actions access rules documented by GitHub.
 
-The 23 historical artifacts are unsigned build evidence, not release assets, and the repository/source will itself become public. After the credential/history audit found no secret material, their remaining risk is primarily user confusion and accidental treatment as supported binaries, not confidentiality. Therefore artifact expiry/deletion is a **preferred pre-public cleanup**, not an independent hard publication blocker, provided the README and code-signing policy continue to state that Actions artifacts are not supported releases and no current release is Authenticode-trusted.
+The 29 current/historical Actions artifacts are build evidence, not release assets, and the repository/source will itself become public. After the credential/history audit found no secret material, their remaining risk is primarily user confusion and accidental treatment as supported binaries, not confidentiality. Therefore artifact expiry/deletion is a **preferred pre-public cleanup**, not an independent hard publication blocker, provided the README and code-signing policy continue to state that Actions artifacts are not supported releases and no current release is Authenticode-trusted.
 
 Official GitHub sources:
 - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility
@@ -207,7 +207,7 @@ State: BLOCKED_PUBLICATION_SEQUENCE
 
 ### License URL
 
-The local branch has Apache-2.0, but the remote public URL cannot be supplied until the readiness work is merged/pushed and the repository is public.
+The remote default branch has Apache-2.0, but an anonymously accessible public license URL cannot be supplied until the repository is public.
 
 State: BLOCKED_GIT_PUBLICATION
 
@@ -215,9 +215,9 @@ State: BLOCKED_GIT_PUBLICATION
 
 No GitHub Release exists. SignPath terms say the project must already be released in the form that should be signed.
 
-The eventual unsigned preview must be a real public release artifact produced from an authorized non-placeholder product version, not the current local `0.0.0` readiness candidate. The preview and later signed stable release should use distinct release/tag identities rather than replacing published unsigned bytes.
+The `0.1.0` candidate and preview tag name `v0.1.0-preview.1` are selected and prepared, but no tag object or GitHub Release exists. The preview and later signed stable release must keep distinct release/tag identities rather than replacing published unsigned bytes.
 
-State: BLOCKED_VERSION_AND_FIRST_RELEASE_AUTHORITY
+State: BLOCKED_PUBLICATION_AND_RELEASE_CREATION_AUTHORITY
 
 Do not invent a download URL and do not use historical Actions artifacts as the official release.
 
@@ -250,11 +250,10 @@ State: REQUIRES_EXPLICIT_EXTERNAL_AUTHORITY
 Do not submit yet.
 
 Submit only after:
-1. readiness commit(s) are deliberately merged/pushed;
-2. repository is public and public docs/license links resolve;
-3. a real release/download URL exists for the Windows artifact form;
-4. MFA requirement is explicitly confirmed;
-5. application facts are refreshed from live GitHub evidence.
+1. repository is public and public docs/license links resolve;
+2. a real release/download URL exists for the Windows artifact form;
+3. MFA requirement is explicitly confirmed;
+4. application facts are refreshed from live GitHub evidence.
 
 Historical unsigned Actions artifacts should preferably be expired or explicitly deleted before publication, but they are no longer treated as a hard eligibility blocker after the exposure audit. If publication happens while they still exist, keep them clearly non-release and unsupported.
 

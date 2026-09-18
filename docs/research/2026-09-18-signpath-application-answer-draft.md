@@ -45,8 +45,8 @@ Repository state at draft time:
 - publication authorized in principle but not executed
 
 License:
-- Apache-2.0 on the local readiness branch
-- public license URL unavailable until readiness changes are pushed and repository is public
+- Apache-2.0 on the remote default branch
+- public license URL unavailable until the repository is public
 
 Project homepage:
 - recommended initial homepage: the public GitHub repository README
@@ -195,22 +195,21 @@ SignPath states that executable applications require a certain verifiable reputa
 
 ## First-release plan
 
-Recommended but not yet authorized:
-- product version: `0.1.0`
-- unsigned preview tag: `v0.1.0-preview.1`
-- later signed stable tag: `v0.1.0`
+Selected/prepared:
+- product version: `0.1.0` - merged on `main`;
+- unsigned preview tag name: `v0.1.0-preview.1` - selected but not created;
+- preview source/tag target: `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- later signed stable tag: not selected (`v0.1.0` remains the recommendation).
 
-Historical local readiness candidate:
-- source commit `e296da18400d0f994fb8f086e36936ccd4c6305b`
-- package/PE version: `0.0.0` / `0.0.0.0`
-- historical readiness evidence only
-- continuity intentionally stale after `eb5393f`, which added checkout normalization to the native-host build-input set
-- should not be the first public release or a signing input
+Current unsigned candidate:
+- source commit `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- package/PE version: `0.1.0` / `0.1.0.0`;
+- main workflow run `35345822405` attempt `1` - SUCCESS;
+- flat/pre-sign SHA-256 `3a07d599b5ee06d9eaa90a83e9b81f58386f55f383d0d04f5fa04038d02ac8e2`;
+- Authenticode/catalog SHA-256 `73de2fbbfe7569478b75ce4ecffdc39503107b47145c792e53ada5cf61ea525d`;
+- exact main readiness - `releaseReady=true`, `blockers=[]`.
 
-Reason:
-- checkout normalization now participates in release/build provenance;
-- selecting a real product version also changes `package.json`, another native-host build input;
-- the selected release source therefore requires a fresh candidate and receipt.
+Historical `e296da1` / `0.0.0` readiness evidence remains superseded.
 
 ## Node SEA policy question for SignPath
 
@@ -286,20 +285,16 @@ See `docs/research/2026-09-18-signpath-reputation-timing.md`.
 
 ## Current blockers before submission
 
-1. Explicitly select the public product version.
-2. Integrate the readiness branch through the Browser Inspect v2 acceptance/merge path.
-3. Push approved readiness work.
-4. Make repository public.
-5. Verify public README/license/security/privacy/code-signing/install links.
-6. Confirm GitHub MFA.
-7. Build a fresh non-placeholder release candidate and receipt.
-8. Create the first official public unsigned preview release if SignPath still requires an already released binary form.
-9. Refresh all application facts from live public GitHub state.
-10. Only then submit the SignPath Foundation application.
+1. Make the repository public under separate authority after the exposure gate passes.
+2. Verify public README/license/security/privacy/code-signing/install links anonymously.
+3. Confirm GitHub MFA.
+4. Under separate release authority, create `v0.1.0-preview.1` at `c1eb195f54864dee1a8997c9baeb0475ce627da6` and publish the prepared unsigned prerelease asset if the public-release sequence is chosen.
+5. Refresh all application facts from live public GitHub state and the public release URL.
+6. Only then submit the SignPath Foundation application under separate authority.
 
 ## Explicitly not authorized by this draft
 
-- product-version selection
+- further product-version or stable-tag selection
 - Git commit amendment/rebase of accepted history
 - Git push/merge
 - repository visibility change

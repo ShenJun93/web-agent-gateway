@@ -1,6 +1,6 @@
 # Native Host Release Notes Templates — 2026-09-18
 
-Status: templates only. No version/tag/release is selected or created.
+Status: templates only. Product version `0.1.0` and preview tag name `v0.1.0-preview.1` are selected in later release-preparation evidence, but this template file does not create a tag or release.
 
 These templates are intentionally conservative. Replace every `<PLACEHOLDER>` from verified release evidence before publication. Never publish a template with unresolved placeholders.
 
