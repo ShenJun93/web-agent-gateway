@@ -68,6 +68,8 @@ jobs:
           test/native-host.test.ts
           test/native-host-manifest.test.ts
           test/native-host-pe-metadata.test.ts
+          test/native-host-candidate-cli.test.ts
+          test/native-host-signature.test.ts
           test/browser-extension-core.test.ts
 
       - name: Build publish candidate once

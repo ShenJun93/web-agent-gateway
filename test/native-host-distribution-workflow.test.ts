@@ -52,6 +52,11 @@ test('native host workflow has narrow triggers permissions runner and immutable 
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
 
+test('native host PR validation covers production candidate recording and signature inspection paths', async () => {
+  const workflow = await workflowText();
+  assert.match(workflow, /test\/native-host-candidate-cli\.test\.ts/);
+  assert.match(workflow, /test\/native-host-signature\.test\.ts/);
+});
 test('native host main push matches exact publication inputs while PR validation stays unfiltered', async () => {
   const workflow = (await workflowText()).replace(/\r\n/g, '\n');
   assert.match(workflow, /pull_request:\n    branches: \[main\]\n  push:/);
