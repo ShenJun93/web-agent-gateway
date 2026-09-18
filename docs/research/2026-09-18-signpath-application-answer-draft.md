@@ -200,15 +200,17 @@ Recommended but not yet authorized:
 - unsigned preview tag: `v0.1.0-preview.1`
 - later signed stable tag: `v0.1.0`
 
-Current local readiness candidate:
+Historical local readiness candidate:
 - source commit `e296da18400d0f994fb8f086e36936ccd4c6305b`
 - package/PE version: `0.0.0` / `0.0.0.0`
-- readiness evidence only
-- should not be the first public release
+- historical readiness evidence only
+- continuity intentionally stale after `eb5393f`, which added checkout normalization to the native-host build-input set
+- should not be the first public release or a signing input
 
 Reason:
-- selecting a real product version changes `package.json`, which is a native-host build input
-- that requires a fresh candidate and receipt
+- checkout normalization now participates in release/build provenance;
+- selecting a real product version also changes `package.json`, another native-host build input;
+- the selected release source therefore requires a fresh candidate and receipt.
 
 ## Node SEA policy question for SignPath
 

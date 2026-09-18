@@ -144,7 +144,7 @@ Intended origin restrictions:
 - manual SignPath approval for every signing request.
 ## Existing local unsigned-candidate evidence
 
-This candidate is readiness evidence only. Its package/PE product version is the placeholder `0.0.0` / `0.0.0.0`; it should not be published as WAG's first public binary release. Selecting a real product version modifies `package.json`, which is a native-host build input and therefore requires a new candidate/receipt.
+This candidate is historical readiness evidence only. Its package/PE product version is the placeholder `0.0.0` / `0.0.0.0`; it should not be published or signed. Commit `eb5393f` later made repository checkout normalization an explicit native-host build input, so continuity from `e296da1` is intentionally stale. Selecting a real product version also modifies `package.json`, another native-host build input. The eventual release source therefore requires a fresh candidate/receipt.
 
 Current release research recommends `0.1.0` as the first product-version candidate and a separate unsigned preview release identity such as `v0.1.0-preview.1`, but neither is selected or authorized. See `docs/research/2026-09-18-first-public-release-sequencing.md`.
 
@@ -159,7 +159,7 @@ Strict unsigned receipt:
 - Authenticode SHA-256: `fccc88d515d5044d2beff8a34ee2224e825f8d78b6f96ceff5b8711e8056754c`
 - signature state at recording checkpoint: `NotSigned`
 
-The receipt is local evidence only. Do not publish the machine-specific receipt path as a user-facing download location.
+The receipt is local historical evidence only. It is not a current signing candidate after `eb5393f`. Do not publish the machine-specific receipt path as a user-facing download location.
 
 ## Verification evidence
 

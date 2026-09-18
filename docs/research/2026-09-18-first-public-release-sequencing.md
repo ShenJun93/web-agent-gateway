@@ -146,7 +146,7 @@ This setting is not required by the current SignPath terms and is not authorized
 
 - select the numeric product version;
 - select the exact preview tag/name;
-- update `package.json.version` (native-host build input; invalidates the existing `e296da1` candidate);
+- update `package.json.version` (native-host build input; requires a fresh release candidate);
 - enable GitHub immutable releases;
 - create/push tag(s);
 - create/publish GitHub release(s);
@@ -159,7 +159,7 @@ FIRST_PRODUCT_VERSION = NOT_SELECTED
 FIRST_PREVIEW_TAG = NOT_SELECTED
 IMMUTABLE_RELEASES = NOT_CONFIGURED
 PUBLIC_RELEASE = NOT_CREATED
-CURRENT_E296DA1_CANDIDATE = VALID_ONLY_FOR_PACKAGE_VERSION_0.0.0
+CURRENT_E296DA1_CANDIDATE = HISTORICAL_READINESS_EVIDENCE_STALE_AFTER_EB5393F
 ```
 
-The existing `e296da1` unsigned candidate remains useful readiness evidence, but it is not the recommended public first-release candidate because the package/PE version is still the placeholder `0.0.0`.
+The existing `e296da1` unsigned candidate remains useful historical readiness evidence, but commit `eb5393f` added checkout normalization as an explicit native-host build input, so candidate continuity is intentionally stale even before product-version selection. The public first-release candidate must be rebuilt after an authorized non-placeholder version is selected. See `docs/research/2026-09-18-checkout-line-ending-portability.md`.

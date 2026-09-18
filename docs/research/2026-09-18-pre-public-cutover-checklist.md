@@ -17,16 +17,18 @@ Repository:
 - immutable releases: disabled
 - Pages: not configured
 
-Current local readiness head:
-- `94ed3499ae60a85c2e5990f709de7ac94ef6eaa2`
+Checkout-normalization implementation checkpoint:
+- `eb5393ff2cb2e07e195f2851be76b73b98aa0038`
 
 Current Browser Inspect v2 base:
 - `e19d57789b03dae36901c633482a89714eb52e11`
 
-Current local unsigned readiness candidate:
+Historical local unsigned readiness candidate:
 - source: `e296da18400d0f994fb8f086e36936ccd4c6305b`
 - product/package version: `0.0.0`
-- readiness evidence only, not recommended for public release
+- historical readiness evidence only
+- continuity intentionally stale after `eb5393f`, which made checkout normalization an explicit native-host build input
+- not a public-release/signing candidate
 
 ## Integration topology
 
@@ -139,7 +141,7 @@ Recommended candidate:
 Not selected:
 - `0.1.0` remains a recommendation until explicitly authorized.
 
-Selecting it modifies `package.json`, which is a native-host build input. This invalidates the `e296da1` executable candidate for release purposes and requires:
+The `e296da1` executable candidate is already stale for release continuity after the `eb5393f` checkout-normalization hardening. Selecting `0.1.0` additionally modifies `package.json`, another native-host build input, and therefore requires:
 1. version change;
 2. typecheck/build/full tests;
 3. native-host license compliance;
