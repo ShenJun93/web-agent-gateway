@@ -91,10 +91,25 @@ test('native host workflow pins researched action commits and forbids floating t
 test('native host publication is main-push only and disambiguates rerun attempts', async () => {
   const workflow = await workflowText();
   const conditionMatches = workflow.match(new RegExp(`if: \\${mainPushCondition.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g')) ?? [];
-  assert.equal(conditionMatches.length, 5);
+  assert.equal(conditionMatches.length, 6);
   assert.match(workflow, /name:\s*wag-native-host-windows-x64-\$\{\{\s*github\.sha\s*\}\}-attempt-\$\{\{\s*github\.run_attempt\s*\}\}/);
   assert.match(workflow, /if-no-files-found:\s*error/);
   assert.match(workflow, /retention-days:\s*14/);
+});
+
+test('native host workflow preserves unsigned candidate receipt as a separate evidence artifact', async () => {
+  const workflow = (await workflowText()).replace(/\r\n/g, '\n');
+  const recordStart = workflow.indexOf('      - name: Record unsigned signing candidate');
+  const evidenceStart = workflow.indexOf('      - name: Upload unsigned candidate evidence');
+  const signingStart = workflow.indexOf('      - name: Upload unsigned signing input');
+  assert.ok(recordStart >= 0 && evidenceStart > recordStart && signingStart > evidenceStart);
+
+  const evidenceBlock = workflow.slice(evidenceStart, signingStart);
+  assert.match(evidenceBlock, /name:\s*wag-native-host-candidate-evidence-\$\{\{ github\.sha \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
+  assert.ok(evidenceBlock.includes('path: ${{ github.workspace }}\\artifacts\\native-host-build\\unsigned-candidate-receipt.json'));
+  assert.doesNotMatch(evidenceBlock, /wag-native-host\.exe/);
+  assert.match(evidenceBlock, /if-no-files-found:\s*error/);
+  assert.match(evidenceBlock, /retention-days:\s*14/);
 });
 
 test('native host workflow uploads one dedicated unsigned signing input before distribution packaging', async () => {

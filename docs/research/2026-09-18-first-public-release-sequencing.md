@@ -54,11 +54,11 @@ Reasoning:
 - remaining provider/signing/product integration can still evolve under pre-1.0 semantics;
 - the existing PE metadata mapper supports numeric `X.Y.Z` without another build-input change.
 
-This is a recommendation only:
+Selection status after explicit authorization on 2026-09-18:
 
 ```text
-FIRST_PRODUCT_VERSION = NOT_SELECTED
-RECOMMENDED_CANDIDATE = 0.1.0
+FIRST_PRODUCT_VERSION = 0.1.0
+MAIN_ADOPTION = PENDING_PR_MERGE
 ```
 
 ## Preview-tag recommendation
@@ -144,9 +144,9 @@ This setting is not required by the current SignPath terms and is not authorized
 
 ## Open decisions requiring explicit authority
 
-- select the numeric product version;
+- merge the authorized `0.1.0` version change to `main`;
 - select the exact preview tag/name;
-- update `package.json.version` (native-host build input; requires a fresh release candidate);
+- obtain fresh candidate evidence from the merged `0.1.0` source before any preview release;
 - enable GitHub immutable releases;
 - create/push tag(s);
 - create/publish GitHub release(s);
@@ -155,7 +155,8 @@ This setting is not required by the current SignPath terms and is not authorized
 ## Current state
 
 ```text
-FIRST_PRODUCT_VERSION = NOT_SELECTED
+FIRST_PRODUCT_VERSION = 0.1.0
+MAIN_ADOPTION = PENDING_PR_MERGE
 FIRST_PREVIEW_TAG = NOT_SELECTED
 IMMUTABLE_RELEASES = NOT_CONFIGURED
 PUBLIC_RELEASE = NOT_CREATED
