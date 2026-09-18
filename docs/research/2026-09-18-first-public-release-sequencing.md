@@ -128,29 +128,22 @@ If any `NATIVE_HOST_BUILD_INPUTS` file changes between preview and stable signin
 
 Docs/release-tool-only changes that are explicitly outside `NATIVE_HOST_BUILD_INPUTS` do not by themselves invalidate the recorded executable candidate, but the published release must still accurately identify the source/build provenance it represents.
 
-## Immutable-release recommendation
+## Immutable-release state
 
-Recommended future GitHub setting:
+GitHub immutable releases were enabled on 2026-09-19 before the first public binary release:
 
 ```text
-ENABLE_IMMUTABLE_RELEASES = RECOMMENDED_BEFORE_FIRST_PUBLIC_BINARY_RELEASE
+IMMUTABLE_RELEASES = ENABLED
+ENFORCED_BY_OWNER = false
 ```
 
-Reasons:
-- prevents moving the release tag after publication;
-- prevents replacing/deleting release assets;
-- generates GitHub release attestation for immutable releases;
-- aligns with WAG's fail-closed supply-chain posture.
-
-This setting is not required by the current SignPath terms and is not authorized by this document.
+This is not a SignPath eligibility requirement; it is WAG supply-chain hardening. Once a release is published under this setting, the release tag/assets must be treated as immutable.
 
 ## Open decisions requiring explicit authority
 
-- make the repository public after the pre-public exposure gate passes;
-- decide whether to enable GitHub immutable releases before publication;
 - create/push the selected `v0.1.0-preview.1` tag at `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
-- create/publish the unsigned GitHub prerelease;
-- upload the frozen deterministic preview ZIP as the public release asset.
+- create the unsigned GitHub prerelease as a draft, attach the frozen deterministic preview ZIP, verify the draft, then publish it;
+- do not replace the unsigned preview bytes after publication.
 
 ## Current state
 
@@ -161,7 +154,8 @@ FIRST_PREVIEW_TAG = v0.1.0-preview.1
 PREVIEW_TAG_TARGET = c1eb195f54864dee1a8997c9baeb0475ce627da6
 PREVIEW_TAG_CREATED = false
 PREVIEW_RELEASE_ZIP_SHA256 = 3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733
-IMMUTABLE_RELEASES = NOT_CONFIGURED
+REPOSITORY_VISIBILITY = PUBLIC
+IMMUTABLE_RELEASES = ENABLED
 PUBLIC_RELEASE = NOT_CREATED
 CURRENT_RELEASE_CANDIDATE = c1eb195f54864dee1a8997c9baeb0475ce627da6
 CURRENT_E296DA1_CANDIDATE = HISTORICAL_READINESS_EVIDENCE_STALE_AFTER_EB5393F

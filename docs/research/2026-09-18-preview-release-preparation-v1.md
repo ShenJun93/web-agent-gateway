@@ -96,18 +96,35 @@ SHA-anchored read-only reconciliation on 2026-09-18:
 
 These counts are intentionally tied to immutable commit SHAs rather than described as the dynamic current branch state. This reconciliation does not change the frozen preview tag target, source candidate, ZIP bytes, hashes, release notes, or release identity.
 
+### Post-public cutover reconciliation — 2026-09-19
+
+Live public state after the authorized cutover and security hardening:
+- remote `main=b83ba368b990d7518ef430929e77f30d99ca89d5`;
+- repository visibility: public;
+- anonymous repository, license, README, security, privacy, code-signing, installation/removal, Actions, and Releases access verified;
+- Git tags: none; GitHub Releases: none;
+- immutable releases: enabled;
+- active `main` ruleset blocks deletion and non-fast-forward updates only;
+- private vulnerability reporting: enabled;
+- Dependabot alerts: enabled with automated security-update PRs disabled;
+- secret scanning + repository push protection: enabled, with zero open secret-scanning alerts at reconciliation time;
+- fork-PR workflow approval policy: `all_external_contributors`;
+- 32 active Actions artifacts remain build evidence;
+- exact `c1eb195f` candidate/evidence/signing-input artifacts remain active until 2026-10-02;
+- all 69 historical Actions run logs were scanned after publication with zero Gitleaks findings.
+
+The pre-public snapshots above remain historical receipts and are intentionally not rewritten. No post-public setting change altered the frozen preview tag target, source candidate, ZIP bytes, hashes, release notes, or release identity.
+
 ## Remaining gates before SignPath application
 
 Hard/publication gates:
-1. repository visibility change under separate authority;
-2. anonymous verification of public license/policy/security/install links;
-3. GitHub MFA confirmation;
-4. creation/publication of the selected preview tag/release under separate authority if the pre-existing-release path is used;
-5. refresh application facts from the live public repository/release.
+1. GitHub MFA confirmation;
+2. creation/publication of the selected preview tag/release under separate authority;
+3. refresh application facts from the live public release/download URL.
 
 Provider-discretion risks:
 - SignPath publishes no numeric executable-project reputation threshold;
-- WAG has minimal public reputation because the repository is still private;
+- WAG's public history is still very young;
 - Node SEA ownership treatment remains a provider-specific question and should be asked neutrally during eligibility review.
 
 Do not manufacture stars, downloads, contributors, public age, or provider acceptance evidence.

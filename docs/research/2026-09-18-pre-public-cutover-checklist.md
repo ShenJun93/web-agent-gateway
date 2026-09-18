@@ -2,6 +2,13 @@
 
 Status: execution checklist only. It does not authorize Git push/merge, repository settings changes, version selection, release creation, or SignPath submission.
 
+Post-public completion note — 2026-09-19:
+- the authorized repository metadata/visibility cutover is complete and the repository is public at https://github.com/ShenJun93/web-agent-gateway;
+- anonymous access to the repository, license, public policy/security/install docs, Actions page, and Releases page was verified;
+- immutable releases, private vulnerability reporting, Dependabot alerts, secret scanning, repository push protection, stricter fork-PR approval, and a minimal `main` history-protection ruleset are enabled;
+- Git tags and GitHub Releases remain absent;
+- the sections below labeled as current/pre-public facts are historical cutover snapshots and are intentionally preserved rather than rewritten.
+
 ## Current facts
 
 Repository:
