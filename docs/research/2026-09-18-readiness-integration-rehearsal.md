@@ -180,3 +180,29 @@ This rehearsal does not authorize:
 - changing GitHub visibility/settings;
 - creating tags/releases;
 - SignPath submission/signing.
+
+## Post-rehearsal delta
+
+The initial fast-forward rehearsal was performed at `d67fbee`, where the Browser Inspect -> readiness delta was 14 commits.
+
+Subsequent local-only readiness commits are:
+
+```text
+204c969 docs: rehearse readiness integration
+2a3d145 fix: bind release readiness to candidate evidence
+8bcd249 docs: record candidate evidence gate
+fda6a3f fix: align native host CI trigger coverage
+```
+
+At `fda6a3f` the current linear counts are:
+
+```text
+Browser Inspect v2 e19d577 -> readiness = 18 commits
+main 7950151 -> readiness                 = 56 commits
+```
+
+None of these four commits rewrites ancestry. The fast-forward topology conclusion therefore remains valid as long as the target branches have not moved before actual integration.
+
+Additional implementation review priority:
+- `2a3d145`: release readiness now requires exact unsigned-candidate receipt + EXE evidence rather than a hardcoded/operator-supplied source SHA;
+- `fda6a3f`: main-push workflow paths now cover every `NATIVE_HOST_BUILD_INPUTS` root, including `.gitattributes` and all `src/**`.
