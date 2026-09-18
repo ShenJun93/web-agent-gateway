@@ -61,3 +61,21 @@ tunnel-client run --profile web-agent-gateway
 ```
 
 Those tunnel/account steps are a post-upgrade acceptance gate, not local pre-upgrade evidence. Do not commit owner tokens, control-plane API keys, tunnel credentials, or machine-specific private config files.
+
+## Windows native host
+The Windows native host is currently a development/pre-release component. Installation changes one per-user Chromium Native Messaging registration and stores exact-owned files under `%LOCALAPPDATA%`.
+
+See `docs/native-host-installation.md` for the system-change warning, preparation, verification, and ownership-safe removal procedure.
+
+## Code signing policy
+See `docs/policies/code-signing-policy.md` for signing scope, manual approval, provenance, official-release rules, and the current pre-SignPath status.
+
+## Security and privacy
+Security reports: `SECURITY.md`.
+
+Privacy behavior: `docs/policies/privacy.md`.
+
+## License
+Web Agent Gateway is licensed under the Apache License 2.0. See `LICENSE`.
+
+The Windows native-host executable incorporates Node.js and bundled MIT-licensed JavaScript dependencies. See `THIRD_PARTY_NOTICES.md` and `third_party/native-host/` for exact tracked license material.

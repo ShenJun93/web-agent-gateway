@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { normalizeNativeHostPeMetadata } from './native-host-pe-metadata.js';
 
 const SEA_FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -31,6 +32,8 @@ async function main(): Promise<void> {
   if (process.platform !== 'win32') throw new Error('Browser native-host artifact v1 requires Windows');
   const outputDir = outputDirectory(process.argv.slice(2));
   await mkdir(outputDir, { recursive: true });
+  const packageJson = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8')) as { version?: unknown };
+  if (typeof packageJson.version !== 'string') throw new Error('package.json version is required');
 
   const bundlePath = join(outputDir, 'wag-native-host.cjs');
   const configPath = join(outputDir, 'sea-config.json');
@@ -63,6 +66,7 @@ async function main(): Promise<void> {
     postjectCli, executablePath, 'NODE_SEA_BLOB', blobPath,
     '--sentinel-fuse', SEA_FUSE,
   ], outputDir);
+  await normalizeNativeHostPeMetadata(executablePath, packageJson.version);
 
   process.stdout.write(`${executablePath}\n`);
 }

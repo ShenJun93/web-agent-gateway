@@ -10,6 +10,13 @@ on:
       - 'browser/native-host/**'
       - 'src/browser-adapter/**'
       - 'scripts/build-native-host.ts'
+      - 'scripts/native-host-pe-metadata.ts'
+      - 'scripts/verify-native-host-version-info.ps1'
+      - 'scripts/verify-native-host-license-compliance.ts'
+      - 'browser/native-host/third-party-components.json'
+      - 'third_party/native-host/**'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
       - 'scripts/package-native-host-distribution.ts'
       - 'scripts/verify-native-host-distribution.ts'
       - 'package.json'
@@ -37,6 +44,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify native-host license compliance
+        run: npm run verify:native-host-licenses
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -53,10 +64,17 @@ jobs:
           test/native-messaging-framing.test.ts
           test/native-host.test.ts
           test/native-host-manifest.test.ts
+          test/native-host-pe-metadata.test.ts
           test/browser-extension-core.test.ts
 
       - name: Build publish candidate once
         run: npm run build:native-host -- --output "${{ github.workspace }}\artifacts\native-host-build"
+
+      - name: Verify publish candidate version info
+        run: >-
+          powershell -NoProfile -NonInteractive -File scripts/verify-native-host-version-info.ps1
+          -ExecutablePath "${{ github.workspace }}\artifacts\native-host-build\wag-native-host.exe"
+          -PackageJsonPath "${{ github.workspace }}\package.json"
 
       - name: Test exact publish candidate
         env:

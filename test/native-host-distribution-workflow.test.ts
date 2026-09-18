@@ -10,6 +10,13 @@ const expectedPushPaths = [
   'browser/native-host/**',
   'src/browser-adapter/**',
   'scripts/build-native-host.ts',
+  'scripts/native-host-pe-metadata.ts',
+  'scripts/verify-native-host-version-info.ps1',
+  'scripts/verify-native-host-license-compliance.ts',
+  'browser/native-host/third-party-components.json',
+  'third_party/native-host/**',
+  'LICENSE',
+  'THIRD_PARTY_NOTICES.md',
   'scripts/package-native-host-distribution.ts',
   'scripts/verify-native-host-distribution.ts',
   'package.json',
@@ -32,6 +39,8 @@ test('native host workflow has narrow triggers permissions runner and immutable 
   assert.match(workflow, /persist-credentials:\s*false/);
   assert.match(workflow, /node-version:\s*['"]24\.20\.0['"]/);
   assert.match(workflow, /package-manager-cache:\s*false/);
+  assert.match(workflow, /run:\s*npm run verify:native-host-licenses/);
+  assert.match(workflow, /scripts\/verify-native-host-version-info\.ps1/);
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
 

@@ -4,11 +4,12 @@ import { copyFile, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } fro
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 
-export const NATIVE_HOST_DISTRIBUTION_SCHEMA_VERSION = 1 as const;
+export const NATIVE_HOST_DISTRIBUTION_SCHEMA_VERSION = 2 as const;
+export const NATIVE_HOST_LEGACY_DISTRIBUTION_SCHEMA_VERSION = 1 as const;
 export const NATIVE_HOST_FILENAME = 'wag-native-host.exe' as const;
 export const NATIVE_HOST_APPLICATION_NAME = 'com.openai.web_agent_gateway' as const;
 export const BROWSER_ADAPTER_EXTENSION_ID = 'nnhhhppkpogkedpjnijeagcbfjaoogec' as const;
-export const NATIVE_HOST_REQUIRED_GATES = [
+export const NATIVE_HOST_LEGACY_REQUIRED_GATES = [
   'typecheck',
   'build',
   'browser-adapter-protocol',
@@ -19,12 +20,24 @@ export const NATIVE_HOST_REQUIRED_GATES = [
   'native-host-artifact',
 ] as const;
 
+export const NATIVE_HOST_REQUIRED_GATES = [
+  'native-host-license-compliance',
+  'typecheck',
+  'build',
+  'browser-adapter-protocol',
+  'native-messaging-framing',
+  'native-host-protocol',
+  'native-host-manifest',
+  'browser-extension-identity',
+  'native-host-version-info',
+  'native-host-artifact',
+] as const;
+
 const sha40 = z.string().regex(/^[0-9a-f]{40}$/);
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const boundedText = z.string().min(1).max(256);
 const repository = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).max(200);
-const receiptSchema = z.object({
-  schemaVersion: z.literal(NATIVE_HOST_DISTRIBUTION_SCHEMA_VERSION),
+const commonReceiptFields = {
   repository,
   sourceSha: sha40,
   sourceRef: z.string().regex(/^refs\/[A-Za-z0-9._\/-]{1,240}$/),
@@ -44,11 +57,27 @@ const receiptSchema = z.object({
   }).strict(),
   nativeApplicationName: z.literal(NATIVE_HOST_APPLICATION_NAME),
   extensionId: z.literal(BROWSER_ADAPTER_EXTENSION_ID),
+} as const;
+
+const legacyReceiptSchema = z.object({
+  schemaVersion: z.literal(NATIVE_HOST_LEGACY_DISTRIBUTION_SCHEMA_VERSION),
+  ...commonReceiptFields,
+  verificationGates: z.tuple(NATIVE_HOST_LEGACY_REQUIRED_GATES.map((gate) => z.literal(gate)) as [
+    z.ZodLiteral<string>,
+    ...z.ZodLiteral<string>[],
+  ]),
+}).strict();
+
+const currentReceiptSchema = z.object({
+  schemaVersion: z.literal(NATIVE_HOST_DISTRIBUTION_SCHEMA_VERSION),
+  ...commonReceiptFields,
   verificationGates: z.tuple(NATIVE_HOST_REQUIRED_GATES.map((gate) => z.literal(gate)) as [
     z.ZodLiteral<string>,
     ...z.ZodLiteral<string>[],
   ]),
 }).strict();
+
+const receiptSchema = z.discriminatedUnion('schemaVersion', [legacyReceiptSchema, currentReceiptSchema]);
 
 export type NativeHostBuildReceipt = z.infer<typeof receiptSchema>;
 
