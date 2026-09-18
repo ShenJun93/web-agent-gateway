@@ -104,7 +104,7 @@ test('unsigned candidate allows docs/test-only later commits and rejects signed 
 
 test('unsigned candidate production CLI records a real unsigned WAG SEA from the clean repository', async (t) => {
   if (process.platform !== 'win32') return t.skip('Windows native-host candidate');
-  const temp = await mkdtemp(join(tmpdir(), 'wag-candidate-e2e-'));
+  const temp = await mkdtemp(join(root, '.wag-candidate-e2e-'));
   try {
     const buildDir = join(temp, 'build');
     const tsxCli = fileURLToPath(import.meta.resolve('tsx/cli'));
