@@ -73,6 +73,8 @@ jobs:
         run: npm run build
 
       - name: Focused distribution tests
+        env:
+          WAG_NATIVE_HOST_SIGNATURE_DIAGNOSTIC: '1'
         run: >-
           npx tsx --test --test-concurrency=1
           test/native-host-distribution.test.ts

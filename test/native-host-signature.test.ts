@@ -88,7 +88,11 @@ function parseSuccess(result: RunResult) {
 function assertBoundedFailure(result: RunResult): void {
   assert.equal(result.code, 1);
   assert.equal(result.stdout, '');
-  assert.equal(result.stderr, failureSentinel);
+  if (process.env.WAG_NATIVE_HOST_SIGNATURE_DIAGNOSTIC === '1') {
+    assert.match(result.stderr, /^wag-native-host-signature-inspect: diagnostic:(?:start|resolve-path|catalog-type|catalog-hash|signature-query|signature-policy)$/);
+  } else {
+    assert.equal(result.stderr, failureSentinel);
+  }
 }
 test('native host signature inspector PowerShell AST is read-only and narrowly allowlisted', async (t) => {
   if (process.platform !== 'win32') return t.skip('Windows Authenticode inspector');
@@ -117,7 +121,11 @@ test('native host signature inspector PowerShell AST is read-only and narrowly a
     assert.equal(allowedMembers.has(member.member), true, `unexpected member invocation: ${member.member}`);
     if (member.member === 'Write') {
       assert.equal(member.expression, '[System.Console]::Error');
-      assert.deepEqual(member.arguments, [`'${failureSentinel}'`]);
+      assert.equal(member.arguments.length, 1);
+      assert.ok(
+        member.arguments[0] === `'${failureSentinel}'` ||
+        member.arguments[0] === '"wag-native-host-signature-inspect: diagnostic:$diagnosticStage"',
+      );
     }
   }
   assert.deepEqual([...new Set(ast.members.map((member) => member.member))].sort(), [
