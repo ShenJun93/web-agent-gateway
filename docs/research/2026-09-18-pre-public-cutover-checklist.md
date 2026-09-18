@@ -40,15 +40,15 @@ Refresh sources:
 - https://github.com/electron/rcedit/issues/184
 - https://git-scm.com/docs/gitattributes
 
-Post-merge evidence reconciliation — 2026-09-18:
-- remote `main` is `b1576de8e1d74ef6894621d53df9b0309dd6685f`; repository visibility remains private;
-- Git tags: none; GitHub Releases: none; immutable releases remain disabled;
-- 32 unexpired Actions artifacts are present; the exact `c1eb195f` candidate/evidence/signing-input artifacts still expire on 2026-10-02;
-- Gitleaks 8.30.1 scanned 258 commits from exact current `origin/main` and reported five `generic-api-key` detections;
+SHA-anchored evidence reconciliation — 2026-09-18:
+- audit baseline `b1576de8e1d74ef6894621d53df9b0309dd6685f`: repository visibility private; Git tags none; GitHub Releases none; immutable releases disabled; 32 unexpired Actions artifacts;
+- Gitleaks 8.30.1 on exact `b1576de8e1d74ef6894621d53df9b0309dd6685f` scanned 258 commits and reported five `generic-api-key` detections;
+- post-merge audit anchor `31e76668139e4cc5c742520482fe6743bd91f7e8`: a fresh full clone and all-ref mirror scan each scanned 259 commits and reported the same five detections;
+- all 38 remote branch heads observed at that audit were ancestors of `31e76668139e4cc5c742520482fe6743bd91f7e8`, so no branch-only commit history added a separate exposure surface;
 - triage: three detections are the same public Authenticode SHA-256 repeated in preview release metadata/tests, one is a historical Authenticode SHA-256, and one is the stable Chromium extension public key;
-- no credential or private-key finding was identified, so this count increase is scanner/evidence drift rather than a new secret-exposure blocker.
+- no credential or private-key finding was identified.
 
-The earlier 13:00 snapshot above remains historical evidence and is intentionally not rewritten.
+These are SHA-anchored audit snapshots, not dynamic claims about whatever commit is current later. The earlier 13:00 snapshot above remains historical evidence and is intentionally not rewritten.
 
 Checkout-normalization implementation checkpoint:
 - `eb5393ff2cb2e07e195f2851be76b73b98aa0038`
