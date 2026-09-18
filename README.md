@@ -31,9 +31,11 @@ COMPOSE, do not fork wholesale:
 - Our code: thin gateway, policy, semantic tools, telemetry, compatibility.
 
 ## Current accepted state
-Trusted Caller Context v1 and the internal Durable Verify Job Core v1 have passed their acceptance gates. Trusted Adapter Admission v1 has also passed the successor distribution, installation, and supported-browser-host gates for the read-only Browser Adapter v1 path.
+Trusted Caller Context v1 and the internal Durable Verify Job Core v1 have passed their acceptance gates. Trusted Adapter Admission v1 remains the authority boundary for browser callers, and Browser Adapter v1 is preserved as historical three-tool evidence.
 
-Browser Adapter v1 remains server-side limited to exactly `health`, `workspace.open`, and `file.read`. Durable verify projection, mutation, public jobs, process/PTY, Git writes, and browser mutation remain unauthorized unless a later reviewed gate explicitly enables them.
+The current read-only browser profile is Browser Inspect v2. It uses a distinct adapter identity/protocol revision and exposes exactly `health`, `workspace.open`, `repo.search`, `repo.snapshot`, and `file.read`. It does not expose `verify.run`, mutation, public jobs, process/PTY, Git writes, browser mutation, or generic forwarding.
+
+The Windows native-host pipeline now records strict unsigned-candidate provenance, normalizes WAG-owned PE VersionInfo before candidate recording, verifies runtime/license inputs, and independently verifies signed-candidate Authenticode continuity. WAG has not yet published or accepted a trusted signed native-host release; Windows application-control acceptance remains gated on an externally signed candidate that passes the existing verifier without relaxation.
 
 The MCP v2 compatibility spike passed for the core/dual-era path, and the later MCP SDK v2 Production Migration v1 moved production to the split v2 TypeScript SDK packages without separately opting into protocol `2026-07-28`. Current-market re-benchmarking and thin-gateway host conformance narrowed WAG to its provider-neutral trust/capability role. Browser Admission HTTP Mode Split v1 removed the unreachable browser generic bearer, the historical `file.patch` protocol was retired after durable-mutation acceptance, MCP v1 experimental Tasks were retired after revalidation, and the remaining generic bearer HTTP compatibility mode was subsequently removed after its consumers were reduced to historical benchmark/spike harnesses. Current HTTP remains Browser Admission only; Business/private MCP remains stdio. Feature and authority growth remain frozen by default pending new evidence.
 

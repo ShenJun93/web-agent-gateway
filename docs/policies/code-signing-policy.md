@@ -2,9 +2,9 @@
 
 ## Current status
 
-Web Agent Gateway is preparing a public Windows code-signing path. No current WAG release should be treated as Authenticode-trusted unless its release notes explicitly say otherwise and the signature verifies independently.
+Web Agent Gateway is preparing an application to SignPath Foundation for free Windows code signing. No current WAG release should be treated as Authenticode-trusted unless its release notes explicitly say otherwise and the signature verifies independently.
 
-The intended zero-cost signing provider is SignPath Foundation. This document does not claim SignPath acceptance before that acceptance exists.
+If the application is accepted, the project will use the program-required attribution: **Free code signing provided by SignPath.io, certificate by SignPath Foundation.** This statement describes the intended signing arrangement and does not claim that WAG has already been accepted.
 
 ## Signing scope
 
@@ -14,7 +14,11 @@ The Windows native-host signing scope is the exact release candidate `wag-native
 
 ## Roles and approval
 
-The project maintainer acts as Author and release Approver unless a future governance change assigns those responsibilities separately.
+Current sole-maintainer role assignment:
+
+- Author/committer: `ShenJun93`.
+- Reviewer for non-committer contributions: `ShenJun93`; external changes require maintainer review before merge.
+- Approver for signing requests: `ShenJun93`.
 
 Every signing request requires an explicit manual approval event. A Git push, merge, CI success, tag, or artifact upload does not itself authorize signing.
 
