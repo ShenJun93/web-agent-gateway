@@ -8,6 +8,7 @@ Repository:
 - `ShenJun93/web-agent-gateway`
 - visibility: private
 - default branch: `main`
+- live remote branch inventory relevant to this integration: `main` only; `feat/browser-inspect-v2` and `docs/signpath-foundation-readiness-v1` are currently local-only
 - GitHub repository description: unset
 - homepage: unset
 - topics: none
