@@ -186,13 +186,14 @@ As of 2026-09-18:
 - GitHub Releases: none;
 - repository rulesets: none;
 - immutable releases: disabled (`enabled: false`, `enforced_by_owner: false` from the read-only repository endpoint);
-- 29 unexpired Actions artifacts exist in the refreshed pre-public audit, including the exact `0.1.0` candidate-evidence, signing-input, and distribution artifacts;
+- 32 unexpired Actions artifacts exist in the latest pre-public audit, including the exact `0.1.0` candidate-evidence, signing-input, and distribution artifacts;
 - the current `0.1.0` candidate artifacts expire on 2026-10-02; older historical artifacts expire earlier;
+- Gitleaks 8.30.1 scanned 258 commits from exact current `origin/main` and reported five `generic-api-key` detections, all triaged as public/non-secret provenance material or the stable Chromium extension public key; no credential/private-key finding was identified;
 - repository Actions retention setting is 90 days, while these uploaded artifacts carry shorter per-artifact expiry.
 
 GitHub documents that private-to-public conversion makes code and Actions history/logs visible to everyone. Artifact metadata for public repositories can be listed without authentication; downloading workflow artifacts uses the artifact download endpoint and authentication/Actions access rules documented by GitHub.
 
-The 29 current/historical Actions artifacts are build evidence, not release assets, and the repository/source will itself become public. After the credential/history audit found no secret material, their remaining risk is primarily user confusion and accidental treatment as supported binaries, not confidentiality. Therefore artifact expiry/deletion is a **preferred pre-public cleanup**, not an independent hard publication blocker, provided the README and code-signing policy continue to state that Actions artifacts are not supported releases and no current release is Authenticode-trusted.
+The 32 current/historical Actions artifacts are build evidence, not release assets, and the repository/source will itself become public. After the credential/history audit found no secret material, their remaining risk is primarily user confusion and accidental treatment as supported binaries, not confidentiality. Therefore artifact expiry/deletion is a **preferred pre-public cleanup**, not an independent hard publication blocker, provided the README and code-signing policy continue to state that Actions artifacts are not supported releases and no current release is Authenticode-trusted.
 
 Official GitHub sources:
 - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility
