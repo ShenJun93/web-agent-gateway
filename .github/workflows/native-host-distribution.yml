@@ -49,6 +49,17 @@ jobs:
         shell: powershell
         run: powershell.exe -NoLogo -NoProfile -NonInteractive -File scripts/diagnose-native-host-runner.ps1
 
+      - name: Diagnose native-host signature inspector
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          WAG_NATIVE_HOST_SIGNATURE_DIAGNOSTIC: '1'
+        run: >-
+          powershell.exe -NoLogo -NoProfile -NonInteractive
+          -File scripts/inspect-native-host-signature.ps1
+          -ExecutablePath "$env:WINDIR\System32\notepad.exe"
+          -ExpectedState Valid
+
       - name: Install dependencies
         run: npm ci
 
