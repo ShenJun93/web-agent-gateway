@@ -1,1 +1,2 @@
 * text=auto eol=lf
+third_party/native-host/** whitespace=-trailing-space,-space-before-tab

@@ -18,8 +18,31 @@ Repository:
 - immutable releases: disabled
 - Pages: not configured
 
+Fresh review refresh — 2026-09-18 13:00 +07:00:
+- live canonical `main` remains `7950151` and matches `origin/main`;
+- readiness remains a strict descendant of Browser Inspect v2 with no merge conflict;
+- GitHub remains private with no releases, no rulesets, no Actions secrets, and no Actions variables;
+- 32 remote branches remain; only `docs/dc-replacement-live-benchmark-a1` is not merged into `origin/main`, and it is already an ancestor of readiness;
+- 23 historical Actions artifacts remain, expiring from 2026-09-27 through 2026-09-30;
+- Gitleaks 8.30.1 scanned 240 reachable commits and reported two generic-key candidates; manual triage identified the stable Chromium extension public key and a provenance hash, not credentials/private keys;
+- `npm audit` reports zero known vulnerabilities for both production-only and complete dependency sets;
+- current SignPath Foundation terms still require an existing released form, OSS licensing, documented policy/privacy/system changes/uninstall, MFA, signing roles, verifiable build provenance, and manual signing approval;
+- current SignPath GitHub connector documentation requires a GitHub-hosted artifact uploaded with `actions/upload-artifact` v4+ before submission; WAG currently pins v7.0.1;
+- Node's current v24 SEA documentation still defines copy/remove-signature/inject/sign ordering, so WAG's byte order remains aligned with upstream;
+- current `resedit` 3.1.0 remains the maintained programmatic replacement recommended by the now-archived Electron `rcedit` project, so no PE-metadata dependency reversal is justified by this refresh;
+- SignPath's "own binaries" interpretation for an application built by injecting WAG code into the official Node executable remains a provider-specific question and is not promoted to PASS.
+
+Refresh sources:
+- https://signpath.org/terms.html
+- https://docs.signpath.io/trusted-build-systems/github
+- https://nodejs.org/docs/latest-v24.x/api/single-executable-applications.html
+- https://www.npmjs.com/package/resedit
+- https://github.com/electron/rcedit/issues/184
+- https://git-scm.com/docs/gitattributes
+
 Checkout-normalization implementation checkpoint:
 - `eb5393ff2cb2e07e195f2851be76b73b98aa0038`
+- vendored third-party license files retain upstream bytes; path-specific Git whitespace rules suppress only `trailing-space` / `space-before-tab` diagnostics for that license tree so range `git diff --check` can remain meaningful without altering license text.
 
 Current Browser Inspect v2 base:
 - `e19d57789b03dae36901c633482a89714eb52e11`
