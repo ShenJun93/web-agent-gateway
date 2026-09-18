@@ -162,8 +162,9 @@ Recommended candidate:
 - unsigned preview tag: `v0.1.0-preview.1`
 - future signed stable tag: `v0.1.0`
 
-Not selected:
-- `0.1.0` remains a recommendation until explicitly authorized.
+Selection status:
+- `0.1.0` was explicitly selected on 2026-09-18 for the release-candidate branch; adoption on `main` remains pending PR merge.
+- no preview tag or GitHub Release is selected or authorized by the version decision.
 
 The `e296da1` executable candidate is already stale for release continuity after the `eb5393f` checkout-normalization hardening. Selecting `0.1.0` additionally modifies `package.json`, another native-host build input, and therefore requires:
 1. version change;
@@ -253,7 +254,6 @@ Prefer:
 ## Explicit execution stop points
 
 Each item below still requires explicit authority:
-- select `0.1.0`;
 - integrate/merge Browser Inspect/readiness branches;
 - push;
 - delete remote branches or Actions artifacts;
