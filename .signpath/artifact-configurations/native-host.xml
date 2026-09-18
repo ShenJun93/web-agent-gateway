@@ -1,0 +1,15 @@
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="windowsVersion" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file
+      path="wag-native-host.exe"
+      product-name="Web Agent Gateway"
+      product-version="${windowsVersion}"
+      file-version="${windowsVersion}"
+      original-filename="wag-native-host.exe">
+      <authenticode-sign hash-algorithm="sha256" />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
