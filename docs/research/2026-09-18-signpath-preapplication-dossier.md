@@ -91,6 +91,8 @@ Current roles:
 - Reviewer for non-committer contributions: `ShenJun93`
 - Approver for signing requests: `ShenJun93`
 
+External contribution expectations are documented in `CONTRIBUTING.md`. SignPath's terms allow trusted Authors to modify source without additional review; the mandatory review rule applies to changes proposed by non-committers. WAG therefore does not invent a second maintainer or self-review requirement.
+
 Signing-request rule:
 - every signing request requires a separate manual approval event;
 - push, merge, CI success, tag, or artifact upload does not itself approve signing.
@@ -179,7 +181,9 @@ As of 2026-09-18:
 - those artifacts expire between 2026-09-27 and 2026-09-30;
 - repository Actions retention setting is 90 days, while these uploaded artifacts carry shorter per-artifact expiry.
 
-GitHub documents that private-to-public conversion makes code and Actions history/logs visible to everyone. GitHub's artifact API is readable without authentication for public resources. Therefore the publication gate remains blocked until the old unsigned artifacts have expired or their deletion is explicitly authorized and completed.
+GitHub documents that private-to-public conversion makes code and Actions history/logs visible to everyone. Artifact metadata for public repositories can be listed without authentication; downloading workflow artifacts uses the artifact download endpoint and authentication/Actions access rules documented by GitHub.
+
+The 23 historical artifacts are unsigned build evidence, not release assets, and the repository/source will itself become public. After the credential/history audit found no secret material, their remaining risk is primarily user confusion and accidental treatment as supported binaries, not confidentiality. Therefore artifact expiry/deletion is a **preferred pre-public cleanup**, not an independent hard publication blocker, provided the README and code-signing policy continue to state that Actions artifacts are not supported releases and no current release is Authenticode-trusted.
 
 Official GitHub sources:
 - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility
@@ -234,11 +238,12 @@ Do not submit yet.
 
 Submit only after:
 1. readiness commit(s) are deliberately merged/pushed;
-2. historical unsigned artifact exposure gate is cleared;
-3. repository is public and public docs/license links resolve;
-4. a real release/download URL exists for the Windows artifact form;
-5. MFA requirement is explicitly confirmed;
-6. application facts are refreshed from live GitHub evidence.
+2. repository is public and public docs/license links resolve;
+3. a real release/download URL exists for the Windows artifact form;
+4. MFA requirement is explicitly confirmed;
+5. application facts are refreshed from live GitHub evidence.
+
+Historical unsigned Actions artifacts should preferably be expired or explicitly deleted before publication, but they are no longer treated as a hard eligibility blocker after the exposure audit. If publication happens while they still exist, keep them clearly non-release and unsupported.
 
 Because SignPath requires a certain verifiable reputation for executable applications but publishes no numeric threshold, application acceptance remains discretionary. If the project is declined for insufficient public history, continue ordinary public development/releases and reapply later rather than manufacturing stars, downloads, contributors, or activity.
 

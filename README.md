@@ -72,6 +72,9 @@ See `docs/native-host-installation.md` for the system-change warning, preparatio
 ## Code signing policy
 See `docs/policies/code-signing-policy.md` for signing scope, manual approval, provenance, official-release rules, and the current pre-SignPath status.
 
+## Contributing
+External changes require maintainer review. See `CONTRIBUTING.md` for contribution, verification, security, and code-signing expectations.
+
 ## Security and privacy
 Security reports: `SECURITY.md`.
 

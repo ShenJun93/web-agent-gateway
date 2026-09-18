@@ -150,7 +150,7 @@ Immediately before changing visibility:
 2. re-run high-confidence secret/private-key scans across all reachable remote refs;
 3. review outstanding remote branches for material not intended for publication;
 4. inspect current Actions run/artifact inventory;
-5. ensure obsolete unsigned native-host artifacts are either expired or separately authorized for deletion;
+5. inventory obsolete unsigned native-host artifacts and confirm they contain no secret/private material; prefer expiry or separately authorized deletion before publication, but do not treat non-release unsigned build artifacts as an independent hard blocker after a clean exposure audit;
 6. confirm license/policy gates are merged into the exact branch that will become public;
 7. confirm no real credentials exist in Actions variables/logs/artifacts.
 GitHub notes that private-to-public conversion exposes code to everyone, permits public forking, and makes Actions history/logs visible. Treat publication as effectively irreversible disclosure even though visibility can technically be changed again.
@@ -177,9 +177,11 @@ After publication:
 
 Current historical Actions artifacts are unsigned distribution artifacts, not supported signed releases.
 
-Before publication choose one explicitly:
+Preferred pre-public cleanup:
 - wait for retention expiry; or
 - separately authorize deletion of obsolete artifacts/runs.
+
+After a clean credential/history audit, remaining historical unsigned artifacts are not themselves a hard publication blocker because they are build evidence derived from source that will become public. Their primary risk is user confusion. If publication precedes expiry, README/release policy must continue to state that Actions artifacts are unsupported and not Authenticode-trusted.
 
 Do not silently re-label or promote historical unsigned CI artifacts as releases.
 
@@ -195,6 +197,8 @@ The public release should use an outer package containing at least:
 - release/provenance metadata needed to bind the outer package to the verified inner receipt.
 
 The outer package must not cause the existing inner verifier to accept extra files. The installer can continue consuming only the extracted verified inner distribution directory.
+
+SignPath supports a ZIP root artifact with nested `pe-file` signing, but WAG must **not** submit its already-finalized three-file distribution for nested signing. Authenticode changes `wag-native-host.exe` bytes, which would invalidate the adjacent checksum and distribution receipt. The signing input therefore remains a separate pre-sign candidate artifact. Only after the returned executable passes WAG's signed-candidate verifier may the pipeline create a new final inner distribution whose checksum/receipt bind the signed executable, then wrap that verified distribution in the outer release ZIP.
 
 The exact first version/tag is a product decision and remains unauthorized.
 
@@ -288,6 +292,25 @@ Build verifiable reputation through normal project evidence:
 
 SignPath's accepted AMIGOpy project demonstrates that single-digit stars do not automatically prevent acceptance, but WAG's very young age remains a legitimate discretionary risk.
 
+## Minimal GitHub protection posture
+
+SignPath's OSS terms distinguish Authors from external contributors: trusted Authors may modify source without additional review, while non-committer contributions require review. A solo-maintainer project therefore must not fabricate a second reviewer or impose an impossible self-approval workflow merely for appearance.
+
+For WAG, the minimal compatible public GitHub posture is:
+- keep `main` free of force pushes;
+- prevent deletion of `main`;
+- keep external pull requests subject to maintainer review as documented in `CONTRIBUTING.md`;
+- do not require a second-person approval for maintainer-authored changes unless another trusted maintainer actually exists;
+- keep release signing restricted by SignPath origin verification to `main` (or a future explicitly approved `release/*` branch);
+- require GitHub-hosted runners for every job leading to an OSS signing request;
+- do not allow untrusted PR jobs to submit signing requests.
+
+GitHub branch/tag rulesets are available on public repositories even on GitHub Free. A future active `main` ruleset with non-fast-forward/force-push protection and deletion protection is useful defense-in-depth, but it is not a prerequisite for the current local readiness checkpoint and is not authorized by this design alone.
+
+Do not add a SignPath `pull_request` ruleset constraint with a non-zero approving-review count while WAG has only one trusted maintainer; that would either deadlock releases or require a bypass that misrepresents the actual governance model.
+
+SignPath origin verification itself can bind repository URL, branch, commit, GitHub workflow origin, artifact upload, and GitHub-hosted runner provenance without inventing a second reviewer.
+
 ## Downstream signing integration gate
 
 Only after SignPath accepts the project:
@@ -295,10 +318,15 @@ Only after SignPath accepts the project:
 2. enumerate exact SignPath/GitHub permissions and credential/federation model;
 3. preserve `contents: read` and add only strictly required signing permissions;
 4. keep PR jobs incapable of signing;
-5. bind signing to exact release source and artifact;
-6. require manual provider approval;
-7. verify the returned binary with existing WAG verifier;
-8. keep signing evidence free of credentials/local machine paths.
+5. build and verify the exact unsigned candidate;
+6. record its unsigned-candidate receipt before any signing mutation;
+7. upload the candidate as the GitHub workflow artifact used for the SignPath request (direct artifact or GitHub-generated ZIP, according to the final SignPath action mode);
+8. require SignPath origin verification for the exact repository/branch/commit and GitHub-hosted runner lineage;
+9. require manual provider approval for every release signing request;
+10. download/extract the returned signed executable and verify it with WAG's existing signed-candidate verifier;
+11. only after verification, package a fresh inner distribution whose checksum/receipt bind the signed bytes;
+12. verify that inner distribution and then create the outer release ZIP with project/runtime licenses and public installation/privacy/signing-policy documentation;
+13. keep signing evidence free of credentials/local machine paths.
 
 No step in this design grants that authority.
 ## Acceptance criteria for readiness v1
