@@ -45,6 +45,10 @@ jobs:
           node-version: '24.20.0'
           package-manager-cache: false
 
+      - name: Diagnose Windows trust primitives
+        shell: powershell
+        run: powershell.exe -NoLogo -NoProfile -NonInteractive -File scripts/diagnose-native-host-runner.ps1
+
       - name: Install dependencies
         run: npm ci
 
