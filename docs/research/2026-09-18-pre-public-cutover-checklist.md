@@ -200,6 +200,7 @@ If any public content is wrong, correct content rather than toggling visibility 
 Do not create the preview release until:
 - product version is explicitly selected;
 - fresh candidate/receipt exists;
+- `scripts/check-pre-public-readiness.ts` passes with the exact `--candidate-receipt` and `--candidate-exe` evidence;
 - deterministic outer ZIP is built from a verified inner distribution;
 - release notes identify it as unsigned;
 - ZIP/executable hashes are recorded;
