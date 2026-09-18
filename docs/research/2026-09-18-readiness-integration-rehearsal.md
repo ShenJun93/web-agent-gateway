@@ -211,3 +211,18 @@ Additional implementation review priority:
 - `fda6a3f`: main-push workflow paths now cover every `NATIVE_HOST_BUILD_INPUTS` root, including `.gitattributes` and all `src/**`;
 - `751d40e`: main-push workflow records an unsigned candidate and uploads a dedicated EXE-only signing-input artifact, but does not submit it to any signer;
 - `b98b3b7`: local SignPath artifact-configuration draft restricts the exact WAG PE and SHA-256 Authenticode; provider IDs/credentials remain absent.
+
+## Browser Inspect v2 gate refresh — 2026-09-18 13:24 +07:00
+
+Live Browser Inspect remains clean at `e19d577`, but its focused `test/browser-adapter.acceptance.test.ts` currently fails before any application-control decision because the fixture still sends Browser wire protocol `version: 1` after production moved to protocol v2.
+
+A temp-clone rehearsal changed only that test to use `BROWSER_ADAPTER_PROTOCOL_VERSION`, matching the test correction already present in readiness commit `e296da1`. On exact Browser source `e19d577`, the corrected acceptance test passed `1/1` on the current Windows host.
+
+This changes the integration review interpretation:
+- `e296da1` contains one Browser Inspect acceptance-fixture correction in addition to signing-readiness work;
+- current `e19d577` cannot be described as acceptance-green without that correction;
+- the correction can be reviewed independently from PE metadata/license/release changes even though it currently lives in the readiness descendant;
+- a passing unsigned execution on the current host is not deterministic signing evidence and does not supersede the approved Signed Native Host Candidate v1 trust contract;
+- no Browser branch mutation or readiness integration was performed by this refresh.
+
+Therefore the future gate should first resolve the stale v1 acceptance fixture through an explicitly reviewed Browser-line change or as an explicitly reviewed part of readiness integration, then evaluate the signed-candidate trust requirement separately.

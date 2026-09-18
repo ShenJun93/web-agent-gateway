@@ -42,7 +42,7 @@ Refresh sources:
 
 Checkout-normalization implementation checkpoint:
 - `eb5393ff2cb2e07e195f2851be76b73b98aa0038`
-- vendored third-party license files retain upstream bytes; path-specific Git whitespace rules suppress only `trailing-space` / `space-before-tab` diagnostics for that license tree so range `git diff --check` can remain meaningful without altering license text.
+- vendored third-party license files retain upstream bytes; path-specific Git whitespace rules suppress only the exact upstream whitespace diagnostics observed in the Node and `pkce-challenge` license files so range `git diff --check` remains meaningful without altering license text.
 
 Current Browser Inspect v2 base:
 - `e19d57789b03dae36901c633482a89714eb52e11`
@@ -76,7 +76,7 @@ Do not bypass the Browser Inspect v2 gate by merging the readiness branch direct
 
 ## Remote-branch disclosure audit
 
-The remote currently has 32 non-main refs in the local inventory.
+The remote currently has 32 branch refs total in the live inventory: `main` plus 31 non-main refs.
 
 At audit time:
 - all but one remote non-main branch are already ancestors of `origin/main`;
