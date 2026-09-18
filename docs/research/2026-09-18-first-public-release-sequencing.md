@@ -152,13 +152,14 @@ FIRST_PRODUCT_VERSION = 0.1.0
 MAIN_ADOPTION = MERGED_c1eb195f54864dee1a8997c9baeb0475ce627da6
 FIRST_PREVIEW_TAG = v0.1.0-preview.1
 PREVIEW_TAG_TARGET = c1eb195f54864dee1a8997c9baeb0475ce627da6
-PREVIEW_TAG_CREATED = false
+PREVIEW_TAG_CREATED = true
 PREVIEW_RELEASE_ZIP_SHA256 = 3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733
 REPOSITORY_VISIBILITY = PUBLIC
 IMMUTABLE_RELEASES = ENABLED
-PUBLIC_RELEASE = NOT_CREATED
+PUBLIC_RELEASE = PUBLISHED_IMMUTABLE_RELEASE_391834069
+PUBLIC_RELEASE_ATTESTATION = VERIFIED
 CURRENT_RELEASE_CANDIDATE = c1eb195f54864dee1a8997c9baeb0475ce627da6
 CURRENT_E296DA1_CANDIDATE = HISTORICAL_READINESS_EVIDENCE_STALE_AFTER_EB5393F
 ```
 
-The existing `e296da1` unsigned candidate remains useful historical readiness evidence only. The current release candidate is the exact `0.1.0` main-push candidate at `c1eb195f54864dee1a8997c9baeb0475ce627da6`, with durable receipt/signing-input/distribution artifacts from workflow run `35345822405`. The selected preview tag has not been created.
+The existing `e296da1` unsigned candidate remains useful historical readiness evidence only. The current release candidate is the exact `0.1.0` main-push candidate at `c1eb195f54864dee1a8997c9baeb0475ce627da6`, with durable receipt/signing-input/distribution artifacts from workflow run `35345822405`. The selected preview tag is now published as immutable prerelease `v0.1.0-preview.1`, release ID `391834069`, with release and asset attestations verified.
