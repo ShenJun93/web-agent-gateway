@@ -89,7 +89,7 @@ function assertBoundedFailure(result: RunResult): void {
   assert.equal(result.code, 1);
   assert.equal(result.stdout, '');
   if (process.env.WAG_NATIVE_HOST_SIGNATURE_DIAGNOSTIC === '1') {
-    assert.match(result.stderr, /^wag-native-host-signature-inspect: diagnostic:(?:start|resolve-path|catalog-type|catalog-hash|signature-query|signature-policy)$/);
+    assert.match(result.stderr, /^wag-native-host-signature-inspect: diagnostic:(?:start|resolve-path|catalog-type|catalog-hash|signature-module|signature-query|signature-policy)$/);
   } else {
     assert.equal(result.stderr, failureSentinel);
   }
@@ -111,6 +111,7 @@ test('native host signature inspector PowerShell AST is read-only and narrowly a
     'ConvertTo-Json',
     'Get-AuthenticodeSignature',
     'Get-Item',
+    'Import-Module',
     'Resolve-Path',
     'Set-StrictMode',
   ]);

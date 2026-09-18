@@ -101,6 +101,8 @@ if ($authenticodeSha256 -notmatch '^[0-9a-f]{64}$') {
   throw 'unexpected Authenticode hash representation'
 }
 
+$diagnosticStage = 'signature-module'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $diagnosticStage = 'signature-query'
 $signature = Get-AuthenticodeSignature -LiteralPath $resolved.Path
 $diagnosticStage = 'signature-policy'
