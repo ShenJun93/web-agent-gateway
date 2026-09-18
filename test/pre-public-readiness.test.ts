@@ -25,7 +25,14 @@ test('publication readiness can pass while release readiness remains blocked on 
   assert.deepEqual(report.blockers, ['release-product-version-placeholder-or-invalid']);
 });
 
-test('release readiness passes only when all publication and version facts pass', () => {
+test('publication readiness can pass while release readiness remains blocked on stale candidate', () => {
+  const report = evaluatePrePublicReadiness(readyFacts({ candidateContinuity: false }));
+  assert.equal(report.publicationReady, true);
+  assert.equal(report.releaseReady, false);
+  assert.deepEqual(report.blockers, ['native-host-candidate-continuity-failed']);
+});
+
+test('release readiness passes only when all publication, candidate, and version facts pass', () => {
   const report = evaluatePrePublicReadiness(readyFacts());
   assert.equal(report.publicationReady, true);
   assert.equal(report.releaseReady, true);
@@ -44,9 +51,9 @@ test('publication readiness fails closed on trust and public-doc drift', () => {
   assert.equal(report.releaseReady, false);
   assert.deepEqual(report.blockers, [
     'worktree-not-clean',
-    'native-host-candidate-continuity-failed',
     'project-license-not-apache-2.0',
     'readme-browser-tool-surface-mismatch',
     'signing-policy-pending-status-missing',
+    'native-host-candidate-continuity-failed',
   ]);
 });

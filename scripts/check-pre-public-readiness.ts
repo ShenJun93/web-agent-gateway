@@ -45,7 +45,6 @@ export function evaluatePrePublicReadiness(facts: ReadinessFacts): ReadinessRepo
   const blockers: string[] = [];
   if (!facts.worktreeClean) blockers.push('worktree-not-clean');
   if (!facts.browserInspectBasePresent) blockers.push('browser-inspect-v2-base-missing');
-  if (!facts.candidateContinuity) blockers.push('native-host-candidate-continuity-failed');
   if (!facts.requiredFilesPresent) blockers.push('required-public-files-missing');
   if (facts.license !== 'Apache-2.0') blockers.push('project-license-not-apache-2.0');
   if (!facts.readmeHasInspectV2) blockers.push('readme-browser-inspect-v2-missing');
@@ -54,6 +53,7 @@ export function evaluatePrePublicReadiness(facts: ReadinessFacts): ReadinessRepo
   if (!facts.signingPolicyPendingAcceptance) blockers.push('signing-policy-pending-status-missing');
 
   const publicationBlockers = [...blockers];
+  if (!facts.candidateContinuity) blockers.push('native-host-candidate-continuity-failed');
   const numericVersion = typeof facts.version === 'string' && /^\d+\.\d+\.\d+$/.test(facts.version);
   const releaseVersionReady = numericVersion && facts.version !== '0.0.0';
   if (!releaseVersionReady) blockers.push('release-product-version-placeholder-or-invalid');

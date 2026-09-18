@@ -246,6 +246,7 @@ test('parseNativeHostSignatureInspection rejects extra keys on Valid branch', ()
 // ── isNativeHostBuildInput: positives ────────────────────────────────────────
 
 test('isNativeHostBuildInput positives', () => {
+  assert.equal(isNativeHostBuildInput('.gitattributes'), true);
   assert.equal(isNativeHostBuildInput('src/a.ts'), true);
   assert.equal(isNativeHostBuildInput('src/browser-adapter/foo.ts'), true);
   assert.equal(isNativeHostBuildInput('browser/native-host/sea-config.json'), true);
