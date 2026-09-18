@@ -1,6 +1,6 @@
 # Native-Host Authenticode Hash Runner Compatibility — 2026-09-18
 
-Status: diagnostic evidence captured; compatibility fix under PR validation.
+Status: root cause confirmed; compatibility fix validated on hosted pull-request CI. Temporary diagnostic hooks are not part of the intended final diff.
 
 ## Failure evidence
 
@@ -51,6 +51,30 @@ match     = true
 ```
 
 A separate `ImageGetDigestStream` probe did not match AppLocker/catalog hashes across tested digest levels, so that approach was rejected.
+
+## Windows PowerShell module-resolution root cause
+
+The Wintrust replacement removed the AppLocker dependency but hosted production-path tests still failed when Node spawned `powershell.exe`. A bounded diagnostic established:
+
+- direct Windows PowerShell invocation from the workflow could resolve `Get-AuthenticodeSignature`;
+- the same Windows PowerShell executable spawned through Node ran in `FullLanguage` mode and retained the Windows system module path, but module autoload failed with `CommandNotFoundException`;
+- importing `Microsoft.PowerShell.Security` by module name then failed with `FormatXmlUpdateException`.
+
+This matches Microsoft's documented `PSModulePath` behavior when Windows PowerShell is started through an intermediate process beneath PowerShell 7: the intermediate process can inherit PowerShell 7 module paths, and those paths can break Windows PowerShell module autoloading.
+
+Official reference:
+
+https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath?view=powershell-7.6
+
+The production inspector therefore imports the Windows PowerShell Security module by its manifest under the child process's own `$PSHOME`, bypassing inherited `PSModulePath` search order:
+
+```powershell
+$securityModulePath = "$PSHOME\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
+Import-Module $securityModulePath -ErrorAction Stop
+```
+
+Hosted PR run `35337456797` on head `cd28940` then passed the Node-spawned PowerShell probe, the focused production-path tests, publish-candidate build, version-info verification, and exact artifact tests.
+
 ## Decision
 
 Replace only the inspector's AppLocker hash dependency with the Windows Wintrust catalog hash APIs above, explicitly requesting `SHA256`.

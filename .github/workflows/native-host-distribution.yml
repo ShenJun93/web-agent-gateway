@@ -45,26 +45,8 @@ jobs:
           node-version: '24.20.0'
           package-manager-cache: false
 
-      - name: Diagnose Windows trust primitives
-        shell: powershell
-        run: powershell.exe -NoLogo -NoProfile -NonInteractive -File scripts/diagnose-native-host-runner.ps1
-
-      - name: Diagnose native-host signature inspector
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          WAG_NATIVE_HOST_SIGNATURE_DIAGNOSTIC: '1'
-        run: >-
-          powershell.exe -NoLogo -NoProfile -NonInteractive
-          -File scripts/inspect-native-host-signature.ps1
-          -ExecutablePath "$env:WINDIR\System32\notepad.exe"
-          -ExpectedState Valid
-
       - name: Install dependencies
         run: npm ci
-
-      - name: Diagnose Node-spawned PowerShell trust
-        run: node scripts/diagnose-node-powershell-runner.mjs
 
       - name: Verify native-host license compliance
         run: npm run verify:native-host-licenses
@@ -76,8 +58,6 @@ jobs:
         run: npm run build
 
       - name: Focused distribution tests
-        env:
-          WAG_NATIVE_HOST_SIGNATURE_DIAGNOSTIC: '1'
         run: >-
           npx tsx --test --test-concurrency=1
           test/native-host-distribution.test.ts

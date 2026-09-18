@@ -5,14 +5,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$diagnosticStage = 'start'
 
 trap {
-  if ($env:WAG_NATIVE_HOST_SIGNATURE_DIAGNOSTIC -eq '1') {
-    [System.Console]::Error.Write("wag-native-host-signature-inspect: diagnostic:$diagnosticStage")
-  } else {
-    [System.Console]::Error.Write('wag-native-host-signature-inspect: failed')
-  }
+  [System.Console]::Error.Write('wag-native-host-signature-inspect: failed')
   exit 1
 }
 
@@ -24,7 +19,6 @@ if (-not [string]::Equals($fullPath, $ExecutablePath, [System.StringComparison]:
   throw 'executable path must be canonical and absolute'
 }
 
-$diagnosticStage = 'resolve-path'
 $resolved = Resolve-Path -LiteralPath $fullPath -ErrorAction Stop
 $item = Get-Item -LiteralPath $resolved.Path -Force -ErrorAction Stop
 if ($item.PSIsContainer) { throw 'executable path must be a file' }
@@ -93,20 +87,15 @@ public static class WagAuthenticodeCatalogHash
 }
 '@
 
-$diagnosticStage = 'catalog-type'
 Add-Type -TypeDefinition $catalogHashSource -Language CSharp
-$diagnosticStage = 'catalog-hash'
 $authenticodeSha256 = [WagAuthenticodeCatalogHash]::Sha256($resolved.Path)
 if ($authenticodeSha256 -notmatch '^[0-9a-f]{64}$') {
   throw 'unexpected Authenticode hash representation'
 }
 
-$diagnosticStage = 'signature-module'
 $securityModulePath = "$PSHOME\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
 Import-Module $securityModulePath -ErrorAction Stop
-$diagnosticStage = 'signature-query'
 $signature = Get-AuthenticodeSignature -LiteralPath $resolved.Path
-$diagnosticStage = 'signature-policy'
 if ($ExpectedState -eq 'Unsigned') {
   if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
     throw 'signature state mismatch'
