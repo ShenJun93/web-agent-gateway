@@ -31,9 +31,11 @@ COMPOSE, do not fork wholesale:
 - Our code: thin gateway, policy, semantic tools, telemetry, compatibility.
 
 ## Current accepted state
-Trusted Caller Context v1 and the internal Durable Verify Job Core v1 have passed their acceptance gates. Trusted Adapter Admission v1 has also passed the successor distribution, installation, and supported-browser-host gates for the read-only Browser Adapter v1 path.
+Trusted Caller Context v1 and the internal Durable Verify Job Core v1 have passed their acceptance gates. Trusted Adapter Admission v1 remains the authority boundary for browser callers, and Browser Adapter v1 is preserved as historical three-tool evidence.
 
-Browser Adapter v1 remains server-side limited to exactly `health`, `workspace.open`, and `file.read`. Durable verify projection, mutation, public jobs, process/PTY, Git writes, and browser mutation remain unauthorized unless a later reviewed gate explicitly enables them.
+The current read-only browser profile is Browser Inspect v2. It uses a distinct adapter identity/protocol revision and exposes exactly `health`, `workspace.open`, `repo.search`, `repo.snapshot`, and `file.read`. It does not expose `verify.run`, mutation, public jobs, process/PTY, Git writes, browser mutation, or generic forwarding.
+
+The Windows native-host pipeline now records strict unsigned-candidate provenance, normalizes WAG-owned PE VersionInfo before candidate recording, verifies runtime/license inputs, and independently verifies signed-candidate Authenticode continuity. WAG has not yet published or accepted a trusted signed native-host release; Windows application-control acceptance remains gated on an externally signed candidate that passes the existing verifier without relaxation.
 
 The MCP v2 compatibility spike passed for the core/dual-era path, and the later MCP SDK v2 Production Migration v1 moved production to the split v2 TypeScript SDK packages without separately opting into protocol `2026-07-28`. Current-market re-benchmarking and thin-gateway host conformance narrowed WAG to its provider-neutral trust/capability role. Browser Admission HTTP Mode Split v1 removed the unreachable browser generic bearer, the historical `file.patch` protocol was retired after durable-mutation acceptance, MCP v1 experimental Tasks were retired after revalidation, and the remaining generic bearer HTTP compatibility mode was subsequently removed after its consumers were reduced to historical benchmark/spike harnesses. Current HTTP remains Browser Admission only; Business/private MCP remains stdio. Feature and authority growth remain frozen by default pending new evidence.
 
@@ -61,3 +63,24 @@ tunnel-client run --profile web-agent-gateway
 ```
 
 Those tunnel/account steps are a post-upgrade acceptance gate, not local pre-upgrade evidence. Do not commit owner tokens, control-plane API keys, tunnel credentials, or machine-specific private config files.
+
+## Windows native host
+The Windows native host is currently a development/pre-release component. Installation changes one per-user Chromium Native Messaging registration and stores exact-owned files under `%LOCALAPPDATA%`.
+
+See `docs/native-host-installation.md` for the system-change warning, preparation, verification, and ownership-safe removal procedure.
+
+## Code signing policy
+See `docs/policies/code-signing-policy.md` for signing scope, manual approval, provenance, official-release rules, and the current pre-SignPath status.
+
+## Contributing
+External changes require maintainer review. See `CONTRIBUTING.md` for contribution, verification, security, and code-signing expectations.
+
+## Security and privacy
+Security reports: `SECURITY.md`.
+
+Privacy behavior: `docs/policies/privacy.md`.
+
+## License
+Web Agent Gateway is licensed under the Apache License 2.0. See `LICENSE`.
+
+The Windows native-host executable incorporates Node.js and bundled MIT-licensed JavaScript dependencies. See `THIRD_PARTY_NOTICES.md` and `third_party/native-host/` for exact tracked license material.

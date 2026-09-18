@@ -11,9 +11,11 @@ export const NATIVE_HOST_CANDIDATE_SCHEMA_VERSION = 1 as const;
 // ── Build inputs ──────────────────────────────────────────────────────────────
 
 export const NATIVE_HOST_BUILD_INPUTS = [
+  '.gitattributes',
   'src/',
   'browser/native-host/',
   'scripts/build-native-host.ts',
+  'scripts/native-host-pe-metadata.ts',
   'package.json',
   'package-lock.json',
   'tsconfig.json',

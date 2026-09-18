@@ -77,6 +77,7 @@ test('NATIVE_HOST_BUILD_INPUTS contains required roots', () => {
   assert.ok(entries.includes('src/'));
   assert.ok(entries.includes('browser/native-host/'));
   assert.ok(entries.includes('scripts/build-native-host.ts'));
+  assert.ok(entries.includes('scripts/native-host-pe-metadata.ts'));
   assert.ok(entries.includes('package.json'));
   assert.ok(entries.includes('package-lock.json'));
   assert.ok(entries.includes('tsconfig.json'));
@@ -245,10 +246,12 @@ test('parseNativeHostSignatureInspection rejects extra keys on Valid branch', ()
 // ── isNativeHostBuildInput: positives ────────────────────────────────────────
 
 test('isNativeHostBuildInput positives', () => {
+  assert.equal(isNativeHostBuildInput('.gitattributes'), true);
   assert.equal(isNativeHostBuildInput('src/a.ts'), true);
   assert.equal(isNativeHostBuildInput('src/browser-adapter/foo.ts'), true);
   assert.equal(isNativeHostBuildInput('browser/native-host/sea-config.json'), true);
   assert.equal(isNativeHostBuildInput('scripts/build-native-host.ts'), true);
+  assert.equal(isNativeHostBuildInput('scripts/native-host-pe-metadata.ts'), true);
   assert.equal(isNativeHostBuildInput('package.json'), true);
   assert.equal(isNativeHostBuildInput('package-lock.json'), true);
   assert.equal(isNativeHostBuildInput('tsconfig.json'), true);
@@ -264,6 +267,9 @@ test('isNativeHostBuildInput negatives', () => {
   // Outside build input roots
   assert.equal(isNativeHostBuildInput('test/a.test.ts'), false);
   assert.equal(isNativeHostBuildInput('docs/x.md'), false);
+  assert.equal(isNativeHostBuildInput('scripts/package-native-host-release.ts'), false);
+  assert.equal(isNativeHostBuildInput('scripts/write-deterministic-zip.ps1'), false);
+  assert.equal(isNativeHostBuildInput('scripts/check-pre-public-readiness.ts'), false);
   // Extension does not match exact entry
   assert.equal(isNativeHostBuildInput('scripts/build-native-host.ts.bak'), false);
   // Directory prefix must be exact — 'src' without slash does not match 'src/'

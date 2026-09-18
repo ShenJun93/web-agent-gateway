@@ -8,7 +8,9 @@ import {
   BROWSER_ADAPTER_EXTENSION_ID,
   NATIVE_HOST_APPLICATION_NAME,
   NATIVE_HOST_DISTRIBUTION_SCHEMA_VERSION,
+  NATIVE_HOST_LEGACY_DISTRIBUTION_SCHEMA_VERSION,
   NATIVE_HOST_FILENAME,
+  NATIVE_HOST_LEGACY_REQUIRED_GATES,
   NATIVE_HOST_REQUIRED_GATES,
   parseNativeHostBuildReceipt,
   sha256File,
@@ -41,12 +43,22 @@ function validReceipt() {
   };
 }
 
-test('native host distribution receipt accepts one strict canonical identity', () => {
+test('native host distribution receipt accepts one strict canonical current identity', () => {
   const receipt = validReceipt();
   assert.deepEqual(parseNativeHostBuildReceipt(receipt), receipt);
+  assert.equal(NATIVE_HOST_DISTRIBUTION_SCHEMA_VERSION, 2);
   assert.equal(NATIVE_HOST_FILENAME, 'wag-native-host.exe');
   assert.equal(NATIVE_HOST_APPLICATION_NAME, 'com.openai.web_agent_gateway');
   assert.equal(BROWSER_ADAPTER_EXTENSION_ID, 'nnhhhppkpogkedpjnijeagcbfjaoogec');
+});
+
+test('native host distribution parser preserves exact legacy v1 receipts', () => {
+  const legacy = {
+    ...validReceipt(),
+    schemaVersion: NATIVE_HOST_LEGACY_DISTRIBUTION_SCHEMA_VERSION,
+    verificationGates: [...NATIVE_HOST_LEGACY_REQUIRED_GATES],
+  };
+  assert.deepEqual(parseNativeHostBuildReceipt(legacy), legacy);
 });
 
 test('native host distribution receipt rejects malformed or widened identity', () => {
@@ -62,6 +74,7 @@ test('native host distribution receipt rejects malformed or widened identity', (
     { ...validReceipt(), nativeApplicationName: 'com.example.other' },
     { ...validReceipt(), extensionId: 'a'.repeat(32) },
     { ...validReceipt(), verificationGates: [...NATIVE_HOST_REQUIRED_GATES].reverse() },
+    { ...validReceipt(), schemaVersion: NATIVE_HOST_LEGACY_DISTRIBUTION_SCHEMA_VERSION },
   ];
 
   for (const value of cases) {
