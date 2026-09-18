@@ -1,6 +1,6 @@
 # First Public Native-Host Release Sequencing — 2026-09-18
 
-Status: research/design only. This document does not select a release version, create a tag/release, enable GitHub settings, or authorize SignPath submission.
+Status: release preparation. Product version `0.1.0` and preview tag name `v0.1.0-preview.1` are selected under explicit authority; no Git tag, GitHub Release, visibility change, immutable-release setting, SignPath submission, or signing action has been performed.
 
 ## Problem
 
@@ -58,18 +58,20 @@ Selection status after explicit authorization on 2026-09-18:
 
 ```text
 FIRST_PRODUCT_VERSION = 0.1.0
-MAIN_ADOPTION = PENDING_PR_MERGE
+MAIN_ADOPTION = MERGED_c1eb195f54864dee1a8997c9baeb0475ce627da6
 ```
 
 ## Preview-tag recommendation
 
 The unsigned eligibility release should use a tag distinct from the eventual signed stable tag.
 
-Recommended pattern:
+Selection status after explicit authorization on 2026-09-18:
 
 ```text
-preview tag: v0.1.0-preview.1
-stable tag:  v0.1.0
+preview tag:       v0.1.0-preview.1
+preview tag target: c1eb195f54864dee1a8997c9baeb0475ce627da6
+tag object:        NOT_CREATED
+stable tag:        NOT_SELECTED (v0.1.0 remains the future recommendation)
 ```
 
 The GitHub preview release should be marked as a prerelease and titled to state that it is unsigned.
@@ -144,23 +146,25 @@ This setting is not required by the current SignPath terms and is not authorized
 
 ## Open decisions requiring explicit authority
 
-- merge the authorized `0.1.0` version change to `main`;
-- select the exact preview tag/name;
-- obtain fresh candidate evidence from the merged `0.1.0` source before any preview release;
-- enable GitHub immutable releases;
-- create/push tag(s);
-- create/publish GitHub release(s);
-- upload public release assets.
+- make the repository public after the pre-public exposure gate passes;
+- decide whether to enable GitHub immutable releases before publication;
+- create/push the selected `v0.1.0-preview.1` tag at `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- create/publish the unsigned GitHub prerelease;
+- upload the frozen deterministic preview ZIP as the public release asset.
 
 ## Current state
 
 ```text
 FIRST_PRODUCT_VERSION = 0.1.0
-MAIN_ADOPTION = PENDING_PR_MERGE
-FIRST_PREVIEW_TAG = NOT_SELECTED
+MAIN_ADOPTION = MERGED_c1eb195f54864dee1a8997c9baeb0475ce627da6
+FIRST_PREVIEW_TAG = v0.1.0-preview.1
+PREVIEW_TAG_TARGET = c1eb195f54864dee1a8997c9baeb0475ce627da6
+PREVIEW_TAG_CREATED = false
+PREVIEW_RELEASE_ZIP_SHA256 = 3f31ebe7258803aaf44194c05c4ae0ce241f7f2849507f7c0f153b129264e733
 IMMUTABLE_RELEASES = NOT_CONFIGURED
 PUBLIC_RELEASE = NOT_CREATED
+CURRENT_RELEASE_CANDIDATE = c1eb195f54864dee1a8997c9baeb0475ce627da6
 CURRENT_E296DA1_CANDIDATE = HISTORICAL_READINESS_EVIDENCE_STALE_AFTER_EB5393F
 ```
 
-The existing `e296da1` unsigned candidate remains useful historical readiness evidence, but commit `eb5393f` added checkout normalization as an explicit native-host build input, so candidate continuity is intentionally stale even before product-version selection. The public first-release candidate must be rebuilt after an authorized non-placeholder version is selected. See `docs/research/2026-09-18-checkout-line-ending-portability.md`.
+The existing `e296da1` unsigned candidate remains useful historical readiness evidence only. The current release candidate is the exact `0.1.0` main-push candidate at `c1eb195f54864dee1a8997c9baeb0475ce627da6`, with durable receipt/signing-input/distribution artifacts from workflow run `35345822405`. The selected preview tag has not been created.
