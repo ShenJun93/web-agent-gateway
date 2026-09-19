@@ -167,11 +167,12 @@ Current candidate:
 - signature state: `NotSigned`;
 - exact main readiness with downloaded receipt + EXE: `publicationReady=true`, `releaseReady=true`, `blockers=[]`.
 
-Selected preview identity:
+Published preview identity:
 - tag name: `v0.1.0-preview.1`;
-- intended tag target/source candidate: `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
-- tag object: not created;
-- GitHub Release: not created.
+- tag target/source candidate: `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- tag exists and remains anchored to exact `c1eb195f54864dee1a8997c9baeb0475ce627da6`;
+- immutable GitHub prerelease exists as release ID `391834069`;
+- the published release contains the exact frozen unsigned ZIP and must not be replaced by later signed bytes.
 
 Historical `e296da1` / `0.0.0` candidate evidence remains superseded and must not be published or signed.
 
@@ -203,17 +204,34 @@ Post-release reconciliation on 2026-09-19, anchored to remote `main=c37e1e1977d3
 - Dependabot alerts: enabled with zero open alerts at reconciliation time; automated Dependabot security-update PRs remain disabled;
 - secret scanning and repository push protection: enabled, with zero open secret-scanning alerts at reconciliation time;
 - fork-PR workflow approval policy: `all_external_contributors`;
-- 32 unexpired Actions artifacts remain build evidence, including the exact `0.1.0` candidate-evidence, signing-input, and distribution artifacts;
-- the exact `c1eb195f54864dee1a8997c9baeb0475ce627da6` candidate artifacts expire on 2026-10-02;
+- 32 unexpired Actions artifacts remain build evidence at the 2026-09-19 lifecycle checkpoint, including the exact `0.1.0` candidate-evidence, signing-input, and distribution artifacts;
+- the three exact `c1eb195f54864dee1a8997c9baeb0475ce627da6` artifacts are still active and expire on 2026-10-02 around 12:41Z; their current artifact IDs are `10546094325` (candidate evidence), `10545804630` (EXE-only signing input), and `10545824818` (distribution);
+- artifact expiry is **not** a SignPath application blocker and does not invalidate the immutable preview release or its recorded hashes/attestations;
+- artifact expiry does remove the old GitHub artifact ID as a future signing input, so an exact-candidate signing request would require an available regenerated GitHub workflow artifact;
 - SHA-anchored Gitleaks evidence remains historical audit evidence: exact `b1576de8e1d74ef6894621d53df9b0309dd6685f` scanned 258 commits; full-clone/all-ref scans at exact `31e76668139e4cc5c742520482fe6743bd91f7e8` each scanned 259 commits with the same five triaged public/non-secret detections;
 - a later full all-ref post-merge audit at `b83ba368b990d7518ef430929e77f30d99ca89d5` scanned 260 commits and reported the same five detections, with no credential/private-key finding;
 - all 69 historical Actions run logs were separately scanned after publication; Gitleaks reported zero leaks and explicit high-risk token/private-key patterns were absent.
 
 Actions artifacts are build evidence, not release assets. The repository is now public, so their remaining risk is user confusion rather than source confidentiality. README and code-signing policy continue to state that Actions artifacts are not supported releases and no current release is Authenticode-trusted.
 
+### c1eb artifact lifecycle and signing fallback
+
+The `c1eb195f54864dee1a8997c9baeb0475ce627da6` workflow uploads each artifact with `retention-days: 14`. Repository-level Actions retention is currently 90 days, but that does not retroactively extend these existing 14-day artifacts.
+
+Current native-host build-input comparison from `c1eb195f54864dee1a8997c9baeb0475ce627da6` through current `main` reports zero changed `NATIVE_HOST_BUILD_INPUTS` entries. Candidate continuity therefore remains valid even though documentation/workflow-validation files have advanced.
+
+Fallback order if signing is separately authorized later:
+
+1. **Before artifact expiry:** the existing EXE-only signing-input artifact may be used only under a separately authorized SignPath signing flow.
+2. **After expiry, while GitHub still permits re-running the original workflow run:** re-run exact run `35345822405` only under explicit workflow-rerun authority. GitHub documents that workflow re-runs are allowed for up to 30 days after the initial run and use the original run's `GITHUB_SHA` / `GITHUB_REF`. WAG artifact names include `github.run_attempt`, so a re-run can produce distinct attempt artifacts while retaining the original `c1eb195f` source identity.
+3. **If the exact run can no longer be re-run, or if any native-host build input changes before signing:** record a fresh unsigned candidate from the then-authorized release source and use a distinct signed-release identity. Do not call different build inputs the same `c1eb195f` signing candidate.
+
+The immutable unsigned preview remains historical/public evidence regardless of Actions-artifact expiry. A future signed stable release must remain distinct from `v0.1.0-preview.1`.
+
 Official GitHub sources:
 - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility
 - https://docs.github.com/en/rest/actions/artifacts
+- https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs
 ## Live application form reconciliation — 2026-09-19
 
 A dedicated read-only browser worker rendered the current SignPath Foundation HubSpot application form. No field was filled and nothing was submitted.
