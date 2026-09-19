@@ -78,6 +78,16 @@ Provide:
 - WAG metadata mutator path: `scripts/native-host-pe-metadata.ts`
 - license manifest: `browser/native-host/third-party-components.json`
 - unsigned-candidate receipt for the exact application candidate.
+
+Favorable, non-binding precedent:
+- SignPath Foundation publicly lists Super Productivity and Heroic Games Launcher as Foundation projects;
+- both public repositories use Electron-based Windows packaging and submit resulting application executables to SignPath for Authenticode signing;
+- Heroic explicitly uploads unsigned packaged `Heroic.exe` application binaries to SignPath before installer construction;
+- Super Productivity uploads its unsigned Electron-built Windows executables to SignPath and verifies the returned signatures.
+
+This does not prove Node SEA eligibility, because Electron packaging and Node SEA are not identical. It does show that an application executable built on an upstream runtime is not automatically excluded from Foundation signing.
+
+State: `PROVIDER_CONFIRMATION_WITH_FAVORABLE_PRECEDENT`.
 ## Code-signing policy evidence
 
 Home-page requirement:
@@ -261,6 +271,14 @@ Anonymous access was verified after the 2026-09-19 visibility cutover.
 
 State: PASS_PUBLICATION
 
+### Project-name discoverability
+
+GitHub-native repository search finds `ShenJun93/web-agent-gateway` for the project name. General public-web exact-name search is not yet reliably distinctive: similarly named "Web Agent Gateway" projects can surface ahead of WAG.
+
+The live application guidance says the project name should clearly identify the project in a Google search. This is therefore tracked as a supporting application-quality risk, not as a separate published numeric eligibility threshold.
+
+State: `PUBLIC_WEB_DISCOVERABILITY_WEAK`
+
 ### License URL
 
 Public Apache-2.0 license URL: https://github.com/ShenJun93/web-agent-gateway/blob/main/LICENSE
@@ -305,9 +323,15 @@ The live SignPath application form requires a `Reputation` answer and asks for e
 
 WAG is newly public and the current live public signals above do not establish broad external adoption. Technical quality, security controls, build provenance, and an immutable public release are verifiable project evidence, but must not be relabeled as independent reputation or usage.
 
-State: `UNRESOLVED_PROVIDER_REPUTATION_GATE`
+Decision state: `WAIT_REPUTATION_SIGNAL`
 
-Do not manufacture reputation evidence. If genuine external usage, independent discussion, media/blog references, or uncontaminated download evidence emerges naturally, it may be added in a later evidence refresh.
+Truthful candidate answer if a later authorized submission occurs before stronger evidence appears:
+
+> Web Agent Gateway is a newly public open-source project with an immutable Windows preview release, public Apache-2.0 source, documented security/privacy/code-signing policies, GitHub Actions build provenance, and independently verifiable GitHub release attestations. The project became public on September 19, 2026, so we do not yet claim broad external adoption; current release download counts include maintainer verification traffic. We are providing the public repository and release evidence for SignPath Foundation to assess whether the project's current verifiable history is sufficient.
+
+This is a disclosure answer, not external reputation evidence.
+
+Do not manufacture reputation evidence. Resume application-readiness review when a genuine independent signal appears or exact-project public-web discoverability materially improves.
 
 ### MFA
 
@@ -339,9 +363,13 @@ Submission additionally requires:
 
 GitHub source-repository MFA is already `PASS_VERIFIED_UI`. SignPath-account MFA remains a provider-onboarding requirement if and when provider-side setup is separately authorized.
 
-Provider-side unresolved items:
-- `UNRESOLVED_PROVIDER_REPUTATION_GATE`: the mandatory Reputation field cannot truthfully claim broad external use from current evidence;
-- Node SEA own-binary versus modified-upstream classification remains a neutral provider question.
+Submission-decision state:
+- `WAIT_REPUTATION_SIGNAL`: the mandatory Reputation field can be answered truthfully as a disclosure, but WAG still lacks a genuine independent trust/adoption signal;
+- `PUBLIC_WEB_DISCOVERABILITY_WEAK`: GitHub-native discovery works, while general exact-name web discovery is still ambiguous.
+
+Provider-side unresolved item:
+- Node SEA own-binary versus modified-upstream classification remains a neutral provider question;
+- risk classification is `PROVIDER_CONFIRMATION_WITH_FAVORABLE_PRECEDENT` because accepted Foundation Electron projects publicly submit runtime-based Windows application executables to SignPath.
 
 Repository publication, anonymous public docs/license verification, the immutable release/download URL, and live release-fact refresh are complete.
 
