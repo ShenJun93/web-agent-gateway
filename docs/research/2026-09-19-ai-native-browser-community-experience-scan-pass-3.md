@@ -616,3 +616,277 @@ Continue research before proposing local benchmarks:
 5. deepen Browserbase/Kernel/Browserless/Notte/Anchor real-user production reports;
 6. track Windows ODR maturity and whether its containment model becomes available/stable on normal Windows 11 builds;
 7. look for additional serious external-agent browser surfaces with real-profile access before closing the scan again.
+
+
+## Native platform correction — OpenAI and Anthropic must be first-class comparators
+
+The expanded scan found that browser-agent capability is no longer only an OSS/service-layer problem. OpenAI and Anthropic now ship native real-profile browser integrations, so the project reuse order requires evaluating those surfaces before custom browser transport.
+
+### ChatGPT Desktop built-in browser + official ChatGPT browser extension
+
+OpenAI currently documents two distinct browser paths on Windows and macOS:
+
+1. a built-in browser inside ChatGPT Desktop with its own browser state; and
+2. the official ChatGPT browser extension for tasks that need the user's existing browser profile, signed-in session, open tabs, and installed extensions.
+
+The official extension is designed to let ChatGPT Work/Codex operate in background tabs without taking over the user's active browsing session. OpenAI's September 2026 release notes also state support for Edge, Brave, Opera, and Vivaldi in addition to Chrome, although feature parity differs by browser.
+
+OpenAI has also deprecated Atlas and explicitly moved browser-agent investment into ChatGPT/Codex. Therefore Atlas is no longer a serious standalone replacement candidate.
+
+This is strategically important for this user's stack: the native OpenAI browser path can plausibly eliminate some provider-specific ChatGPT browser-control glue if the workflow can move from ChatGPT Web to ChatGPT Desktop/Work/Codex.
+
+But current Windows public failure evidence is substantial:
+
+- Windows Browser/Chrome bridge setup can hang or fail to expose the privileged native pipe;
+- Windows Browser Use can leave orphaned Chrome processes after Codex execution;
+- the in-app browser has repeated reports where closing/finalizing the last browser tab terminates the entire desktop app and interrupts other active tasks;
+- the in-app browser can steal foreground focus when opening browser windows/tabs;
+- Windows browser screenshot routing has reported wrong-window fallback behavior.
+
+These are direct matches for the user's existing machine-pressure and multi-session concerns.
+
+Disposition:
+
+**PROMOTE OPENAI NATIVE BROWSER STACK TO TOP RESEARCH TIER.**
+
+However:
+
+- it is not a ChatGPT Web production adapter;
+- it is provider-specific rather than provider-neutral;
+- current Windows lifecycle evidence is not strong enough to retire owner-aware cleanup;
+- the browser extension/native pipe is not a public stable transport contract for arbitrary external clients.
+
+Sources:
+
+- https://help.openai.com/en/articles/20001277-using-the-built-in-browser-in-the-chatgpt-desktop-app
+- https://help.openai.com/en/articles/20001371-evolving-atlas-into-chatgpt-for-browser-based-agentic-work
+- https://help.openai.com/en/articles/6825453-chatgpt-release-notes
+- https://github.com/openai/codex/issues/32462
+- https://github.com/openai/codex/issues/33662
+- https://github.com/openai/codex/issues/43347
+- https://github.com/openai/codex/issues/36645
+
+### Reusing the OpenAI native browser bridge
+
+A small independent project, `DeliciousBuding/codex-browser-bridge`, demonstrates that the ChatGPT Desktop browser bridge can be wrapped as an MCP server by speaking to the existing Windows named pipe.
+
+This is valuable prior art because it shows that a thin composition layer may be possible without reimplementing browser/profile transport.
+
+But the project is independent of OpenAI and relies on an internal/local bridge protocol. It has a small adoption footprint and no guarantee that the pipe/protocol remains a supported external contract.
+
+Disposition:
+
+**HIGH-VALUE PRIOR ART / WATCH.**
+Do not build product authority on an undocumented provider-internal pipe without an accepted compatibility strategy.
+
+Source:
+
+- https://github.com/DeliciousBuding/codex-browser-bridge
+
+### Claude in Chrome
+
+Anthropic's official Claude in Chrome extension can be driven from Claude Code/Cowork and works against the user's existing authenticated browser state.
+
+This is another native-first comparator and is especially relevant because the user already uses Claude Code.
+
+However, Windows issue history is also materially rough:
+
+- browser connection can remain unavailable despite correct native-host configuration;
+- auto-updates have broken browser connection;
+- stale/incorrect "connected" states have been reported;
+- Windows named-pipe/native-host defects have occurred;
+- startup can wedge when Chrome is not running;
+- multi-browser/tab ownership interference has been reported;
+- community users have built hooks to pin each Claude Code session to its own tab because concurrent sessions can cross-control browser tabs.
+
+Disposition:
+
+**PROMOTE TO NATIVE COMPARATOR, NOT RELIABILITY BASELINE.**
+
+It is useful evidence that browser transport should be upstream/provider-native where possible, but it is not evidence that custom lifecycle/ownership supervision can be removed.
+
+Sources:
+
+- https://support.claude.com/en/articles/12012173-get-started-with-claude-in-chrome
+- https://github.com/anthropics/claude-code/issues/77400
+- https://github.com/anthropics/claude-code/issues/93751
+- https://github.com/anthropics/claude-code/issues/62141
+- https://github.com/anthropics/claude-code/issues/72677
+
+## New local bridge prior art
+
+### whg517/browser-bridge
+
+This project is closer to WAG's historical browser bridge than most browser-agent libraries:
+
+- extension + native messaging host;
+- no raw remote-debugging port;
+- real authenticated Chrome;
+- broker multiplexing multiple MCP clients;
+- service-worker/native-host restart tolerance;
+- per-agent identities;
+- broker auto-exit after the last client;
+- per-site approval plus confirmations for higher-risk actions;
+- Apache-2.0;
+- Windows x64 prebuilt path.
+
+The most important caveat is visible in its own current issue tracker: Windows broker survival across MCP client/server exit still needs explicit verification because Windows Job Object `KILL_ON_JOB_CLOSE` semantics can undermine the intended durable broker lifecycle.
+
+Its public adoption is still small.
+
+Disposition:
+
+**PROMOTE TO CODE-REVIEW TIER AS A DIRECT WAG BROWSER-TRANSPORT DONOR.**
+Do not promote to replacement on community evidence alone.
+
+Source:
+
+- https://github.com/whg517/browser-bridge
+
+### vitalysim/browser-bridge
+
+This project is feature-rich and demonstrates another real-profile extension + localhost server architecture with recording, network capture, security-testing tools and "watch mode".
+
+Its own commit history contains valuable operational evidence: stale service/extension builds, socket blips, lost final batches on tab close, debugger detach reasons and abandoned intercepts all required explicit fixes.
+
+Windows currently lacks the same built-in service/autostart integration that Linux/macOS have.
+
+Disposition:
+
+**USE AS FAILURE-MODE / OBSERVABILITY DONOR, NOT PRIMARY REPLACEMENT CANDIDATE.**
+
+Source:
+
+- https://github.com/vitalysim/browser-bridge
+
+## BrowserOS neo re-check worsens the Windows lifecycle assessment
+
+Fresh September issue evidence adds two severe lifecycle signals:
+
+- Windows `browseros-claw-server` dead loopback connections can grow without bound; one report measured roughly 13.9k established sockets in five days and warned of system-wide ephemeral-port exhaustion;
+- a native-messaging regression can orphan host processes; one report measured 1,196 leaked processes, ~20 GB memory and hundreds of thousands of handles in 21 hours.
+
+These are unusually close to the user's actual machine-pressure failure mode.
+
+BrowserOS neo remains interesting as an AI-native browser, but this evidence lowers its priority for Windows operational use until those lifecycle defects are resolved and independently revalidated.
+
+Sources:
+
+- https://github.com/browseros-ai/BrowserOS/issues/2592
+- https://github.com/browseros-ai/BrowserOS/issues/2072
+
+## Browserbase local CLI is not automatically cleanup-free
+
+The newer Browserbase `browse` CLI is strategically interesting because it offers one coding-agent CLI that can work locally and route to Browserbase cloud.
+
+But its local path is daemon-based. Official skill/reference material explicitly documents:
+
+- `browse stop` for cleanup;
+- zombie-daemon recovery using process kill;
+- named sessions to prevent parallel-session conflicts;
+- separate zombie cleanup per session;
+- loop-process cleanup for tracing after crashes.
+
+Therefore Browserbase's cloud path can remove local browser-process ownership, but its local CLI should not be treated as a solved replacement for SessionCommander cleanup.
+
+Sources:
+
+- https://www.browse.sh/
+- https://github.com/browserbase/skills
+
+## Consumer-native browser agents are relevant directionally, but not composable replacements
+
+Google Chrome/Gemini and Microsoft Edge now have native agentic browsing surfaces:
+
+- Gemini in Chrome can reason across tabs and, in supported markets/plans, perform auto-browse tasks with user confirmation for sensitive actions;
+- Edge's Browse with Copilot can click/type/navigate locally in the browser;
+- Google exposes computer-use models/APIs and WebMCP/Chrome DevTools for developers.
+
+These confirm that agentic browsing is becoming a browser/platform primitive.
+
+However, current consumer Gemini/Copilot browser modes do not expose the provider-neutral external coding-agent control contract WAG needs. They should not be confused with Chrome DevTools MCP, Playwright, WebMCP, or computer-use APIs.
+
+Perplexity Comet and Dia also have community MCP/CDP wrappers, but those wrappers rely on browser-specific/CDP behavior rather than an official stable external authority surface.
+
+Disposition:
+
+**DIRECTIONAL WATCH, NOT WAG REPLACEMENT.**
+
+Sources:
+
+- https://blog.google/products-and-platforms/products/chrome/chrome-expands-apac/
+- https://support.microsoft.com/en-us/microsoft-copilot/browse-with-copilot
+- https://learn.microsoft.com/en-us/microsoft-edge/web-platform/devtools-mcp-server
+
+## Revised native-first research ordering
+
+The earlier Tier A ordering is superseded.
+
+For this user's actual Windows workflow, research should now distinguish **native provider paths** from **provider-neutral reusable substrates**.
+
+### Native provider comparators
+
+1. ChatGPT Desktop built-in browser / official ChatGPT browser extension
+2. Claude in Chrome
+
+These may be the lowest-maintenance solution for provider-specific workflows, but current Windows lifecycle issues prevent assuming they solve concurrency/cleanup.
+
+### Provider-neutral reusable substrate tier
+
+1. Microsoft Playwright CLI + `browser.bind()`
+2. Microsoft Playwright MCP extension mode
+3. Aside CLI/MCP/REPL
+4. Browser Harness
+5. Panerelay + Playwright/agent-browser/Browser Use
+6. Playwriter
+7. whg517/browser-bridge
+
+### Diagnostics / donor tier
+
+- Chrome DevTools MCP
+- vitalysim/browser-bridge
+- h5i
+
+### AI-native browser products to monitor, not currently prefer on Windows
+
+- BrowserOS neo
+- open-browser-use
+- Opera/Neon browser CLI
+- Agent360 Browser MCP
+- other smaller bridges
+
+## Replacement-impact correction
+
+The expanded evidence suggests a narrower future WAG architecture may be viable:
+
+```text
+Provider/browser-native transport
+    OR
+Playwright/Panerelay/bridge substrate
+            |
+            v
+thin provider adapter
+            |
+            v
+WAG authority / ownership / approvals / durable effects
+```
+
+Potentially retireable if an upstream winner is proven:
+
+- WAG-owned browser action schema;
+- WAG-owned tab/snapshot/navigation mechanics;
+- provider-specific Chrome/Edge transport;
+- generic DevTools collection;
+- browser launch/profile plumbing.
+
+Still not retireable from current evidence:
+
+- WebChat admission and opaque ownership;
+- capability/risk policy;
+- ADR-0019 local approval boundary;
+- durable verify/mutation effect ownership;
+- audit/evidence;
+- owner-aware process cleanup for any local daemon/browser path;
+- Guardian context/continuity functions.
+
+The strategic goal is increasingly **make WAG thinner**, not **build a better browser**.
