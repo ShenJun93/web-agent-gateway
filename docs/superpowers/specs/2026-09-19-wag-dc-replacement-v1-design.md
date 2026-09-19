@@ -2,7 +2,7 @@
 
 Date: 2026-09-19
 Status: APPROVED DESIGN — implementation authorized by this milestone; distribution/provider actions are not
-Decision authority: ADR-0018, ADR-0020, ADR-0021
+Decision authority: ADR-0018, ADR-0020, ADR-0021, ADR-0022
 Depends on: ADR-0003, ADR-0008, ADR-0009, ADR-0011, ADR-0014, ADR-0015, ADR-0017, ADR-0019
 Research: `docs/research/2026-09-19-wag-dc-replacement-v1-surface-selection.md`
 Measured gap: `docs/benchmarks/2026-09-17-dc-replacement-live-benchmark-v1-attempt-1.md`
@@ -303,7 +303,8 @@ Recorded so the replacement claim stays honest against the documented DC surface
 shell / arbitrary command execution      NOT PROVIDED
 interactive process sessions / PTY       NOT PROVIDED
 process listing / termination            NOT PROVIDED
-file create / move / delete              NOT PROVIDED
+file create                              REVIEWED, never overwriting (ADR-0022)
+file move / delete                       NOT PROVIDED
 directory create / list                  NOT PROVIDED
 full-file rewrite                        NOT PROVIDED  (bounded before/after replacement only)
 Git writes / commit / branch / push      NOT PROVIDED
@@ -366,7 +367,7 @@ This design does not:
 
 - change the Browser Adapter tool list, adapter id, protocol revision, or admission rules;
 - grant Tier C or Tier D to any browser surface;
-- add shell, process, PTY, Git write, file create/move/delete, directory, or configuration-mutation tools anywhere;
+- add shell, process, PTY, Git write, file move/delete, directory, or configuration-mutation tools anywhere;
 - add a dependency, listener, tunnel, service, elevation, or OS boundary;
 - change `verify.run` semantics, verify profile hashing, or durable verify job core;
 - change native-host build, installation, registry, distribution, release, tag or signing state;

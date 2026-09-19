@@ -61,6 +61,11 @@ authoritative — re-run it.
 - **Orphan processes.** Interrupted runs leave `node.exe` children of this worktree behind, and a
   leaked DevSpace holds its port. Clean up **only** processes whose command line contains this
   worktree path. Other worktrees' orphans belong to other sessions — never broad-kill.
+- **A failing integration test can hang the whole suite.** An assertion that throws before its
+  cleanup hook leaves a real DevSpace and a real loopback HTTP server alive, and the runner then
+  waits on those handles forever. The symptom is a log that stops growing mid-run with one `✖`
+  already printed. Fix the test, kill only this worktree's node processes, and re-run — do not
+  wait it out.
 - **Windows file locks.** SQLite handles must be closed before a temp directory is removed or the
   unlink fails with `EBUSY`. `node:test` runs `t.after` hooks in registration order, so register store
   cleanup before the directory removal.

@@ -77,7 +77,7 @@ test('the extended private stdio profile completes the DC repository-engineering
   assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), [
     'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
     'file.read', 'verify.run',
-    'mutation.preview', 'mutation.result',
+    'mutation.preview', 'file.create', 'mutation.result',
   ]);
 
   const { workspaceId } = parse<{ workspaceId: string }>(

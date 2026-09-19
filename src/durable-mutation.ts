@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { assertReadTarget, validateReadPath } from './path-policy.js';
+import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
 import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
@@ -7,6 +7,8 @@ import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
 const MAX_FRAGMENT_BYTES = 32 * 1024;
 const MAX_FILE_BYTES = 64 * 1024;
 const SHA256_RE = /^[a-f0-9]{64}$/;
+/** SHA-256 of the empty string: the base hash that marks a mutation as a creation (ADR-0022). */
+const EMPTY_SHA256 = createHash('sha256').update('', 'utf8').digest('hex');
 
 export interface DurableMutationInput {
   path: string;
@@ -72,9 +74,10 @@ export class DurableMutationCoordinator {
     assertIdentity(caller, workspace);
     const backend = this.backend(workspace.backendKind);
     const path = validateReadPath(input.path);
-    await assertReadTarget(workspace.canonicalRoot, path);
     validateInput(input);
-    const original = await backend.readExact(workspace.canonicalRoot, path);
+    if (isCreationInput(input)) await assertCreateTarget(workspace.canonicalRoot, path);
+    else await assertReadTarget(workspace.canonicalRoot, path);
+    const original = await readBase(backend, workspace.canonicalRoot, path, input);
     const prepared = prepareMutation(workspaceId, path, original, input);
     const createdAt = this.now();
     const record = this.options.store.createMutation({
@@ -166,9 +169,13 @@ export class DurableMutationCoordinator {
     const backend = this.backend(claimed.backendKind);
     try {
       await this.revalidateStoredPlan(workspace.canonicalRoot, claimed, backend);
-      const original = await backend.readExact(workspace.canonicalRoot, claimed.path);
+      const original = await readBase(backend, workspace.canonicalRoot, claimed.path, claimed);
       const candidate = original.replace(claimed.before, claimed.after);
-      await backend.updateExisting(workspace.canonicalRoot, claimed.path, original, candidate);
+      if (isCreationInput(claimed)) {
+        await backend.createNew(workspace.canonicalRoot, claimed.path, candidate);
+      } else {
+        await backend.updateExisting(workspace.canonicalRoot, claimed.path, original, candidate);
+      }
       const finalText = await backend.readExact(workspace.canonicalRoot, claimed.path);
       if (sha256(finalText) !== claimed.resultSha256) throw new Error('Gateway rejected post-write SHA-256 mismatch');
       this.options.store.finishMutation(mutationId, 'SUCCEEDED', this.now(), JSON.stringify({ resultSha256: claimed.resultSha256 }));
@@ -186,7 +193,7 @@ export class DurableMutationCoordinator {
     const backend = this.backend(record.backendKind);
     let current: string;
     try {
-      current = await backend.readExact(workspace.canonicalRoot, record.path);
+      current = await readBase(backend, workspace.canonicalRoot, record.path, record);
     } catch (error) {
       this.options.store.finishMutation(record.mutationId, 'OUTCOME_UNKNOWN', this.now(), undefined, errorClass(error));
       return;
@@ -205,8 +212,9 @@ export class DurableMutationCoordinator {
 
   private async revalidateStoredPlan(root: string, record: MutationRecord, backend: FileMutationBackend): Promise<void> {
     const path = validateReadPath(record.path);
-    await assertReadTarget(root, path);
-    const original = await backend.readExact(root, path);
+    if (isCreationInput(record)) await assertCreateTarget(root, path);
+    else await assertReadTarget(root, path);
+    const original = await readBase(backend, root, path, record);
     const prepared = prepareMutation(record.workspaceId, path, original, {
       path,
       baseSha256: record.baseSha256,
@@ -225,7 +233,7 @@ export class DurableMutationCoordinator {
     error: unknown,
   ): Promise<void> {
     try {
-      const current = await backend.readExact(root, record.path);
+      const current = await readBase(backend, root, record.path, record);
       const currentHash = sha256(current);
       if (currentHash === record.resultSha256) {
         this.options.store.finishMutation(record.mutationId, 'SUCCEEDED', this.now(), JSON.stringify({ resultSha256: record.resultSha256 }));
@@ -248,9 +256,21 @@ export class DurableMutationCoordinator {
   }
 }
 
+/**
+ * A creation is encoded as a mutation whose base is the empty file (ADR-0022). No historical
+ * record can be mistaken for one, because an update always carries a non-empty `before`.
+ */
+export function isCreationInput(input: Pick<DurableMutationInput, 'baseSha256' | 'before'>): boolean {
+  return input.before === '' && input.baseSha256 === EMPTY_SHA256;
+}
+
 function validateInput(input: DurableMutationInput): void {
   if (!SHA256_RE.test(input.baseSha256)) throw new Error('Gateway rejected invalid base SHA-256');
-  if (!input.before) throw new Error('Gateway rejected before text must be non-empty');
+  if (isCreationInput(input)) {
+    if (!input.after) throw new Error('Gateway rejected empty file creation');
+  } else if (!input.before) {
+    throw new Error('Gateway rejected before text must be non-empty');
+  }
   rejectUnsafeText(input.before, 'before');
   rejectUnsafeText(input.after, 'after');
   if (Buffer.byteLength(input.before, 'utf8') > MAX_FRAGMENT_BYTES) throw new Error('Gateway rejected before exceeds 32 KiB');
@@ -262,7 +282,12 @@ function prepareMutation(workspaceId: string, path: string, original: string, in
   if (Buffer.byteLength(original, 'utf8') > MAX_FILE_BYTES) throw new Error('Gateway rejected target exceeds 64 KiB');
   const baseSha256 = sha256(original);
   if (baseSha256 !== input.baseSha256) throw new Error('Gateway rejected base SHA-256 mismatch');
-  if (countOccurrences(original, input.before) !== 1) throw new Error('Gateway rejected before text must occur exactly once');
+  // The occurrence rule is meaningless against empty content, and counting empty-string
+  // occurrences would not terminate. For a creation the hash check above already pins the base.
+  if (!isCreationInput(input) && countOccurrences(original, input.before) !== 1) {
+    throw new Error('Gateway rejected before text must occur exactly once');
+  }
+  // For a creation `original` and `before` are both empty, so this already yields exactly `after`.
   const candidate = original.replace(input.before, input.after);
   rejectUnsafeText(candidate, 'candidate');
   if (Buffer.byteLength(candidate, 'utf8') > MAX_FILE_BYTES) throw new Error('Gateway rejected candidate exceeds 64 KiB');
@@ -347,4 +372,19 @@ function boundedTtl(value: number): number {
 
 function errorClass(error: unknown): string {
   return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
+ * Reads the base content a mutation record is defined against. A creation's base is the empty
+ * file, so an absent target is its expected state rather than an error; for an update, absence
+ * surfaces through the base-hash comparison instead of being papered over.
+ */
+async function readBase(
+  backend: FileMutationBackend,
+  root: string,
+  path: string,
+  record: Pick<DurableMutationInput, 'baseSha256' | 'before'>,
+): Promise<string> {
+  if (!isCreationInput(record)) return backend.readExact(root, path);
+  return (await backend.readExactIfPresent(root, path)) ?? '';
 }

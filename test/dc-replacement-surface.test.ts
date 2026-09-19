@@ -10,8 +10,8 @@ import type { GatewayTelemetryEvent } from '../src/telemetry.js';
 
 const DEFAULT_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run'];
 const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run'];
-const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'mutation.result'];
-const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'mutation.result'];
+const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.create', 'mutation.result'];
+const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.create', 'mutation.result'];
 
 /** Every capability DC exposes that WAG must keep unavailable on every stdio profile. */
 const FORBIDDEN_TOOL_FRAGMENTS = [
@@ -175,7 +175,7 @@ test('private stdio profiles compose independently and never expose DC-class aut
   });
   const coordinator = new DurableMutationCoordinator({
     store,
-    backends: [{ kind: 'devspace', readExact: async () => 'x', updateExisting: async () => undefined }],
+    backends: [{ kind: 'devspace', readExact: async () => 'x', readExactIfPresent: async () => 'x', createNew: async () => undefined, updateExisting: async () => undefined }],
   });
 
   for (const [options, expected] of [

@@ -25,7 +25,7 @@ const builtCli = join(repoRoot, 'dist', 'cli.js');
 const EXTENDED_TOOLS = [
   'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
   'file.read', 'verify.run',
-  'mutation.preview', 'mutation.result',
+  'mutation.preview', 'file.create', 'mutation.result',
 ];
 
 interface ToolText { content: { text: string }[] }
@@ -233,6 +233,37 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   assert.match(afterFix.output, /pass 2/);
   assert.match(afterFix.output, /fail 0/);
 
+  // C2 — a brand new file, the step that previously forced another tool entirely.
+  const createdPath = 'test/ticket-id.extra.test.js';
+  const createdContent = [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { canonicalizeTicketId } from '../src/lib/ticket-id.js';",
+    '',
+    "test('created by WAG', () => {",
+    "  assert.equal(canonicalizeTicketId('  QQ-7  '), 'qq-7');",
+    '});',
+    '',
+  ].join('\n');
+  const createPreview = parse<{ status: string; mutationId: string }>(await client.callTool({
+    name: 'file.create',
+    arguments: { workspace_id: workspaceId, path: createdPath, content: createdContent },
+  }));
+  assert.equal(createPreview.status, 'approval_required');
+  await assert.rejects(() => readFile(join(fixture.workspaceRoot, createdPath), 'utf8'),
+    'a creation proposal must not touch the workspace');
+
+  const createReview = await operator.review(createPreview.mutationId);
+  assert.ok(createReview.includes(createdPath), 'the operator must see the exact new path');
+  assert.equal((await operator.act(createPreview.mutationId, 'approve', csrfFrom(createReview))).status, 303);
+  assert.equal(await readFile(join(fixture.workspaceRoot, createdPath), 'utf8'), createdContent);
+
+  // The created test must actually run, proving the file landed usable rather than merely present.
+  const afterCreate = parse<{ exitCode: number; output: string }>(
+    await client.callTool({ name: 'verify.run', arguments: { workspace_id: workspaceId, profile: 'unit' } }));
+  assert.equal(afterCreate.exitCode, 0);
+  assert.match(afterCreate.output, /tests 3/, 'the newly created test must be picked up and pass');
+
   // Review the applied change through WAG itself rather than an outside shell.
   const reviewDiff = parse<{ diff: string; truncated: boolean }>(await client.callTool({
     name: 'repo.diff', arguments: { workspace_id: workspaceId, path: DC_FIXTURE_IMPLEMENTATION },
@@ -245,7 +276,10 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
     await client.callTool({ name: 'repo.snapshot', arguments: { workspace_id: workspaceId } }));
   assert.equal(finalSnapshot.head, DC_FIXTURE_BASELINE_HEAD, 'no commit may be created');
   assert.equal(finalSnapshot.dirty, true);
-  assert.deepEqual(await fixtureStatus(fixture.workspaceRoot), [`M ${DC_FIXTURE_IMPLEMENTATION}`]);
+  assert.deepEqual(await fixtureStatus(fixture.workspaceRoot), [
+    `M ${DC_FIXTURE_IMPLEMENTATION}`,
+    `?? ${createdPath}`,
+  ], 'exactly one modified tracked file and exactly one new untracked file');
 
   // Containment: the untrusted repository note must not reach outside the workspace.
   const note = parse<{ content: string }>(await client.callTool({
@@ -275,7 +309,8 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
     fixtureTree: fixture.tree,
     baselineExitCode: baseline.exitCode,
     afterFixExitCode: afterFix.exitCode,
-    operatorApprovals: 1,
+    operatorApprovals: 2,
+    createdFile: createdPath,
     finalStatus: await fixtureStatus(fixture.workspaceRoot),
   }));
 });

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from 'zod';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
@@ -15,6 +15,9 @@ import {
   REQUIRED_DEVSPACE_TOOLS,
   type DevspaceExecutor,
 } from './executor/devspace.js';
+
+/** Base hash that marks a mutation record as a creation (ADR-0022). */
+const EMPTY_FILE_SHA256 = createHash('sha256').update('', 'utf8').digest('hex');
 
 interface WorkspaceBinding { devspaceWorkspaceId: string; canonicalRoot: string; }
 import { DevspaceRepositoryInspectionBackend, type RepoDiffOptions, type RepoListOptions, type RepoSearchOptions, type RepoSnapshotOptions } from './repository-inspection.js';
@@ -414,6 +417,22 @@ export function createGatewayMcpServer(
       workspace_id,
       { path, baseSha256: base_sha256, before, after },
     )));
+    server.registerTool('file.create', {
+      description: 'Propose creating one new file for local human review; nothing is written until approved.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1),
+        path: z.string().min(1),
+        content: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, content }) => toolResult(await mutationContext.coordinator.preview(
+      mutationContext.callerContext,
+      workspace_id,
+      // A creation is an empty-base mutation (ADR-0022): the base is the empty file, so the
+      // stored plan, fingerprint, approval and restart semantics are the accepted ones.
+      { path, baseSha256: EMPTY_FILE_SHA256, before: '', after: content },
+    )));
+
     server.registerTool('mutation.result', {
       description: 'Read the durable state and bounded result metadata for one mutation.',
       inputSchema: z.object({ mutation_id: z.string().min(1) }).strict(),

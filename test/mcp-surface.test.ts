@@ -61,7 +61,7 @@ test('opt-in durable mutation MCP exposes preview/result without remote approval
     ownerId: callerContext.ownerId, sessionId: callerContext.sessionId, adapterId: callerContext.adapterId,
     canonicalRoot: root, backendKind: 'fake', createdAt: 1,
   });
-  const backend = { kind: 'fake', readExact: async () => original, updateExisting: async () => undefined };
+  const backend = { kind: 'fake', readExact: async () => original, readExactIfPresent: async () => original, createNew: async () => undefined, updateExisting: async () => undefined };
   const coordinator = new DurableMutationCoordinator({ store, backends: [backend] });
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
   const gateway = createGateway({ executor, allowedRoots: [root] });
@@ -73,7 +73,8 @@ test('opt-in durable mutation MCP exposes preview/result without remote approval
   t.after(async () => { await client.close(); await server.close(); });
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
-    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'mutation.preview', 'mutation.result',
+    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
+    'mutation.preview', 'file.create', 'mutation.result',
   ]);
   const previewTool = tools.tools.find((tool) => tool.name === 'mutation.preview');
   const resultTool = tools.tools.find((tool) => tool.name === 'mutation.result');

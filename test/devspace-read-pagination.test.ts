@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createGatewayCallerContext } from '../src/caller-context.js';
@@ -95,6 +95,45 @@ test('a bounded mutation succeeds on a file longer than one executor page', asyn
 
   const after = await backend.readExact(fixture.workspaceRoot, 'long.txt');
   assert.equal(after, candidate, 'the write must land exactly, past the first executor page');
+});
+
+/**
+ * Absence is detected from the executor's error text, because its read tool has no typed
+ * "not found". If that wording ever changes upstream this test fails loudly — which is the
+ * point, since a misdetected absence would turn a creation into an overwrite.
+ */
+test('the mutation backend distinguishes a missing file from a present one against the real executor', async (t) => {
+  const fixture = await startPinnedDevspace();
+  t.after(() => fixture.stop());
+  await writeFile(join(fixture.workspaceRoot, 'present.txt'), 'present\n', 'utf8');
+
+  const executor = new DevspaceExecutor({ baseUrl: fixture.baseUrl, accessToken: fixture.accessToken });
+  const backend = new DevspaceFileMutationBackend(executor);
+
+  assert.equal(await backend.readExactIfPresent(fixture.workspaceRoot, 'present.txt'), 'present\n');
+  assert.equal(await backend.readExactIfPresent(fixture.workspaceRoot, 'absent.txt'), undefined,
+    'a missing file must report absence, not throw');
+  assert.equal(await backend.readExactIfPresent(fixture.workspaceRoot, 'nested/absent.txt'), undefined);
+});
+
+test('the mutation backend creates a new file and refuses to create over an existing one', async (t) => {
+  const fixture = await startPinnedDevspace();
+  t.after(() => fixture.stop());
+  await writeFile(join(fixture.workspaceRoot, 'taken.txt'), 'original\n', 'utf8');
+
+  const executor = new DevspaceExecutor({ baseUrl: fixture.baseUrl, accessToken: fixture.accessToken });
+  const backend = new DevspaceFileMutationBackend(executor);
+
+  await backend.createNew(fixture.workspaceRoot, 'fresh.txt', 'brand new\n');
+  assert.equal(await readFile(join(fixture.workspaceRoot, 'fresh.txt'), 'utf8'), 'brand new\n');
+
+  // The executor's add silently overwrites; the backend must catch that before it happens.
+  await assert.rejects(() => backend.createNew(fixture.workspaceRoot, 'taken.txt', 'replacement\n'),
+    /existing target/i);
+  assert.equal(await readFile(join(fixture.workspaceRoot, 'taken.txt'), 'utf8'), 'original\n');
+
+  await assert.rejects(() => backend.createNew(fixture.workspaceRoot, 'blank.txt', ''),
+    /empty file creation/i);
 });
 
 test('oversized content is still refused rather than silently truncated', async (t) => {

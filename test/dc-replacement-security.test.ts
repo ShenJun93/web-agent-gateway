@@ -24,6 +24,10 @@ function recordingBackend(writes: Recorded[]): FileMutationBackend {
   return {
     kind: 'devspace',
     readExact: async () => ORIGINAL,
+    readExactIfPresent: async () => ORIGINAL,
+    createNew: async (_root: string, path: string, candidate: string) => {
+      writes.push({ path, candidate });
+    },
     updateExisting: async (_root: string, path: string, _original: string, candidate: string) => {
       writes.push({ path, candidate });
     },

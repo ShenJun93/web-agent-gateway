@@ -3,7 +3,7 @@
 Date: 2026-09-19
 Status: ACCEPTANCE PLAN — defines the exact evidence required for local production acceptance
 Companion design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`
-Decision authority: ADR-0018, ADR-0020, ADR-0021
+Decision authority: ADR-0018, ADR-0020, ADR-0021, ADR-0022
 Research: `docs/research/2026-09-19-wag-dc-replacement-v1-surface-selection.md`
 Measured gap: `docs/benchmarks/2026-09-17-dc-replacement-live-benchmark-v1-attempt-1.md`
 
@@ -86,7 +86,7 @@ Negative discovery tests must prove absence, in every combination, of:
 - `job.*`;
 - shell, process, PTY, terminal, or command tools;
 - Git write tools;
-- file create/move/delete or directory tools;
+- file move/delete or directory tools;
 - runtime configuration mutation tools;
 - arbitrary tool forwarding.
 

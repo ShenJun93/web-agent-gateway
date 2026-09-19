@@ -1,5 +1,5 @@
-import { realpath } from 'node:fs/promises';
-import { isAbsolute, parse, relative, resolve } from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, parse, relative, resolve } from 'node:path';
 
 const SENSITIVE_SEGMENTS = new Set(['.git', '.ssh', '.aws', '.gnupg', '.azure', '.kube']);
 const SENSITIVE_FILES = new Set(['.npmrc', '.pypirc', '.netrc', '_netrc', '.git-credentials']);
@@ -41,6 +41,36 @@ export async function assertReadTarget(root: string, relativePath: string): Prom
   const target = await realpath(resolve(root, relativePath));
   if (!containsPath(root, target)) throw new Error('Gateway denied workspace escape');
   if (hasSensitiveSegment(target)) throw new Error('Gateway denied sensitive path');
+}
+
+/**
+ * Confines a path that is expected NOT to exist yet, for reviewed file creation.
+ *
+ * `assertReadTarget` cannot be used here because it resolves the target itself and a file that
+ * does not exist has no real path. Instead the nearest existing ancestor is resolved, which is
+ * what a symlinked parent directory would have to subvert, and the target must genuinely be
+ * absent so a creation can never quietly become an overwrite.
+ */
+export async function assertCreateTarget(root: string, relativePath: string): Promise<void> {
+  const target = resolve(root, relativePath);
+  if (hasSensitiveSegment(target)) throw new Error('Gateway denied sensitive path');
+  if (await pathExists(target)) throw new Error('Gateway denied existing creation target');
+
+  let ancestor = dirname(target);
+  for (;;) {
+    if (await pathExists(ancestor)) break;
+    const parent = dirname(ancestor);
+    if (parent === ancestor) throw new Error('Gateway denied workspace escape');
+    ancestor = parent;
+  }
+  const realAncestor = await realpath(ancestor);
+  if (!containsPath(root, realAncestor)) throw new Error('Gateway denied workspace escape');
+  if (hasSensitiveSegment(realAncestor)) throw new Error('Gateway denied sensitive path');
+}
+
+async function pathExists(value: string): Promise<boolean> {
+  try { await lstat(value); return true; }
+  catch { return false; }
 }
 
 function containsPath(root: string, target: string): boolean {

@@ -53,7 +53,8 @@ test('durable mutation runtime reconciles before serving and owns only its local
   const client = runtime.client;
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
-    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'mutation.preview', 'mutation.result',
+    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
+    'mutation.preview', 'file.create', 'mutation.result',
   ]);
 
   const opened = await client.callTool({ name: 'workspace.open', arguments: { path: fixture.workspaceRoot } });

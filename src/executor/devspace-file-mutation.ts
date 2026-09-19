@@ -18,6 +18,38 @@ export class DevspaceFileMutationBackend implements FileMutationBackend {
     return this.readWorkspaceExact(workspaceId, path);
   }
 
+  /**
+   * The executor's read tool reports a missing file as an error string rather than a typed
+   * condition, so absence is recognised from that message. Any other failure propagates, because
+   * mistaking a permission error for absence would let a creation silently overwrite.
+   * `devspace-read-pagination.test.ts` pins this against the pinned executor revision.
+   */
+  async readExactIfPresent(root: string, path: string): Promise<string | undefined> {
+    const workspaceId = await this.executor.openWorkspace(root);
+    try {
+      return await this.readWorkspaceExact(workspaceId, path);
+    } catch (error) {
+      if (isMissingFileError(error)) return undefined;
+      throw error;
+    }
+  }
+
+  async createNew(root: string, path: string, candidate: string): Promise<void> {
+    if (candidate === '') throw new Error('Gateway rejected empty file creation');
+    const workspaceId = await this.executor.openWorkspace(root);
+    if (await this.readExactIfPresent(root, path) !== undefined) {
+      throw new Error('Gateway rejected creation over an existing target');
+    }
+
+    const result = await this.executor.applyPatch(workspaceId, buildAddPatch(path, candidate));
+    // The executor's add silently overwrites an existing path and reports "update" when it does,
+    // so the reported operation is the proof that this created rather than replaced.
+    assertSingleResult(result, path, 'add');
+
+    const finalText = await this.readWorkspaceExact(workspaceId, path);
+    if (finalText !== candidate) throw new Error('Gateway rejected backend post-write mismatch');
+  }
+
   async updateExisting(root: string, path: string, original: string, candidate: string): Promise<void> {
     const workspaceId = await this.executor.openWorkspace(root);
     const current = await this.readWorkspaceExact(workspaceId, path);
@@ -25,7 +57,7 @@ export class DevspaceFileMutationBackend implements FileMutationBackend {
 
     const patch = buildUpdatePatch(path, original, candidate);
     const result = await this.executor.applyPatch(workspaceId, patch);
-    assertSingleUpdateResult(result, path);
+    assertSingleResult(result, path, 'update');
 
     const finalText = await this.readWorkspaceExact(workspaceId, path);
     if (finalText !== candidate) throw new Error('Gateway rejected backend post-write mismatch');
@@ -66,9 +98,28 @@ function patchLines(value: string): string[] {
   return lines;
 }
 
-function assertSingleUpdateResult(result: DevspacePatchResult, path: string): void {
+function assertSingleResult(result: DevspacePatchResult, path: string, operation: 'add' | 'update'): void {
   const file = result.files[0];
-  if (result.files.length !== 1 || file?.operation !== 'update' || file.path !== path || file.previousPath !== undefined) {
+  if (result.files.length !== 1 || file?.operation !== operation || file.path !== path || file.previousPath !== undefined) {
     throw new Error('Gateway rejected DevSpace patch result');
   }
+}
+
+function buildAddPatch(path: string, candidate: string): string {
+  if (/[\r\n]/.test(path)) throw new Error('Gateway denied workspace-relative path');
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${path}`,
+    ...patchLines(candidate).map((line) => `+${line}`),
+    '*** End Patch',
+  ].join('\n');
+}
+
+/**
+ * The executor has no typed "not found", so absence is matched on the underlying filesystem
+ * error it surfaces. Deliberately narrow: EACCES, EPERM and EISDIR must not look like absence.
+ */
+function isMissingFileError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bENOENT\b|no such file or directory/i.test(message);
 }
