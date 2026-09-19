@@ -4,32 +4,30 @@ Read `NEW_CHAT_HANDOFF_2026-09-19_AI_NATIVE_BROWSER_COMMUNITY_SCAN.md` first.
 
 Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, ADR-0018, ADR-0019, and all current browser research receipts before any decision or mutation.
 
-Current research receipts:
-
-- `docs/research/2026-09-19-ai-native-browser-community-experience-scan.md`
-- `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-2.md`
-- `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-3.md`
-- `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-4.md`
-- `docs/research/2026-09-19-ai-native-browser-replacement-pressure-audit.md`
+Current research receipts now include:
 - `docs/research/2026-09-20-ai-native-browser-research-pass-5.md`
+- `docs/research/2026-09-20-ai-native-browser-research-pass-6.md`
+plus all earlier Pass 1–4/replacement-pressure receipts referenced by the detailed handoff.
 
 The user explicitly requested more research. **Do not run local benchmarks yet.**
 
-Pass 5 found material new prior art:
-- Browser Controller: promote to source-review tier for authenticated local multi-agent/tab ownership.
-- Chrome Agent Bridge: promote as ownership/cleanup donor.
-- Agent360 Browser MCP: promote for targeted research; current false-success issue is a hard blocker.
-- codex-browser-bridge: high-value OpenAI-specific adapter; freeze duplicate WAG implementation of ChatGPT Desktop browser pipe by default.
-- Vibe MCP: demote current Windows local lane due reproducible relay instability/current E2E hang.
-- BrowserMCP/browsermcp.io and hangwin/mcp-chrome: demote due maintenance/security evidence.
+Pass 6 material changes:
+- Chrome DevTools for agents promoted to first-party Chrome comparator, but current orphan/memory/Windows autoConnect evidence blocks lifecycle-baseline status.
+- Playwright remains provider-neutral primary; shared BrowserContext is explicitly not an ownership/authority boundary.
+- Browser Controller remains high source-review candidate.
+- LAPSrj/browser-mcp promoted as Windows root-PID/shared-profile lifecycle donor.
+- browser-rs-mcp promoted as per-owner capability/managed-mode authority donor, but no Windows support.
+- uiuing/browser-agent promoted as post-action effect-verification/risk-tier donor.
+- Agent360 effect verification improved in v1.29.2, but issue #19 class is not fully closed.
+- whg517/browser-bridge Windows Job Object broker-lifetime gate remains open.
+- Polar/Hark/Aside/Phi are product/UX comparators, not replacements for WAG authority.
 
-Current direction remains:
-- Playwright first-party is the primary provider-neutral browser substrate;
-- WebMCP is a semantic fast path, not authority;
+Current direction:
 - do not build a new AI-native browser;
-- freeze custom generic browser mechanics;
-- retain WAG authority/ADR-0019/durable effects and bounded owner-aware cleanup;
-- keep Guardian on continuity;
-- keep SessionCommander on exact-owned runtime supervision.
+- freeze generic browser mechanics;
+- retain WAG ADR-0019 authority/durable effects;
+- retain Guardian continuity;
+- retain SessionCommander/Cleanup exact-owned lifecycle supervision;
+- strengthen explicit effect verification.
 
-Next action: Pass 6 deep source/community narrowing, still no local benchmark.
+Next action: **Pass 7 targeted source/fix-velocity research, still no local benchmark.**

@@ -1,4 +1,4 @@
-# New Chat Handoff — AI-native Browser Community Scan
+# New Chat Handoff — AI-native Browser / Agent-browser Research
 
 Date: 2026-09-20
 Repository: `ShenJun93/web-agent-gateway`
@@ -6,9 +6,9 @@ Canonical branch: `main`
 
 ## User directive
 
-Continue researching community experience, source-level prior art, security and lifecycle. **Do not run local benchmarks yet.**
+Continue research. **Do not run local benchmarks yet.**
 
-Sunk cost does not protect WAG/Guardian/SessionCommander browser code. Prefer native/standard/proven upstream solutions when evidence is stronger.
+Do not preserve WAG/Guardian/SessionCommander browser code because of sunk cost. Prefer native/standard/proven upstream where evidence is stronger, but do not retire authority/lifecycle guarantees without evidence.
 
 ## Canonical authority
 
@@ -18,244 +18,245 @@ Fresh-read in this order:
 2. `README.md`.
 3. `docs/adr/0018-lock-webchat-local-coding-mission.md`.
 4. `docs/adr/0019-separate-browser-proposal-from-consequential-authority.md`.
-5. Research receipts:
+5. Current research receipts:
    - `docs/research/2026-09-19-ai-native-browser-community-experience-scan.md`
    - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-2.md`
    - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-3.md`
    - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-4.md`
    - `docs/research/2026-09-19-ai-native-browser-replacement-pressure-audit.md`
    - `docs/research/2026-09-20-ai-native-browser-research-pass-5.md`
+   - `docs/research/2026-09-20-ai-native-browser-research-pass-6.md`
 6. Chat history last.
 
 This handoff is not authority when Git disagrees.
 
 ## Verified research state
 
-Passes 1–5 plus the replacement-pressure audit are complete.
+Passes 1–6 plus the replacement-pressure audit are complete.
 
-No local install/benchmark was run in Pass 5.
+No local install/benchmark was run in Pass 6.
 
-Remote `main` was fresh-verified at
-`33ca394a63a31665e4e6f2dbf8394cb0fbed779c`
-before the Pass 5 branch was created.
+Remote `main` was fresh-verified at:
+`e8ac691b09e80a2a9925163ed04e652479928d05`
+before the Pass 6 branch was created.
 
-## Pass 5 synthesis
-
-### Primary provider-neutral substrate remains Playwright
-
-Keep this ordering:
+## Current architecture direction
 
 ```text
-coding agent + shell -> Playwright CLI first
-generic MCP + existing authenticated Chrome/Edge -> Playwright MCP extension first
-shared Playwright browser/session -> Browser.bind()/shared context before custom broker
+DO NOT BUILD A NEW AI-NATIVE BROWSER.
+
+provider-specific workflow
+  -> provider-native browser where accepted
+
+Chrome-specific live debugging / real Chrome
+  -> Chrome DevTools for agents first-party comparator
+
+provider-neutral browser automation
+  -> Playwright primary substrate
+
+real-profile multi-agent ownership
+  -> Browser Controller / Chrome Agent Bridge / Panerelay / vetted bridge donors
+
+consequential local effects
+  -> WAG ADR-0019 proposal -> local approval -> durable effect core
+
+local runtime/process lifecycle
+  -> SessionCommander / Cleanup Sidecar exact-owned supervision until upstream proves zero-residue recovery
 ```
 
-Do not treat Playwright as cleanup/lifecycle baseline yet. Current real-profile/Windows failure evidence remains relevant.
+## Pass 6 changes
 
-### Browser Controller — PROMOTE
+### Chrome DevTools for agents — PROMOTED
 
-`compnew2006/browser-controller` is the strongest new local architecture found in Pass 5.
+Now treat Google Chrome DevTools for agents as a first-party Chrome comparator.
 
-Important properties:
-- exact tab targeting;
-- per-client session IDs;
-- per-tab mutex/lock;
-- shared daemon for multiple agents;
+Strong:
+- stable official surface;
+- existing logged-in Chrome via `--autoConnect`;
+- explicit Chrome permission prompt;
+- live tabs/extensions/application state;
+- concurrent-page routing experiment;
+- WebMCP/custom page tooling.
+
+Current blockers:
+- Windows `--autoConnect` timeout issue #2675;
+- orphan isolated Chrome issue #2621;
+- long-lived memory/CPU retention reports;
+- duplicate/reconnect process conflicts.
+
+Conclusion:
+**do not recreate generic Chrome DevTools/CDP features, but do not make it lifecycle authority.**
+
+### Playwright — still provider-neutral primary, but shared context is not isolation
+
+Recent issues demonstrate cross-client DOM/page/recorder bleed under shared BrowserContext modes.
+
+Conclusion:
+- keep Playwright as action substrate;
+- keep owner/session identity outside Playwright shared context;
+- do not use shared context as WAG authority boundary.
+
+### Browser Controller — remains top source-review candidate
+
+Source review confirms:
+- separate enrollment secret;
+- exact extension Origin pin;
+- token-authenticated IPC and WebSocket;
 - Windows named-pipe IPC;
-- loopback-only WebSocket;
-- auth token + separate enrollment secret;
-- fail-closed port ownership;
-- bounded timeouts and no retry of side-effecting actions;
-- MIT.
+- unique session IDs;
+- heartbeat eviction;
+- per-session rate limits;
+- bounded per-tool timeouts;
+- abort in-flight calls + release exact session locks on disconnect.
 
-Caution:
-- tiny public adoption;
-- current README competitor comparison is stale about Playwright's existing-browser/multi-agent capability.
+Gap:
+- independent sustained-use evidence remains thin;
+- Windows named-pipe ACL / hostile-same-user evidence still needed.
 
-Use source/test design as evidence, not its market comparison.
+### Agent360 — improving but #19 class still open
 
-### Chrome Agent Bridge — PROMOTE AS OWNERSHIP/CLEANUP DONOR
+v1.29.2 adds stronger event/effect checks and honest failures for several interaction classes.
 
-`cmsflash/agent-browser-mcp` enforces `threadTitle -> one private tab group`.
+But project's own docs still point to issue #19 for remaining false-success behavior.
 
-Key findings:
-- thread cannot enumerate/touch another thread's tabs;
-- profile routing fails closed rather than guesses;
-- reconnect/freeze/focus-steal tests exist;
-- important cleanup finding: closing a grouped set of tabs can leave a Chrome saved-group artifact that syncs to the user account; safe cleanup is ungroup then close;
-- abandoned workspace GC exists.
+Use as effect-verification donor, not primary substrate yet.
 
-Limitation:
-- local shell is trusted; local admission is not a WAG-grade boundary.
-- Windows-specific proof remains weaker than macOS/test-profile proof.
+### LAPSrj/browser-mcp — PROMOTED Windows lifecycle donor
 
-### Agent360 Browser MCP — PROMOTE TARGETED RESEARCH
+Distinctive Windows mechanics:
+- exact root browser PID;
+- `taskkill /F /T` exact tree teardown;
+- sidecar with root PID/CDP port/attached sessions;
+- shared-profile refcount;
+- last-session teardown;
+- session-scoped tabs;
+- Edge + Chrome stated live-validated.
 
-Strengths:
-- active maintenance;
-- documented 20-session model;
-- tab groups per agent;
-- stdin-close + idle cleanup;
-- optional profile pairing;
-- human-in-the-loop tool.
+Security caution:
+- WSL relay may bind `0.0.0.0`; threat review required.
+- community/adoption evidence remains tiny.
 
-Hard blockers:
-- issue #19: action can report `ok:true` while React app state did not change;
-- issue #18: full port contention causes repeated range-wide bind attempts;
-- issue #11: Windows SPA scroll can complete without triggering lazy-load effect.
+### browser-rs-mcp — PROMOTED authority donor, not Windows candidate
 
-Effect verification must be a hard acceptance requirement.
+Useful:
+- per-owner capability auth;
+- managed multi-tenant mode;
+- secret-broker design.
 
-### codex-browser-bridge — PROMOTE OPENAI-SPECIFIC ADAPTER
+Current public builds are macOS/Linux, not Windows.
 
-Reuses ChatGPT Desktop's `codex-browser-use-*` named pipe and provider browser extension.
+### uiuing/browser-agent — PROMOTED effect-verification donor
 
-Implication:
-**freeze any plan to duplicate ChatGPT Desktop's private browser pipe inside WAG unless this adapter is proven insufficient.**
+Useful design:
+- post-action verification against live DOM;
+- expected vs actual evidence;
+- risk tiers;
+- site policies;
+- confirmation prompts;
+- authorization memory;
+- audit traces.
 
-It remains:
-- OpenAI-specific;
-- dependent on private/undocumented protocol;
-- not a ChatGPT Web replacement;
-- not an ADR-0019 authority replacement.
+This is strong prior art for WAG result/effect verification without requiring adoption of the whole runtime.
 
-### Vibe MCP — DEMOTE CURRENT WINDOWS LOCAL LANE
+### whg517/browser-bridge — Windows gate remains open
 
-Feature set is strong, especially outbound remote relay.
+Issue #192 still requests real Windows evidence that broker survives client/server death under Windows Job Object `KILL_ON_JOB_CLOSE`.
 
-But current evidence:
-- issue #129: native Windows relay fails to stabilize across tested 0.1.0–0.3.2 versions;
-- DevTools path used a POSIX `/tmp` socket on native Windows in that report;
-- issue #157: clean-main browser CLI E2E `status` timeout;
-- issue #132: non-loopback HTTP MCP needs real authentication, Host validation is insufficient.
+Do not assume its multi-client broker lifetime on the user's workload until that is verified.
 
-Keep remote outbound architecture as a donor, not current Windows primary.
+## Proprietary / funded browser layer
 
-### BrowserMCP/browsermcp.io and hangwin/mcp-chrome — DEMOTE
+### Polar
 
-Popularity is not enough.
+$5.7M seed led by Madrona, ex-Comet team, focused on long-running authenticated knowledge-work automation.
 
-Current evidence includes stale public core, unauthenticated/local-control concerns, reconnect/process defects, and for hangwin active high-risk SSRF/path/origin/auth reports.
+Relevant as product/UX comparator.
+Not a provider-neutral local infrastructure replacement.
 
-Do not spend first-round empirical time here.
+### Hark Handoff
 
-### WebMCP — semantic layer becomes more important, authority does not
+Very heavily funded browser/computer-use system. Current public evidence is still preview/vendor-demo heavy; independent sustained-use evidence is not yet enough for architecture decisions.
 
-Chrome origin trial is active and current docs/security guidance are evolving.
+### Aside
 
-September spec discussions still include:
-- page-enforced write boundaries;
-- an agent that can both call WebMCP and automate UI potentially satisfying the page's own approval UI;
-- lifecycle/abort/refusal semantics.
+Mixed community experience:
+- strong logged-in cross-site automation reports;
+- also bloat/crash/sign-out/privacy complaints.
 
-Therefore:
+UX comparator only.
 
-```text
-WebMCP tool semantics = valuable
-WebMCP hints = untrusted signals
-consequentialHint = not authorization
-WAG local approval = still required
-```
+### Phi
 
-Preferred semantic path remains:
+Interesting local/open browser direction but currently macOS-only, so not the Windows operational base.
 
-```text
-WebMCP -> structured Playwright/native tools -> generic DOM -> pixel/CUA fallback
-```
+## Current replacement/freeze map
 
-### Provider-native paths remain comparators, not lifecycle baselines
+Freeze:
+- new generic DOM/action catalog in WAG;
+- generic CDP wrappers;
+- custom browser launch/profile engine;
+- another general multi-client browser protocol;
+- ChatGPT Desktop private pipe clone while codex-browser-bridge/native path is sufficient;
+- cloud browser fleet infrastructure;
+- Guardian generic browser automation;
+- SessionCommander browser-semantic features.
 
-Current OpenAI Windows browser reports still include orphan processes/focus/teardown crashes.
-Current Claude Windows reports still include native-host problems and stale false-positive browser-connected state.
-
-Keep exact liveness/effect verification and bounded cleanup.
-
-### Cloud lane
-
-Browserbase:
-- strongest independent production/community volume;
-- official current paid entry $20/mo with 25 concurrent and 100 browser hours;
-- independent ~10k-session anecdote supports managed ops/stability but complains about short-task billing floor.
-
-Kernel:
-- strong managed-auth/profiles/idle model;
-- current $30 Hobbyist, 10 concurrent; $200 Startup, 150 concurrent;
-- vendor claims idle/no-idle-charge advantages;
-- independent production evidence still thinner than Browserbase.
-
-Keep:
-```text
-cloud first comparator = Browserbase
-cloud second comparator = Kernel
-open-source fallback = Steel
-```
-
-## Current replacement map
-
-### Freeze custom generic browser mechanics
-
-Do not expand:
-- DOM action catalogs;
-- generic snapshot engines;
-- browser launch/profile engines;
-- arbitrary CDP wrappers;
-- custom session-sharing broker before Playwright/browser donors fail measured requirements;
-- OpenAI Desktop named-pipe clone;
-- generic cloud browser fleet management.
-
-### Retain
-
-WAG:
-- caller/admission;
-- opaque ownership;
+Retain:
+- WAG caller/admission/opaque ownership;
 - capability policy;
 - ADR-0019 proposal/effect split;
 - local approval;
-- secret isolation;
-- durable effect/job ownership;
+- durable effects/jobs;
 - audit/evidence;
-- substrate conformance.
+- Guardian context/continuity;
+- SessionCommander exact-owned process/runtime supervision;
+- Cleanup Sidecar as independent fallback/verifier.
 
-Guardian:
-- context/continuity/early handoff.
+Strengthen:
+- explicit post-action/effect verification;
+- fail-closed ownership;
+- bounded timeout/recovery;
+- exact process-tree cleanup evidence.
 
-SessionCommander/Cleanup:
-- exact-owned runtime/process supervision;
-- residue cleanup until upstream proves deterministic zero-residue recovery.
-
-## Pass 6 — still research only
+## Pass 7 — still research only
 
 Research next:
 
-1. Browser Controller Windows named-pipe ACL/auth, daemon restart/orphan behavior, independent adoption.
-2. Chrome Agent Bridge Windows support, local admission, multi-profile ownership, independent use.
-3. Agent360 exact released pairing state and whether false-success #19 gets fixed.
-4. Playwright discarded-tab/Memory Saver issue, attached-vs-owned lifecycle and shared-context isolation.
-5. codex-browser-bridge pipe ACL inherited from ChatGPT Desktop and multi-client behavior.
-6. WebMCP approval/write-boundary issue evolution and real non-demo adopters.
-7. more independent Kernel production evidence vs Browserbase.
-8. only discover additional real-profile bridges when they add a capability not already covered above.
+1. Browser Controller Windows named-pipe ACL and NTFS token/enrollment permissions.
+2. LAPSrj stale/malicious sidecar handling, PID reuse, crash recovery and Windows process ownership.
+3. Chrome DevTools #2675/#2621/#2431 fix velocity/current release state.
+4. Playwright fixes after #1631/#42608 and recommended safe multi-client topology.
+5. whg517/browser-bridge #192 Windows Job Object result.
+6. Agent360 #19 full closure.
+7. codex-browser-bridge inherited ChatGPT Desktop named-pipe ACL and multi-client semantics.
+8. independent Polar/Hark long-duration failure evidence.
+9. additional projects only when they add a genuinely new authority/ownership/lifecycle primitive.
+10. convert best external effect-verification ideas into a WAG-level contract before any browser implementation grows.
 
 ## Decision markers
 
 ```text
-AI_NATIVE_BROWSER_PASS_5 = COMPLETE
+AI_NATIVE_BROWSER_PASS_6 = COMPLETE
 LOCAL_BENCHMARK_RUN = NO
 USER_REQUEST_MORE_RESEARCH = ACTIVE
 BUILD_NEW_BROWSER = NO
+
 PLAYWRIGHT_PROVIDER_NEUTRAL_PRIMARY = YES
-BROWSER_CONTROLLER = PROMOTE_SOURCE_REVIEW
-CHROME_AGENT_BRIDGE = PROMOTE_OWNERSHIP_DONOR
-AGENT360 = PROMOTE_TARGETED_RESEARCH
-CODEX_BROWSER_BRIDGE = PROMOTE_OPENAI_SPECIFIC_ADAPTER
-VIBE_WINDOWS = DEMOTE_CURRENT
-BROWSERMCP_IO = DEMOTE
-MCP_CHROME_HANGWIN = DEMOTE_SECURITY
-WEBMCP = SEMANTIC_FAST_PATH_NOT_AUTHORITY
-BROWSERBASE = CLOUD_FIRST_COMPARATOR
-KERNEL = CLOUD_SECOND_COMPARATOR
+CHROME_DEVTOOLS_FOR_AGENTS = FIRST_PARTY_CHROME_COMPARATOR
+PLAYWRIGHT_SHARED_CONTEXT = NOT_AUTHORITY_BOUNDARY
+
+BROWSER_CONTROLLER = HIGH_SOURCE_REVIEW
+LAPSRJ_BROWSER_MCP = WINDOWS_LIFECYCLE_DONOR
+BROWSER_RS_MCP = AUTHORITY_DONOR_NO_WINDOWS
+UIUING_BROWSER_AGENT = EFFECT_VERIFICATION_DONOR
+AGENT360 = EFFECT_VERIFICATION_DONOR_ISSUE19_OPEN
+WHG517_BROWSER_BRIDGE = WINDOWS_LIFETIME_GATE_OPEN
+
 WAG_AUTHORITY_CORE = RETAIN
-OWNER_AWARE_CLEANUP = RETAIN
-NEXT_ACTION = PASS_6_DEEP_SOURCE_AND_COMMUNITY_NARROWING
+ADR_0019_APPROVAL_BOUNDARY = RETAIN
+OWNER_AWARE_LOCAL_CLEANUP = RETAIN
+GENERIC_BROWSER_ACTION_BUILD = FREEZE
+EFFECT_VERIFICATION_REQUIREMENT = STRENGTHEN
+
+NEXT_ACTION = PASS_7_TARGETED_SOURCE_AND_FIX_VELOCITY_RESEARCH
 ```
