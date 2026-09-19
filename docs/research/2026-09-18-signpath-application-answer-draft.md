@@ -270,18 +270,17 @@ SignPath requirement:
 - MFA for SignPath access and source-repository access for all relevant team members
 
 GitHub MFA state:
-- UNKNOWN / not verified
+- PASS_VERIFIED_UI
 
-Reason:
-- current GitHub OAuth token does not have `read:user`
-- GitHub REST therefore does not expose the private `two_factor_authentication` field
-- GraphQL does not currently expose a `hasTwoFactorEnabled` User field
+Verification:
+- verified directly in GitHub `Settings -> Password and authentication` on 2026-09-19 using a dedicated read-only browser worker;
+- source-repository account MFA is enabled;
+- configured MFA methods and recovery details are intentionally not recorded in this public repository.
 
-Action before application:
-- maintainer confirms GitHub MFA in the GitHub UI
-- SignPath account MFA must also be enabled/configured according to provider onboarding
+SignPath account MFA:
+- must be enabled/configured according to provider onboarding if and when provider-side setup is separately authorized.
 
-Do not widen the current GitHub token scope solely to populate this draft.
+The GitHub API token scope was not widened for this verification.
 
 ## Reputation timing
 
@@ -299,8 +298,8 @@ Completed publication prerequisites:
 - immutable releases are enabled before the first public binary release;
 - private vulnerability reporting, Dependabot alerts, secret scanning, push protection, stricter fork-PR approval, and a minimal `main` history-protection ruleset are enabled.
 
-Remaining pre-submission blocker:
-1. Confirm GitHub MFA.
+Repository-side hard pre-submission blockers:
+- none currently identified.
 
 Provider-discretion question to carry into eligibility/application review:
 - obtain SignPath's project-specific interpretation of whether WAG's Node SEA executable is WAG's own application binary or falls under the modified-upstream visible-fork condition.
