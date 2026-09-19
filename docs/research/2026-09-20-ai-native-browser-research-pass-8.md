@@ -764,3 +764,153 @@ GENERIC_BROWSER_MECHANICS_BUILD = FREEZE
 
 NEXT_ACTION = PASS_9_NATIVE_SECURITY_AND_HOST_AUTHORITY_RESEARCH
 ```
+
+## Pass 8 continuation — additional real-profile and remote-bridge prior art
+
+The user requested broader research before any local benchmark. A further scan found several projects with materially relevant ownership, Windows, remote-reachability, and effect-truth ideas.
+
+### BrowserTap — promote to primary Windows ownership/effect-truth donor
+
+BrowserTap (LinVireo/browsertap-mcp, MIT) is more relevant to WAG/SessionCommander than a generic browser-control wrapper.
+
+Source/security documentation records:
+- explicit session_id, lifecycle generation and owner_id;
+- tab mutation/cleanup tied to current owner and current tab generation;
+- operation receipts that distinguish pre-dispatch failure from possibly-dispatched unknown outcomes;
+- retry_safe=false when execution may have crossed the browser boundary;
+- delayed replies retained as evidence without making an old unknown operation replayable;
+- managed bridge restart/stop checks PID, process creation identity and executable identity rather than killing by image name;
+- stale or unmanaged process records fail closed instead of terminating an unknown process.
+
+Most importantly for Pass 8, BrowserTap documents a concrete Windows token-file ACL implementation: a newly created token gets the current Windows user as owner; a protected owner-only DACL is applied before the first token byte is written; existing token files must belong to the expected user; the DACL is hardened and verified before reading; failed security checks refuse the read.
+
+Its security documentation is also explicit that loopback is not a same-user boundary, reading the bridge token is browser-session takeover, extension Origin pinning does not authenticate arbitrary local processes, and raw CDP/JavaScript are not a sandbox.
+
+Disposition:
+
+    BROWSERTAP_WINDOWS_TOKEN_DACL = STRONG_DONOR
+    BROWSERTAP_PROCESS_IDENTITY = PID_PLUS_CREATION_PLUS_EXECUTABLE
+    BROWSERTAP_TAB_OWNERSHIP = OWNER_PLUS_GENERATION
+    BROWSERTAP_EFFECT_RECEIPTS = STRONG_DONOR
+    BROWSERTAP_HOSTILE_SAME_USER_SANDBOX = NO
+    BROWSERTAP_WAG_REPLACEMENT = NO
+
+Sources:
+- https://github.com/LinVireo/browsertap-mcp
+- https://github.com/LinVireo/browsertap-mcp/blob/main/.github/SECURITY.md
+- https://github.com/LinVireo/browsertap-mcp/blob/main/CHANGELOG.md
+- https://github.com/LinVireo/browsertap-mcp/blob/main/docs/TROUBLESHOOTING.md
+
+### TaskWindow — good session/tab UX, Windows token ACL proof missing
+
+TaskWindow adds daemon-minted sessionToken, per-session tab groups, concurrent-agent separation, background/no-focus behavior, idle reaping and retry reuse of the same session token to avoid duplicate first-tab creation.
+
+However current source uses Node mode 0o600 / chmodSync 0o600 for bearer/config files. Node's Windows permission model does not make owner/group/other distinctions, so this is not proof of current-user-only NTFS secrecy.
+
+    TASKWINDOW_SESSION_TAB_MODEL = USEFUL_DONOR
+    TASKWINDOW_WINDOWS_TOKEN_ACL = UNPROVEN
+    TASKWINDOW_WAG_AUTHORITY_REPLACEMENT = NO
+
+Source: https://github.com/clawnify/taskwindow
+
+### browserControl — stronger remote authority prior art than bearer-URL relays
+
+Officially-aditya/browserControl is useful primarily as remote-authority prior art. Its documented remote architecture includes OAuth discovery, Dynamic Client Registration, Authorization Code + PKCE, opaque access tokens, rotating refresh tokens, device-bound browser grants and rotation/revocation of device credentials. Browser-side device credentials are not exposed directly to the AI client.
+
+It also uses current observation/document identity for visual mutations and models an exclusive interactive control lease. Stale observations/page state invalidate actions; local interactive control has priority over remote interactive control.
+
+    BROWSERCONTROL_REMOTE_OAUTH = STRONG_DONOR
+    BROWSERCONTROL_OBSERVATION_FENCE = STRONG_DONOR
+    BROWSERCONTROL_INTERACTIVE_LEASE = STRONG_DONOR
+    BROWSERCONTROL_WAG_AUTHORITY_REPLACEMENT = NO
+
+Repository: https://github.com/Officially-aditya/browserControl
+
+### Vibe Browser / Vibe MCP — excellent reachability fit, high bearer-relay risk
+
+VibeTechnologies/vibe-mcp (Apache-2.0) directly addresses ChatGPT-Web-adjacent reachability: the extension can dial outbound to a hosted relay, so a hosted assistant can reach the user's logged-in Chrome without an inbound PC port.
+
+The current hosted path has a major authority trade-off: the relay URL/UUID is the bearer credential, no OAuth consent/DCR/scope layer is required on that hosted connector path, anyone holding the UUID can control the live browser session, and page content traverses the vendor relay in remote mode.
+
+Public project history includes direct evidence:
+- issue #105 records a published npm README exposing a live relay session identifier, with an external user demonstrating access;
+- issue #87 records repeated Extension reconnecting failures on the public relay path;
+- issue #129 records native Windows local-relay failures across several early releases;
+- later fixes add credential redaction, WSS policy, bounded handshakes and lifecycle cleanup.
+
+    VIBE_REMOTE_REACHABILITY = HIGH_FIT
+    VIBE_NO_INBOUND_PORT = VALUABLE_DONOR
+    VIBE_HOSTED_UUID = BROWSER_WIDE_BEARER
+    VIBE_REMOTE_PAGE_DATA = VENDOR_RELAY_PATH
+    VIBE_RELAY_SECURITY_INCIDENT = PUBLICLY_DOCUMENTED
+    VIBE_WAG_AUTHORITY_REPLACEMENT = NO
+
+Sources:
+- https://github.com/VibeTechnologies/vibe-mcp
+- https://github.com/VibeTechnologies/vibe-mcp/issues/105
+- https://github.com/VibeTechnologies/vibe-mcp/issues/87
+- https://github.com/VibeTechnologies/vibe-mcp/issues/129
+- https://github.com/VibeTechnologies/vibe-mcp/issues/135
+
+### Savage MCP — narrow-capability donor aligned with WAG philosophy
+
+dominikduda/savage_mcp deliberately avoids a generic browser-control surface. It uses loopback, mutual HMAC-SHA256 challenge/response, allowed_hosts and optional allowed_paths enforced on both sides, and no arbitrary JavaScript or generic click/type/form-submit surface.
+
+    SAVAGE_MUTUAL_HMAC = USEFUL_DONOR
+    SAVAGE_HOST_PATH_POLICY = USEFUL_DONOR
+    SAVAGE_NARROW_CAPABILITY = STRONG_ALIGNMENT
+    SAVAGE_FULL_BROWSER_REPLACEMENT = NO
+
+Repository: https://github.com/dominikduda/savage_mcp
+
+### Chrome Agent Bridge — cleanup semantics donor
+
+cmsflash/agent-browser-mcp contributes two useful operational lessons: multi-profile routing should fail closed instead of guessing; and Chrome 129+ saved tab groups should be ungrouped before closing so cleanup does not leave a persistent/synced saved-group artifact.
+
+Repository: https://github.com/cmsflash/agent-browser-mcp
+
+## Revised process-identity baseline
+
+Combining Microsoft process APIs, SessionCommander requirements, LAPSrj and BrowserTap yields:
+
+    PID alone = liveness hint
+    PID + process name = weak identity
+    PID + command line = recovery evidence
+    PID + creation time = PID-reuse defense
+    PID + expected executable = binary identity evidence
+    PID + creation + executable + WAG-owned nonce/job = preferred owned-process identity
+
+A durable coordination record is not an authority credential merely because it contains those fields; it also needs tamper protection and verification against live OS evidence.
+
+## Revised effect-truth baseline
+
+BrowserTap, Hronaut, Agent360 and distributed-system idempotency practice converge on:
+
+    PRECONDITION_CHECKED
+      -> DISPATCHED
+      -> RECONCILING
+      -> CONFIRMED | FAILED | UNKNOWN
+
+Pre-dispatch failure may be retryable. Once dispatch may have happened, timeout is not proof of failure. Reuse an idempotency/operation key when the target supports one. Target-relevant bounded read-back may reconcile UNKNOWN. Absence of proof stays UNKNOWN. UNKNOWN must not trigger automatic replay.
+
+## Updated decision markers after Pass 8 continuation
+
+    AI_NATIVE_BROWSER_PASS_8_CONTINUATION = COMPLETE
+    LOCAL_BENCHMARK_RUN = NO
+    WINDOWS_NODE_MODE_0600_OWNER_ONLY = FALSE
+    WINDOWS_DEFAULT_NAMED_PIPE_OWNER_ONLY = FALSE
+    CUSTOM_WINDOWS_PIPE_MINIMUM = EXPLICIT_USER_OR_LOGON_SID_DACL + PIPE_REJECT_REMOTE_CLIENTS + APP_AUTH
+    PROCESS_PID_ONLY_AUTHORITY = FORBIDDEN
+    PROCESS_IDENTITY_PREFERRED = PID + CREATION_IDENTITY + EXECUTABLE + OWNERSHIP_RECORD
+    BROWSERTAP = PRIMARY_WINDOWS_OWNERSHIP_EFFECT_DONOR
+    TASKWINDOW = TAB_SESSION_UX_DONOR_WITH_WINDOWS_ACL_GAP
+    BROWSERCONTROL = REMOTE_OAUTH_OBSERVATION_LEASE_DONOR
+    VIBE = OUTBOUND_REACHABILITY_DONOR_WITH_BROWSER_WIDE_BEARER_RISK
+    SAVAGE_MCP = NARROW_READ_POLICY_DONOR
+    CHROME_AGENT_BRIDGE = CLEANUP_AND_PROFILE_ROUTING_DONOR
+    EFFECT_STATE = PRECONDITION_CHECKED -> DISPATCHED -> RECONCILING -> CONFIRMED|FAILED|UNKNOWN
+    UNKNOWN_BLIND_RETRY = FORBIDDEN
+    WAG_AUTHORITY_CORE = RETAIN
+    SESSIONCOMMANDER_EXACT_OWNED_LIFECYCLE = RETAIN
+    CUSTOM_GENERIC_BROWSER_MECHANICS = FREEZE
+    NEXT_ACTION = PASS_9_REMOTE_WEBCHAT_BRIDGE_AND_AUTHORITY_PRIOR_ART
