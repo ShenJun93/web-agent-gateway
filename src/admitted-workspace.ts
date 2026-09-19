@@ -1,6 +1,7 @@
 import type { GatewayCallerContext } from './caller-context.js';
 import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
 import { DevspaceReadLimitError, type DevspaceExecutor } from './executor/devspace.js';
+import { readDevspaceText } from './executor/devspace-read.js';
 import type { RepositoryInspectionBackend, RepoSearchOptions, RepoSearchResult, RepoSnapshotOptions, RepoSnapshotResult } from './repository-inspection.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 
@@ -47,7 +48,10 @@ export class AdmittedWorkspaceService {
 
     let content: string;
     try {
-      content = await this.options.executor.readFile(binding.devspaceWorkspaceId, safePath, undefined, 2000);
+      content = await readDevspaceText(this.options.executor, binding.devspaceWorkspaceId, safePath, {
+        maxBytes: 64 * 1024,
+        oversizedMessage: 'Gateway rejected oversized content',
+      });
     } catch (error) {
       if (error instanceof DevspaceReadLimitError) throw new Error('Gateway rejected oversized content');
       throw error;

@@ -4,6 +4,7 @@ import {
   type DevspaceExecutor,
   type DevspacePatchResult,
 } from './devspace.js';
+import { readDevspaceText } from './devspace-read.js';
 
 const MAX_FILE_BYTES = 64 * 1024;
 
@@ -31,39 +32,18 @@ export class DevspaceFileMutationBackend implements FileMutationBackend {
   }
 
   private async readWorkspaceExact(workspaceId: string, path: string): Promise<string> {
-    let output = '';
-    let offset: number | undefined;
-    for (let page = 0; page < 64; page += 1) {
-      let raw: string;
-      try {
-        raw = await this.executor.readFile(workspaceId, path, offset, 2000);
-      } catch (error) {
-        if (error instanceof DevspaceReadLimitError) {
-          throw new Error('Gateway rejected backend target exceeds executor read limit');
-        }
-        throw error;
+    try {
+      return await readDevspaceText(this.executor, workspaceId, path, {
+        maxBytes: MAX_FILE_BYTES,
+        oversizedMessage: 'Gateway rejected backend target exceeds 64 KiB',
+      });
+    } catch (error) {
+      if (error instanceof DevspaceReadLimitError) {
+        throw new Error('Gateway rejected backend target exceeds executor read limit');
       }
-      const continuation = splitReadContinuation(raw);
-      output += continuation?.content ?? raw;
-      if (Buffer.byteLength(output, 'utf8') > MAX_FILE_BYTES) {
-        throw new Error('Gateway rejected backend target exceeds 64 KiB');
-      }
-      if (!continuation) return output;
-      if (offset !== undefined && continuation.nextOffset <= offset) {
-        throw new Error('Gateway rejected invalid backend read continuation');
-      }
-      offset = continuation.nextOffset;
+      throw error;
     }
-    throw new Error('Gateway rejected excessive backend read pagination');
   }
-}
-
-function splitReadContinuation(value: string): { content: string; nextOffset: number } | undefined {
-  const match = /\n\[Showing lines \d+-\d+ of \d+ \([^\]]+ limit\)\. Use offset=(\d+) to continue\.\]$/.exec(value);
-  if (!match) return undefined;
-  const nextOffset = Number(match[1]);
-  if (!Number.isSafeInteger(nextOffset) || nextOffset < 1) throw new Error('Gateway rejected invalid backend read continuation');
-  return { content: value.slice(0, match.index), nextOffset };
 }
 
 function buildUpdatePatch(path: string, original: string, candidate: string): string {

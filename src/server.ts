@@ -18,6 +18,7 @@ import {
 
 interface WorkspaceBinding { devspaceWorkspaceId: string; canonicalRoot: string; }
 import { DevspaceRepositoryInspectionBackend, type RepoSearchOptions, type RepoSnapshotOptions } from './repository-inspection.js';
+import { readDevspaceText } from './executor/devspace-read.js';
 
 export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, openWorkspaceId }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string> }) {
   const workspaces = new Map<string, WorkspaceBinding>();
@@ -69,7 +70,14 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
           return { safePath, devspaceWorkspaceId: workspace.devspaceWorkspaceId };
         });
         let content: string;
-        try { content = await trace.phase('executorMs', () => executor.readFile(scoped.devspaceWorkspaceId, scoped.safePath, undefined, 2000)); }
+        try {
+          content = await trace.phase('executorMs', () => readDevspaceText(
+            executor,
+            scoped.devspaceWorkspaceId,
+            scoped.safePath,
+            { maxBytes: 64 * 1024, oversizedMessage: 'Gateway rejected oversized content' },
+          ));
+        }
         catch (error) { if (error instanceof DevspaceReadLimitError) throw new Error('Gateway rejected oversized content'); throw error; }
         const result = await trace.phase('aggregationMs', () => {
           const normalized = content.replace(/\r\n/g, '\n').replace(/\n$/, '');
