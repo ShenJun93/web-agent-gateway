@@ -91,16 +91,27 @@ A local operator may opt in to the repository-engineering profile that carries W
 
 ```jsonc
 "repositoryEngineering": {
-  "search": true,
+  "inspect": true,
   "mutation": { "statePath": "C:\\path\\to\\control-plane.sqlite", "ownerId": "local.private.stdio" }
 }
 ```
 
-`search` adds read-only `repo.search`. `mutation` adds `mutation.preview` and `mutation.result`, and starts the loopback operator review server whose one-time bootstrap URL is printed on stderr, never on the MCP transport. `mutation.preview` writes nothing: a separate, locally authenticated operator must approve the exact record before any file changes, approval is single-use and TTL-bounded, and reject or expiry leaves the repository byte-identical.
+`inspect` adds the read-only set `repo.list`, `repo.search` and `repo.diff`. `mutation` adds `mutation.preview` and `mutation.result`, and starts the loopback operator review server. `mutation.preview` writes nothing: a separate, locally authenticated operator must approve the exact record before any file changes, approval is single-use and TTL-bounded, and reject or expiry leaves the repository byte-identical.
+
+The operator review server's **origin** is announced on stderr; its single-use bootstrap token is not. A stdio gateway's stderr belongs to whichever process spawned it — in the supported deployment that is the remote-facing tunnel client — so the token is written to `<statePath>.operator-url` instead and removed on shutdown. Open that URL locally to review and approve.
+
+With both enabled the surface is exactly:
+
+```text
+health  workspace.open  repo.list  repo.search  repo.snapshot  repo.diff  file.read  verify.run
+mutation.preview  mutation.result
+```
+
+`repo.list` returns the immediate tracked and untracked-not-ignored entries of one directory. `repo.diff` returns the bounded working-tree diff against `HEAD`, with the bodies of path-policy-sensitive files (`.env`, `.npmrc`, `.git-credentials` and the rest of the denylist) withheld. Every response is capped at 64 KiB and reports whether it was truncated. A caller-supplied path is never interpolated into a shell command: it reaches git as a single literal argv pathspec.
 
 WAG stays deliberately narrower than Desktop Commander on every profile. It exposes no shell, process control, PTY, arbitrary argv, file create/move/delete, directory tools, Git writes, or runtime configuration mutation, and `allowedRoots` is enforced rather than advisory.
 
-Authority: `docs/adr/0020-make-private-stdio-the-dc-replacement-surface.md`. Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`. Acceptance: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`.
+Authority: `docs/adr/0020-make-private-stdio-the-dc-replacement-surface.md` and `docs/adr/0021-complete-the-bounded-repository-inspection-set.md`. Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`. Acceptance: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`.
 
 ## Windows native host
 The Windows native host is currently a development/pre-release component. Installation changes one per-user Chromium Native Messaging registration and stores exact-owned files under `%LOCALAPPDATA%`.

@@ -12,7 +12,7 @@ const verifyProfileSchema = z.object({
 export const DEFAULT_PRIVATE_STDIO_OWNER_ID = 'local.private.stdio';
 
 const repositoryEngineeringSchema = z.object({
-  search: z.boolean().default(false),
+  inspect: z.boolean().default(false),
   mutation: z.object({
     statePath: z.string().min(1),
     ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).default(DEFAULT_PRIVATE_STDIO_OWNER_ID),
@@ -38,7 +38,7 @@ export interface PrivateRepositoryEngineeringMutation {
   ownerId: string;
 }
 export interface PrivateRepositoryEngineering {
-  search: boolean;
+  inspect: boolean;
   mutation?: PrivateRepositoryEngineeringMutation;
 }
 export interface PrivateGatewayConfig {
@@ -80,7 +80,7 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
     browserVerifyProfiles: parsed.browserVerifyProfiles,
     ...(parsed.repositoryEngineering === undefined ? {} : {
       repositoryEngineering: {
-        search: parsed.repositoryEngineering.search,
+        inspect: parsed.repositoryEngineering.inspect,
         ...(mutation === undefined ? {} : { mutation: { statePath: mutation.statePath, ownerId: mutation.ownerId } }),
       },
     }),

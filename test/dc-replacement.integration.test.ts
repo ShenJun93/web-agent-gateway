@@ -67,7 +67,7 @@ test('the extended private stdio profile completes the DC repository-engineering
   });
   await coordinator.reconcile();
 
-  const server = createGatewayMcpServer(gateway, { repoSearch: true, mutationContext: { callerContext, coordinator } });
+  const server = createGatewayMcpServer(gateway, { inspect: true, mutationContext: { callerContext, coordinator } });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'dc-replacement-integration', version: '1.0.0' }, { capabilities: {} });
   await server.connect(serverTransport);
@@ -75,7 +75,8 @@ test('the extended private stdio profile completes the DC repository-engineering
   t.after(async () => { await client.close(); await server.close(); });
 
   assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), [
-    'health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read', 'verify.run',
+    'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
+    'file.read', 'verify.run',
     'mutation.preview', 'mutation.result',
   ]);
 

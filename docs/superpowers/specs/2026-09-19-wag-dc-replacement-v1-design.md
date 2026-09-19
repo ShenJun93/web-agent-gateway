@@ -2,7 +2,7 @@
 
 Date: 2026-09-19
 Status: APPROVED DESIGN — implementation authorized by this milestone; distribution/provider actions are not
-Decision authority: ADR-0018, ADR-0020
+Decision authority: ADR-0018, ADR-0020, ADR-0021
 Depends on: ADR-0003, ADR-0008, ADR-0009, ADR-0011, ADR-0014, ADR-0015, ADR-0017, ADR-0019
 Research: `docs/research/2026-09-19-wag-dc-replacement-v1-surface-selection.md`
 Measured gap: `docs/benchmarks/2026-09-17-dc-replacement-live-benchmark-v1-attempt-1.md`
@@ -46,8 +46,8 @@ Consequences:
                  ┌─────────────────────────── local machine ───────────────────────────┐
                  │                                                                     │
   MCP client ───►│  serve-stdio                                                        │
-  (Business /    │    ├─ health / workspace.open / repo.search / repo.snapshot         │
-   tunnel /      │    ├─ file.read / verify.run            (bounded, no shell)         │
+  (Business /    │    ├─ health / workspace.open / repo.list / repo.search             │
+   tunnel /      │    ├─ repo.snapshot / repo.diff / file.read / verify.run            │
    local)        │    ├─ mutation.preview  ──► durable record, NO write                │
                  │    └─ mutation.result   ──► bounded state view                      │
                  │                                   │                                 │
@@ -87,15 +87,21 @@ With both options configured, the surface becomes, in exactly this order:
 ```text
 health
 workspace.open
+repo.list
 repo.search
 repo.snapshot
+repo.diff
 file.read
 verify.run
 mutation.preview
 mutation.result
 ```
 
-Each flag is independent. `search` alone yields six tools; `mutation` alone yields seven.
+Each flag is independent. `inspect` alone yields eight tools; `mutation` alone yields seven.
+
+`inspect` admits the whole read-only set — `repo.list`, `repo.search` and `repo.diff` — because they are one
+authority class, not three. `repo.list` returns the immediate tracked and untracked-not-ignored entries of one
+directory; `repo.diff` returns the bounded working-tree diff against `HEAD`. Both are specified by ADR-0021.
 
 Opt-in is a local JSON file the operator writes. It is never derived from tool arguments, transport metadata, provider
 identity, environment supplied by the MCP client, or repository content.
@@ -112,7 +118,7 @@ identity, environment supplied by the MCP client, or repository content.
   "browserVerifyProfiles": [],
 
   "repositoryEngineering": {
-    "search": true,
+    "inspect": true,
     "mutation": {
       "statePath": "<absolute path to the durable state database>",
       "ownerId": "local.private.stdio"
@@ -124,7 +130,7 @@ identity, environment supplied by the MCP client, or repository content.
 Validation rules, all fail-closed at load time:
 
 - the whole block is optional; absent means both capabilities disabled;
-- `search` defaults to `false`;
+- `inspect` defaults to `false`;
 - `mutation` is absent by default;
 - `mutation.statePath` is required when `mutation` is present and must be absolute;
 - `mutation.ownerId` is optional, defaults to `local.private.stdio`, and must match the existing caller-context
@@ -176,13 +182,19 @@ It resolves `devspaceWorkspaceId` and `canonicalRoot` from the same workspace bi
 use, and emits a `repo.search` telemetry trace like every other gateway method. No new path policy is written; the
 backend already enforces the bounded `git grep` helper.
 
-### 2. `createGatewayMcpServer` gains an explicit `repoSearch` switch
+### 1b. `createGateway` gains `repoList` and `repoDiff`
+
+Both delegate to the same shared `DevspaceRepositoryInspectionBackend`, emit `repo.list` / `repo.diff` telemetry
+traces, and resolve the same workspace binding as every other read. Their bounds and the argv-not-shell handling of a
+caller-supplied path are specified by ADR-0021.
+
+### 2. `createGatewayMcpServer` gains an explicit `inspect` switch
 
 ```ts
 createGatewayMcpServer(gateway, { repoSearch?: boolean, mutationContext?: MutationMcpContext })
 ```
 
-`repo.search` is registered only when `repoSearch === true`, immediately after `workspace.open`, with the same input
+`repo.search`, `repo.list` and `repo.diff` are registered only when `inspect === true`, immediately after `workspace.open`, with the same input
 schema, the same `validSearchQuery` guard, and the same read-only annotations already used on the browser profile.
 Both existing call sites keep their current behavior when the option is omitted.
 
@@ -231,8 +243,8 @@ start repository-engineering runtime        (store + caller context, or nothing)
 bootstrap private gateway                   (with openWorkspaceId when present)
 attach(executor)                            (coordinator + reconcile + operator server)
 emit {"type":"gateway.profile",...} and, when mutation is enabled,
-     {"type":"gateway.operator","bootstrapUrl":"..."}  on stderr
-start stdio server with { repoSearch, mutationContext }
+     {"type":"gateway.operator","origin":"…","urlFile":"…"}  on stderr (never the token)
+start stdio server with { inspect, mutationContext }
 emit {"type":"gateway.ready","mode":"stdio"} on stderr
 ```
 
@@ -246,15 +258,23 @@ for an unconfigured gateway.
 Teardown order on every exit path, including failures: stdio server, engineering runtime, private gateway runtime.
 Each step is individually guarded so one failure cannot skip the others.
 
-#### Why stderr for the operator bootstrap URL
+#### Where the operator bootstrap token goes
 
-stdout is the MCP transport and must never carry it. stderr belongs to the local process that launched the gateway —
-the same process that must already supply `DEVSPACE_OAUTH_OWNER_TOKEN` through the environment. That launcher is
-therefore already inside the trusted local domain, and emitting the bootstrap URL there introduces no new trust
-assumption. The URL is single-use: `startOperatorServer` discards the bootstrap token on first successful redemption.
+stdout is the MCP transport and must never carry it.
 
-The bootstrap URL, operator origin, session cookie, CSRF token and `statePath` MUST NOT appear in any MCP response,
-tool result, error message, or telemetry event.
+stderr is not safe either, and the first draft of this design was wrong about that. The argument was that stderr
+belongs to the launcher, which already holds `DEVSPACE_OAUTH_OWNER_TOKEN`, so nothing new is exposed. But the owner
+token travels *inward* through the environment, whereas stderr travels *outward*: for the supported deployment the
+launcher is the remote-facing tunnel client, and an MCP client is permitted to log, buffer or forward a child's
+stderr. Those are not the same exposure.
+
+So the gateway announces only the operator **origin** on stderr and writes the single-use bootstrap URL to
+`<statePath>.operator-url` with restrictive permissions, removing it on shutdown. That file carries the same exposure
+as the state database beside it, and never leaves the machine. On Windows the mode bits are advisory, which is
+stated rather than relied on.
+
+The bootstrap URL, session cookie, CSRF token and `statePath` MUST NOT appear in any MCP response, tool result, error
+message, or telemetry event, and the bootstrap token MUST NOT appear on stderr.
 
 ## Workflow coverage
 
@@ -263,13 +283,17 @@ How each measured benchmark scenario is satisfied on the extended stdio profile:
 | Scenario | Path | Authority |
 | --- | --- | --- |
 | R0 bounded read | `workspace.open` -> `file.read` | read-only, path-policy bounded |
-| R1 discovery | `workspace.open` -> `repo.search` | read-only, bounded `git grep`, tracked files only |
-| R2 repository state | `workspace.open` -> `repo.snapshot` | read-only, bounded `git status/rev-parse/diff --stat/ls-files` |
+| R1 discovery | `workspace.open` -> `repo.search` / `repo.list` | read-only, bounded `git grep` and `git ls-files`, tracked and untracked-not-ignored only |
+| R2 repository state | `workspace.open` -> `repo.snapshot` / `repo.diff` | read-only, bounded `git status/rev-parse/diff/ls-files` |
 | V1 named verification | `verify.run` with a configured profile | named profile only; no argv/env from the client |
 | C1 reviewed change | `mutation.preview` -> **local operator approval** -> `mutation.result` | write only after single-use local approval |
 | D1 integrated loop | R1 -> file.read -> V1 -> C1 -> V1 -> R2 | composition of the above; no new authority |
 
 D1 is explicitly a composition. This design adds nothing for D1 beyond making R1 and C1 reachable.
+
+`repo.list` and `repo.diff` are not required by the measured benchmark scenarios; they were added under ADR-0021
+because working the loop without them forced a shell for two ordinary steps — enumerating a directory and reading the
+change that was just approved.
 
 ## What WAG still does not do
 
@@ -316,11 +340,11 @@ this design does not upgrade it.
 
 Test-first, one behavior per test, no production code without a failing test.
 
-1. **Config** — default absence, `search` default false, absolute `statePath`, `ownerId` pattern, strict unknown-key
+1. **Config** — default absence, `inspect` default false, absolute `statePath`, `ownerId` pattern, strict unknown-key
    rejection, existing config behavior unchanged.
 2. **Gateway** — `repoSearch` clamps, delegates to the inspection backend with the right binding, emits telemetry,
    rejects unknown workspace ids.
-3. **Surface** — default five tools in order; `search` only; `mutation` only; both; `validSearchQuery` rejection;
+3. **Surface** — default five tools in order; `inspect` only; `mutation` only; both; `validSearchQuery` rejection;
    absence of `verify.preview`, `job.*`, shell/process/Git/config tools in every combination.
 4. **Runtime** — disabled mode opens no store and binds no port; enabled mode reconciles before serving; `close()` is
    idempotent and ordered; `attach` failure still releases the store.

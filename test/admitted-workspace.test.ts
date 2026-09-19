@@ -39,6 +39,11 @@ class FakeInspectionBackend {
     this.snapshots.push({ devspaceWorkspaceId, options });
     return { branch: 'main', head: 'abc', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false };
   }
+
+  // The admitted browser surface does not project list/diff; these satisfy the backend
+  // contract and fail loudly if that ever changes without a reviewed decision.
+  async list(): Promise<never> { throw new Error('repo.list is not projected to the admitted browser surface'); }
+  async diff(): Promise<never> { throw new Error('repo.diff is not projected to the admitted browser surface'); }
 }
 
 async function fixture() {

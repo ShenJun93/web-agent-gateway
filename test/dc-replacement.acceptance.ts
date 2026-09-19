@@ -23,7 +23,8 @@ const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const builtCli = join(repoRoot, 'dist', 'cli.js');
 
 const EXTENDED_TOOLS = [
-  'health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read', 'verify.run',
+  'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
+  'file.read', 'verify.run',
   'mutation.preview', 'mutation.result',
 ];
 
@@ -104,7 +105,7 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
     allowedRoots: [fixture.workspaceRoot],
     devspace: { baseUrl: devspace.baseUrl, resourceUrl: devspace.resourceUrl },
     verifyProfiles: { unit: { argv: ['npm', 'test'], timeoutMs: 30_000, maxOutputTokens: 4_000 } },
-    repositoryEngineering: { search: true, mutation: { statePath, ownerId: 'local.private.stdio' } },
+    repositoryEngineering: { inspect: true, mutation: { statePath, ownerId: 'local.private.stdio' } },
   }), 'utf8');
 
   // The measured path is the built artifact spawned as a real child over a real stdio transport.
@@ -141,6 +142,19 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   assert.ok(located.has(DC_FIXTURE_IMPLEMENTATION));
   assert.ok(located.has(DC_FIXTURE_TEST));
 
+  // R1b — navigate the tree the way an engineer would, without a shell.
+  const listed = parse<{ path: string; entries: { name: string; type: string }[] }>(await client.callTool({
+    name: 'repo.list', arguments: { workspace_id: workspaceId, path: 'src/lib' },
+  }));
+  assert.deepEqual(listed.entries, [{ name: 'ticket-id.js', type: 'file', tracked: true }]);
+
+  const rootListing = parse<{ entries: { name: string; type: string }[] }>(
+    await client.callTool({ name: 'repo.list', arguments: { workspace_id: workspaceId } }));
+  assert.deepEqual(
+    rootListing.entries.filter((entry) => entry.type === 'directory').map((entry) => entry.name),
+    ['docs', 'notes', 'src', 'test'],
+  );
+
   // R2
   const snapshot = parse<{ branch: string; head: string; dirty: boolean }>(
     await client.callTool({ name: 'repo.snapshot', arguments: { workspace_id: workspaceId } }));
@@ -173,11 +187,16 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   assert.equal(await readFile(join(fixture.workspaceRoot, DC_FIXTURE_IMPLEMENTATION), 'utf8'), original);
   assert.deepEqual(await fixtureStatus(fixture.workspaceRoot), []);
 
-  const bootstrapMatch = /"type":"gateway\.operator","bootstrapUrl":"([^"]+)"/.exec(stderr);
-  assert.ok(bootstrapMatch, `the gateway must publish the operator bootstrap URL locally; stderr was: ${stderr}`);
-  const bootstrapUrl = bootstrapMatch[1]!;
-  const operatorOrigin = new URL(bootstrapUrl).origin;
+  const operatorMatch = /"type":"gateway\.operator","origin":"([^"]+)","urlFile":"([^"]+)"/.exec(stderr);
+  assert.ok(operatorMatch, `the gateway must announce the operator origin locally; stderr was: ${stderr}`);
+  const operatorOrigin = operatorMatch[1]!;
   assert.match(operatorOrigin, /^http:\/\/127\.0\.0\.1:/, 'operator review must bind loopback only');
+  assert.equal(/token=/.test(stderr), false,
+    'the single-use bootstrap token must not reach the stderr pipe the spawning client inherits');
+
+  // The operator reads the single-use token from disk, beside the state database.
+  const bootstrapUrl = (await readFile(JSON.parse(`"${operatorMatch[2]!}"`) as string, 'utf8')).trim();
+  assert.equal(new URL(bootstrapUrl).origin, operatorOrigin);
 
   const anonymous = await OperatorBrowser.anonymous(operatorOrigin, preview.mutationId);
   assert.equal(anonymous.status, 401, 'knowing the operator origin must not grant approval authority');
@@ -213,6 +232,14 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   assert.equal(afterFix.exitCode, 0);
   assert.match(afterFix.output, /pass 2/);
   assert.match(afterFix.output, /fail 0/);
+
+  // Review the applied change through WAG itself rather than an outside shell.
+  const reviewDiff = parse<{ diff: string; truncated: boolean }>(await client.callTool({
+    name: 'repo.diff', arguments: { workspace_id: workspaceId, path: DC_FIXTURE_IMPLEMENTATION },
+  }));
+  assert.equal(reviewDiff.truncated, false);
+  assert.match(reviewDiff.diff, /-\s*return value\.toLowerCase\(\);/);
+  assert.match(reviewDiff.diff, /\+\s*return value\.trim\(\)\.toLowerCase\(\);/);
 
   const finalSnapshot = parse<{ branch: string; head: string; dirty: boolean }>(
     await client.callTool({ name: 'repo.snapshot', arguments: { workspace_id: workspaceId } }));

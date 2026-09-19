@@ -111,7 +111,7 @@ export async function main(
       gateway: runtime.gateway,
       input: deps.stdin,
       output: deps.stdout,
-      repoSearch: engineering.profile.repoSearch,
+      inspect: engineering.profile.inspect,
       mutationContext: engineering.mutationContext,
     });
   } catch (error) {
@@ -150,15 +150,23 @@ async function closeQuietly(engineering: RepositoryEngineeringRuntime): Promise<
 
 /**
  * Local-only capability and operator-review diagnostics. Nothing is emitted for the shipped
- * default profile, and the operator bootstrap URL never reaches stdout, which carries MCP
- * transport bytes only.
+ * default profile.
+ *
+ * The operator origin is announced, but the single-use bootstrap token is not: a stdio
+ * gateway's stderr belongs to whichever process spawned it, and in the supported deployment
+ * that is the remote-facing tunnel client. The token is written to `urlFile` instead, and the
+ * operator reads it from there.
  */
 function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime): void {
-  const { repoSearch, mutation } = engineering.profile;
-  if (!repoSearch && !mutation) return;
-  stderr.write(`${JSON.stringify({ type: 'gateway.profile', repoSearch, mutation })}\n`);
+  const { inspect, mutation } = engineering.profile;
+  if (!inspect && !mutation) return;
+  stderr.write(`${JSON.stringify({ type: 'gateway.profile', inspect, mutation })}\n`);
   if (engineering.operator) {
-    stderr.write(`${JSON.stringify({ type: 'gateway.operator', bootstrapUrl: engineering.operator.bootstrapUrl })}\n`);
+    stderr.write(`${JSON.stringify({
+      type: 'gateway.operator',
+      origin: engineering.operator.origin,
+      urlFile: engineering.operator.urlFile,
+    })}\n`);
   }
 }
 

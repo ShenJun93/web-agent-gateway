@@ -46,7 +46,7 @@ async function surface(
   root: string,
 ) {
   const gateway = createGateway({ executor: stubExecutor(), allowedRoots: [root], verifyProfiles: {} });
-  const server = createGatewayMcpServer(gateway, { repoSearch: true, mutationContext: { callerContext, coordinator } });
+  const server = createGatewayMcpServer(gateway, { inspect: true, mutationContext: { callerContext, coordinator } });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'dc-replacement-security', version: '1.0.0' }, { capabilities: {} });
   await server.connect(serverTransport);

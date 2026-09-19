@@ -17,7 +17,7 @@ import {
 } from './executor/devspace.js';
 
 interface WorkspaceBinding { devspaceWorkspaceId: string; canonicalRoot: string; }
-import { DevspaceRepositoryInspectionBackend, type RepoSearchOptions, type RepoSnapshotOptions } from './repository-inspection.js';
+import { DevspaceRepositoryInspectionBackend, type RepoDiffOptions, type RepoListOptions, type RepoSearchOptions, type RepoSnapshotOptions } from './repository-inspection.js';
 import { readDevspaceText } from './executor/devspace-read.js';
 
 export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, openWorkspaceId }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string> }) {
@@ -121,6 +121,32 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       } catch (error) { trace.finish(false, error); throw error; }
     },
 
+    async repoList(workspaceId: string, options: RepoListOptions = {}) {
+      const trace = startTrace('repo.list', telemetry); trace.markIngress();
+      try {
+        const workspace = await trace.phase('policyMs', async () => {
+          const value = binding(workspaceId);
+          await assertScopedTarget(value.canonicalRoot, options.path);
+          return value;
+        });
+        const value = await trace.phase('executorMs', () => inspection.list(workspace.devspaceWorkspaceId, options));
+        trace.finish(true); return value;
+      } catch (error) { trace.finish(false, error); throw error; }
+    },
+
+    async repoDiff(workspaceId: string, options: RepoDiffOptions = {}) {
+      const trace = startTrace('repo.diff', telemetry); trace.markIngress();
+      try {
+        const workspace = await trace.phase('policyMs', async () => {
+          const value = binding(workspaceId);
+          await assertScopedTarget(value.canonicalRoot, options.path);
+          return value;
+        });
+        const value = await trace.phase('executorMs', () => inspection.diff(workspace.devspaceWorkspaceId, options));
+        trace.finish(true); return value;
+      } catch (error) { trace.finish(false, error); throw error; }
+    },
+
     async repoSearch(workspaceId: string, query: string, options: RepoSearchOptions = {}) {
       const trace = startTrace('repo.search', telemetry); trace.markIngress();
       try {
@@ -146,6 +172,16 @@ export type GatewayApi = ReturnType<typeof createGateway>;
 export interface BrowserAdmittedMcpContext {
   callerContext: GatewayCallerContext;
   workspaces: Pick<AdmittedWorkspaceService, 'open' | 'read' | 'search' | 'snapshot'>;
+}
+
+/**
+ * Applies the same realpath confinement to a scoped inspection subtree that `file.read` applies
+ * to a file, so the workspace boundary is asserted by WAG rather than inherited from whatever
+ * the underlying tool happens to do with a symlink.
+ */
+async function assertScopedTarget(canonicalRoot: string, path: string | undefined): Promise<void> {
+  if (path === undefined || path === '' || path === '.') return;
+  await assertReadTarget(canonicalRoot, validateReadPath(path.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')));
 }
 
 function validSearchQuery(query: string): boolean {
@@ -309,12 +345,24 @@ export interface MutationMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { repoSearch, mutationContext }: { repoSearch?: boolean; mutationContext?: MutationMcpContext } = {},
+  { inspect, mutationContext }: { inspect?: boolean; mutationContext?: MutationMcpContext } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   server.registerTool('health', { description: 'Check gateway and executor compatibility.', annotations: { readOnlyHint: true } }, async () => toolResult(await gateway.health()));
   server.registerTool('workspace.open', { description: 'Open one approved local workspace and return an opaque workspace id.', inputSchema: z.object({ path: z.string().min(1) }), annotations: { readOnlyHint: true } }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
-  if (repoSearch === true) {
+  if (inspect === true) {
+    server.registerTool('repo.list', {
+      description: 'List the immediate tracked and untracked entries of one workspace directory.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(1024).optional(),
+        max_entries: z.number().int().min(1).max(1_000).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, max_entries }) => toolResult(
+      await gateway.repoList(workspace_id, { path, maxEntries: max_entries }),
+    ));
+
     server.registerTool('repo.search', {
       description: 'Search tracked repository files for a literal string.',
       inputSchema: z.object({
@@ -333,6 +381,16 @@ export function createGatewayMcpServer(
     });
   }
   server.registerTool('repo.snapshot', { description: 'Return bounded repository status, HEAD, diff summary, and tracked files.', inputSchema: z.object({ workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }), annotations: { readOnlyHint: true } }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
+  if (inspect === true) {
+    server.registerTool('repo.diff', {
+      description: 'Return the bounded unified diff of the working tree against HEAD.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(1024).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path }) => toolResult(await gateway.repoDiff(workspace_id, { path })));
+  }
   server.registerTool('file.read', { description: 'Read bounded text from an opened workspace.', inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }), annotations: { readOnlyHint: true } }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
   server.registerTool('verify.run', {
     description: 'Run one locally configured verification profile; arbitrary shell input is not accepted.',

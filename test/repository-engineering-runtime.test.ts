@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -29,6 +29,15 @@ class CaptureWritable extends PassThrough {
   text(): string { return this.chunks.join(''); }
 }
 
+/** Startup spans several async hops, so wait on the observable outcome, not a fixed tick. */
+async function until(predicate: () => boolean, what: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+  }
+  throw new Error(`Timed out waiting for ${what}`);
+}
+
 // --------------------------------------------------------------------------
 // Gate 4 — runtime assembly
 // --------------------------------------------------------------------------
@@ -39,7 +48,7 @@ test('disabled repository engineering opens no store, binds no port, and builds 
     startOperatorServer: async () => { operatorStarts += 1; throw new Error('must not start'); },
   });
 
-  assert.deepEqual(runtime.profile, { repoSearch: false, mutation: false });
+  assert.deepEqual(runtime.profile, { inspect: false, mutation: false });
   assert.equal(runtime.openWorkspaceId, undefined);
   assert.equal(runtime.mutationContext, undefined);
   assert.equal(runtime.operator, undefined);
@@ -53,8 +62,8 @@ test('disabled repository engineering opens no store, binds no port, and builds 
 });
 
 test('search-only opt-in stays read-only and still assembles no mutation state', async () => {
-  const runtime = await startRepositoryEngineeringRuntime(config({ search: true }));
-  assert.deepEqual(runtime.profile, { repoSearch: true, mutation: false });
+  const runtime = await startRepositoryEngineeringRuntime(config({ inspect: true }));
+  assert.deepEqual(runtime.profile, { inspect: true, mutation: false });
   assert.equal(runtime.openWorkspaceId, undefined);
   await runtime.attach(fakeExecutor);
   assert.equal(runtime.mutationContext, undefined);
@@ -78,11 +87,11 @@ test('mutation opt-in binds workspace.open to durable records owned by a per-pro
   const statePath = join(root, 'control-plane.sqlite');
 
   const first = track(await startRepositoryEngineeringRuntime(
-    config({ search: true, mutation: { statePath, ownerId: 'local.private.stdio' } }),
+    config({ inspect: true, mutation: { statePath, ownerId: 'local.private.stdio' } }),
     { startOperatorServer: async () => ({ origin: 'http://127.0.0.1:1', bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x', close: async () => {} }) },
   ));
 
-  assert.deepEqual(first.profile, { repoSearch: true, mutation: true });
+  assert.deepEqual(first.profile, { inspect: true, mutation: true });
   assert.ok(first.openWorkspaceId, 'mutation previews resolve workspaces from the store');
   const workspaceId = first.openWorkspaceId!(process.cwd());
   assert.match(workspaceId, /^ws_/);
@@ -94,7 +103,7 @@ test('mutation opt-in binds workspace.open to durable records owned by a per-pro
   assert.match(first.mutationContext!.callerContext.sessionId, /^sid_/);
 
   const second = track(await startRepositoryEngineeringRuntime(
-    config({ search: false, mutation: { statePath: join(root, 'other.sqlite'), ownerId: 'local.private.stdio' } }),
+    config({ inspect: false, mutation: { statePath: join(root, 'other.sqlite'), ownerId: 'local.private.stdio' } }),
   ));
   await second.attach(fakeExecutor);
   assert.notEqual(
@@ -111,7 +120,7 @@ test('attach is single-use and releases the durable store when it fails', async 
   const statePath = join(root, 'control-plane.sqlite');
 
   const runtime = track(await startRepositoryEngineeringRuntime(
-    config({ search: false, mutation: { statePath, ownerId: 'local.private.stdio' } }),
+    config({ inspect: false, mutation: { statePath, ownerId: 'local.private.stdio' } }),
     { startOperatorServer: async () => { throw new Error('operator bind failed'); } },
   ));
   await assert.rejects(() => runtime.attach(fakeExecutor), /operator bind failed/);
@@ -127,7 +136,7 @@ test('attach is single-use and releases the durable store when it fails', async 
   await runtime.close();
 
   const reusable = track(await startRepositoryEngineeringRuntime(
-    config({ search: false, mutation: { statePath: join(root, 'again.sqlite'), ownerId: 'local.private.stdio' } }),
+    config({ inspect: false, mutation: { statePath: join(root, 'again.sqlite'), ownerId: 'local.private.stdio' } }),
     { startOperatorServer: async () => ({ origin: 'http://127.0.0.1:1', bootstrapUrl: 'http://127.0.0.1:1/b', close: async () => {} }) },
   ));
   await reusable.attach(fakeExecutor);
@@ -183,13 +192,13 @@ function cliHarness(repositoryEngineering?: PrivateGatewayConfig['repositoryEngi
 test('serve-stdio forwards the resolved capability profile to the MCP surface', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-dc-cli-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const h = cliHarness({ search: true, mutation: { statePath: join(root, 'state.sqlite'), ownerId: 'local.private.stdio' } });
+  const h = cliHarness({ inspect: true, mutation: { statePath: join(root, 'state.sqlite'), ownerId: 'local.private.stdio' } });
 
   const running = main(['serve-stdio', '--config', resolve('private.json')], h.deps);
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+  await until(() => h.stdioOptions.length > 0, 'the stdio surface to start');
 
   assert.equal(h.stdioOptions.length, 1);
-  assert.equal(h.stdioOptions[0]!.repoSearch, true);
+  assert.equal(h.stdioOptions[0]!.inspect, true);
   assert.ok(h.stdioOptions[0]!.mutationContext, 'mutation opt-in must reach the stdio surface');
 
   h.requestShutdown();
@@ -201,16 +210,23 @@ test('serve-stdio forwards the resolved capability profile to the MCP surface', 
 test('operator bootstrap URL is local-only and never reaches the MCP transport', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-dc-cli-operator-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const h = cliHarness({ search: false, mutation: { statePath: join(root, 'state.sqlite'), ownerId: 'local.private.stdio' } });
+  const h = cliHarness({ inspect: false, mutation: { statePath: join(root, 'state.sqlite'), ownerId: 'local.private.stdio' } });
 
   const running = main(['serve-stdio', '--config', resolve('private.json')], h.deps);
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+  await until(() => h.stderr.text().includes('gateway.operator'), 'the operator review server to start');
 
   assert.equal(h.stdout.text(), '', 'stdout carries MCP framing only');
-  assert.match(h.stderr.text(), /"type":"gateway\.profile","repoSearch":false,"mutation":true/);
+  assert.match(h.stderr.text(), /"type":"gateway\.profile","inspect":false,"mutation":true/);
   assert.match(h.stderr.text(), /"type":"gateway\.operator"/);
-  assert.match(h.stderr.text(), /operator-secret/);
+  assert.match(h.stderr.text(), /"origin":"http:\/\/127\.0\.0\.1:65000"/);
+  assert.match(h.stderr.text(), /"urlFile":/);
+  assert.equal(h.stderr.text().includes('operator-secret'), false,
+    'the single-use bootstrap token must not reach the inherited stderr pipe');
   assert.equal(h.stderr.text().includes('owner-token-that-must-not-leak'), false);
+
+  // It is written beside the state database instead, and removed on shutdown.
+  const urlFile = join(root, 'state.sqlite.operator-url');
+  assert.match(await readFile(urlFile, 'utf8'), /operator-secret/);
 
   h.requestShutdown();
   assert.equal(await running, 0);
@@ -225,21 +241,21 @@ test('doctor stays silent for the shipped default profile and reports an opted-i
 
   const root = await mkdtemp(join(tmpdir(), 'wag-dc-doctor-'));
   const track = scoped(t, root);
-  const loud = cliHarness({ search: true });
+  const loud = cliHarness({ inspect: true });
   assert.equal(await main(['doctor', '--config', resolve('private.json')], loud.deps), 0);
   assert.equal(JSON.parse(loud.stdout.text()).status, 'ok');
-  assert.match(loud.stderr.text(), /"type":"gateway\.profile","repoSearch":true,"mutation":false/);
+  assert.match(loud.stderr.text(), /"type":"gateway\.profile","inspect":true,"mutation":false/);
   assert.equal(loud.stderr.text().includes('gateway.operator'), false);
 
   // doctor is a preflight: it reports the profile without binding the operator review port.
   let operatorStarts = 0;
-  const mutating = cliHarness({ search: true, mutation: { statePath: join(root, 'doctor.sqlite'), ownerId: 'local.private.stdio' } });
+  const mutating = cliHarness({ inspect: true, mutation: { statePath: join(root, 'doctor.sqlite'), ownerId: 'local.private.stdio' } });
   mutating.deps.startRepositoryEngineering = async (loaded) => track(await startRepositoryEngineeringRuntime(loaded, {
     startOperatorServer: async () => { operatorStarts += 1; throw new Error('doctor must not bind the operator port'); },
   }));
   assert.equal(await main(['doctor', '--config', resolve('private.json')], mutating.deps), 0);
   assert.equal(operatorStarts, 0);
-  assert.match(mutating.stderr.text(), /"type":"gateway\.profile","repoSearch":true,"mutation":true/);
+  assert.match(mutating.stderr.text(), /"type":"gateway\.profile","inspect":true,"mutation":true/);
   assert.equal(mutating.stderr.text().includes('gateway.operator'), false);
 });
 
@@ -257,7 +273,7 @@ test('an attach failure closes the privileged runtime and never serves the surfa
   const h = cliHarness();
   const closed = h.closed;
   h.deps.startRepositoryEngineering = async () => ({
-    profile: { repoSearch: true, mutation: true },
+    profile: { inspect: true, mutation: true },
     openWorkspaceId: () => 'ws_stub',
     attach: async () => { throw new Error('reconcile failed'); },
     close: async () => { closed.push('engineering'); },

@@ -9,9 +9,9 @@ import { createGateway, createGatewayMcpServer } from '../src/server.js';
 import type { GatewayTelemetryEvent } from '../src/telemetry.js';
 
 const DEFAULT_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run'];
-const SEARCH_TOOLS = ['health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read', 'verify.run'];
+const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run'];
 const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'mutation.result'];
-const FULL_TOOLS = [...SEARCH_TOOLS, 'mutation.preview', 'mutation.result'];
+const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'mutation.result'];
 
 /** Every capability DC exposes that WAG must keep unavailable on every stdio profile. */
 const FORBIDDEN_TOOL_FRAGMENTS = [
@@ -123,17 +123,46 @@ test('private stdio default profile is exactly the accepted five tools', async (
 
 test('private stdio search opt-in adds exactly repo.search in the accepted position', async (t) => {
   const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
-  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), { repoSearch: true }));
+  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), { inspect: true }));
   const tools = await client.listTools();
-  assert.deepEqual(tools.tools.map((tool) => tool.name), SEARCH_TOOLS);
+  assert.deepEqual(tools.tools.map((tool) => tool.name), INSPECT_TOOLS);
 
   const search = tools.tools.find((tool) => tool.name === 'repo.search');
   assert.deepEqual(search?.annotations, { readOnlyHint: true, destructiveHint: false, openWorldHint: false });
 });
 
+test('the inspect profile declares every added tool read-only and strictly typed', async (t) => {
+  const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
+  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), { inspect: true }));
+  const tools = await client.listTools();
+
+  for (const name of ['repo.list', 'repo.search', 'repo.diff']) {
+    const tool = tools.tools.find((candidate) => candidate.name === name);
+    assert.ok(tool, `${name} must be present under the inspect profile`);
+    assert.deepEqual(tool!.annotations, { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      `${name} must be annotated read-only and non-destructive`);
+  }
+
+  const { workspaceId } = JSON.parse(String((await client.callTool({
+    name: 'workspace.open', arguments: { path: process.cwd() },
+  }) as { content: { text: string }[] }).content[0]!.text)) as { workspaceId: string };
+
+  // Strict schemas: an unknown argument is a rejection, never a silently ignored field.
+  for (const [name, args] of [
+    ['repo.list', { workspace_id: workspaceId, recursive: true }],
+    ['repo.diff', { workspace_id: workspaceId, staged: true }],
+    ['repo.list', { workspace_id: workspaceId, max_entries: 0 }],
+    ['repo.list', { workspace_id: workspaceId, max_entries: 1_001 }],
+  ] as const) {
+    const response = await client.callTool({ name, arguments: args as Record<string, unknown> });
+    assert.equal((response as { isError?: boolean }).isError, true,
+      `${name} must reject ${JSON.stringify(args)}`);
+  }
+});
+
 test('private stdio search opt-in is an explicit true, never a truthy value', async (t) => {
   const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
-  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), { repoSearch: false }));
+  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), { inspect: false }));
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), DEFAULT_TOOLS);
 });
@@ -151,7 +180,7 @@ test('private stdio profiles compose independently and never expose DC-class aut
 
   for (const [options, expected] of [
     [{ mutationContext: { callerContext, coordinator } }, MUTATION_TOOLS],
-    [{ repoSearch: true, mutationContext: { callerContext, coordinator } }, FULL_TOOLS],
+    [{ inspect: true, mutationContext: { callerContext, coordinator } }, FULL_TOOLS],
   ] as const) {
     const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
     const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), options));
@@ -168,7 +197,7 @@ test('private stdio profiles compose independently and never expose DC-class aut
 
 test('private stdio repo.search rejects control characters and oversized queries', async (t) => {
   const { executor } = stubExecutor({ output: '', exitCode: 1, running: false });
-  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), { repoSearch: true }));
+  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), { inspect: true }));
   const { workspaceId } = JSON.parse(String((await client.callTool({
     name: 'workspace.open', arguments: { path: process.cwd() },
   }) as { content: { text: string }[] }).content[0]!.text)) as { workspaceId: string };

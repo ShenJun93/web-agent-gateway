@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { rm, writeFile } from 'node:fs/promises';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { SqliteDurableStore } from './durable-store.js';
@@ -12,7 +13,7 @@ import type { MutationMcpContext } from './server.js';
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
 
 export interface RepositoryEngineeringProfile {
-  repoSearch: boolean;
+  inspect: boolean;
   mutation: boolean;
 }
 
@@ -26,7 +27,7 @@ export interface RepositoryEngineeringRuntime {
   /** Present only after a successful attach with mutation enabled. */
   mutationContext?: MutationMcpContext;
   /** Present only after a successful attach with mutation enabled. */
-  operator?: { origin: string; bootstrapUrl: string };
+  operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
 }
 
@@ -50,12 +51,12 @@ export async function startRepositoryEngineeringRuntime(
   options: RepositoryEngineeringRuntimeOptions = {},
 ): Promise<RepositoryEngineeringRuntime> {
   const settings = config.repositoryEngineering;
-  const repoSearch = settings?.search === true;
+  const inspect = settings?.inspect === true;
   const mutationSettings = settings?.mutation;
 
   if (!mutationSettings) {
     return {
-      profile: { repoSearch, mutation: false },
+      profile: { inspect, mutation: false },
       async attach() { /* nothing to attach */ },
       async close() { /* nothing to close */ },
     };
@@ -67,12 +68,13 @@ export async function startRepositoryEngineeringRuntime(
     adapterId: PRIVATE_STDIO_ADAPTER_ID,
   });
   const store = new SqliteDurableStore(mutationSettings.statePath);
+  const urlFile = `${mutationSettings.statePath}.operator-url`;
 
   let operator: OperatorServer | undefined;
   let attached = false;
   let closed = false;
   const runtime: RepositoryEngineeringRuntime = {
-    profile: { repoSearch, mutation: true },
+    profile: { inspect, mutation: true },
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,
       sessionId: callerContext.sessionId,
@@ -91,8 +93,14 @@ export async function startRepositoryEngineeringRuntime(
         });
         await coordinator.reconcile();
         operator = await (options.startOperatorServer ?? startOperatorServer)({ coordinator });
+        // The single-use bootstrap token is written beside the state database rather than
+        // printed, because a stdio gateway's stderr belongs to whatever spawned it — for the
+        // supported deployment that is the remote-facing tunnel client, which is permitted to
+        // log or forward child stderr. The file carries the same exposure as the state
+        // database itself and is removed on shutdown.
+        await writeFile(urlFile, `${operator.bootstrapUrl}\n`, { encoding: 'utf8', mode: 0o600 });
         runtime.mutationContext = { callerContext, coordinator };
-        runtime.operator = { origin: operator.origin, bootstrapUrl: operator.bootstrapUrl };
+        runtime.operator = { origin: operator.origin, bootstrapUrl: operator.bootstrapUrl, urlFile };
       } catch (error) {
         await runtime.close();
         throw error;
@@ -101,7 +109,10 @@ export async function startRepositoryEngineeringRuntime(
     async close() {
       if (closed) return;
       closed = true;
-      try { await operator?.close(); }
+      try {
+        await rm(urlFile, { force: true }).catch(() => undefined);
+        await operator?.close();
+      }
       finally { store.close(); }
     },
   };

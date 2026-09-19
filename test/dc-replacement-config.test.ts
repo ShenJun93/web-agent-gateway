@@ -35,13 +35,13 @@ test('repository engineering search defaults to false and is an explicit local o
   const implicit = await loadPrivateGatewayConfig(await writeConfig(root, 'implicit.json', {
     ...baseConfig(root), repositoryEngineering: {},
   }));
-  assert.equal(implicit.repositoryEngineering?.search, false);
+  assert.equal(implicit.repositoryEngineering?.inspect, false);
   assert.equal(implicit.repositoryEngineering?.mutation, undefined);
 
   const explicit = await loadPrivateGatewayConfig(await writeConfig(root, 'explicit.json', {
-    ...baseConfig(root), repositoryEngineering: { search: true },
+    ...baseConfig(root), repositoryEngineering: { inspect: true },
   }));
-  assert.equal(explicit.repositoryEngineering?.search, true);
+  assert.equal(explicit.repositoryEngineering?.inspect, true);
   assert.equal(explicit.repositoryEngineering?.mutation, undefined);
 });
 
@@ -51,12 +51,12 @@ test('repository engineering mutation requires an absolute state path', async (t
 
   await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'relative.json', {
     ...baseConfig(root),
-    repositoryEngineering: { search: true, mutation: { statePath: 'state/control-plane.sqlite' } },
+    repositoryEngineering: { inspect: true, mutation: { statePath: 'state/control-plane.sqlite' } },
   })), /absolute/i);
 
   await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'missing.json', {
     ...baseConfig(root),
-    repositoryEngineering: { search: true, mutation: {} },
+    repositoryEngineering: { inspect: true, mutation: {} },
   })), /statePath|invalid|required|expected/i);
 
   const statePath = join(root, 'state', 'control-plane.sqlite');
@@ -64,7 +64,7 @@ test('repository engineering mutation requires an absolute state path', async (t
     ...baseConfig(root), repositoryEngineering: { mutation: { statePath } },
   }));
   assert.equal(loaded.repositoryEngineering?.mutation?.statePath, statePath);
-  assert.equal(loaded.repositoryEngineering?.search, false,
+  assert.equal(loaded.repositoryEngineering?.inspect, false,
     'enabling mutation must not implicitly enable search');
 });
 
@@ -96,7 +96,7 @@ test('repository engineering config stays strict so no key silently grants capab
   const statePath = join(root, 'state.sqlite');
 
   await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'unknown-top.json', {
-    ...baseConfig(root), repositoryEngineering: { search: true, shell: true },
+    ...baseConfig(root), repositoryEngineering: { inspect: true, shell: true },
   })), /unrecognized|unknown/i);
 
   await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'unknown-mutation.json', {
@@ -112,7 +112,7 @@ test('existing private config behavior is unchanged by the repository engineerin
   const loaded = await loadPrivateGatewayConfig(await writeConfig(root, 'compat.json', {
     ...baseConfig(root),
     browserVerifyProfiles: ['unit'],
-    repositoryEngineering: { search: true, mutation: { statePath: join(root, 'state.sqlite') } },
+    repositoryEngineering: { inspect: true, mutation: { statePath: join(root, 'state.sqlite') } },
   }));
   assert.deepEqual(loaded.allowedRoots, [root]);
   assert.deepEqual(loaded.browserVerifyProfiles, ['unit']);

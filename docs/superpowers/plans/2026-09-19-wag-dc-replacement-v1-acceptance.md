@@ -3,7 +3,7 @@
 Date: 2026-09-19
 Status: ACCEPTANCE PLAN — defines the exact evidence required for local production acceptance
 Companion design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`
-Decision authority: ADR-0018, ADR-0020
+Decision authority: ADR-0018, ADR-0020, ADR-0021
 Research: `docs/research/2026-09-19-wag-dc-replacement-v1-surface-selection.md`
 Measured gap: `docs/benchmarks/2026-09-17-dc-replacement-live-benchmark-v1-attempt-1.md`
 
@@ -46,7 +46,7 @@ Disposition: return to design review.
 Tests must prove:
 
 - `repositoryEngineering` absent means both capabilities disabled;
-- `search` defaults to `false`;
+- `inspect` defaults to `false`;
 - `mutation` absent by default;
 - `mutation.statePath` required when `mutation` present, and rejected when not absolute;
 - `mutation.ownerId` defaults to the fixed literal and rejects values outside the caller-context authority pattern;
@@ -54,16 +54,16 @@ Tests must prove:
 - every existing private-config behavior — allowed roots, DevSpace loopback/resource URL rules, verify profiles,
   `browserVerifyProfiles` — is unchanged.
 
-## Gate 2 — Source gate: gateway `repoSearch`
+## Gate 2 — Source gate: gateway inspection methods
 
 Tests must prove:
 
-- `repoSearch` resolves the same workspace binding as `file.read` and `repo.snapshot`, and rejects an unknown
-  `workspace_id`;
+- `repoSearch`, `repoList` and `repoDiff` resolve the same workspace binding as `file.read` and `repo.snapshot`,
+  and reject an unknown `workspace_id`;
 - defaults and clamps match the accepted browser projection exactly: `ignoreCase` false, `maxResults` 20 clamped to
   `[1, 50]`, `contextLines` 1 clamped to `[0, 2]`;
-- it delegates to the shared `DevspaceRepositoryInspectionBackend` and introduces no second search implementation;
-- it emits a `repo.search` telemetry trace with success and failure outcomes;
+- they delegate to the shared `DevspaceRepositoryInspectionBackend` and introduce no second implementation;
+- each emits its own telemetry trace with success and failure outcomes;
 - existing `repo.snapshot` and `file.read` behavior is unchanged.
 
 ## Gate 3 — Source gate: capability profile
@@ -72,11 +72,12 @@ Tests must prove the exact tool list, in order, for all four combinations:
 
 ```text
 default            health, workspace.open, repo.snapshot, file.read, verify.run
-search only        health, workspace.open, repo.search, repo.snapshot, file.read, verify.run
+inspect only       health, workspace.open, repo.list, repo.search, repo.snapshot, repo.diff,
+                   file.read, verify.run
 mutation only      health, workspace.open, repo.snapshot, file.read, verify.run,
                    mutation.preview, mutation.result
-both               health, workspace.open, repo.search, repo.snapshot, file.read, verify.run,
-                   mutation.preview, mutation.result
+both               health, workspace.open, repo.list, repo.search, repo.snapshot, repo.diff,
+                   file.read, verify.run, mutation.preview, mutation.result
 ```
 
 Negative discovery tests must prove absence, in every combination, of:
@@ -132,7 +133,10 @@ Independently test, with no real credential, user document, unrelated process or
 - operator reject produces no backend write;
 - review-deadline expiry produces no backend write;
 - approval is single-use; a replayed approval creates no second write;
-- a path traversal or absolute-escape argument to `repo.search`, `file.read` or `mutation.preview` fails closed.
+- a path traversal or absolute-escape argument to `repo.search`, `repo.list`, `repo.diff`, `file.read` or
+  `mutation.preview` fails closed;
+- a caller-supplied path that is legal on disk but full of shell syntax reaches git as a single argv element and
+  executes no embedded command.
 
 ## Gate 7 — Restart gate
 
@@ -183,7 +187,9 @@ committed `docs/benchmarks/fixtures/dc-replacement-v1` template:
 - admit the stdio caller;
 - open the exact fixture workspace;
 - `repo.search` locates the implementation and test without the prompt revealing either path;
+- `repo.list` enumerates a subtree and the repository root, excluding ignored paths;
 - `repo.snapshot` reports branch, HEAD and bounded diff;
+- `repo.diff` reports the approved change after it lands;
 - `file.read` returns the sentinel exactly;
 - `verify.run` on the `unit` profile returns the baseline oracle: exit code 1, two tests, one pass, one fail;
 - `mutation.preview` persists a record and performs no write — proven by re-reading the file;

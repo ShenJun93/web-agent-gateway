@@ -6,7 +6,7 @@ export interface GatewayStdioServerOptions {
   gateway: GatewayApi;
   input?: Readable;
   output?: Writable;
-  repoSearch?: boolean;
+  inspect?: boolean;
   mutationContext?: MutationMcpContext;
 }
 
@@ -18,7 +18,7 @@ export async function startGatewayStdioServer(
   options: GatewayStdioServerOptions,
 ): Promise<GatewayStdioServer> {
   const server = createGatewayMcpServer(options.gateway, {
-    repoSearch: options.repoSearch,
+    inspect: options.inspect,
     mutationContext: options.mutationContext,
   });
   const transport = new StdioServerTransport(options.input, options.output);
