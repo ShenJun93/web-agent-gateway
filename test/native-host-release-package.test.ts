@@ -8,6 +8,7 @@ import {
   writeNativeHostDistributionBundle,
 } from '../src/browser-adapter/native-host-distribution.js';
 import { packageNativeHostRelease } from '../scripts/package-native-host-release.js';
+import { createShadowedPSModulePath } from './windows-powershell-fixture.js';
 
 const repository = 'ShenJun93/web-agent-gateway';
 const sourceSha = 'a'.repeat(40);
@@ -74,6 +75,33 @@ test('native host outer release ZIP is deterministic and preserves exact inner d
     'docs/policies/privacy.md',
     'third_party/native-host/NODE-v24.20.0-LICENSE',
   ]) assert.ok(names.includes(required), `missing ${required}`);
+});
+
+test('native host outer release packaging ignores a hostile inherited PSModulePath', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows deterministic ZIP implementation');
+  const root = await mkdtemp(join(tmpdir(), 'wag-release-package-psmodulepath-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const hostile = await createShadowedPSModulePath();
+  t.after(() => rm(hostile, { recursive: true, force: true }));
+
+  // The shadow claims Get-FileHash from a root module that cannot load, so the
+  // ZIP helper would die on it if the child inherited this PSModulePath.
+  const previous = process.env.PSModulePath;
+  process.env.PSModulePath = hostile;
+  t.after(() => {
+    if (previous === undefined) delete process.env.PSModulePath;
+    else process.env.PSModulePath = previous;
+  });
+
+  const distributionDirectory = await createDistribution(root);
+  const packaged = await packageNativeHostRelease({
+    distributionDirectory,
+    outputZip: join(root, 'hostile-psmodulepath.zip'),
+    expectedRepository: repository,
+    expectedSourceSha: sourceSha,
+  });
+  assert.equal(packaged.sourceSha, sourceSha);
+  assert.ok(packaged.entryCount > 0);
 });
 
 test('native host outer release packaging fails closed on distribution drift and existing output', async (t) => {

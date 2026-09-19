@@ -25,6 +25,7 @@ import {
   NATIVE_HOST_APPLICATION_NAME,
 } from '../src/browser-adapter/native-host-distribution.js';
 import { createNativeHostManifest } from '../src/browser-adapter/native-host-manifest.js';
+import { createShadowedPSModulePath, windowsPowerShellChildEnv } from './windows-powershell-fixture.js';
 
 const execFileAsync = promisify(execFile);
 const verifierPath = fileURLToPath(new URL('../scripts/verify-native-host-installation.ps1', import.meta.url));
@@ -163,15 +164,14 @@ async function runVerifier(
   return execFileAsync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', wrapper], {
     cwd: process.cwd(),
     timeout: 15_000,
-    env: {
-      ...process.env,
+    env: windowsPowerShellChildEnv({
       LOCALAPPDATA: localAppData,
       WAG_EXPECTED_REGISTRY_PATH: expectedRegistryPath,
       WAG_TEST_REGISTRATION_MODE: mode,
       WAG_TEST_REGISTRATION_VALUE: fixture.paths.manifest,
       WAG_VERIFIER: fixture.verifierPath,
       WAG_RECEIPT: fixture.paths.receipt,
-    },
+    }),
   });
 }
 
@@ -254,6 +254,43 @@ test('PowerShell verifier AST stays inside the positive read-only capability all
   assert.deepEqual([...new Set(parsed.members)].sort(), [...allowedMembers].sort());
 });
 
+test('Windows verifier ignores a hostile inherited PSModulePath', {
+  skip: process.platform !== 'win32' ? 'Windows-only verifier execution' : false,
+  timeout: 180_000,
+}, async (t) => {
+  const fixture = await createPreparedFixture(t);
+  const hostile = await createShadowedPSModulePath();
+  t.after(() => rm(hostile, { recursive: true, force: true }));
+
+  // The shadow claims Get-FileHash from a root module that cannot load, so a
+  // WinPS 5.1 process that inherits it loses the cmdlet — the same way a
+  // PowerShell 7 parent's PSModulePath does.
+  const previous = process.env.PSModulePath;
+  process.env.PSModulePath = hostile;
+  t.after(() => {
+    if (previous === undefined) delete process.env.PSModulePath;
+    else process.env.PSModulePath = previous;
+  });
+
+  await assert.rejects(
+    () => execFileAsync('powershell.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+      'if (-not (Get-Command Get-FileHash -ErrorAction SilentlyContinue)) { exit 3 }',
+    ], { env: { ...process.env } }),
+    (error: unknown) => (error as { code?: number }).code === 3,
+    'the hostile PSModulePath must actually break an inheriting WinPS process',
+  );
+
+  const result = await runVerifier(fixture, 'MATCH');
+  assert.equal(result.stderr, '');
+  assert.deepEqual(JSON.parse(result.stdout), {
+    sourceSha: NATIVE_HOST_ACCEPTED_SOURCE_SHA,
+    executableSha256: fixture.executableSha256,
+    manifestSha256: fixture.receipt.manifestSha256,
+    registration: 'MATCH',
+  });
+});
+
 test('Windows verifier rejects a valid prepared installation under a 32-bit PowerShell process', {
   skip: process.platform !== 'win32' ? 'Windows-only 32-bit verifier gate' : false,
   timeout: 180_000,
@@ -270,7 +307,7 @@ test('Windows verifier rejects a valid prepared installation under a 32-bit Powe
     () => execFileAsync(powershell32, [
       '-NoLogo', '-NoProfile', '-NonInteractive', '-File', fixture.verifierPath,
       '-ReceiptPath', fixture.paths.receipt,
-    ], { env: { ...process.env, LOCALAPPDATA: fixture.localAppData } }),
+    ], { env: windowsPowerShellChildEnv({ LOCALAPPDATA: fixture.localAppData }) }),
     (error: unknown) => {
       const failure = error as { stderr?: string };
       assert.equal(failure.stderr?.trim(), 'wag-native-host-installation-verify: failed');
