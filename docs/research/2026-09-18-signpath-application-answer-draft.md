@@ -2,15 +2,59 @@
 
 Status: draft only. Not submitted. This file is a factual answer bank for the public SignPath Foundation application and does not imply acceptance.
 
-## Form-discovery note
+## Live application form schema — 2026-09-19
 
-The current SignPath application page embeds a HubSpot EU1 form:
-- portal id: `145110231`
-- form id: `bf62807d-bb72-4e45-9bde-1f3a53ba2472`
+The current SignPath application page embeds HubSpot EU1 form `bf62807d-bb72-4e45-9bde-1f3a53ba2472` under portal `145110231`.
 
-The public page/embed source does not expose a static field schema. HubSpot's official form-definition API requires authenticated HubSpot access. No attempt was made to bypass that access or submit the form.
+A dedicated read-only browser worker rendered the live form on 2026-09-19. No field was filled and the form was not submitted.
 
-Therefore this draft is organized by SignPath's documented eligibility/configuration requirements, not by guessed HubSpot field names.
+Rendered fields:
+- `Project Name*`
+- `Repository URL*`
+- `Homepage URL*`
+- `Download URL`
+- `Privacy Policy URL`
+- `Wikipedia URL (optional)`
+- `Tagline*`
+- `Description*`
+- `Reputation*`
+- `Maintainer Type`
+- `Build System*`
+- `First Name*`
+- `Last Name*`
+- `Email*`
+- `Company Name`
+- `Primary Discovery Channel*`
+- `Please specify the exact source (optional)`
+- required Code-of-Conduct agreement
+- optional marketing-communications consent
+- required personal-data processing consent
+
+Observed select options relevant to WAG:
+- `Maintainer Type`: `Individual maintainer(s)` is an exact live option;
+- `Build System*`: `GitHub Actions` is an exact live option;
+- `Primary Discovery Channel*`: live options include `Organic search`, `AI / LLM tools`, `Developer platforms (e.g. GitHub)`, `Community platforms`, `Social media`, `Events`, `Referral`, `Direct contact`, and `Other`.
+
+Safe deterministic WAG mappings:
+- Project Name: `Web Agent Gateway`;
+- Repository URL: `https://github.com/ShenJun93/web-agent-gateway`;
+- Homepage URL: `https://github.com/ShenJun93/web-agent-gateway`;
+- Download URL: do not auto-fill before provider acceptance; the live field is optional and says any supplied download page must mention use of SignPath Foundation for code signing, while WAG's current immutable preview truthfully states that SignPath acceptance is not claimed and that the project is only preparing an application;
+- Privacy Policy URL: public WAG privacy policy;
+- Wikipedia URL: leave blank unless a real English Wikipedia article exists;
+- Maintainer Type: `Individual maintainer(s)`;
+- Build System: `GitHub Actions`;
+- Tagline and Description: use the factual project wording below.
+
+Human-supplied choices that must not be inferred:
+- First Name, Last Name, Email;
+- Company Name, if any;
+- Primary Discovery Channel and exact discovery source;
+- Code-of-Conduct agreement;
+- personal-data processing consent;
+- optional marketing communications consent.
+
+`Reputation*` is required by the live form and remains an unresolved provider-reputation gate; do not manufacture adoption evidence to satisfy it.
 
 Official sources:
 - https://signpath.org/apply.html
@@ -184,9 +228,21 @@ Project status:
 Current official public releases:
 - `v0.1.0-preview.1` - immutable unsigned GitHub prerelease, release ID `391834069`
 
-Current public asset counter:
-- GitHub currently reports `3` downloads for the preview ZIP at this reconciliation checkpoint
-- these include project-owner verification downloads performed during release validation and must not be represented as external-user adoption or reputation evidence
+Live public-signal snapshot on 2026-09-19:
+- GitHub stars: `0`;
+- forks: `0`;
+- subscribers/watchers: `0`;
+- contributor list: `ShenJun93` only;
+- preview ZIP counter: `4` downloads at this checkpoint.
+
+The preview ZIP counter includes project-owner verification downloads performed during release validation and therefore must not be represented as external-user adoption or reputation evidence.
+
+The live application form makes `Reputation*` a required field and asks for links or information showing that the project is widely used or trusted. WAG does not currently have verified external adoption evidence that would justify claiming it is widely used.
+
+State:
+- `UNRESOLVED_PROVIDER_REPUTATION_GATE`
+
+A truthful eventual reputation answer may describe the project's very recent public launch and provide verifiable public repository/release/security evidence, but it must clearly distinguish technical/project evidence from external adoption or reputation. SignPath publishes no numeric executable-project reputation threshold, so provider acceptance remains discretionary.
 
 Do not manufacture:
 - stars
@@ -195,8 +251,7 @@ Do not manufacture:
 - contributors
 - issue activity
 - project age
-
-SignPath states that executable applications require a certain verifiable reputation but publishes no numeric threshold. Acceptance remains discretionary.
+- media/community references
 
 ## First-release plan
 
@@ -284,9 +339,14 @@ The GitHub API token scope was not widened for this verification.
 
 ## Reputation timing
 
-SignPath publishes no numeric reputation threshold. A sample of comparable accepted executable projects shows public repository ages ranging from roughly two months to well over a year when first observed on the Foundation project list; low-star AMIGOpy had substantially longer history, while shorter-history AI projects had strong visible traction.
+SignPath publishes no numeric reputation threshold, while the live application form requires a `Reputation*` answer. A sample of comparable accepted executable projects shows public repository ages ranging from roughly two months to well over a year when first observed on the Foundation project list; low-star AMIGOpy had substantially longer history, while shorter-history AI projects had strong visible traction.
 
-WAG was created on 2026-09-09 and became public on 2026-09-19. Its public-history profile is therefore still very young. Submission is possible once the documented hard requirements are met, but provider acceptance remains discretionary. Prefer to establish the real public preview release and ordinary maintenance evidence rather than manufacturing popularity or waiting for an invented fixed duration.
+WAG was created on 2026-09-09 and became public on 2026-09-19. Its public-history profile is therefore still very young, and current live GitHub signals do not establish broad external adoption.
+
+State:
+- `UNRESOLVED_PROVIDER_REPUTATION_GATE`
+
+Do not invent a fixed waiting period or manufacture popularity. Ordinary public development, genuine users/community references, independent discussion, and uncontaminated usage evidence may strengthen a later reputation answer if they arise naturally.
 
 See `docs/research/2026-09-18-signpath-reputation-timing.md`.
 
@@ -298,13 +358,26 @@ Completed publication prerequisites:
 - immutable releases are enabled before the first public binary release;
 - private vulnerability reporting, Dependabot alerts, secret scanning, push protection, stricter fork-PR approval, and a minimal `main` history-protection ruleset are enabled.
 
-Repository-side hard pre-submission blockers:
-- none currently identified.
+Repository-side technical prerequisites:
+- no unresolved repository-side hard blocker is currently identified.
 
-Provider-discretion question to carry into eligibility/application review:
+Application-completion inputs that remain outside repository authority:
+- First Name, Last Name, Email;
+- optional Company Name;
+- Primary Discovery Channel and optional exact discovery source;
+- required Code-of-Conduct agreement;
+- required personal-data processing consent;
+- optional marketing-communications choice.
+
+Unresolved provider/reputation gate:
+- `Reputation*` is a required live form field;
+- WAG currently lacks verified external adoption evidence sufficient to claim broad use or trust;
+- state: `UNRESOLVED_PROVIDER_REPUTATION_GATE`.
+
+Provider-policy question to carry into eligibility/application review:
 - obtain SignPath's project-specific interpretation of whether WAG's Node SEA executable is WAG's own application binary or falls under the modified-upstream visible-fork condition.
 
-The public release/download facts are now refreshed from the immutable release. SignPath submission still requires separate explicit authority.
+The public release/download facts are refreshed from the immutable release. SignPath submission still requires separate explicit authority.
 
 ## Explicitly not authorized by this draft
 
