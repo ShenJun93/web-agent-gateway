@@ -60,6 +60,57 @@ test('operator page escapes review content and emits restrictive headers', async
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(html, /canonicalRoot|ownerId|sessionId|adapterId/i);
 });
+/**
+ * The commit review page is the one control the whole design rests on, and everything it renders
+ * is untrusted: the repository owns its filenames and its git config, the caller owns the message.
+ */
+function fakeCommitCoordinator() {
+  const review = {
+    commitId: 'cmt_test', state: 'PENDING_APPROVAL' as const,
+    branch: 'work', oldHead: 'a'.repeat(40), treeSha: 'b'.repeat(40),
+    author: 'Someone Else <someone@example.invalid>',
+    workspaceRoot: 'C:\\repos\\project',
+    // A right-to-left override in a filename displays the name in a different order than it
+    // will be committed under; a zero-width space hides a difference entirely.
+    paths: ['src/app\u202Egpj.sj', 'src/inno\u200Bcent.ts'],
+    changes: [
+      { status: 'M' as const, path: 'src/app\u202Egpj.sj' },
+      { status: 'A' as const, path: 'src/inno\u200Bcent.ts' },
+    ],
+    message: 'fix: harmless\u202E tiderc',
+    fingerprint: 'c'.repeat(64), reviewDeadline: Date.now() + 60_000,
+  };
+  return {
+    listPendingLocal: () => [review],
+    reviewLocal: (id: string) => id === review.commitId ? review : undefined,
+    approveLocal: async (id: string) => id === review.commitId,
+    rejectLocal: (id: string) => id === review.commitId,
+  };
+}
+
+test('commit review names the repository, the author and the change set, and defuses bidi text', async (t) => {
+  const server = await startOperatorServer({
+    coordinator: fakeCoordinator(),
+    commitCoordinator: fakeCommitCoordinator(),
+  });
+  t.after(() => server.close());
+  const boot = await fetch(server.bootstrapUrl, { redirect: 'manual' });
+  const cookie = cookiePair(boot.headers.get('set-cookie'));
+  const html = await (await fetch(`${server.origin}/commits/cmt_test`, { headers: { cookie } })).text();
+
+  assert.match(html, /Repository: C:\\repos\\project/, 'the operator must know which repository this is');
+  assert.match(html, /Author: Someone Else &lt;someone@example\.invalid&gt;/,
+    'the operator must know who the commit will be attributed to');
+  assert.match(html, /M src\/app/, 'the resulting change set must be shown');
+  assert.match(html, /A src\/inno/);
+
+  // Rendered as visible code points, never as active formatting.
+  assert.equal(html.includes('\u202E'), false, 'a bidi override must never reach the page verbatim');
+  assert.equal(html.includes('\u200B'), false, 'a zero-width space must never reach the page verbatim');
+  assert.match(html, /&lt;U\+202E&gt;/);
+  assert.match(html, /&lt;U\+200B&gt;/);
+});
+
 test('operator mutations require exact Origin, session cookie, and CSRF', async (t) => {
   const coordinator = fakeCoordinator();
   const server = await startOperatorServer({ coordinator });

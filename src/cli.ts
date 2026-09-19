@@ -113,6 +113,7 @@ export async function main(
       output: deps.stdout,
       inspect: engineering.profile.inspect,
       mutationContext: engineering.mutationContext,
+      gitCommitContext: engineering.gitCommitContext,
     });
   } catch (error) {
     await closeQuietly(engineering);
@@ -158,9 +159,9 @@ async function closeQuietly(engineering: RepositoryEngineeringRuntime): Promise<
  * operator reads it from there.
  */
 function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime): void {
-  const { inspect, mutation } = engineering.profile;
-  if (!inspect && !mutation) return;
-  stderr.write(`${JSON.stringify({ type: 'gateway.profile', inspect, mutation })}\n`);
+  const { inspect, mutation, gitCommit } = engineering.profile;
+  if (!inspect && !mutation && !gitCommit) return;
+  stderr.write(`${JSON.stringify({ type: 'gateway.profile', inspect, mutation, gitCommit })}\n`);
   if (engineering.operator) {
     stderr.write(`${JSON.stringify({
       type: 'gateway.operator',

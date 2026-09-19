@@ -90,6 +90,38 @@ test('repository engineering owner id defaults locally and rejects unsafe values
   assert.equal(custom.repositoryEngineering?.mutation?.ownerId, 'local.owner-2');
 });
 
+test('repository engineering git commit cannot be a half-capability', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-dc-config-commit-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  // gitCommit shares the durable store, caller context and operator review server with mutation.
+  // Without mutation it would bind nothing and silently expose no commit authority at all.
+  await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'orphan.json', {
+    ...baseConfig(root), repositoryEngineering: { inspect: true, gitCommit: {} },
+  })), /gitCommit requires/i);
+
+  // An empty protected set reads like a default but means every branch is committable.
+  await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'empty.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      inspect: true,
+      mutation: { statePath: join(root, 'state.sqlite') },
+      gitCommit: { protectedBranches: [] },
+    },
+  })), /protectedBranches/i);
+
+  const loaded = await loadPrivateGatewayConfig(await writeConfig(root, 'ok.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      inspect: true,
+      mutation: { statePath: join(root, 'state.sqlite') },
+      gitCommit: {},
+    },
+  }));
+  assert.deepEqual(loaded.repositoryEngineering?.gitCommit, {},
+    'an empty gitCommit block means the built-in protected set, not an empty one');
+});
+
 test('repository engineering config stays strict so no key silently grants capability', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-dc-config-strict-'));
   t.after(() => rm(root, { recursive: true, force: true }));

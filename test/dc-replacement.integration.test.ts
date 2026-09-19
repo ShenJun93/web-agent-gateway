@@ -9,6 +9,8 @@ import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DurableMutationCoordinator } from '../src/durable-mutation.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import { DevspaceFileMutationBackend } from '../src/executor/devspace-file-mutation.js';
+import { DevspaceGitCommitBackend } from '../src/executor/devspace-git-commit.js';
+import { DurableCommitCoordinator } from '../src/git-commit.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
 import { PRIVATE_STDIO_ADAPTER_ID } from '../src/repository-engineering-runtime.js';
@@ -67,7 +69,14 @@ test('the extended private stdio profile completes the DC repository-engineering
   });
   await coordinator.reconcile();
 
-  const server = createGatewayMcpServer(gateway, { inspect: true, mutationContext: { callerContext, coordinator } });
+  const commitCoordinator = new DurableCommitCoordinator({
+    store, backend: new DevspaceGitCommitBackend(executor),
+  });
+  const server = createGatewayMcpServer(gateway, {
+    inspect: true,
+    mutationContext: { callerContext, coordinator },
+    gitCommitContext: { callerContext, coordinator: commitCoordinator },
+  });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'dc-replacement-integration', version: '1.0.0' }, { capabilities: {} });
   await server.connect(serverTransport);
@@ -78,6 +87,7 @@ test('the extended private stdio profile completes the DC repository-engineering
     'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
     'file.read', 'verify.run',
     'mutation.preview', 'file.create', 'mutation.result',
+    'git.commit', 'git.commit.result',
   ]);
 
   const { workspaceId } = parse<{ workspaceId: string }>(

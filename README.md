@@ -92,7 +92,8 @@ A local operator may opt in to the repository-engineering profile that carries W
 ```jsonc
 "repositoryEngineering": {
   "inspect": true,
-  "mutation": { "statePath": "C:\\path\\to\\control-plane.sqlite", "ownerId": "local.private.stdio" }
+  "mutation": { "statePath": "C:\\path\\to\\control-plane.sqlite", "ownerId": "local.private.stdio" },
+  "gitCommit": { "protectedBranches": ["main", "master"] }
 }
 ```
 
@@ -104,8 +105,14 @@ With both enabled the surface is exactly:
 
 ```text
 health  workspace.open  repo.list  repo.search  repo.snapshot  repo.diff  file.read  verify.run
-mutation.preview  file.create  mutation.result
+mutation.preview  file.create  mutation.result  git.commit  git.commit.result
 ```
+
+`gitCommit` adds reviewed committing, and requires `mutation` because it shares the same durable store and operator review server — asking for it alone is a config error, not a quiet half-capability. `git.commit` proposes one commit of an exact path set; the operator sees the branch, the parent HEAD, the resulting tree, every selected path, the resulting change set and the full message before approving. WAG commits with git plumbing against a private index — `read-tree`, `add`, `write-tree`, `commit-tree`, `update-ref` — and pins `core.hooksPath` to an empty directory on every call, so **no commit hook runs**: not `pre-commit`, `commit-msg`, `post-commit`, nor the `post-index-change` and `reference-transaction` hooks that plumbing would otherwise still fire. The commit message is never shell syntax, and your real index is never touched. WAG also binds the resulting **tree delta**, not just the paths you named, and refuses anything that is not an addition or a modification — so a directory replaced by a file cannot quietly delete the subtree it shadows. Before any of that, it checks that the repository's own top level *is* the workspace you approved, which is what stops a repository-supplied `core.worktree` from redirecting the commit at another directory and stops a workspace nested inside a larger repository from committing to that outer repository. The author the commit would be attributed to comes from the repository's config, so it is shown to you and re-checked after you approve. The branch moves only by compare-and-swap against the approved parent, so a branch that moved since the preview makes the commit fail rather than clobber. `main` and `master` are protected by default.
+
+Because the real index is deliberately left alone, after a WAG commit `git status` shows the committed paths as staged reversions against the new HEAD until you refresh the index yourself (`git reset -- <paths>`, which changes no file content). Nothing is lost, and WAG's own next commit is unaffected.
+
+Not available in v1: amend, merge commits, empty commits, signing, force, reset, checkout, branch creation or deletion, push/fetch/pull, committing on a detached HEAD, and committing a deletion or rename.
 
 `repo.list` returns the immediate tracked and untracked-not-ignored entries of one directory. `repo.diff` returns the bounded working-tree diff against `HEAD`, with the bodies of path-policy-sensitive files (`.env`, `.npmrc`, `.git-credentials` and the rest of the denylist) withheld. Every response is capped at 64 KiB and reports whether it was truncated. A caller-supplied path is never interpolated into a shell command: it reaches git as a single literal argv pathspec.
 

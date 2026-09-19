@@ -5,6 +5,7 @@ import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
+import type { DurableCommitCoordinator } from './git-commit.js';
 import type { BrowserVerifyRequestCoordinator } from './browser-verify-request.js';
 import type { AdmittedWorkspaceService } from './admitted-workspace.js';
 import { resolveVerifyProfile, type VerifyProfile } from './verify-profile.js';
@@ -341,6 +342,11 @@ export function createBrowserVerifyAdmittedMcpServer(
   return server;
 }
 
+export interface GitCommitMcpContext {
+  callerContext: GatewayCallerContext;
+  coordinator: Pick<DurableCommitCoordinator, 'preview' | 'result'>;
+}
+
 export interface MutationMcpContext {
   callerContext: GatewayCallerContext;
   coordinator: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
@@ -348,7 +354,7 @@ export interface MutationMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext }: { inspect?: boolean; mutationContext?: MutationMcpContext } = {},
+  { inspect, mutationContext, gitCommitContext }: { inspect?: boolean; mutationContext?: MutationMcpContext; gitCommitContext?: GitCommitMcpContext } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   server.registerTool('health', { description: 'Check gateway and executor compatibility.', annotations: { readOnlyHint: true } }, async () => toolResult(await gateway.health()));
@@ -440,6 +446,25 @@ export function createGatewayMcpServer(
     }, async ({ mutation_id }) => toolResult(mutationContext.coordinator.result(mutationContext.callerContext, mutation_id)));
   }
 
+  if (gitCommitContext) {
+    server.registerTool('git.commit', {
+      description: 'Propose one commit of an exact path set for local human review; nothing is committed until approved.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1),
+        paths: z.array(z.string().min(1).max(1024)).min(1).max(64),
+        message: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 8 * 1024),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, paths, message }) => toolResult(await gitCommitContext.coordinator.preview(
+      gitCommitContext.callerContext, workspace_id, { paths, message },
+    )));
+
+    server.registerTool('git.commit.result', {
+      description: 'Read the durable state and bounded result of one proposed commit.',
+      inputSchema: z.object({ commit_id: z.string().min(1).max(256) }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ commit_id }) => toolResult(gitCommitContext.coordinator.result(gitCommitContext.callerContext, commit_id)));
+  }
 
   return server;
 }

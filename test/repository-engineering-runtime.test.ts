@@ -48,7 +48,7 @@ test('disabled repository engineering opens no store, binds no port, and builds 
     startOperatorServer: async () => { operatorStarts += 1; throw new Error('must not start'); },
   });
 
-  assert.deepEqual(runtime.profile, { inspect: false, mutation: false });
+  assert.deepEqual(runtime.profile, { inspect: false, mutation: false, gitCommit: false });
   assert.equal(runtime.openWorkspaceId, undefined);
   assert.equal(runtime.mutationContext, undefined);
   assert.equal(runtime.operator, undefined);
@@ -63,7 +63,7 @@ test('disabled repository engineering opens no store, binds no port, and builds 
 
 test('search-only opt-in stays read-only and still assembles no mutation state', async () => {
   const runtime = await startRepositoryEngineeringRuntime(config({ inspect: true }));
-  assert.deepEqual(runtime.profile, { inspect: true, mutation: false });
+  assert.deepEqual(runtime.profile, { inspect: true, mutation: false, gitCommit: false });
   assert.equal(runtime.openWorkspaceId, undefined);
   await runtime.attach(fakeExecutor);
   assert.equal(runtime.mutationContext, undefined);
@@ -91,7 +91,7 @@ test('mutation opt-in binds workspace.open to durable records owned by a per-pro
     { startOperatorServer: async () => ({ origin: 'http://127.0.0.1:1', bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x', close: async () => {} }) },
   ));
 
-  assert.deepEqual(first.profile, { inspect: true, mutation: true });
+  assert.deepEqual(first.profile, { inspect: true, mutation: true, gitCommit: false });
   assert.ok(first.openWorkspaceId, 'mutation previews resolve workspaces from the store');
   const workspaceId = first.openWorkspaceId!(process.cwd());
   assert.match(workspaceId, /^ws_/);
@@ -273,7 +273,7 @@ test('an attach failure closes the privileged runtime and never serves the surfa
   const h = cliHarness();
   const closed = h.closed;
   h.deps.startRepositoryEngineering = async () => ({
-    profile: { inspect: true, mutation: true },
+    profile: { inspect: true, mutation: true, gitCommit: false },
     openWorkspaceId: () => 'ws_stub',
     attach: async () => { throw new Error('reconcile failed'); },
     close: async () => { closed.push('engineering'); },

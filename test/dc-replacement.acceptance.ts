@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
@@ -19,6 +21,7 @@ import {
 } from './dc-replacement-fixture.js';
 import { DEVSPACE_TEST_OWNER_TOKEN, startPinnedDevspace } from './devspace-fixture.js';
 
+const execFileAsync = promisify(execFile);
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const builtCli = join(repoRoot, 'dist', 'cli.js');
 
@@ -26,7 +29,24 @@ const EXTENDED_TOOLS = [
   'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
   'file.read', 'verify.run',
   'mutation.preview', 'file.create', 'mutation.result',
+  'git.commit', 'git.commit.result',
 ];
+
+/**
+ * Every hook class git plumbing can reach, not just the porcelain four: post-index-change fires on
+ * any index write and reference-transaction on any ref update.
+ */
+const HOSTILE_HOOKS = [
+  'pre-commit', 'prepare-commit-msg', 'commit-msg', 'post-commit',
+  'post-index-change', 'reference-transaction', 'pre-applypatch', 'post-checkout',
+  'post-rewrite', 'pre-auto-gc', 'push-to-checkout',
+];
+
+/**
+ * The two classes the execution backend's own open_workspace triggers. WAG cannot pass git options
+ * into that MCP call, so they are recorded and attributed rather than claimed away (ADR-0023).
+ */
+const BACKEND_HOOKS = /FIRED-(?:post-index-change|reference-transaction)\r?\n/g;
 
 interface ToolText { content: { text: string }[] }
 function parse<T>(response: unknown): T {
@@ -52,16 +72,21 @@ class OperatorBrowser {
     return browser;
   }
 
-  async review(mutationId: string): Promise<string> {
-    const response = await fetch(`${this.origin}/mutations/${encodeURIComponent(mutationId)}`, {
+  async review(recordId: string, kind: 'mutations' | 'commits' = 'mutations'): Promise<string> {
+    const response = await fetch(`${this.origin}/${kind}/${encodeURIComponent(recordId)}`, {
       headers: { cookie: this.cookie },
     });
     assert.equal(response.status, 200, 'the operator must be able to read the exact pending review');
     return response.text();
   }
 
-  async act(mutationId: string, action: 'approve' | 'reject', csrf: string, overrides: { origin?: string } = {}) {
-    return fetch(`${this.origin}/mutations/${encodeURIComponent(mutationId)}/${action}`, {
+  async act(
+    mutationId: string,
+    action: 'approve' | 'reject',
+    csrf: string,
+    overrides: { origin?: string; kind?: 'mutations' | 'commits' } = {},
+  ) {
+    return fetch(`${this.origin}/${overrides.kind ?? 'mutations'}/${encodeURIComponent(mutationId)}/${action}`, {
       method: 'POST',
       redirect: 'manual',
       headers: {
@@ -82,6 +107,12 @@ class OperatorBrowser {
       body: new URLSearchParams({ csrf: 'guessed' }).toString(),
     });
   }
+}
+
+/** A tool call that must be refused; MCP reports refusal as isError rather than by throwing. */
+function assertNotError(response: unknown): never {
+  assert.equal((response as { isError?: boolean }).isError, true, 'the call must be refused');
+  throw new Error('refused as expected');
 }
 
 function csrfFrom(html: string): string {
@@ -105,7 +136,11 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
     allowedRoots: [fixture.workspaceRoot],
     devspace: { baseUrl: devspace.baseUrl, resourceUrl: devspace.resourceUrl },
     verifyProfiles: { unit: { argv: ['npm', 'test'], timeoutMs: 30_000, maxOutputTokens: 4_000 } },
-    repositoryEngineering: { inspect: true, mutation: { statePath, ownerId: 'local.private.stdio' } },
+    repositoryEngineering: {
+      inspect: true,
+      mutation: { statePath, ownerId: 'local.private.stdio' },
+      gitCommit: {},
+    },
   }), 'utf8');
 
   // The measured path is the built artifact spawned as a real child over a real stdio transport.
@@ -292,6 +327,96 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   assert.equal((escape as { isError?: boolean }).isError, true);
   assert.equal(JSON.stringify(escape).includes('DO_NOT_DISCLOSE'), false);
 
+  // G1 — commit the work through WAG. The fixture's branch is `main`, which is protected by
+  // default, so the refusal is evidence before the success is.
+  await assert.rejects(() => client.callTool({
+    name: 'git.commit',
+    arguments: { workspace_id: workspaceId, paths: [DC_FIXTURE_IMPLEMENTATION], message: 'onto main' },
+  }).then(assertNotError), 'a protected branch must be refused');
+
+  // Hostile hooks in BOTH locations a repository controls: its own .git/hooks, and a core.hooksPath
+  // it points wherever it likes. No commit-class hook may run for either half of a WAG commit.
+  const canaryPath = join(temp, 'hook-canary.txt');
+  const hostileHookDir = join(temp, 'evil-hooks');
+  for (const location of [join(fixture.workspaceRoot, '.git', 'hooks'), hostileHookDir]) {
+    await mkdir(location, { recursive: true });
+    for (const hook of HOSTILE_HOOKS) {
+      const file = join(location, hook);
+      await writeFile(file, `#!/bin/sh\necho FIRED-${hook} >> "${canaryPath.replace(/\\/g, '/')}"\nexit 0\n`);
+      await chmod(file, 0o755);
+    }
+  }
+  await execFileAsync('git', ['config', 'core.hooksPath', hostileHookDir.replace(/\\/g, '/')],
+    { cwd: fixture.workspaceRoot });
+
+  await execFileAsync('git', ['checkout', '-q', '-b', 'wag-work'], { cwd: fixture.workspaceRoot });
+  await writeFile(join(fixture.workspaceRoot, 'unrelated-dirty.txt'), 'must stay untracked\n');
+  const realIndexBefore = (await execFileAsync('git', ['write-tree'], { cwd: fixture.workspaceRoot })).stdout.trim();
+
+  // The fixture's own porcelain calls above legitimately fire post-index-change. Clearing here is
+  // what makes everything recorded afterwards attributable to WAG and its execution backend.
+  await rm(canaryPath, { force: true });
+
+  const commitPreview = parse<{ status: string; commitId: string; branch: string; oldHead: string; treeSha: string }>(
+    await client.callTool({
+      name: 'git.commit',
+      arguments: {
+        workspace_id: workspaceId,
+        paths: [DC_FIXTURE_IMPLEMENTATION, createdPath],
+        message: 'fix: trim outer whitespace before lowercasing\n\nProposed by WAG; $(touch pwned) stays data.\n',
+      },
+    }));
+  assert.equal(commitPreview.status, 'approval_required');
+  assert.equal(commitPreview.branch, 'wag-work');
+  assert.equal(commitPreview.oldHead, DC_FIXTURE_BASELINE_HEAD);
+
+  const commitReview = await operator.review(commitPreview.commitId, 'commits');
+  assert.ok(commitReview.includes(createdPath), 'the operator must see every selected path');
+  assert.ok(commitReview.includes(fixture.workspaceRoot),
+    'the operator must see which repository the commit lands in');
+  assert.ok(commitReview.includes(`M ${DC_FIXTURE_IMPLEMENTATION}`) && commitReview.includes(`A ${createdPath}`),
+    'the operator must see the resulting change set, not only the requested paths');
+  assert.equal((await operator.act(commitPreview.commitId, 'approve', csrfFrom(commitReview), { kind: 'commits' })).status, 303);
+
+  const commitView = parse<{ state: string; commit: string }>(
+    await client.callTool({ name: 'git.commit.result', arguments: { commit_id: commitPreview.commitId } }));
+  assert.equal(commitView.state, 'SUCCEEDED');
+
+  // Read the canary before this test runs any git of its own: `git write-tree` below would fire
+  // post-index-change from the same hostile hooks path and blur the attribution. Everything in it
+  // at this point was caused by WAG's proposal and commit, and by nothing else.
+  const firedHooks = await readFile(canaryPath, 'utf8').catch(() => '');
+  assert.equal(firedHooks.replace(BACKEND_HOOKS, ''), '',
+    `no commit-class hook may run; observed ${JSON.stringify(firedHooks)}`);
+  const backendHookInvocations = (firedHooks.match(BACKEND_HOOKS) ?? []).length;
+  await assert.rejects(() => readFile(join(fixture.workspaceRoot, 'pwned'), 'utf8'));
+
+  const gitOut = async (args: string[]) =>
+    (await execFileAsync('git', args, { cwd: fixture.workspaceRoot })).stdout.trim();
+  assert.equal(await gitOut(['rev-parse', 'HEAD']), commitView.commit);
+  assert.equal(await gitOut(['rev-parse', 'HEAD^']), DC_FIXTURE_BASELINE_HEAD, 'exactly one parent');
+  assert.equal(await gitOut(['rev-parse', 'HEAD^{tree}']), commitPreview.treeSha);
+  assert.deepEqual((await gitOut(['show', '--name-only', '--format=', 'HEAD'])).split('\n').sort(),
+    [DC_FIXTURE_IMPLEMENTATION, createdPath].sort());
+  assert.equal(await gitOut(['show', `HEAD:${DC_FIXTURE_IMPLEMENTATION}`]), DC_FIXTURE_FIXED_IMPLEMENTATION.trimEnd());
+  assert.match(await gitOut(['show', '-s', '--format=%B', 'HEAD']), /\$\(touch pwned\) stays data/);
+
+  assert.equal(await gitOut(['write-tree']), realIndexBefore, 'the real index must be untouched');
+  assert.equal(await gitOut(['status', '--porcelain', '--', 'unrelated-dirty.txt']), '?? unrelated-dirty.txt',
+    'the unrelated dirty file must survive the commit');
+
+  // Documented consequence of never touching the real index (ADR-0023): the index still holds
+  // the pre-commit tree, so git renders the committed paths as staged reversions against the new
+  // HEAD until the operator refreshes it. No content is lost and the worktree is unchanged, and
+  // WAG's own next commit is unaffected because it reads HEAD, never the index.
+  const statusAfter = await gitOut(['status', '--porcelain']);
+  assert.match(statusAfter, /^MM src\/lib\/ticket-id\.js$/m);
+  assert.match(statusAfter, /^D {2}test\/ticket-id\.extra\.test\.js$/m);
+  assert.equal(await gitOut(['show', `HEAD:${createdPath}`]), createdContent.trimEnd(),
+    'the committed content is intact regardless of the stale index view');
+  assert.equal(await readFile(join(fixture.workspaceRoot, createdPath), 'utf8'), createdContent,
+    'the worktree file is intact too');
+
   // Secret containment on the local diagnostic channel and the remote transport alike.
   assert.equal(stderr.includes(DEVSPACE_TEST_OWNER_TOKEN), false,
     'the DevSpace owner token must never appear in gateway diagnostics');
@@ -309,8 +434,13 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
     fixtureTree: fixture.tree,
     baselineExitCode: baseline.exitCode,
     afterFixExitCode: afterFix.exitCode,
-    operatorApprovals: 2,
+    operatorApprovals: 3,
     createdFile: createdPath,
+    commitBranch: commitPreview.branch,
+    commitSha: commitView.commit,
+    commitParent: DC_FIXTURE_BASELINE_HEAD,
+    commitClassHooksFired: false,
+    backendHookInvocations,
     finalStatus: await fixtureStatus(fixture.workspaceRoot),
   }));
 });

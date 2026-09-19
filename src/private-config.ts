@@ -13,6 +13,9 @@ export const DEFAULT_PRIVATE_STDIO_OWNER_ID = 'local.private.stdio';
 
 const repositoryEngineeringSchema = z.object({
   inspect: z.boolean().default(false),
+  gitCommit: z.object({
+    protectedBranches: z.array(z.string().min(1).max(256)).min(1).max(64).optional(),
+  }).strict().optional(),
   mutation: z.object({
     statePath: z.string().min(1),
     ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).default(DEFAULT_PRIVATE_STDIO_OWNER_ID),
@@ -37,8 +40,12 @@ export interface PrivateRepositoryEngineeringMutation {
   statePath: string;
   ownerId: string;
 }
+export interface PrivateRepositoryEngineeringGitCommit {
+  protectedBranches?: string[];
+}
 export interface PrivateRepositoryEngineering {
   inspect: boolean;
+  gitCommit?: PrivateRepositoryEngineeringGitCommit;
   mutation?: PrivateRepositoryEngineeringMutation;
 }
 export interface PrivateGatewayConfig {
@@ -64,6 +71,11 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
   if (mutation && !isAbsolute(mutation.statePath)) {
     throw new Error('Private gateway repository engineering mutation statePath must be absolute');
   }
+  // Commit review reuses the durable store, caller context and operator server that mutation builds.
+  // Accepting it alone would advertise nothing and bind nothing, which reads as a working opt-in.
+  if (parsed.repositoryEngineering?.gitCommit && !mutation) {
+    throw new Error('Private gateway repository engineering gitCommit requires mutation');
+  }
 
   const allowedRoots: string[] = [];
   for (const configuredRoot of parsed.allowedRoots) {
@@ -81,6 +93,13 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
     ...(parsed.repositoryEngineering === undefined ? {} : {
       repositoryEngineering: {
         inspect: parsed.repositoryEngineering.inspect,
+        ...(parsed.repositoryEngineering.gitCommit === undefined ? {} : {
+          gitCommit: {
+            ...(parsed.repositoryEngineering.gitCommit.protectedBranches === undefined
+              ? {}
+              : { protectedBranches: parsed.repositoryEngineering.gitCommit.protectedBranches }),
+          },
+        }),
         ...(mutation === undefined ? {} : { mutation: { statePath: mutation.statePath, ownerId: mutation.ownerId } }),
       },
     }),

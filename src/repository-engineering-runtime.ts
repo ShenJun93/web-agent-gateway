@@ -4,10 +4,12 @@ import { createGatewayCallerContext, type GatewayCallerContext } from './caller-
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { SqliteDurableStore } from './durable-store.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
+import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
+import { DurableCommitCoordinator } from './git-commit.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
-import type { MutationMcpContext } from './server.js';
+import type { GitCommitMcpContext, MutationMcpContext } from './server.js';
 
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
@@ -15,6 +17,7 @@ export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
 export interface RepositoryEngineeringProfile {
   inspect: boolean;
   mutation: boolean;
+  gitCommit: boolean;
 }
 
 export interface RepositoryEngineeringRuntime {
@@ -26,6 +29,8 @@ export interface RepositoryEngineeringRuntime {
   attach(executor: DevspaceExecutor): Promise<void>;
   /** Present only after a successful attach with mutation enabled. */
   mutationContext?: MutationMcpContext;
+  /** Present only after a successful attach with git commit enabled. */
+  gitCommitContext?: GitCommitMcpContext;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
@@ -53,10 +58,11 @@ export async function startRepositoryEngineeringRuntime(
   const settings = config.repositoryEngineering;
   const inspect = settings?.inspect === true;
   const mutationSettings = settings?.mutation;
+  const gitCommitSettings = settings?.gitCommit;
 
   if (!mutationSettings) {
     return {
-      profile: { inspect, mutation: false },
+      profile: { inspect, mutation: false, gitCommit: false },
       async attach() { /* nothing to attach */ },
       async close() { /* nothing to close */ },
     };
@@ -74,7 +80,7 @@ export async function startRepositoryEngineeringRuntime(
   let attached = false;
   let closed = false;
   const runtime: RepositoryEngineeringRuntime = {
-    profile: { inspect, mutation: true },
+    profile: { inspect, mutation: true, gitCommit: gitCommitSettings !== undefined },
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,
       sessionId: callerContext.sessionId,
@@ -92,7 +98,24 @@ export async function startRepositoryEngineeringRuntime(
           backends: [new DevspaceFileMutationBackend(executor)],
         });
         await coordinator.reconcile();
-        operator = await (options.startOperatorServer ?? startOperatorServer)({ coordinator });
+
+        let commitCoordinator: DurableCommitCoordinator | undefined;
+        if (gitCommitSettings) {
+          commitCoordinator = new DurableCommitCoordinator({
+            store,
+            backend: new DevspaceGitCommitBackend(executor),
+            ...(gitCommitSettings.protectedBranches === undefined
+              ? {}
+              : { protectedBranches: gitCommitSettings.protectedBranches }),
+          });
+          await commitCoordinator.reconcile();
+        }
+
+        operator = await (options.startOperatorServer ?? startOperatorServer)({
+          coordinator,
+          ...(commitCoordinator === undefined ? {} : { commitCoordinator }),
+        });
+        if (commitCoordinator) runtime.gitCommitContext = { callerContext, coordinator: commitCoordinator };
         // The single-use bootstrap token is written beside the state database rather than
         // printed, because a stdio gateway's stderr belongs to whatever spawned it — for the
         // supported deployment that is the remote-facing tunnel client, which is permitted to

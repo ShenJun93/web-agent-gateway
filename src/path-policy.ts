@@ -38,7 +38,14 @@ export function validateReadPath(input: string): string {
 }
 
 export async function assertReadTarget(root: string, relativePath: string): Promise<void> {
-  const target = await realpath(resolve(root, relativePath));
+  let target: string;
+  try {
+    target = await realpath(resolve(root, relativePath));
+  } catch {
+    // The underlying error carries the absolute canonical path; replace it with a stable
+    // denial so a caller learns only that the target was refused.
+    throw new Error('Gateway denied missing path');
+  }
   if (!containsPath(root, target)) throw new Error('Gateway denied workspace escape');
   if (hasSensitiveSegment(target)) throw new Error('Gateway denied sensitive path');
 }

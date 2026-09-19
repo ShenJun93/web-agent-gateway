@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { GatewayAuthority } from './caller-context.js';
+import type { GitCommitChange } from './git-commit-backend.js';
 
 export type MutationState =
   | 'PENDING_APPROVAL' | 'QUEUED' | 'EXECUTING'
@@ -60,6 +61,37 @@ export interface MutationRecord extends GatewayAuthority {
   executionStartedAt?: number;
   completedAt?: number;
   resultMetadata?: string;
+  errorClass?: string;
+}
+
+export type CommitState =
+  | 'PENDING_APPROVAL' | 'EXECUTING' | 'SUCCEEDED' | 'FAILED'
+  | 'REJECTED' | 'EXPIRED' | 'OUTCOME_UNKNOWN';
+
+export interface CreateCommitRecord extends GatewayAuthority {
+  workspaceId: string;
+  backendKind: string;
+  branch: string;
+  oldHead: string;
+  treeSha: string;
+  /** `Name <email>` the commit would be attributed to, read from the untrusted repository. */
+  author: string;
+  paths: readonly string[];
+  changes: readonly GitCommitChange[];
+  message: string;
+  messageSha256: string;
+  fingerprint: string;
+  createdAt: number;
+  reviewDeadline: number;
+}
+
+export interface CommitRecord extends CreateCommitRecord {
+  commitId: string;
+  state: CommitState;
+  reviewedAt?: number;
+  executionStartedAt?: number;
+  completedAt?: number;
+  resultCommit?: string;
   errorClass?: string;
 }
 
@@ -208,6 +240,38 @@ export class SqliteDurableStore {
         error_class TEXT,
         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
       );
+    `);
+    // New table rather than new columns: the schema is created with CREATE TABLE IF NOT EXISTS
+    // and there is no migration framework, so a table appears on existing databases for free
+    // while a column would not (ADR-0022, ADR-0023).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS commits (
+        commit_id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        backend_kind TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        old_head TEXT NOT NULL,
+        tree_sha TEXT NOT NULL,
+        author TEXT NOT NULL,
+        paths TEXT NOT NULL,
+        changes TEXT NOT NULL,
+        message TEXT NOT NULL,
+        message_sha256 TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        state TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        review_deadline INTEGER NOT NULL,
+        reviewed_at INTEGER,
+        execution_started_at INTEGER,
+        completed_at INTEGER,
+        result_commit TEXT,
+        error_class TEXT,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_commits_state ON commits(state, created_at);
     `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS audit_events (
@@ -655,6 +719,108 @@ export class SqliteDurableStore {
     this.db.close();
   }
 
+  createCommit(input: CreateCommitRecord): CommitRecord {
+    const record: CommitRecord = { commitId: `cmt_${randomUUID()}`, ...input, state: 'PENDING_APPROVAL' };
+    this.db.prepare(`INSERT INTO commits
+      (commit_id, owner_id, session_id, adapter_id, workspace_id, backend_kind, branch, old_head,
+       tree_sha, author, paths, changes, message, message_sha256, fingerprint, state, created_at, review_deadline)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(record.commitId, record.ownerId, record.sessionId, record.adapterId, record.workspaceId,
+        record.backendKind, record.branch, record.oldHead, record.treeSha, record.author, JSON.stringify(record.paths),
+        JSON.stringify(record.changes), record.message, record.messageSha256, record.fingerprint, record.state, record.createdAt,
+        record.reviewDeadline);
+    return record;
+  }
+
+  getCommit(commitId: string): CommitRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM commits WHERE commit_id = ?').get(commitId);
+    return row ? commitFromRow(row as Record<string, unknown>) : undefined;
+  }
+
+  listPendingCommits(limit = 20): CommitRecord[] {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const rows = this.db.prepare("SELECT * FROM commits WHERE state = 'PENDING_APPROVAL' ORDER BY created_at LIMIT ?").all(safeLimit);
+    return rows.map((row) => commitFromRow(row as Record<string, unknown>));
+  }
+
+  /**
+   * Outstanding proposals for one caller. The operator's review list is finite, so an unbounded
+   * caller could bury a real proposal under lookalikes within the review window.
+   */
+  countPendingCommits(authority: GatewayAuthority, now: number): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS pending FROM commits
+      WHERE state = 'PENDING_APPROVAL' AND review_deadline > ?
+        AND owner_id = ? AND session_id = ? AND adapter_id = ?`)
+      .get(now, authority.ownerId, authority.sessionId, authority.adapterId) as { pending: number };
+    return Number(row.pending);
+  }
+
+  listRecoverableCommits(): CommitRecord[] {
+    const rows = this.db.prepare("SELECT * FROM commits WHERE state IN ('PENDING_APPROVAL','EXECUTING') ORDER BY created_at").all();
+    return rows.map((row) => commitFromRow(row as Record<string, unknown>));
+  }
+
+  /** Single-use and TTL-bounded: the conditional UPDATE is what makes a replay a no-op. */
+  claimCommit(commitId: string, now: number): CommitRecord | undefined {
+    return this.transitionCommit(commitId, 'PENDING_APPROVAL', () => {
+      const result = this.db.prepare(`UPDATE commits SET state = 'EXECUTING', reviewed_at = ?, execution_started_at = ?
+        WHERE commit_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline > ?`)
+        .run(now, now, commitId, now);
+      return Number(result.changes) === 1;
+    });
+  }
+
+  rejectCommit(commitId: string, now: number): boolean {
+    return Boolean(this.transitionCommit(commitId, 'PENDING_APPROVAL', () => {
+      const result = this.db.prepare(`UPDATE commits SET state = 'REJECTED', completed_at = ?
+        WHERE commit_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline > ?`)
+        .run(now, commitId, now);
+      return Number(result.changes) === 1;
+    }));
+  }
+
+  expireCommit(commitId: string, now: number): boolean {
+    return Boolean(this.transitionCommit(commitId, 'PENDING_APPROVAL', () => {
+      const result = this.db.prepare(`UPDATE commits SET state = 'EXPIRED', completed_at = ?
+        WHERE commit_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline <= ?`)
+        .run(now, commitId, now);
+      return Number(result.changes) === 1;
+    }));
+  }
+
+  finishCommit(
+    commitId: string,
+    state: Extract<CommitState, 'SUCCEEDED' | 'FAILED' | 'OUTCOME_UNKNOWN'>,
+    now: number,
+    resultCommit?: string,
+    errorClass?: string,
+  ): boolean {
+    return Boolean(this.transitionCommit(commitId, 'EXECUTING', () => {
+      const result = this.db.prepare(`UPDATE commits
+        SET state = ?, completed_at = ?, result_commit = ?, error_class = ?
+        WHERE commit_id = ? AND state = 'EXECUTING'`)
+        .run(state, now, resultCommit ?? null, errorClass ?? null, commitId);
+      return Number(result.changes) === 1;
+    }));
+  }
+
+  private transitionCommit(commitId: string, fromState: CommitState, apply: () => boolean): CommitRecord | undefined {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const before = this.getCommit(commitId);
+      if (!before || before.state !== fromState || !apply()) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      const after = this.getCommit(commitId)!;
+      this.db.exec('COMMIT');
+      return after;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   private transition(mutationId: string, fromState: MutationState, toState: MutationState, observedAt: number, apply: () => boolean): MutationRecord | undefined {
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -745,6 +911,26 @@ function mutationFromRow(row: Record<string, unknown>): MutationRecord {
     ...(row.execution_started_at === null ? {} : { executionStartedAt: Number(row.execution_started_at) }),
     ...(row.completed_at === null ? {} : { completedAt: Number(row.completed_at) }),
     ...(row.result_metadata === null ? {} : { resultMetadata: String(row.result_metadata) }),
+    ...(row.error_class === null ? {} : { errorClass: String(row.error_class) }),
+  };
+}
+
+function commitFromRow(row: Record<string, unknown>): CommitRecord {
+  return {
+    commitId: String(row.commit_id), ownerId: String(row.owner_id),
+    sessionId: String(row.session_id), adapterId: String(row.adapter_id),
+    workspaceId: String(row.workspace_id), backendKind: String(row.backend_kind),
+    branch: String(row.branch), oldHead: String(row.old_head), treeSha: String(row.tree_sha),
+    author: String(row.author),
+    paths: JSON.parse(String(row.paths)) as string[],
+    changes: JSON.parse(String(row.changes)) as GitCommitChange[],
+    message: String(row.message), messageSha256: String(row.message_sha256),
+    fingerprint: String(row.fingerprint), state: String(row.state) as CommitState,
+    createdAt: Number(row.created_at), reviewDeadline: Number(row.review_deadline),
+    ...(row.reviewed_at === null ? {} : { reviewedAt: Number(row.reviewed_at) }),
+    ...(row.execution_started_at === null ? {} : { executionStartedAt: Number(row.execution_started_at) }),
+    ...(row.completed_at === null ? {} : { completedAt: Number(row.completed_at) }),
+    ...(row.result_commit === null ? {} : { resultCommit: String(row.result_commit) }),
     ...(row.error_class === null ? {} : { errorClass: String(row.error_class) }),
   };
 }

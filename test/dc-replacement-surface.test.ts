@@ -3,6 +3,7 @@ import test from 'node:test';
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DurableMutationCoordinator } from '../src/durable-mutation.js';
+import { DurableCommitCoordinator } from '../src/git-commit.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import type { DevspaceExecutor, ExecResult } from '../src/executor/devspace.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
@@ -12,11 +13,18 @@ const DEFAULT_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read',
 const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run'];
 const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.create', 'mutation.result'];
 const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.create', 'mutation.result'];
+const COMMIT_TOOLS = [...FULL_TOOLS, 'git.commit', 'git.commit.result'];
 
-/** Every capability DC exposes that WAG must keep unavailable on every stdio profile. */
+/**
+ * Every capability DC exposes that WAG must keep unavailable on every stdio profile.
+ * git.commit and git.commit.result are the only accepted Git tools (ADR-0023); every other
+ * Git verb, and every shell/process/directory verb, must stay absent.
+ */
+const ACCEPTED_GIT_TOOLS = new Set(['git.commit', 'git.commit.result']);
 const FORBIDDEN_TOOL_FRAGMENTS = [
   'verify.preview', 'verify.result', 'job.', 'shell', 'process', 'terminal', 'pty', 'exec',
-  'git.', 'commit', 'push', 'file.write', 'file.patch', 'file.move', 'file.delete',
+  'git.', 'commit', 'push', 'fetch', 'pull', 'merge', 'amend', 'reset', 'checkout', 'branch',
+  'file.write', 'file.patch', 'file.move', 'file.delete',
   'directory', 'config.set', 'set_config', 'forward',
 ];
 
@@ -178,9 +186,23 @@ test('private stdio profiles compose independently and never expose DC-class aut
     backends: [{ kind: 'devspace', readExact: async () => 'x', readExactIfPresent: async () => 'x', createNew: async () => undefined, updateExisting: async () => undefined }],
   });
 
+  const commitCoordinator = new DurableCommitCoordinator({
+    store,
+    backend: {
+      kind: 'devspace',
+      plan: async () => { throw new Error('unused'); },
+      commit: async () => { throw new Error('unused'); },
+    },
+  });
+
   for (const [options, expected] of [
     [{ mutationContext: { callerContext, coordinator } }, MUTATION_TOOLS],
     [{ inspect: true, mutationContext: { callerContext, coordinator } }, FULL_TOOLS],
+    [{
+      inspect: true,
+      mutationContext: { callerContext, coordinator },
+      gitCommitContext: { callerContext, coordinator: commitCoordinator },
+    }, COMMIT_TOOLS],
   ] as const) {
     const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
     const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), options));
@@ -188,6 +210,7 @@ test('private stdio profiles compose independently and never expose DC-class aut
     assert.deepEqual(tools.tools.map((tool) => tool.name), expected);
 
     for (const name of tools.tools.map((tool) => tool.name)) {
+      if (ACCEPTED_GIT_TOOLS.has(name)) continue;
       for (const forbidden of FORBIDDEN_TOOL_FRAGMENTS) {
         assert.equal(name.includes(forbidden), false, `stdio surface must not expose ${name}`);
       }

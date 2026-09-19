@@ -2,12 +2,20 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { BrowserVerifyLocalReviewView } from './browser-verify-request.js';
 import type { MutationLocalReviewView } from './durable-mutation.js';
+import type { GitCommitLocalReviewView } from './git-commit.js';
 
 interface OperatorMutationCoordinator {
   listPendingLocal(limit?: number): MutationLocalReviewView[];
   reviewLocal(mutationId: string): MutationLocalReviewView | undefined;
   approveLocal(mutationId: string): Promise<boolean>;
   rejectLocal(mutationId: string): boolean;
+}
+
+interface OperatorCommitCoordinator {
+  listPendingLocal(limit?: number): GitCommitLocalReviewView[];
+  reviewLocal(commitId: string): GitCommitLocalReviewView | undefined;
+  approveLocal(commitId: string): Promise<boolean>;
+  rejectLocal(commitId: string): boolean;
 }
 
 interface OperatorVerifyCoordinator {
@@ -26,10 +34,11 @@ export interface OperatorServer {
 export async function startOperatorServer(options: {
   coordinator?: OperatorMutationCoordinator;
   verifyCoordinator?: OperatorVerifyCoordinator;
+  commitCoordinator?: OperatorCommitCoordinator;
   host?: string;
   port?: number;
 }): Promise<OperatorServer> {
-  if (!options.coordinator && !options.verifyCoordinator) {
+  if (!options.coordinator && !options.verifyCoordinator && !options.commitCoordinator) {
     throw new Error('Operator server requires a review coordinator');
   }
   const host = options.host ?? '127.0.0.1';
@@ -60,6 +69,7 @@ export async function startOperatorServer(options: {
         return html(res, renderList(
           options.coordinator?.listPendingLocal(20) ?? [],
           options.verifyCoordinator?.listPendingLocal(20) ?? [],
+          options.commitCoordinator?.listPendingLocal(20) ?? [],
           session.csrf,
         ));
       }
@@ -85,6 +95,25 @@ export async function startOperatorServer(options: {
         const ok = mutationAction[2] === 'approve'
           ? await options.coordinator.approveLocal(mutationId)
           : options.coordinator.rejectLocal(mutationId);
+        if (!ok) return deny(res, 409);
+        res.writeHead(303, { location: '/' }).end();
+        return;
+      }
+
+      const commitDetail = /^\/commits\/([^/]+)$/.exec(url.pathname);
+      if (req.method === 'GET' && commitDetail && options.commitCoordinator) {
+        const review = options.commitCoordinator.reviewLocal(decodeURIComponent(commitDetail[1]!));
+        if (!review) return deny(res, 404);
+        return html(res, renderCommitReview(review, session.csrf));
+      }
+
+      const commitAction = /^\/commits\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
+      if (req.method === 'POST' && commitAction && options.commitCoordinator) {
+        if (!(await validPost(req, session.csrf, origin))) return deny(res, 403);
+        const commitId = decodeURIComponent(commitAction[1]!);
+        const ok = commitAction[2] === 'approve'
+          ? await options.commitCoordinator.approveLocal(commitId)
+          : options.commitCoordinator.rejectLocal(commitId);
         if (!ok) return deny(res, 409);
         res.writeHead(303, { location: '/' }).end();
         return;
@@ -165,13 +194,16 @@ function html(res: ServerResponse, body: string): void {
 function renderList(
   mutations: MutationLocalReviewView[],
   verifications: BrowserVerifyLocalReviewView[],
+  commits: GitCommitLocalReviewView[],
   csrf: string,
 ): string {
   const mutationItems = mutations.map((review) => renderMutationReview(review, csrf)).join('');
   const verifyItems = verifications.map((review) => renderVerifyReview(review, csrf)).join('');
+  const commitItems = commits.map((review) => renderCommitReview(review, csrf)).join('');
   return '<!doctype html><meta charset="utf-8"><title>WAG Review</title><h1>Pending reviews</h1>'
     + '<h2>Mutations</h2>' + (mutationItems || '<p>None</p>')
-    + '<h2>Verifications</h2>' + (verifyItems || '<p>None</p>');
+    + '<h2>Verifications</h2>' + (verifyItems || '<p>None</p>')
+    + '<h2>Commits</h2>' + (commitItems || '<p>None</p>');
 }
 
 function renderMutationReview(review: MutationLocalReviewView, csrf: string): string {
@@ -207,16 +239,55 @@ function renderVerifyReview(review: BrowserVerifyLocalReviewView, csrf: string):
     + '</article>';
 }
 
-function actionForm(kind: 'mutations' | 'verifications', id: string, action: 'approve' | 'reject', csrf: string): string {
+function renderCommitReview(review: GitCommitLocalReviewView, csrf: string): string {
+  const actionId = encodeURIComponent(review.commitId);
+  const paths = review.paths.map((path) => '<li>' + escapeHtml(path) + '</li>').join('');
+  return '<article>'
+    + `<h2>Commit on ${escapeHtml(review.branch)}</h2>`
+    + `<p>Repository: ${escapeHtml(review.workspaceRoot)}</p>`
+    + `<p>State: ${escapeHtml(review.state)}</p>`
+    + `<p>Commit request: ${escapeHtml(review.commitId)}</p>`
+    + `<p>Parent HEAD: ${escapeHtml(review.oldHead)}</p>`
+    + `<p>Resulting tree: ${escapeHtml(review.treeSha)}</p>`
+    // The author comes from the repository's own configuration, which is untrusted, so the
+    // operator is told who the commit will be attributed to rather than left to assume.
+    + `<p>Author: ${escapeHtml(review.author)}</p>`
+    + `<p>Fingerprint: ${escapeHtml(review.fingerprint)}</p>`
+    + `<p>Review expires: ${review.reviewDeadline}</p>`
+    + `<h3>Selected paths</h3><ul>${paths}</ul>`
+    // The selected path set is what was asked for; the change set is what the commit actually
+    // does. They differ whenever git resolves a directory/file conflict, so the operator is
+    // shown the resulting delta rather than only the request.
+    + `<h3>Resulting changes</h3><ul>${review.changes
+      .map((change) => `<li>${escapeHtml(change.status)} ${escapeHtml(change.path)}</li>`)
+      .join('')}</ul>`
+    + `<h3>Message</h3><pre>${escapeHtml(review.message)}</pre>`
+    + '<p>Approval creates one commit and moves the branch only if HEAD and content are unchanged.</p>'
+    + actionForm('commits', actionId, 'approve', csrf)
+    + actionForm('commits', actionId, 'reject', csrf)
+    + '</article>';
+}
+
+function actionForm(kind: 'mutations' | 'verifications' | 'commits', id: string, action: 'approve' | 'reject', csrf: string): string {
   return `<form method="post" action="/${kind}/${id}/${action}">`
     + `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">`
     + `<button type="submit">${action === 'approve' ? 'Approve' : 'Reject'}</button></form>`;
 }
 
+/**
+ * Bidi overrides, isolates and zero-width characters. A repository controls its own filenames and
+ * a caller controls the commit message, so both reach this page; rendered verbatim they let text
+ * display in an order other than the one that will be committed. Escaping them as visible code
+ * points keeps the review page an honest statement of what is being approved.
+ */
+const INVISIBLE_OR_BIDI = /[­؜᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[char]!);
+  return value
+    .replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[char]!)
+    .replace(INVISIBLE_OR_BIDI, (char) => `&lt;U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}&gt;`);
 }
 
 function secret(): string {
