@@ -61,4 +61,27 @@ test('private config is strict, absolute, loopback-only, and canonicalizes allow
   assert.equal(loaded.verifyProfiles.version.maxOutputTokens, 1_000);
   assert.equal(loaded.devspace.baseUrl, 'http://127.0.0.1:7676');
   assert.equal(loaded.devspace.resourceUrl, 'http://127.0.0.1:7676/mcp');
+  assert.deepEqual(loaded.browserVerifyProfiles, []);
+});
+
+test('private config browser verify allowlist defaults empty and rejects duplicate or unknown profiles', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-private-config-browser-verify-'));
+  t.after(async () => { const { rm } = await import('node:fs/promises'); await rm(root, { recursive: true, force: true }); });
+
+  const allowed = { ...validConfig(root), browserVerifyProfiles: ['version'] };
+  const loaded = await loadPrivateGatewayConfig(await writeConfig(root, 'allowed.json', allowed));
+  assert.deepEqual(loaded.browserVerifyProfiles, ['version']);
+  assert.deepEqual(loaded.verifyProfiles.version.argv, ['node', '--version']);
+
+  const duplicate = { ...validConfig(root), browserVerifyProfiles: ['version', 'version'] };
+  await assert.rejects(
+    async () => loadPrivateGatewayConfig(await writeConfig(root, 'duplicate.json', duplicate)),
+    /must be unique/i,
+  );
+
+  const unknown = { ...validConfig(root), browserVerifyProfiles: ['missing'] };
+  await assert.rejects(
+    async () => loadPrivateGatewayConfig(await writeConfig(root, 'unknown-browser-profile.json', unknown)),
+    /not configured/i,
+  );
 });

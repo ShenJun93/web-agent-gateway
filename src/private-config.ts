@@ -16,6 +16,9 @@ const privateGatewayConfigSchema = z.object({
     resourceUrl: z.string().url(),
   }).strict(),
   verifyProfiles: z.record(z.string().min(1), verifyProfileSchema),
+  browserVerifyProfiles: z.array(
+    z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
+  ).max(32).default([]),
 }).strict();
 
 export type PrivateVerifyProfile = z.infer<typeof verifyProfileSchema>;
@@ -23,12 +26,19 @@ export interface PrivateGatewayConfig {
   allowedRoots: string[];
   devspace: { baseUrl: string; resourceUrl: string };
   verifyProfiles: Record<string, PrivateVerifyProfile>;
+  browserVerifyProfiles?: string[];
 }
 export async function loadPrivateGatewayConfig(configPath: string): Promise<PrivateGatewayConfig> {
   if (!isAbsolute(configPath)) throw new Error('Private gateway config path must be absolute');
   const parsed = privateGatewayConfigSchema.parse(JSON.parse(await readFile(configPath, 'utf8')));
   const baseUrl = validateLoopbackBaseUrl(parsed.devspace.baseUrl);
   const resourceUrl = validateResourceUrl(parsed.devspace.resourceUrl, baseUrl);
+  if (new Set(parsed.browserVerifyProfiles).size !== parsed.browserVerifyProfiles.length) {
+    throw new Error('Private gateway browser verify profiles must be unique');
+  }
+  if (parsed.browserVerifyProfiles.some((name) => parsed.verifyProfiles[name] === undefined)) {
+    throw new Error('Private gateway browser verify profile is not configured');
+  }
 
   const allowedRoots: string[] = [];
   for (const configuredRoot of parsed.allowedRoots) {
@@ -42,6 +52,7 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
     allowedRoots,
     devspace: { baseUrl, resourceUrl },
     verifyProfiles: parsed.verifyProfiles,
+    browserVerifyProfiles: parsed.browserVerifyProfiles,
   };
 }
 

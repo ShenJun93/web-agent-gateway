@@ -5,6 +5,7 @@ import { SqliteDurableStore } from './durable-store.js';
 
 export const BROWSER_ADAPTER_V1_ID = 'browser.chatgpt.native.v1' as const;
 export const BROWSER_INSPECT_ADAPTER_ID = 'browser.chatgpt.native.inspect.v2' as const;
+export const BROWSER_VERIFY_ADAPTER_ID = 'browser.chatgpt.native.verify.v3' as const;
 
 const correlationId = z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 

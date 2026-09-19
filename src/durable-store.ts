@@ -14,6 +14,13 @@ export type VerifyJobErrorClass =
   | 'RESTART_RESUME_DISABLED' | 'RESTART_EXECUTION_UNVERIFIABLE'
   | 'EXECUTION_TIMEOUT_UNCONFIRMED' | 'EXECUTION_PORT_ERROR_UNCONFIRMED';
 
+export type BrowserVerifyRequestState =
+  | 'PENDING_APPROVAL' | 'REJECTED' | 'EXPIRED' | 'INVALIDATED' | 'DISPATCHED';
+export type BrowserVerifyRequestErrorClass =
+  | 'WORKSPACE_MISSING' | 'WORKSPACE_OWNERSHIP_MISMATCH'
+  | 'PROFILE_MISSING' | 'PROFILE_NOT_ALLOWED' | 'PROFILE_PLAN_DRIFT'
+  | 'RESTART_RESUME_NOT_ALLOWED';
+
 export interface LocalPrincipalRecord {
   ownerId: string;
   createdAt: number;
@@ -116,6 +123,29 @@ export interface VerifyJobEvent {
   toState: VerifyJobState;
   attemptId?: string;
   errorClass?: VerifyJobErrorClass;
+}
+
+export interface CreateBrowserVerifyRequestRecord extends GatewayAuthority {
+  requestId: string;
+  workspaceId: string;
+  profileName: string;
+  planSha256: string;
+  fingerprint: string;
+  createdAt: number;
+  reviewDeadline: number;
+}
+
+export interface BrowserVerifyRequestRecord extends CreateBrowserVerifyRequestRecord {
+  state: BrowserVerifyRequestState;
+  approvedAt?: number;
+  completedAt?: number;
+  linkedJobId?: string;
+  errorClass?: BrowserVerifyRequestErrorClass;
+}
+
+export interface BrowserVerifyApprovalResult {
+  request: BrowserVerifyRequestRecord;
+  job: VerifyJobRecord;
 }
 
 export class SqliteDurableStore {
@@ -229,6 +259,31 @@ export class SqliteDurableStore {
         error_class TEXT,
         FOREIGN KEY(job_id) REFERENCES verify_jobs(job_id)
       );
+    `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS browser_verify_requests (
+        request_id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        profile_name TEXT NOT NULL,
+        plan_sha256 TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        state TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        review_deadline INTEGER NOT NULL,
+        approved_at INTEGER,
+        completed_at INTEGER,
+        linked_job_id TEXT,
+        error_class TEXT,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id),
+        FOREIGN KEY(linked_job_id) REFERENCES verify_jobs(job_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_browser_verify_requests_state
+        ON browser_verify_requests(state, created_at);
+      CREATE INDEX IF NOT EXISTS idx_browser_verify_requests_session
+        ON browser_verify_requests(owner_id, session_id, adapter_id, state, created_at);
     `);
   }
 
@@ -462,6 +517,140 @@ export class SqliteDurableStore {
     return rows.map((row) => verifyJobEventFromRow(row as Record<string, unknown>));
   }
 
+  createBrowserVerifyRequest(
+    input: CreateBrowserVerifyRequestRecord,
+    limits: { perSession: number; global: number },
+  ): BrowserVerifyRequestRecord | undefined {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const duplicate = this.db.prepare(`SELECT request_id FROM browser_verify_requests
+        WHERE owner_id = ? AND session_id = ? AND adapter_id = ?
+          AND workspace_id = ? AND profile_name = ?
+          AND state = 'PENDING_APPROVAL' AND review_deadline > ?
+        LIMIT 1`).get(
+        input.ownerId, input.sessionId, input.adapterId,
+        input.workspaceId, input.profileName, input.createdAt,
+      );
+      const sessionCount = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM browser_verify_requests
+        WHERE owner_id = ? AND session_id = ? AND adapter_id = ?
+          AND state = 'PENDING_APPROVAL' AND review_deadline > ?`)
+        .get(input.ownerId, input.sessionId, input.adapterId, input.createdAt) as { count: number }).count);
+      const globalCount = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM browser_verify_requests
+        WHERE state = 'PENDING_APPROVAL' AND review_deadline > ?`)
+        .get(input.createdAt) as { count: number }).count);
+      if (duplicate || sessionCount >= limits.perSession || globalCount >= limits.global) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+
+      const record: BrowserVerifyRequestRecord = { ...input, state: 'PENDING_APPROVAL' };
+      this.db.prepare(`INSERT INTO browser_verify_requests (
+        request_id, owner_id, session_id, adapter_id, workspace_id, profile_name,
+        plan_sha256, fingerprint, state, created_at, review_deadline
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        record.requestId, record.ownerId, record.sessionId, record.adapterId,
+        record.workspaceId, record.profileName, record.planSha256, record.fingerprint,
+        record.state, record.createdAt, record.reviewDeadline,
+      );
+      this.db.exec('COMMIT');
+      return record;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  getBrowserVerifyRequest(requestId: string): BrowserVerifyRequestRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM browser_verify_requests WHERE request_id = ?').get(requestId);
+    return row ? browserVerifyRequestFromRow(row as Record<string, unknown>) : undefined;
+  }
+
+  listPendingBrowserVerifyRequests(limit = 20): BrowserVerifyRequestRecord[] {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const rows = this.db.prepare(`SELECT * FROM browser_verify_requests
+      WHERE state = 'PENDING_APPROVAL' ORDER BY created_at LIMIT ?`).all(safeLimit);
+    return rows.map((row) => browserVerifyRequestFromRow(row as Record<string, unknown>));
+  }
+
+  expireBrowserVerifyRequest(requestId: string, now: number): boolean {
+    const updated = this.db.prepare(`UPDATE browser_verify_requests
+      SET state = 'EXPIRED', completed_at = ?
+      WHERE request_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline <= ?`)
+      .run(now, requestId, now);
+    return Number(updated.changes) === 1;
+  }
+
+  rejectBrowserVerifyRequest(requestId: string, now: number): boolean {
+    const updated = this.db.prepare(`UPDATE browser_verify_requests
+      SET state = 'REJECTED', completed_at = ?
+      WHERE request_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline > ?`)
+      .run(now, requestId, now);
+    return Number(updated.changes) === 1;
+  }
+
+  invalidateBrowserVerifyRequest(
+    requestId: string,
+    now: number,
+    errorClass: BrowserVerifyRequestErrorClass,
+  ): boolean {
+    const updated = this.db.prepare(`UPDATE browser_verify_requests
+      SET state = 'INVALIDATED', completed_at = ?, error_class = ?
+      WHERE request_id = ? AND state = 'PENDING_APPROVAL'`)
+      .run(now, errorClass, requestId);
+    return Number(updated.changes) === 1;
+  }
+
+  approveBrowserVerifyRequestAndCreateJob(input: {
+    requestId: string;
+    now: number;
+    dispatchDeadline: number;
+    currentPlanSha256: string;
+  }): BrowserVerifyApprovalResult | undefined {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const request = this.getBrowserVerifyRequest(input.requestId);
+      if (!request || request.state !== 'PENDING_APPROVAL' || request.reviewDeadline <= input.now) {
+        this.db.exec('ROLLBACK');
+        return undefined;
+      }
+      const workspace = this.getWorkspace(request.workspaceId);
+      if (!workspace || !sameAuthorityTuple(request, workspace)) {
+        this.db.prepare(`UPDATE browser_verify_requests
+          SET state = 'INVALIDATED', completed_at = ?, error_class = ?
+          WHERE request_id = ? AND state = 'PENDING_APPROVAL'`).run(
+          input.now, workspace ? 'WORKSPACE_OWNERSHIP_MISMATCH' : 'WORKSPACE_MISSING', request.requestId,
+        );
+        this.db.exec('COMMIT');
+        return undefined;
+      }
+      if (request.planSha256 !== input.currentPlanSha256) {
+        this.db.prepare(`UPDATE browser_verify_requests
+          SET state = 'INVALIDATED', completed_at = ?, error_class = 'PROFILE_PLAN_DRIFT'
+          WHERE request_id = ? AND state = 'PENDING_APPROVAL'`).run(input.now, request.requestId);
+        this.db.exec('COMMIT');
+        return undefined;
+      }
+
+      const job = this.createVerifyJob({
+        ownerId: request.ownerId, sessionId: request.sessionId, adapterId: request.adapterId,
+        workspaceId: request.workspaceId, backendKind: workspace.backendKind,
+        profileName: request.profileName, planSha256: request.planSha256,
+        createdAt: input.now, dispatchDeadline: input.dispatchDeadline,
+      });
+      const updated = this.db.prepare(`UPDATE browser_verify_requests
+        SET state = 'DISPATCHED', approved_at = ?, linked_job_id = ?
+        WHERE request_id = ? AND state = 'PENDING_APPROVAL'`)
+        .run(input.now, job.jobId, request.requestId);
+      if (Number(updated.changes) !== 1) throw new Error('Browser verify approval lost atomic transition');
+      const approved = this.getBrowserVerifyRequest(request.requestId)!;
+      this.db.exec('COMMIT');
+      return { request: approved, job };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -603,4 +792,35 @@ function verifyJobEventFromRow(row: Record<string, unknown>): VerifyJobEvent {
     ...(row.attempt_id === null ? {} : { attemptId: String(row.attempt_id) }),
     ...(row.error_class === null ? {} : { errorClass: String(row.error_class) as VerifyJobErrorClass }),
   };
+}
+
+function browserVerifyRequestFromRow(row: Record<string, unknown>): BrowserVerifyRequestRecord {
+  return {
+    requestId: String(row.request_id),
+    ownerId: String(row.owner_id),
+    sessionId: String(row.session_id),
+    adapterId: String(row.adapter_id),
+    workspaceId: String(row.workspace_id),
+    profileName: String(row.profile_name),
+    planSha256: String(row.plan_sha256),
+    fingerprint: String(row.fingerprint),
+    state: String(row.state) as BrowserVerifyRequestState,
+    createdAt: Number(row.created_at),
+    reviewDeadline: Number(row.review_deadline),
+    ...(row.approved_at === null ? {} : { approvedAt: Number(row.approved_at) }),
+    ...(row.completed_at === null ? {} : { completedAt: Number(row.completed_at) }),
+    ...(row.linked_job_id === null ? {} : { linkedJobId: String(row.linked_job_id) }),
+    ...(row.error_class === null ? {} : {
+      errorClass: String(row.error_class) as BrowserVerifyRequestErrorClass,
+    }),
+  };
+}
+
+function sameAuthorityTuple(
+  expected: Pick<GatewayAuthority, 'ownerId' | 'sessionId' | 'adapterId'>,
+  actual: Pick<GatewayAuthority, 'ownerId' | 'sessionId' | 'adapterId'>,
+): boolean {
+  return expected.ownerId === actual.ownerId
+    && expected.sessionId === actual.sessionId
+    && expected.adapterId === actual.adapterId;
 }
