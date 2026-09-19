@@ -2,11 +2,11 @@
 
 Date: 2026-09-19
 Status: PASS — local production acceptance only
-Candidate: `dbfa4ba` (this receipt is docs-only and adds no code to the candidate)
+Candidate: `dbfa4ba`, extended by `c7d1991` (see the addendum)
 Base: `7d85395`
 Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`
 Acceptance plan: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`
-Decision authority: ADR-0018, ADR-0020, ADR-0021
+Decision authority: ADR-0018, ADR-0020, ADR-0021, ADR-0022
 Research: `docs/research/2026-09-19-wag-dc-replacement-v1-surface-selection.md`
 Measured gap: `docs/benchmarks/2026-09-17-dc-replacement-live-benchmark-v1-attempt-1.md`
 
@@ -57,8 +57,8 @@ already-accepted local approval path reachable outside a test fixture.
 
 ```text
 src/private-config.ts                  optional strict repositoryEngineering block, default absent
-src/server.ts                          createGateway.repoSearch + repo.search registration behind an explicit switch
-src/stdio-server.ts                    forwards { repoSearch, mutationContext }
+src/server.ts                          repoSearch/repoList/repoDiff + registration behind an explicit switch
+src/stdio-server.ts                    forwards { inspect, mutationContext }
 src/repository-engineering-runtime.ts  new: store + caller context + coordinator + operator server assembly
 src/cli.ts                             wires the profile, emits local-only diagnostics, ordered teardown
 ```
@@ -77,12 +77,12 @@ mutation, approval and ownership contracts reused without relaxation. Base SHA `
 
 `test/dc-replacement-config.test.ts` — 6 tests, 0 failures.
 
-Proves: absent block means both capabilities disabled; `search` defaults false; `mutation` absent by default;
+Proves: absent block means both capabilities disabled; `inspect` defaults false; `mutation` absent by default;
 `statePath` required and must be absolute; `ownerId` defaults to `local.private.stdio` and rejects space, slash, empty,
 over-length and quote-injection values; strict schema rejects unknown keys at both levels; existing allowed-root,
 DevSpace URL, verify-profile and `browserVerifyProfiles` behavior unchanged.
 
-### Gate 2 — gateway `repoSearch`
+### Gate 2 — gateway inspection methods
 
 Covered in `test/dc-replacement-surface.test.ts`.
 
@@ -93,18 +93,21 @@ traced on both success and failure.
 
 ### Gate 3 — capability profile
 
-`test/dc-replacement-surface.test.ts` — 8 tests, 0 failures.
+`test/dc-replacement-surface.test.ts` — 9 tests, 0 failures.
+
+Final surface, after ADR-0021 and ADR-0022:
 
 ```text
 default         health, workspace.open, repo.snapshot, file.read, verify.run
-search only     health, workspace.open, repo.search, repo.snapshot, file.read, verify.run
+inspect only    health, workspace.open, repo.list, repo.search, repo.snapshot, repo.diff,
+                file.read, verify.run
 mutation only   health, workspace.open, repo.snapshot, file.read, verify.run,
-                mutation.preview, mutation.result
-both            health, workspace.open, repo.search, repo.snapshot, file.read, verify.run,
-                mutation.preview, mutation.result
+                mutation.preview, file.create, mutation.result
+both            health, workspace.open, repo.list, repo.search, repo.snapshot, repo.diff,
+                file.read, verify.run, mutation.preview, file.create, mutation.result
 ```
 
-`repoSearch: false` yields the default list, so the switch is an explicit `true` rather than a truthy value. In every
+`inspect: false` yields the default list, so the switch is an explicit `true` rather than a truthy value. In every
 combination the surface is asserted free of `verify.preview`, `verify.result`, `job.*`, shell, process, terminal, pty,
 exec, Git write, file write/patch/move/delete, directory, configuration-mutation and forwarding tools. Control
 characters, NUL and over-length search queries are denied on the stdio surface, not only on the browser surface.
@@ -123,8 +126,9 @@ Proves: disabled mode opens no store, binds no port and builds no caller context
 ### Gate 5 — CLI
 
 Proves: the resolved profile reaches the stdio surface; teardown order is stdio, engineering runtime, privileged
-runtime on success and on every failure path; stdout carries MCP framing only; the operator bootstrap URL is emitted on
-stderr and never on stdout; the DevSpace owner token never appears in diagnostics; `doctor` is a read-only preflight
+runtime on success and on every failure path; stdout carries MCP framing only; the operator origin is emitted on
+stderr while the single-use bootstrap token goes to `<statePath>.operator-url`; the DevSpace owner token never
+appears in diagnostics; `doctor` is a read-only preflight
 that reports the profile without binding the operator port or issuing a bootstrap URL; nothing at all is emitted for
 the shipped default profile; a repository-engineering or attach failure fails closed with a sanitized code and never
 starts the surface.
@@ -348,15 +352,45 @@ review the resulting diff — without Desktop Commander, without a shell, and wi
 This is Layer A production evidence under the benchmark contract. It does not establish that
 ChatGPT Web replaced Remote Desktop Commander; that requires Layer B, which is out of scope here.
 
+## Addendum — reviewed file creation (`c7d1991`)
+
+After the acceptance above, one further gap was closed, because a session that cannot create a file
+still depends on another tool for ordinary work. ADR-0022 adds `file.create` as a mutation whose
+base is the empty file, which needs no store migration and no change to the state machine.
+
+Re-run at `c7d1991`:
+
+```text
+npm test                     373 pass / 0 fail   exit 0   369.8 s
+npm run typecheck            exit 0
+npm run build                exit 0
+npm run test:business        1 pass / 0 fail     exit 0
+npm run test:dc-replacement  1 pass / 0 fail     exit 0
+git diff --check             exit 0
+```
+
+The production-local run now also proposes a new test file, approves it over the real loopback
+operator server, and re-verifies: the suite goes from 2 tests to 3 passing, proving the created file
+landed usable rather than merely present. Final residue is exactly
+`M src/lib/ticket-id.js` plus `?? test/ticket-id.extra.test.js`, from two separate approvals.
+
+Creation-specific negative evidence: proposing over an existing path is refused; a path that appears
+between proposal and approval is refused at execution with the pre-existing content intact; an empty
+file is refused; `.env`, `.git/…`, traversal, absolute and Windows-reserved targets are refused; and
+a symlinked parent directory cannot place a file outside the workspace.
+
+One suite run was discarded during this milestone: a failing assertion left a real DevSpace and a
+real loopback server alive, which hung the runner. The stale expectation was fixed, only this
+worktree's processes were terminated, and the suite was re-run clean. That trap is now recorded in
+`.claude/skills/wag-acceptance-gates/SKILL.md`.
+
 ## Residual capability limits
 
 WAG is accepted as the primary repository-engineering operator for the workflows above. It is not a
 Desktop Commander replacement for everything DC can do, and the following are genuinely absent:
 
 ```text
-file creation / deletion / move      NOT AVAILABLE — the accepted durable mutation contract is
-                                     defined over an existing file's before/after content, so
-                                     creation needs its own gated milestone, not a retrofit
+file deletion / move                 NOT AVAILABLE
 directory create / remove            NOT AVAILABLE
 git log / blame / branch / worktree  NOT AVAILABLE — only snapshot and working-tree diff
 git commit or any Git write          NOT AUTHORIZED
@@ -365,8 +399,8 @@ background jobs, job ids, caller-    NOT EXPOSED — verify.run is synchronous a
 visible cancellation                 timeout and interrupt handled inside the gateway
 ```
 
-A session doing ordinary WAG work can therefore inspect, verify and make reviewed single-file edits
-through WAG alone, but still needs another tool to create a new file or to commit.
+A session doing ordinary WAG work can therefore inspect, verify, make reviewed edits and create new
+files through WAG alone, but still needs another tool to commit.
 
 ## Explicitly still outstanding
 
@@ -376,7 +410,7 @@ PRODUCTION_BROWSER_VERIFY                    = NOT_YET_ACCEPTED
 BROWSER_EXACT_NATIVE_HOST_CANDIDATE          = NOT_PRODUCED
 SUPPORTED_HOST_TIER_R / TIER_V (Layer B)     = NOT_RUN
 TIER_C / TIER_D ON ANY BROWSER SURFACE       = FORBIDDEN
-REVIEWED_FILE_CREATION                       = DEFERRED_SEPARATE_MILESTONE
+REVIEWED_FILE_CREATION                       = ACCEPTED (ADR-0022, c7d1991)
 GIT_MUTATION                                 = NOT_AUTHORIZED
 PUSH / PR / MERGE / RELEASE / TAG / SIGNING  = NOT_PERFORMED
 PROVIDER OR ACCOUNT ACTIONS                  = NOT_PERFORMED
