@@ -2,7 +2,7 @@
 
 Date: 2026-09-19
 Status: APPROVED DESIGN — implementation authorized by this milestone; distribution/provider actions are not
-Decision authority: ADR-0018, ADR-0020, ADR-0021, ADR-0022
+Decision authority: ADR-0018, ADR-0020, ADR-0021, ADR-0022, ADR-0023
 Depends on: ADR-0003, ADR-0008, ADR-0009, ADR-0011, ADR-0014, ADR-0015, ADR-0017, ADR-0019
 Research: `docs/research/2026-09-19-wag-dc-replacement-v1-surface-selection.md`
 Measured gap: `docs/benchmarks/2026-09-17-dc-replacement-live-benchmark-v1-attempt-1.md`
@@ -94,10 +94,14 @@ repo.diff
 file.read
 verify.run
 mutation.preview
+file.create
 mutation.result
+git.commit
+git.commit.result
 ```
 
-Each flag is independent. `inspect` alone yields eight tools; `mutation` alone yields seven.
+Each flag is independent. `inspect` alone yields eight tools; `mutation` alone yields eight; `gitCommit`
+requires `mutation` because it shares the operator review server, and adds two more.
 
 `inspect` admits the whole read-only set — `repo.list`, `repo.search` and `repo.diff` — because they are one
 authority class, not three. `repo.list` returns the immediate tracked and untracked-not-ignored entries of one
@@ -122,6 +126,9 @@ identity, environment supplied by the MCP client, or repository content.
     "mutation": {
       "statePath": "<absolute path to the durable state database>",
       "ownerId": "local.private.stdio"
+    },
+    "gitCommit": {
+      "protectedBranches": ["main", "master"]
     }
   }
 }
@@ -135,6 +142,10 @@ Validation rules, all fail-closed at load time:
 - `mutation.statePath` is required when `mutation` is present and must be absolute;
 - `mutation.ownerId` is optional, defaults to `local.private.stdio`, and must match the existing caller-context
   authority pattern `^[A-Za-z0-9._:-]{1,128}$`;
+- `gitCommit` is absent by default and requires `mutation`, because it reuses the same durable store, caller
+  context and operator review server;
+- `gitCommit.protectedBranches` is optional and defaults to `["main", "master"]`; it is compared case-folded, so
+  `Main` cannot slip past a `main` entry;
 - the schema stays `.strict()`, so an unknown key is a config error rather than a silent capability.
 
 `statePath` is a local operator decision and is never echoed to the MCP client.
@@ -233,6 +244,37 @@ Ordering is forced by existing contracts and is the same order the accepted fixt
 When mutation is disabled the module returns `{ repoSearch, attach: noop, close: noop }` and opens no database, binds
 no port and creates no caller context.
 
+### 4b. New `src/git-commit.ts` and `src/executor/devspace-git-commit.ts`
+
+`gitCommit` adds one reviewed authority class, specified by ADR-0023 and assembled by the same runtime module.
+
+`DurableCommitCoordinator` mirrors `DurableMutationCoordinator` exactly — `preview`, `result`,
+`listPendingLocal`, `reviewLocal`, `approveLocal`, `rejectLocal`, `reconcile` — over a new `commits` table
+rather than new columns, because the store creates its schema with `CREATE TABLE IF NOT EXISTS` and has no migration
+framework. It validates the message (non-empty, no NUL, at most 8 KiB) and the path set (at most 64 paths, no control
+characters, each one through `validateReadPath` and `assertReadTarget`, deduplicated and ordered) before anything
+touches git.
+
+`DevspaceGitCommitBackend` is the execution half. It reuses the accepted helper mechanism —
+a WAG-owned source, gzipped, base64url-encoded, evaluated by a `node -e` stub, driving `spawnSync` with a real argv
+array — so no path, branch name or commit message is ever concatenated into the executor's shell string. Every git
+invocation carries `-c core.hooksPath=<empty directory owned by this process>`. It runs plumbing only:
+
+```text
+plan()    rev-parse --show-toplevel == the admitted canonical root, else refuse;
+          symbolic-ref -> branch; rev-parse HEAD; in-progress and unmerged checks;
+          git var GIT_AUTHOR_IDENT -> the author, bound and shown;
+          per-path regular-file and filter-attribute checks;
+          private GIT_INDEX_FILE: read-tree HEAD, add -- :(literal)<path>..., write-tree;
+          diff-tree --name-status HEAD <tree>  -> the change set, refused unless every entry is A or M
+commit()  revalidate branch, HEAD and the candidate tree; commit-tree <tree> -p HEAD with the message on stdin;
+          update-ref refs/heads/<branch> <new> <old>   (compare-and-swap)
+```
+
+The **change set**, not the requested path set, is what the preview binds and the operator approves. Per-path guards
+alone are not sufficient: ADR-0023 records the directory/file swap that deletes a subtree while every per-path check
+passes.
+
 ### 5. CLI wiring
 
 `serve-stdio`:
@@ -288,6 +330,7 @@ How each measured benchmark scenario is satisfied on the extended stdio profile:
 | V1 named verification | `verify.run` with a configured profile | named profile only; no argv/env from the client |
 | C1 reviewed change | `mutation.preview` -> **local operator approval** -> `mutation.result` | write only after single-use local approval |
 | D1 integrated loop | R1 -> file.read -> V1 -> C1 -> V1 -> R2 | composition of the above; no new authority |
+| G1 reviewed commit | `git.commit` -> **local operator approval** -> `git.commit.result` | branch moves only by compare-and-swap after a single-use local approval |
 
 D1 is explicitly a composition. This design adds nothing for D1 beyond making R1 and C1 reachable.
 
@@ -307,7 +350,9 @@ file create                              REVIEWED, never overwriting (ADR-0022)
 file move / delete                       NOT PROVIDED
 directory create / list                  NOT PROVIDED
 full-file rewrite                        NOT PROVIDED  (bounded before/after replacement only)
-Git writes / commit / branch / push      NOT PROVIDED
+commit                                   REVIEWED, plumbing only, CAS (ADR-0023)
+Git branch / push / fetch / merge        NOT PROVIDED
+amend / reset / checkout / force         NOT PROVIDED
 runtime configuration mutation           NOT PROVIDED
 ambient filesystem reach                 NOT PROVIDED  (allowedRoots is enforced, not advisory)
 ```
@@ -332,7 +377,27 @@ Preserved without relaxation:
   verify profile, or reach the operator channel;
 - `allowedRoots` is canonicalized at load and enforced per call; path policy rejects traversal, absolute escapes and
   non-regular targets;
-- secrets — owner token, operator bootstrap/session/CSRF values, `statePath` — never appear in MCP output or telemetry.
+- secrets — owner token, operator bootstrap/session/CSRF values, `statePath` — never appear in MCP output or telemetry;
+- committing never runs `git commit`: no commit hook is reachable, and `core.hooksPath` is pinned to an empty
+  directory on every WAG git invocation so `post-index-change` and `reference-transaction` cannot fire either;
+- the commit message reaches git on stdin and the paths reach it as `:(literal)` argv elements, so neither is ever
+  shell syntax;
+- the operator's real index and worktree are never written; a failed commit leaves both byte-identical;
+- the branch moves only by compare-and-swap against the exact approved parent, so HEAD drift fails closed rather than
+  clobbering;
+- `main` and `master` are protected by local configuration that no caller can relax, detached HEAD is refused, and
+  a change set containing anything but an addition or a modification is refused;
+- the repository's own top level must equal the admitted canonical root, so a hostile `core.worktree` cannot redirect
+  the commit at another directory and a workspace nested in a larger repository cannot commit to that outer
+  repository — per-path confinement alone never asked whether this is the admitted *repository*;
+- the author identity is read from the untrusted repository configuration, bound into the record and the fingerprint,
+  shown to the operator, and revalidated at approval;
+- the operator's review page names the repository and the author, and renders bidi overrides and zero-width
+  characters as visible code points, so a filename or message cannot display in one order and commit in another;
+- an outcome WAG cannot observe — executor error, interrupted helper, truncated or unreadable output — is recorded as
+  `OUTCOME_UNKNOWN`, never as a clean failure;
+- an input too large for the executor's bounded command string is refused while proposing, and outstanding proposals
+  are capped per caller so the operator's review list cannot be buried.
 
 Not claimed: containment against a fully compromised same-user account. ADR-0017 and ADR-0019 already state this and
 this design does not upgrade it.
@@ -356,10 +421,19 @@ Test-first, one behavior per test, no production code without a failing test.
    response; reject and expiry produce no write.
 7. **Restart** — the four windows of the accepted verify plan applied to stdio mutation: pending across restart,
    approved-then-restart, claimed-then-restart, backend exception.
-8. **Production-local acceptance** — built `dist/cli.js serve-stdio` against the real pinned DevSpace and a fresh copy
-   of the committed `docs/benchmarks/fixtures/dc-replacement-v1` template, executing R0, R1, R2, V1, C1 and D1 through
-   the real MCP client with a real local operator approval over the real loopback HTTP server, then verifying exact
-   repository residue.
+8. **Commit** — normal modify and new file; a selected subset while unrelated files are dirty; awkward filenames
+   (spaces, quotes, wildcard characters, leading dash); a commit message full of shell syntax; hostile hooks in both
+   `.git/hooks` and `core.hooksPath`; a dirty real index preserved byte-for-byte; HEAD drift, branch drift and
+   selected-file drift after preview; foreign owner/session/adapter; replay of an approval; detached HEAD; protected
+   branch; merge and unmerged state; a deletion or rename in the change set; `commit.gpgsign` and other config
+   surprises; a hostile `core.worktree`; a workspace nested in an outer repository; an oversized message or path
+   set; a missing author identity and an author changed after review; an unobservable backend outcome; a message that
+   forges the helper's result sentinel; a flood of proposals; a repository-authored instruction that tries to widen
+   the commit.
+9. **Production-local acceptance** — built `dist/cli.js serve-stdio` against the real pinned DevSpace and a fresh copy
+   of the committed `docs/benchmarks/fixtures/dc-replacement-v1` template, executing R0, R1, R2, V1, C1, D1 and a
+   reviewed commit through the real MCP client with real local operator approvals over the real loopback HTTP server,
+   then verifying exact repository residue, the exact commit and tree contents, and that no hook canary fired.
 
 ## Non-goals
 
@@ -367,7 +441,9 @@ This design does not:
 
 - change the Browser Adapter tool list, adapter id, protocol revision, or admission rules;
 - grant Tier C or Tier D to any browser surface;
-- add shell, process, PTY, Git write, file move/delete, directory, or configuration-mutation tools anywhere;
+- add shell, process, PTY, file move/delete, directory, or configuration-mutation tools anywhere;
+- add any Git write beyond the single reviewed commit of ADR-0023 — no amend, branch, push, fetch, merge, reset,
+  checkout, force or arbitrary ref update;
 - add a dependency, listener, tunnel, service, elevation, or OS boundary;
 - change `verify.run` semantics, verify profile hashing, or durable verify job core;
 - change native-host build, installation, registry, distribution, release, tag or signing state;
@@ -383,6 +459,10 @@ EXTENDED_STDIO_PROFILE = LOCAL_CONFIG_OPT_IN
 NEW_EXECUTION_PRIMITIVE = NONE
 NEW_DEPENDENCY = NONE
 MUTATION_LOCAL_APPROVAL = REQUIRED
+GIT_COMMIT_LOCAL_APPROVAL = REQUIRED
+GIT_COMMIT_VIA_PORCELAIN = FORBIDDEN
+GIT_BRANCH_MOVE = COMPARE_AND_SWAP_ONLY
+GIT_REPOSITORY_IDENTITY = ASSERTED_AGAINST_ADMITTED_ROOT
 RESTART_INHERITS_APPROVAL = FORBIDDEN
 OPERATOR_CREDENTIALS_REMOTE = FORBIDDEN
 BROWSER_SURFACE_CHANGE = NONE

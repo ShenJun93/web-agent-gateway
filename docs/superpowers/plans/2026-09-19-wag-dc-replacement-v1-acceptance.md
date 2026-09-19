@@ -3,7 +3,7 @@
 Date: 2026-09-19
 Status: ACCEPTANCE PLAN — defines the exact evidence required for local production acceptance
 Companion design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`
-Decision authority: ADR-0018, ADR-0020, ADR-0021, ADR-0022
+Decision authority: ADR-0018, ADR-0020, ADR-0021, ADR-0022, ADR-0023
 Research: `docs/research/2026-09-19-wag-dc-replacement-v1-surface-selection.md`
 Measured gap: `docs/benchmarks/2026-09-17-dc-replacement-live-benchmark-v1-attempt-1.md`
 
@@ -77,8 +77,13 @@ inspect only       health, workspace.open, repo.list, repo.search, repo.snapshot
 mutation only      health, workspace.open, repo.snapshot, file.read, verify.run,
                    mutation.preview, mutation.result
 both               health, workspace.open, repo.list, repo.search, repo.snapshot, repo.diff,
-                   file.read, verify.run, mutation.preview, mutation.result
+                   file.read, verify.run, mutation.preview, file.create, mutation.result
+all three          health, workspace.open, repo.list, repo.search, repo.snapshot, repo.diff,
+                   file.read, verify.run, mutation.preview, file.create, mutation.result,
+                   git.commit, git.commit.result
 ```
+
+`gitCommit` without `mutation` is a configuration error, not a silent half-capability.
 
 Negative discovery tests must prove absence, in every combination, of:
 
@@ -136,7 +141,35 @@ Independently test, with no real credential, user document, unrelated process or
 - a path traversal or absolute-escape argument to `repo.search`, `repo.list`, `repo.diff`, `file.read` or
   `mutation.preview` fails closed;
 - a caller-supplied path that is legal on disk but full of shell syntax reaches git as a single argv element and
-  executes no embedded command.
+  executes no embedded command;
+- a commit message containing `$(...)`, backticks, `;`, `&&` and redirection is stored verbatim and executes
+  nothing;
+- executable hooks installed in both `.git/hooks` and a hostile `core.hooksPath` — `pre-commit`,
+  `prepare-commit-msg`, `commit-msg`, `post-commit`, `post-index-change`, `reference-transaction` and the
+  rest — do not run for either half of a WAG commit; a separate attribution test proves that any surviving
+  `post-index-change` / `reference-transaction` invocation comes from the execution backend's own
+  `open_workspace`, which WAG cannot pass git options into, and never from WAG's git invocations;
+- a directory in HEAD replaced by a regular file of the same name is refused, not silently committed as a subtree
+  deletion;
+- a dirty real index and unrelated dirty worktree files are byte-identical after a commit and after every refusal;
+- HEAD drift, branch drift and selected-file drift between preview and approval each fail closed;
+- a foreign owner/session/adapter is denied on `git.commit.result`, and a replayed approval commits nothing twice;
+- `main` and `master` are refused by default, case-insensitively;
+- a detached HEAD, an in-progress merge/cherry-pick/revert/rebase, and unmerged index entries are each refused;
+- `commit.gpgsign=true` does not produce a signed object, and an unusable `user.name`/`user.email` fails closed
+  at proposal time rather than being synthesised or discovered after approval;
+- a repository whose `.git/config` sets `core.worktree` elsewhere is refused, and a decoy file of the selected
+  name in the workspace does not make the outside file's bytes committable;
+- a workspace nested inside a larger repository cannot commit to that outer repository's branch;
+- the author the commit would be attributed to is bound into the record, shown on the review page, and revalidated at
+  approval, so a repository cannot re-attribute an approved commit;
+- bidi overrides and zero-width characters in a filename, a change-set entry or the message are rendered on the
+  review page as visible code points, never verbatim;
+- an input too large for the executor's bounded command string is refused while proposing, with a named reason;
+- an executor error, an interrupted helper, or truncated or unreadable output is recorded as `OUTCOME_UNKNOWN` and
+  never as a clean failure;
+- a commit message cannot forge the helper's result sentinel;
+- one caller cannot fill the operator's review list with proposals.
 
 ## Gate 7 — Restart gate
 
@@ -195,7 +228,10 @@ committed `docs/benchmarks/fixtures/dc-replacement-v1` template:
 - `mutation.preview` persists a record and performs no write — proven by re-reading the file;
 - local operator approval causes exactly one write;
 - `verify.run` after the approved change returns exit code 0 with two passes;
-- final repository residue is exactly one modified tracked file, `src/lib/ticket-id.js`.
+- final repository residue is exactly one modified tracked file, `src/lib/ticket-id.js`;
+- `git.commit` persists a record, writes no ref and moves no branch — proven by re-reading HEAD;
+- local operator approval produces exactly one ordinary single-parent commit whose tree contains exactly the approved
+  change.
 
 Reject flow and expiry flow are each proven to leave the file byte-identical.
 
@@ -212,7 +248,14 @@ Requirements:
   run;
 - perform the operator approval over the **real loopback HTTP operator server**, using the real bootstrap redemption,
   real session cookie and real CSRF token — no in-process shortcut, no direct coordinator call;
-- execute R0, R1, R2, V1, C1, D1 in one session;
+- execute R0, R1, R2, V1, C1, D1 and one reviewed commit in one session;
+- for the commit: arm a canary for every hook class — `pre-commit`, `prepare-commit-msg`, `commit-msg`,
+  `post-commit`, `post-index-change`, `reference-transaction` and the remaining names — in both `.git/hooks` and a
+  hostile `core.hooksPath`, clear it immediately before the operation, prove the protected-branch refusal on `main`,
+  then commit on a working branch and verify the exact commit SHA, parent and tree contents; that **no commit-class
+  canary fired at all**; that any surviving index/ref canary is attributable to the execution backend's own
+  `open_workspace` and is recorded as such rather than claimed away; that the real index is unchanged; and that
+  unrelated dirty files are untouched;
 - verify exact final repository residue;
 - prove Remote Desktop Commander was not used: the measured path has no DC tool available, and the run is recorded as
   WAG-only.
@@ -233,6 +276,7 @@ npm test
 npm run typecheck
 npm run build
 npm run test:business
+npm run test:dc-replacement
 git diff --check
 ```
 
@@ -268,6 +312,7 @@ TIER_R_LOCAL = R0 + R1 + R2 complete on the built production stdio path
 TIER_V_LOCAL = V1 complete on the built production stdio path
 TIER_C_LOCAL = C1 complete with real local operator approval
 TIER_D_LOCAL = D1 complete as a composed loop
+TIER_G_LOCAL = one reviewed commit complete with real local operator approval
 ```
 
 Local acceptance explicitly does **not** authorize or claim:
@@ -295,7 +340,9 @@ Stop and return to design review if implementation requires:
 - weakening caller/workspace ownership;
 - changing the default five-tool stdio contract;
 - changing any browser adapter identity, protocol revision or tool list;
-- bypassing the local approval to make a gate pass.
+- bypassing the local approval to make a gate pass;
+- committing through `git commit` porcelain, mutating the real index, or moving a branch by anything but
+  compare-and-swap.
 
 ## Decision markers
 
@@ -306,6 +353,8 @@ PRODUCTION_LOCAL_REQUIRES_REAL_DEVSPACE = TRUE
 PRODUCTION_LOCAL_REQUIRES_REAL_OPERATOR_HTTP_APPROVAL = TRUE
 LAYER_B_WEBCHAT_EVIDENCE = OUT_OF_SCOPE_SEPARATE_GATE
 DISTRIBUTION_SIGNING_PROVIDER = OUT_OF_SCOPE
+GIT_COMMIT_REQUIRES_REAL_OPERATOR_HTTP_APPROVAL = TRUE
+GIT_COMMIT_HOOK_CANARY_EVIDENCE = REQUIRED
 DEFAULT_STDIO_CONTRACT_CHANGE = FORBIDDEN
 BROWSER_SURFACE_CHANGE = FORBIDDEN
 ```
