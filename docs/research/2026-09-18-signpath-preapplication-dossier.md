@@ -204,7 +204,54 @@ Actions artifacts are build evidence, not release assets. The repository is now 
 Official GitHub sources:
 - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility
 - https://docs.github.com/en/rest/actions/artifacts
-## Application fields still blocked
+## Live application form reconciliation — 2026-09-19
+
+A dedicated read-only browser worker rendered the current SignPath Foundation HubSpot application form. No field was filled and nothing was submitted.
+
+Required live fields:
+- Project Name;
+- Repository URL;
+- Homepage URL;
+- Tagline;
+- Description;
+- Reputation;
+- Build System;
+- First Name;
+- Last Name;
+- Email;
+- Primary Discovery Channel;
+- Code-of-Conduct agreement;
+- personal-data processing consent.
+
+Optional or conditional live fields:
+- Download URL;
+- Privacy Policy URL;
+- Wikipedia URL;
+- Maintainer Type;
+- Company Name;
+- exact discovery source;
+- marketing-communications consent.
+
+Exact deterministic WAG mappings:
+- Project Name: `Web Agent Gateway`;
+- Repository URL: public WAG GitHub repository;
+- Homepage URL: public WAG GitHub repository;
+- Download URL: do not auto-fill pre-acceptance; the live field is optional and requires a supplied download page to mention use of SignPath Foundation for code signing, while WAG's current immutable unsigned preview explicitly says SignPath acceptance is not claimed and the project is preparing an application;
+- Privacy Policy URL: public WAG privacy policy;
+- Wikipedia URL: blank unless a real English Wikipedia article exists;
+- Maintainer Type: `Individual maintainer(s)`;
+- Build System: `GitHub Actions`;
+- Tagline/Description: use factual project wording already maintained in this dossier.
+
+Human-input-only fields:
+- First Name, Last Name, Email;
+- Company Name, if applicable;
+- Primary Discovery Channel and exact discovery source;
+- all consent/agreement choices.
+
+The live form's `Reputation` field is required and is not safely auto-fillable from current WAG evidence.
+
+## Application field readiness
 
 ### Public repository URL
 
@@ -241,11 +288,26 @@ Historical Actions artifacts remain build evidence and are not the official rele
 
 ### Download counts / user evidence
 
-GitHub currently reports `3` downloads for the preview ZIP at this reconciliation checkpoint. Project-owner verification downloads were performed during draft/post-publication validation, so this counter must not be represented as external-user adoption or reputation evidence.
+At the 2026-09-19 live-form reconciliation checkpoint:
+- stars: `0`;
+- forks: `0`;
+- subscribers/watchers: `0`;
+- contributor list: `ShenJun93` only;
+- preview ZIP counter: `4`.
 
-State: OPERATOR_VERIFICATION_CONTAMINATED / NOT_REPUTATION_EVIDENCE
+Project-owner verification downloads were performed during release validation, so the preview ZIP counter must not be represented as external-user adoption or reputation evidence.
 
-Do not manufacture reputation evidence.
+State: `OPERATOR_VERIFICATION_CONTAMINATED / NOT_REPUTATION_EVIDENCE`
+
+### Reputation
+
+The live SignPath application form requires a `Reputation` answer and asks for evidence that the project is widely used or trusted. SignPath's terms also state that downloadable executable programs require a certain verifiable reputation, without publishing a numeric threshold.
+
+WAG is newly public and the current live public signals above do not establish broad external adoption. Technical quality, security controls, build provenance, and an immutable public release are verifiable project evidence, but must not be relabeled as independent reputation or usage.
+
+State: `UNRESOLVED_PROVIDER_REPUTATION_GATE`
+
+Do not manufacture reputation evidence. If genuine external usage, independent discussion, media/blog references, or uncontaminated download evidence emerges naturally, it may be added in a later evidence refresh.
 
 ### MFA
 
@@ -265,16 +327,25 @@ State: REQUIRES_EXPLICIT_EXTERNAL_AUTHORITY
 
 Do not submit yet.
 
-Submit only after:
-1. separate explicit authority is granted for SignPath submission.
+Application completion requires human selection of:
+- First Name, Last Name, Email;
+- Primary Discovery Channel and optional exact discovery source;
+- Company Name if applicable;
+- required Code-of-Conduct and personal-data-processing consents;
+- optional marketing-communications choice.
+
+Submission additionally requires:
+1. separate explicit authority for SignPath submission.
 
 GitHub source-repository MFA is already `PASS_VERIFIED_UI`. SignPath-account MFA remains a provider-onboarding requirement if and when provider-side setup is separately authorized.
 
-Repository publication, anonymous public docs/license verification, the real immutable release/download URL, and live release-fact refresh are complete. Carry the unresolved Node SEA ownership classification as a neutral provider question; do not manufacture a policy answer.
+Provider-side unresolved items:
+- `UNRESOLVED_PROVIDER_REPUTATION_GATE`: the mandatory Reputation field cannot truthfully claim broad external use from current evidence;
+- Node SEA own-binary versus modified-upstream classification remains a neutral provider question.
 
-Historical unsigned Actions artifacts were a preferred pre-public cleanup, not a hard eligibility blocker after the exposure audit. The repository is now public while they remain active; keep them clearly non-release and unsupported until they expire naturally or are separately deleted under explicit authority.
+Repository publication, anonymous public docs/license verification, the immutable release/download URL, and live release-fact refresh are complete.
 
-Because SignPath requires a certain verifiable reputation for executable applications but publishes no numeric threshold, application acceptance remains discretionary. If the project is declined for insufficient public history, continue ordinary public development/releases and reapply later rather than manufacturing stars, downloads, contributors, or activity.
+Historical unsigned Actions artifacts remain unsupported build evidence rather than releases. Because SignPath publishes no numeric reputation threshold, acceptance remains discretionary. If current public history is insufficient, continue ordinary public development/releases and refresh only genuine reputation evidence rather than manufacturing stars, downloads, contributors, activity, or media references.
 
 ## Authority boundary
 
