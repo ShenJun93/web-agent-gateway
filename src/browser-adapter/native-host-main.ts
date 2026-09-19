@@ -1,14 +1,18 @@
-import { McpLocalAdapterLink } from './local-link.js';
-import { loadAdapterDiscovery, parseNativeHostInvocation, runNativeHost } from './native-host.js';
+import { McpLocalVerifyAdapterLink } from './local-link-v3.js';
+import {
+  loadVerifyAdapterDiscovery,
+  parseNativeVerifyHostInvocation,
+  runNativeVerifyHost,
+} from './native-host-v3.js';
 
 async function main(): Promise<void> {
-  const invocation = parseNativeHostInvocation(process.argv, process.env);
-  const discovery = await loadAdapterDiscovery(invocation.discoveryPath);
-  await runNativeHost({
+  const invocation = parseNativeVerifyHostInvocation(process.argv, process.env);
+  const discovery = await loadVerifyAdapterDiscovery(invocation.discoveryPath);
+  await runNativeVerifyHost({
     input: process.stdin,
     output: process.stdout,
     expectedOrigin: invocation.expectedOrigin,
-    linkFactory: (correlationId) => McpLocalAdapterLink.admit(discovery, correlationId),
+    linkFactory: (correlationId) => McpLocalVerifyAdapterLink.admit(discovery, correlationId),
   });
 }
 

@@ -237,3 +237,64 @@ test('proposal limits are enforced before persistence', async (t) => {
   assert.throws(() => coordinator.preview(caller, ninth.workspaceId, 'unit'), /Gateway denied verify request/);
   assert.equal(store.listPendingBrowserVerifyRequests(100).length, 8);
 });
+
+test('approval transaction rolls back both request transition and internal job on injected failure', async (t) => {
+  const { store, workspace, coordinator } = await setup(t);
+  const preview = coordinator.preview(caller, workspace.workspaceId, 'unit');
+  const request = store.getBrowserVerifyRequest(preview.request_id)!;
+  const original = store.createVerifyJob.bind(store);
+  (store as any).createVerifyJob = (input: any) => {
+    original(input);
+    throw new Error('injected after verify job insert');
+  };
+
+  assert.throws(() => store.approveBrowserVerifyRequestAndCreateJob({
+    requestId: request.requestId,
+    now: 2_000,
+    dispatchDeadline: 302_000,
+    currentPlanSha256: request.planSha256,
+  }), /injected after verify job insert/);
+
+  const after = store.getBrowserVerifyRequest(preview.request_id)!;
+  assert.equal(after.state, 'PENDING_APPROVAL');
+  assert.equal(after.linkedJobId, undefined);
+  assert.deepEqual(store.listRecoverableVerifyJobs(), []);
+});
+
+test('global proposal limit blocks the thirty-third live request across caller sessions', async (t) => {
+  const a = await setup(t);
+  for (let session = 0; session < 4; session += 1) {
+    const sessionCaller = createGatewayCallerContext({
+      ownerId: caller.ownerId,
+      sessionId: `session-global-${session}`,
+      adapterId: caller.adapterId,
+    });
+    for (let i = 0; i < 8; i += 1) {
+      const workspace = a.store.openWorkspaceRecord({
+        ...sessionCaller,
+        canonicalRoot: `E:/fixture/global-${session}-${i}`,
+        backendKind: 'fake',
+        createdAt: 1_000 + session * 10 + i,
+      });
+      a.coordinator.preview(sessionCaller, workspace.workspaceId, 'unit');
+    }
+  }
+  assert.equal(a.store.listPendingBrowserVerifyRequests(100).length, 32);
+
+  const extraCaller = createGatewayCallerContext({
+    ownerId: caller.ownerId,
+    sessionId: 'session-global-extra',
+    adapterId: caller.adapterId,
+  });
+  const extraWorkspace = a.store.openWorkspaceRecord({
+    ...extraCaller,
+    canonicalRoot: 'E:/fixture/global-extra',
+    backendKind: 'fake',
+    createdAt: 2_000,
+  });
+  assert.throws(
+    () => a.coordinator.preview(extraCaller, extraWorkspace.workspaceId, 'unit'),
+    /Gateway denied verify request/,
+  );
+  assert.equal(a.store.listPendingBrowserVerifyRequests(100).length, 32);
+});

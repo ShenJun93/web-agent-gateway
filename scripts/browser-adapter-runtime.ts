@@ -2,17 +2,23 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import { AdmittedWorkspaceService } from '../src/admitted-workspace.js';
-import { BrowserAdmissionRegistry, BROWSER_INSPECT_ADAPTER_ID } from '../src/adapter-admission.js';
+import { BrowserAdmissionRegistry, BROWSER_VERIFY_ADAPTER_ID } from '../src/adapter-admission.js';
+import { BrowserVerifyRequestCoordinator } from '../src/browser-verify-request.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
+import { DurableVerifyJobCoordinator } from '../src/durable-verify-job.js';
+import { DevspaceVerifyExecutionPort } from '../src/executor/devspace-verify.js';
 import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
+import { startOperatorServer } from '../src/operator-server.js';
 import { loadPrivateGatewayConfig } from '../src/private-config.js';
 import { bootstrapPrivateGateway } from '../src/private-runtime.js';
-import { createBrowserAdmittedMcpServer } from '../src/server.js';
+import { createBrowserVerifyAdmittedMcpServer } from '../src/server.js';
 import { DevspaceRepositoryInspectionBackend } from '../src/repository-inspection.js';
-import { BROWSER_ADAPTER_PROTOCOL_VERSION } from '../src/browser-adapter/protocol.js';
+import { BROWSER_VERIFY_PROTOCOL_VERSION } from '../src/browser-adapter/protocol-v3.js';
 
 export interface BrowserAdapterRuntime {
   admissionUrl: string;
+  operatorOrigin: string;
+  operatorBootstrapUrl: string;
   close(): Promise<void>;
 }
 
@@ -33,13 +39,15 @@ export async function startBrowserAdapterRuntime(options: {
   let admission: BrowserAdmissionRegistry | undefined;
   let privateRuntime: Awaited<ReturnType<typeof bootstrapPrivateGateway>> | undefined;
   let http: Awaited<ReturnType<typeof startBrowserAdmissionHttpServer>> | undefined;
+  let operator: Awaited<ReturnType<typeof startOperatorServer>> | undefined;
 
   try {
     await mkdir(dirname(options.statePath), { recursive: true });
     await mkdir(dirname(options.discoveryPath), { recursive: true });
     store = new SqliteDurableStore(options.statePath);
-    admission = new BrowserAdmissionRegistry(BROWSER_INSPECT_ADAPTER_ID, store);
+    admission = new BrowserAdmissionRegistry(BROWSER_VERIFY_ADAPTER_ID, store);
     privateRuntime = await bootstrapPrivateGateway(config, { env });
+
     const inspection = new DevspaceRepositoryInspectionBackend(privateRuntime.executor);
     const workspaces = new AdmittedWorkspaceService({
       store,
@@ -48,14 +56,31 @@ export async function startBrowserAdapterRuntime(options: {
       allowedRoots: config.allowedRoots,
     });
 
+    const jobs = new DurableVerifyJobCoordinator({
+      store,
+      profiles: () => config.verifyProfiles,
+      ports: [new DevspaceVerifyExecutionPort(privateRuntime.executor)],
+    });
+    await jobs.reconcile();
+
+    const verify = new BrowserVerifyRequestCoordinator({
+      store,
+      profiles: () => config.verifyProfiles,
+      browserProfiles: () => config.browserVerifyProfiles ?? [],
+      jobs,
+    });
+    verify.reconcile();
+
+    operator = await startOperatorServer({ verifyCoordinator: verify });
+
     http = await startBrowserAdmissionHttpServer({
       gateway: privateRuntime.gateway,
       browserAdmission: {
         bootstrapToken,
         admission,
-        browserMcp: (caller) => createBrowserAdmittedMcpServer(
+        browserMcp: (caller) => createBrowserVerifyAdmittedMcpServer(
           privateRuntime!.gateway,
-          { callerContext: caller, workspaces },
+          { callerContext: caller, workspaces, verify },
         ),
       },
     });
@@ -64,18 +89,21 @@ export async function startBrowserAdapterRuntime(options: {
     await writeFile(options.discoveryPath, JSON.stringify({
       admissionUrl: http.admissionUrl,
       bootstrapToken,
-      protocolVersion: BROWSER_ADAPTER_PROTOCOL_VERSION,
-      adapterId: BROWSER_INSPECT_ADAPTER_ID,
+      protocolVersion: BROWSER_VERIFY_PROTOCOL_VERSION,
+      adapterId: BROWSER_VERIFY_ADAPTER_ID,
     }), { encoding: 'utf8', mode: 0o600 });
 
     let closed = false;
     return {
       admissionUrl: http.admissionUrl,
+      operatorOrigin: operator.origin,
+      operatorBootstrapUrl: operator.bootstrapUrl,
       async close() {
         if (closed) return;
         closed = true;
         await rm(options.discoveryPath, { force: true });
         await http?.close();
+        await operator?.close();
         admission?.close();
         await privateRuntime?.close();
         store?.close();
@@ -84,6 +112,7 @@ export async function startBrowserAdapterRuntime(options: {
   } catch (error) {
     await rm(options.discoveryPath, { force: true }).catch(() => undefined);
     await http?.close().catch(() => undefined);
+    await operator?.close().catch(() => undefined);
     admission?.close();
     await privateRuntime?.close().catch(() => undefined);
     store?.close();

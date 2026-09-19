@@ -5,6 +5,7 @@ import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
+import type { BrowserVerifyRequestCoordinator } from './browser-verify-request.js';
 import type { AdmittedWorkspaceService } from './admitted-workspace.js';
 import { resolveVerifyProfile, type VerifyProfile } from './verify-profile.js';
 export type { VerifyProfile } from './verify-profile.js';
@@ -179,6 +180,101 @@ export function createBrowserAdmittedMcpServer(
   }, async ({ workspace_id, path }) => toolResult(await context.workspaces.read(
     context.callerContext, workspace_id, path,
   )));
+  return server;
+}
+
+export interface BrowserVerifyAdmittedMcpContext {
+  callerContext: GatewayCallerContext;
+  workspaces: Pick<AdmittedWorkspaceService, 'open' | 'read' | 'search' | 'snapshot'>;
+  verify: Pick<BrowserVerifyRequestCoordinator, 'preview' | 'result'>;
+}
+
+export function createBrowserVerifyAdmittedMcpServer(
+  gateway: Pick<GatewayApi, 'health'>,
+  context: BrowserVerifyAdmittedMcpContext,
+): McpServer {
+  const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
+  server.registerTool('health', {
+    description: 'Check gateway and executor compatibility.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async () => toolResult(await gateway.health()));
+
+  server.registerTool('workspace.open', {
+    description: 'Open one approved local workspace and return an opaque caller-owned workspace id.',
+    inputSchema: z.object({ path: z.string().min(1) }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ path }) => toolResult(await context.workspaces.open(context.callerContext, path)));
+
+  server.registerTool('repo.search', {
+    description: 'Search tracked repository files for a literal string.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      query: z.string().min(1).refine(validSearchQuery),
+      ignore_case: z.boolean().optional(),
+      max_results: z.number().int().min(1).max(50).optional(),
+      context_lines: z.number().int().min(0).max(2).optional(),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ workspace_id, query, ignore_case, max_results, context_lines }) => {
+    if (!validSearchQuery(query)) throw new Error('Gateway denied search query');
+    return toolResult(await context.workspaces.search(
+      context.callerContext,
+      workspace_id,
+      query,
+      { ignoreCase: ignore_case, maxResults: max_results, contextLines: context_lines },
+    ));
+  });
+
+  server.registerTool('repo.snapshot', {
+    description: 'Return bounded repository status, HEAD, diff summary, and tracked files.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      max_files: z.number().int().min(1).max(200).optional(),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ workspace_id, max_files }) => toolResult(await context.workspaces.snapshot(
+    context.callerContext,
+    workspace_id,
+    { maxFiles: max_files },
+  )));
+
+  server.registerTool('file.read', {
+    description: 'Read bounded text from an opened workspace.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      path: z.string().min(1).max(4096),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ workspace_id, path }) => toolResult(await context.workspaces.read(
+    context.callerContext,
+    workspace_id,
+    path,
+  )));
+
+  server.registerTool('verify.preview', {
+    description: 'Create one bounded caller-owned verification proposal for separate local operator review.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      profile: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ workspace_id, profile }) => toolResult(context.verify.preview(
+    context.callerContext,
+    workspace_id,
+    profile,
+  )));
+
+  server.registerTool('verify.result', {
+    description: 'Read bounded state or result evidence for one caller-owned verification proposal.',
+    inputSchema: z.object({
+      request_id: z.string().min(1).max(256).regex(/^verifyreq_[A-Za-z0-9-]+$/),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ request_id }) => toolResult(context.verify.result(
+    context.callerContext,
+    request_id,
+  )));
+
   return server;
 }
 

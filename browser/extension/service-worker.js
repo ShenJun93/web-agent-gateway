@@ -1,10 +1,10 @@
-import { createBrowserExtensionCore, createSessionCorrelationStore } from './service-worker-core.js';
-import { parseChatGptObservation } from './chatgpt-call-parser.js';
-import { createNativeSessionController } from './native-session-core.js';
+import { createBrowserVerifyExtensionCore, createSessionCorrelationStore } from './service-worker-core-v3.js';
+import { parseChatGptVerifyObservation } from './chatgpt-call-parser-v3.js';
+import { createNativeVerifySessionController } from './native-session-core-v3.js';
 
-const core = createBrowserExtensionCore();
+const core = createBrowserVerifyExtensionCore();
 const sessionCorrelations = createSessionCorrelationStore(chrome.storage.session, () => crypto.randomUUID());
-const native = createNativeSessionController({
+const native = createNativeVerifySessionController({
   connectNative: () => chrome.runtime.connectNative('com.openai.web_agent_gateway'),
   randomUUID: () => crypto.randomUUID(),
   onToolResponse: (response) => {
@@ -21,12 +21,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ queued: false });
       return false;
     }
-    const call = parseChatGptObservation({ text: message.text, codeBlocks: message.codeBlocks });
+    const call = parseChatGptVerifyObservation({ text: message.text, codeBlocks: message.codeBlocks });
     if (!call) { sendResponse({ queued: false }); return false; }
     void sessionCorrelations.forTab(tabId).then((sessionId) => {
       const request = {
-        version: 2, type: 'tool.call', requestId: `req_${crypto.randomUUID()}`,
-        sessionId, tool: call.tool, arguments: call.arguments,
+        version: 3,
+        type: 'tool.call',
+        requestId: `req_${crypto.randomUUID()}`,
+        sessionId,
+        tool: call.tool,
+        arguments: call.arguments,
       };
       const queued = core.queueProviderRequest({ url: senderUrl, tabId }, request);
       sendResponse({ queued, requestId: queued ? request.requestId : undefined });

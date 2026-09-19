@@ -57,14 +57,18 @@ test('provider messages cannot supply correlation or storage identity', async ()
   assert.doesNotMatch(source, /message\.(?:sessionId|correlationId|correlation_id|storageKey|storage_key)/);
 });
 
-test('service-worker wires peekForExecution before native ensureReady and takeForExecution', async () => {
+test('service-worker preserves peek -> handshake -> take ordering across successor protocol', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../browser/extension/service-worker.js', import.meta.url), 'utf8');
   assert.match(source, /peekForExecution\(message\.requestId,\s*'sidepanel'\)/);
   assert.match(source, /native\.ensureReady\(pending\.sessionId\)/);
   assert.match(source, /takeForExecution\(message\.requestId,\s*'sidepanel'\)/);
   assert.match(source, /native\.postTool\(request\)/);
-  assert.match(source, /version:\s*2/);
+  const peek = source.indexOf('peekForExecution');
+  const ready = source.indexOf('native.ensureReady');
+  const take = source.indexOf('takeForExecution');
+  const post = source.indexOf('native.postTool');
+  assert.ok(peek >= 0 && peek < ready && ready < take && take < post);
 });
 
 class FakeNativePort {
