@@ -2,6 +2,25 @@
 
 Provider-neutral local execution gateway for Web AI clients.
 
+## What WAG is
+
+Web Agent Gateway (WAG) is an open-source, local-first, least-authority gateway for AI clients that need bounded access to user-approved developer resources. WAG keeps identity, policy, approvals, secrets, durable ownership, and capability admission under local control instead of exposing a generic remote-machine surface.
+
+### Current public surface
+
+The current Browser Inspect v2 profile is intentionally read-only and exposes exactly five methods: `health`, `workspace.open`, `repo.search`, `repo.snapshot`, and `file.read`. It does not expose raw shell/process access, Git writes, file mutation, browser mutation, or generic forwarding.
+
+The Windows x64 native-host preview is currently **unsigned** and must not be treated as Authenticode-trusted. Supported preview downloads come from the immutable GitHub Release, not from transient GitHub Actions artifacts.
+
+### Start here
+
+- [Latest preview release](https://github.com/ShenJun93/web-agent-gateway/releases/tag/v0.1.0-preview.1)
+- [Windows native-host installation and removal](docs/native-host-installation.md)
+- [Security policy](SECURITY.md)
+- [Privacy policy](docs/policies/privacy.md)
+- [Code-signing policy](docs/policies/code-signing-policy.md)
+- [Contributing](CONTRIBUTING.md)
+
 ## Goal
 Provide a provider-neutral, least-authority local trust/capability gateway for AI hosts that need bounded access to local resources, while keeping identity, policy, approvals, secrets, durable ownership, and audit under WAG control.
 
