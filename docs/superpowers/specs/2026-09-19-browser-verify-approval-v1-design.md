@@ -2,7 +2,7 @@
 
 Date: 2026-09-19
 Status: DRAFT DESIGN — implementation and production promotion are not authorized by this document
-Decision authority: ADR-0016, ADR-0017, ADR-0018
+Decision authority: ADR-0016, ADR-0017, ADR-0018, ADR-0019
 Depends on: Durable Verify Job Core v1, Trusted Adapter Admission v1, Browser Inspect v2 source implementation
 
 ## Purpose
@@ -64,21 +64,21 @@ Official sources:
 
 Therefore Browser Verify Approval v1 does **not** claim that extension origin, a localhost bearer, a named-pipe DACL, parent process identity, window handle, PID, or same-user token is sufficient consequential authority.
 
-## ADR-0017 compatibility gate
+## ADR-0019 authority decision
 
-This design does not silently reinterpret ADR-0017.
+ADR-0019 resolves the previously open ADR-0017 successor question.
 
-`verify.preview` creates durable WAG control-plane state, so the v3 browser profile is no longer literally read-only even though it has no repository/process execution effect. ADR-0017 explicitly requires a new reviewed decision when the browser capability profile or Windows bootstrap trust assumption changes.
+`verify.preview` creates durable WAG control-plane state, but ADR-0017 already permits `workspace.open` to persist caller-owned workspace records. ADR-0019 therefore makes the boundary explicit: bounded caller-owned proposal/control-plane writes may use the current same-user Browser admission when they have zero direct consequential effect and are resource-bounded.
 
-Therefore implementation requires a separate accepted ADR (or explicit ADR-0017 amendment) that approves one of these conclusions:
-- the existing same-user browser bootstrap may mint **bounded proposal authority only** because all consequential execution remains behind an independent local operator approval; or
-- a stronger bootstrap/isolation mechanism is required before even proposal-state creation is exposed.
+ADR-0019 does **not** upgrade the Windows bootstrap into strong caller attestation. Direct verify execution, mutation, Git/process, browser mutation, publication, and equivalent consequential effects remain forbidden through the current Browser admission unless an independent accepted authority transition applies.
 
-Until that decision exists, this specification is architecture research, not implementation authority.
+For Browser Verify Approval v1, that independent transition is exact local operator approval of the immutable proposal.
+
+The architecture prerequisite is therefore satisfied, but this design still grants no implementation or production-promotion authority.
 
 ## Core decision
 
-Subject to the ADR compatibility gate, the browser receives **proposal authority only**.
+Under ADR-0019, the browser receives **proposal authority only**.
 
 It does not receive direct execution authority.
 
@@ -509,7 +509,8 @@ TRUSTED_BROWSER_PROFILE_ALLOWLIST = REQUIRED
 BROWSER_PROFILE_RESUME_AFTER_RESTART = FORBIDDEN
 INTERNAL_JOB_ID_REMOTE_EXPOSURE = FORBIDDEN
 SHELL_PROCESS_PTY_GIT_MUTATION = NOT_EXPOSED
-ADR_0017_SUCCESSOR_DECISION = REQUIRED_BEFORE_IMPLEMENTATION
+ADR_0017_SUCCESSOR_DECISION = SATISFIED_BY_ADR_0019
+ADR_0019_PROPOSAL_AUTHORITY = ACCEPTED
 IMPLEMENTATION_AUTHORITY = NOT_GRANTED_BY_THIS_DOCUMENT
 PRODUCTION_PROMOTION = REQUIRES_SEPARATE_ACCEPTANCE
 ```

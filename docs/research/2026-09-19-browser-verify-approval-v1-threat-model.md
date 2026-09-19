@@ -8,9 +8,9 @@ Companion design: `docs/superpowers/specs/2026-09-19-browser-verify-approval-v1-
 
 Allow a WebChat/browser caller to propose one bounded named verification while ensuring that no command execution can occur until a separate local operator explicitly approves the exact immutable request.
 
-This threat model does not override ADR-0017. Because proposal creation is a durable control-plane write, a successor ADR decision must explicitly accept proposal-only browser authority under the current bootstrap or require a stronger bootstrap/isolation mechanism before implementation.
+ADR-0019 resolves the ADR-0017 successor question by accepting bounded, rate-limited, caller-owned proposal/control-plane writes under the current same-user Browser admission while preserving zero direct consequential browser authority.
 
-The design assumes the current Windows browser/native bootstrap is useful provenance but not a strong same-user isolation boundary. Therefore the browser path never receives an execution primitive.
+The design still assumes the current Windows browser/native bootstrap is useful provenance but not a strong same-user isolation boundary. Therefore the browser path never receives an execution primitive, and stronger isolation remains required for any future direct browser process/Git/mutation/browser authority that is not mediated by an independently accepted local authority transition.
 
 ## Assets
 
@@ -388,6 +388,7 @@ RESTART_AFTER_CLAIM = OUTCOME_UNKNOWN_NO_REPLAY
 INTERNAL_JOB_ID_REMOTE = HIDDEN
 OPERATOR_SECRET_REMOTE = HIDDEN
 V2_TO_V3_AUTHORITY_UPGRADE = FORBIDDEN
+ADR_0019_PROPOSAL_AUTHORITY_ONLY = ENFORCED
 ```
 
 ## Threat-model decision
