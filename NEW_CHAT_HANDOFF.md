@@ -2,7 +2,7 @@
 
 Read `NEW_CHAT_HANDOFF_2026-09-19_AI_NATIVE_BROWSER_COMMUNITY_SCAN.md` first.
 
-Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, accepted ADR/spec authority, and the current browser research receipts before any decision or mutation.
+Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, ADR-0018, ADR-0019, and all current browser research receipts before any decision or mutation.
 
 Current research receipts:
 
@@ -11,17 +11,25 @@ Current research receipts:
 - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-3.md`
 - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-4.md`
 - `docs/research/2026-09-19-ai-native-browser-replacement-pressure-audit.md`
+- `docs/research/2026-09-20-ai-native-browser-research-pass-5.md`
 
 The user explicitly requested more research. **Do not run local benchmarks yet.**
 
-Current direction:
+Pass 5 found material new prior art:
+- Browser Controller: promote to source-review tier for authenticated local multi-agent/tab ownership.
+- Chrome Agent Bridge: promote as ownership/cleanup donor.
+- Agent360 Browser MCP: promote for targeted research; current false-success issue is a hard blocker.
+- codex-browser-bridge: high-value OpenAI-specific adapter; freeze duplicate WAG implementation of ChatGPT Desktop browser pipe by default.
+- Vibe MCP: demote current Windows local lane due reproducible relay instability/current E2E hang.
+- BrowserMCP/browsermcp.io and hangwin/mcp-chrome: demote due maintenance/security evidence.
 
-- prefer provider-native browser paths when appropriate, but do not treat current OpenAI/Claude Windows lifecycle as a cleanup/ownership baseline;
-- treat first-party Playwright CLI/MCP extension/`browser.bind()` as the primary provider-neutral substrate to research;
-- treat WebMCP as a strategic semantic layer, not an authority layer;
-- freeze expansion of custom generic browser mechanics;
-- keep WAG authority/ADR-0019 approval/durable effects and bounded owner-aware cleanup until replacement evidence exists;
-- keep Guardian focused on context/continuity rather than growing into browser automation;
-- keep SessionCommander focused on exact-owned runtime supervision rather than browser semantics.
+Current direction remains:
+- Playwright first-party is the primary provider-neutral browser substrate;
+- WebMCP is a semantic fast path, not authority;
+- do not build a new AI-native browser;
+- freeze custom generic browser mechanics;
+- retain WAG authority/ADR-0019/durable effects and bounded owner-aware cleanup;
+- keep Guardian on continuity;
+- keep SessionCommander on exact-owned runtime supervision.
 
-Sunk cost does not protect existing WAG/Guardian/SessionCommander browser code. The likely architecture is a thinner WAG above native/WebMCP/Playwright/cloud substrates, not a new AI-native browser.
+Next action: Pass 6 deep source/community narrowing, still no local benchmark.
