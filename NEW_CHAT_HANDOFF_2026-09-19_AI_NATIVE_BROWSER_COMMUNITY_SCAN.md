@@ -3,13 +3,12 @@
 Date: 2026-09-19
 Repository: `ShenJun93/web-agent-gateway`
 Canonical branch: `main`
-Checkpoint after research receipt: `142f53a6ff6090e6f335d9232b5733ba71299961`
 
 ## User directive
 
 Do not preserve our own code because of sunk cost. If an external project/service is materially better, prefer adopting it and retire/freeze overlapping custom code.
 
-Before practical benchmarking, research **community experience** and real failure modes broadly enough to eliminate weak candidates without wasting local test time.
+Research **community experience and real failure modes first**. Only benchmark the smallest surviving shortlist.
 
 ## Canonical authority
 
@@ -20,142 +19,210 @@ Fresh-read, in order:
 3. Relevant accepted specs/ADRs, especially:
    - `docs/adr/0018-lock-webchat-local-coding-mission.md`
    - `docs/adr/0019-separate-browser-proposal-from-consequential-authority.md`
-4. Research receipt:
+4. Research receipts:
    - `docs/research/2026-09-19-ai-native-browser-community-experience-scan.md`
+   - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-2.md`
 5. Chat history last.
 
 Do not use this handoff as authority when Git disagrees.
 
 ## Verified state
 
-A first community-experience pass was completed for:
+Two community/prior-art passes are now complete.
 
+### Pass 1
+
+Covered:
 1. BrowserOS neo
 2. open-browser-use
 3. Cloudflare Browser Run / Kitesurf
 
+Main conclusions:
+- BrowserOS neo: credible local replacement candidate, but still early/rough.
+- open-browser-use: architecture strongly relevant; insufficient independent community proof.
+- Browser Run/Kitesurf: strong offload lane, not persistent local-auth replacement.
+
+### Pass 2
+
+Covered:
+1. Vercel `agent-browser`
+2. Browser Use / Browser Harness / BrowserCode
+3. Steel
+4. Browserbase / Stagehand
+5. Kernel
+6. Hyperbrowser / HyperAgent
+7. Opera `opera-browser-cli` / `opera-devtools-mcp`
+8. Puma Browser / Puma OS
+9. Open Interpreter / Interpreter Extension
+10. Panerelay, Browser Bridge, Real Browser MCP, Chrome Bridge MCP
+
 No local install/benchmark was performed.
 
-Research receipt commit:
-`142f53a6ff6090e6f335d9232b5733ba71299961`
+Remote WAG `main` was verified at
+`2abb644c85134b8ef2a8482ad7d2757a04bfa6fd`
+immediately before the Pass 2 branch was created.
 
-### BrowserOS neo
+The local Windows Desktop Commander device was offline during this pass, so local worktree/HEAD was **not** independently verified.
 
-Community evidence is mixed but substantive.
+## Shortlist after community evidence
+
+### Local real-profile lane
+
+Primary:
+1. **Browser Harness**
+
+Secondary:
+2. **Panerelay + agent-browser provider**
+
+Optional only if adopting Opera/Neon is acceptable:
+3. **Opera browser CLI / DevTools MCP**
+
+Reference/action engine:
+4. **agent-browser** — useful and active, but do not make it sole lifecycle authority yet.
+
+### Cloud/offload lane
+
+Primary:
+1. **Browserbase**
+2. **Kernel**
+
+Fallback where self-host/open-source matters:
+3. **Steel**
+
+Watch:
+4. **Hyperbrowser**
+
+## Eliminated from first empirical round
+
+Do not benchmark these in the first round:
+
+- BrowserCode — evaluate Browser Harness substrate instead.
+- Open Interpreter core — higher-level agent runtime outside WAG mission.
+- Puma Browser / Puma OS — wrong current platform/problem.
+- every small real-profile bridge — code review first, benchmark only if it reveals a material advantage.
+- all cloud providers — only Browserbase vs Kernel if cloud offload becomes an immediate goal.
+
+## Important reliability findings
+
+### Browser Harness
+
+Relevant current public blockers:
+- Windows auth-token/workspace permission hardening gap.
+- concurrent daemon-start race can orphan a daemon.
+- closing current tab can leave dangling session state.
+- cold-start/screenshot issues remain active.
+
+Therefore it is the **first empirical candidate**, not an assumed production replacement.
+
+### agent-browser
 
 Positive:
-- real daily-use reports;
-- useful with Claude Code / MCP;
-- logged-in account workflows are a real differentiator;
-- some users report good results with Hermes/Claude and credentialed sites.
+- current releases added a Rust daemon, default idle timeout and Windows Job Object containment.
+- strong profile/session/action semantics and frequent release velocity.
 
-Negative:
-- still described as early/rough;
-- long multi-step agent workflows can be slow or fail;
-- current GitHub issues show MCP compatibility, migration, platform, UI, and hardening problems.
+Remaining public risk:
+- recent Windows `open/connect` hangs.
+- recent wedged-session report where harness timeout did not recover the detached daemon/browser tree.
+- unresolved command/watchdog behavior means local cleanup cannot be retired from public evidence alone.
 
-Disposition:
-**credible local replacement candidate, but not yet assumed production-boring.**
+Use it as an action engine/reference until failure/recovery evidence is green.
 
-### open-browser-use
+### Panerelay
 
-Architecture is highly relevant:
-- real Chrome/profile;
-- extension + native messaging;
-- MCP/SDK/CLI;
-- local-first;
-- MIT license.
+Strong design fit:
+- real existing Chrome/Edge.
+- explicit user-authorized tabs.
+- agent-browser + Browser Use integration.
+- background tab control.
+- MIT.
+- compatibility matrix distinguishes verified/partial/unsupported behavior and fails closed on some launch-time controls that cannot be guaranteed.
 
-But independent community evidence is still sparse relative to adoption claims. Public footprint is small and rapidly changing.
+But public community volume is small. Treat it as code-review + bounded empirical candidate, not a migration by reputation.
 
-Disposition:
-**watch/code-review first; insufficient community proof for a migration decision.**
+### Opera browser CLI
 
-### Cloudflare Browser Run / Kitesurf
+Strong official Windows/vendor path and logged-in/persistent browser support.
 
-Browser Run has the strongest infrastructure/offload story:
-- cloud execution;
-- CDP;
-- Live View;
-- recordings;
-- human takeover;
-- high paid-tier concurrency.
+But:
+- detached persistent bridge exists.
+- project docs include stale-bridge recovery.
+- parallel routing work is still planned for some flows.
+- independent community evidence is very small.
+- CDP/browser-debug authority is broad.
 
-Kitesurf is interesting for agent-native stateless work and vendor benchmarks claim materially lower CPU/RAM than Chromium, but:
-- beta;
-- stateless;
-- fidelity trade-offs;
-- bot/challenge limitations reported by community;
-- not a replacement for persistent local authenticated browsing.
+## Existing custom-code consequences
 
-Disposition:
-**strong offload lane, not primary local browser replacement.**
+Do not preserve browser-specific code due sunk cost.
 
-## Important correction to previous strategy
+However, current evidence does **not** justify retiring:
 
-Do **not** immediately run a three-way empirical benchmark.
+- WAG admission/ownership/capability policy.
+- ADR-0019 local approval transition.
+- durable consequential-effect ownership.
+- SessionCommander / Cleanup Sidecar owner-aware failure cleanup.
 
-First broaden the community/prior-art scan. The goal is to avoid testing projects that public evidence already disqualifies.
+External projects may replace browser attachment/action/profile/session plumbing if empirical evidence is stronger.
 
-## Next exact research pass
+Guardian continuity/context-warning functionality is separate from generic browser control and should be judged independently.
 
-Research community experience and public failure evidence for:
+## Next exact action
 
-1. Vercel `agent-browser`
-2. Browser Use / BrowserCode / Browser Harness
-3. Steel
-4. Browserbase
-5. Kernel
-6. Hyperbrowser
-7. Opera Neon CLI
-8. Puma Browser / Puma OS
-9. Open Interpreter
-10. any strong local real-profile MCP/browser bridge discovered during the scan
+Community stop condition has been met.
 
-For each candidate collect:
+Run the **minimum local empirical comparison**, not a broad benchmark:
 
-- sustained-use community reports;
-- Windows reliability;
-- authenticated-profile behavior;
-- session/process cleanup;
-- concurrency behavior;
-- bot/challenge behavior;
-- security/privacy incidents;
-- issue velocity and unresolved blockers;
-- pricing/lock-in;
-- license;
-- which WAG/Guardian/SessionCommander functionality it could eliminate.
+1. Browser Harness.
+2. Panerelay + agent-browser provider.
+3. Opera browser CLI only if an Opera/Neon dependency is acceptable.
+
+Use a dedicated non-sensitive browser/profile first.
+
+Acceptance matrix:
+
+1. Windows setup/attach.
+2. authenticated profile survives controlled restart.
+3. existing-tab control does not unexpectedly steal focus.
+4. two simultaneous agent sessions stay isolated.
+5. 10 open/action/close cycles leave zero task-owned residual process.
+6. forced kill mid-navigation/snapshot recovers without stale ownership.
+7. deliberately slow/wedged target produces bounded failure.
+8. local listener/socket/pipe and token permissions are acceptably scoped.
+9. untrusted page content cannot gain consequential local authority.
+10. Claude Code/Codex integration works without weakening WAG authority.
+
+If local empirical evidence selects an upstream winner, identify exact WAG/Guardian/SessionCommander code that becomes redundant and retire/freeze it in small reversible slices.
+
+## Cloud follow-up only when needed
+
+If offload becomes immediate, compare only:
+
+- Browserbase
+- Kernel
+
+on one authenticated workflow with profile reuse, crash/reconnect, explicit cleanup, 3-5 concurrent sessions, live/replay evidence and observed cost.
+
+Do not benchmark Steel/Hyperbrowser unless the first pair fails a concrete requirement.
 
 ## Decision discipline
 
 Use:
 `NATIVE -> STANDARD -> PROVEN OSS/SERVICE -> COMPOSE -> WRAP -> EXTEND -> BUILD`
 
-Do not protect:
-- WAG browser-specific code,
-- ChatGPTSessionGuardian browser-control scope,
-- SessionCommander browser/process lifecycle logic,
-- Cleanup Sidecar architecture,
+ADR-0019 remains controlling:
+browser-side proposal authority must not silently become consequential execution authority.
 
-merely because we already built them.
+## Decision markers
 
-However, do not retire components until evidence shows the replacement preserves the required trust/ownership boundary.
-
-ADR-0019 remains important: browser-side proposal authority must not silently become consequential execution authority.
-
-## Community-evidence rule
-
-Prefer:
-1. repeated independent reports;
-2. detailed GitHub issues/reproductions;
-3. maintainer responses/fixes;
-4. official docs for capabilities/limits;
-5. vendor benchmarks only when labeled as vendor claims.
-
-Do not rank a project from star count or one Reddit comment.
-
-## Stop condition for next session
-
-Continue research until the candidate field can be reduced to a small shortlist on community evidence alone.
-
-Only then recommend the minimum empirical test needed to resolve remaining uncertainty.
+```text
+COMMUNITY_SCAN_STOP_CONDITION = MET
+LOCAL_BENCHMARK_RUN = NO
+LOCAL_PRIMARY = BROWSER_HARNESS
+LOCAL_SECONDARY = PANERELAY_PLUS_AGENT_BROWSER
+LOCAL_OPTIONAL_VENDOR = OPERA_BROWSER_CLI
+AGENT_BROWSER = ACTION_ENGINE_REFERENCE
+CLOUD_PRIMARY = BROWSERBASE,KERNEL
+CLOUD_SELF_HOST_FALLBACK = STEEL
+RETIRE_WAG_AUTHORITY_BOUNDARY = NO
+RETIRE_LOCAL_CLEANUP_YET = NO
+NEXT_ACTION = MINIMUM_LOCAL_EMPIRICAL_COMPARISON
+```
