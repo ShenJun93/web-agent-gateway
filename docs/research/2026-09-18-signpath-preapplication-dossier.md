@@ -251,11 +251,9 @@ Do not manufacture reputation evidence.
 
 SignPath terms require MFA for all relevant SignPath and source-repository accounts.
 
-Current GitHub MFA status remains unverified. A read-only `gh api user` query authenticated as `ShenJun93`, but the active OAuth token has `repo`, `workflow`, `read:org`, and `gist` scopes and lacks `read:user`; GitHub therefore returned no private `two_factor_authentication` value. Per GitHub's REST documentation, `read:user` (or broader `user`) is required for that private field.
+GitHub source-repository MFA was verified directly in GitHub `Settings -> Password and authentication` on 2026-09-19 using a dedicated read-only browser worker. Configured MFA methods and recovery details are intentionally not recorded in this public repository. No GitHub token scope was widened for the verification.
 
-Do not infer enabled or disabled from the missing field, and do not widen the token scope merely for this dossier.
-
-State: REQUIRES_MAINTAINER_CONFIRMATION_BEFORE_APPLICATION
+State: PASS_VERIFIED_UI
 
 ### SignPath account / organization / project
 
@@ -268,8 +266,9 @@ State: REQUIRES_EXPLICIT_EXTERNAL_AUTHORITY
 Do not submit yet.
 
 Submit only after:
-1. GitHub MFA is explicitly confirmed;
-2. separate explicit authority is granted for SignPath submission.
+1. separate explicit authority is granted for SignPath submission.
+
+GitHub source-repository MFA is already `PASS_VERIFIED_UI`. SignPath-account MFA remains a provider-onboarding requirement if and when provider-side setup is separately authorized.
 
 Repository publication, anonymous public docs/license verification, the real immutable release/download URL, and live release-fact refresh are complete. Carry the unresolved Node SEA ownership classification as a neutral provider question; do not manufacture a policy answer.
 

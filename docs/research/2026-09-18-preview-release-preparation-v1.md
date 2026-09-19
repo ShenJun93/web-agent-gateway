@@ -129,12 +129,16 @@ Live release state:
 
 ## Remaining gates before SignPath application
 
-Hard pre-submission gate:
-1. GitHub MFA confirmation.
+Repository-side hard pre-submission gates:
+- none currently identified.
+
+Verified account prerequisite:
+- GitHub source-repository MFA: `PASS_VERIFIED_UI` on 2026-09-19; configured MFA methods and recovery details are intentionally not recorded in this public repository.
 
 Application/provider gates:
 1. separate explicit authority for SignPath submission;
-2. neutral provider determination of the Node SEA own-binary versus modified-upstream question.
+2. neutral provider determination of the Node SEA own-binary versus modified-upstream question;
+3. SignPath-account MFA during provider onboarding if and when provider-side setup is separately authorized.
 
 Provider-discretion risks:
 - SignPath publishes no numeric executable-project reputation threshold;
