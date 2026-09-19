@@ -17,7 +17,7 @@ import {
 } from './executor/devspace.js';
 
 interface WorkspaceBinding { devspaceWorkspaceId: string; canonicalRoot: string; }
-import { DevspaceRepositoryInspectionBackend, type RepoSnapshotOptions } from './repository-inspection.js';
+import { DevspaceRepositoryInspectionBackend, type RepoSearchOptions, type RepoSnapshotOptions } from './repository-inspection.js';
 
 export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, openWorkspaceId }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string> }) {
   const workspaces = new Map<string, WorkspaceBinding>();
@@ -109,6 +109,22 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       try {
         const workspace = binding(workspaceId);
         const value = await trace.phase('executorMs', () => inspection.snapshot(workspace.devspaceWorkspaceId, options));
+        trace.finish(true); return value;
+      } catch (error) { trace.finish(false, error); throw error; }
+    },
+
+    async repoSearch(workspaceId: string, query: string, options: RepoSearchOptions = {}) {
+      const trace = startTrace('repo.search', telemetry); trace.markIngress();
+      try {
+        const workspace = binding(workspaceId);
+        const value = await trace.phase('executorMs', () => inspection.search({
+          devspaceWorkspaceId: workspace.devspaceWorkspaceId,
+          canonicalRoot: workspace.canonicalRoot,
+          query,
+          ignoreCase: options.ignoreCase ?? false,
+          maxResults: Math.min(Math.max(options.maxResults ?? 20, 1), 50),
+          contextLines: Math.min(Math.max(options.contextLines ?? 1, 0), 2),
+        }));
         trace.finish(true); return value;
       } catch (error) { trace.finish(false, error); throw error; }
     },
@@ -283,10 +299,31 @@ export interface MutationMcpContext {
   coordinator: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
 }
 
-export function createGatewayMcpServer(gateway: GatewayApi, { mutationContext }: { mutationContext?: MutationMcpContext } = {}): McpServer {
+export function createGatewayMcpServer(
+  gateway: GatewayApi,
+  { repoSearch, mutationContext }: { repoSearch?: boolean; mutationContext?: MutationMcpContext } = {},
+): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   server.registerTool('health', { description: 'Check gateway and executor compatibility.', annotations: { readOnlyHint: true } }, async () => toolResult(await gateway.health()));
   server.registerTool('workspace.open', { description: 'Open one approved local workspace and return an opaque workspace id.', inputSchema: z.object({ path: z.string().min(1) }), annotations: { readOnlyHint: true } }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
+  if (repoSearch === true) {
+    server.registerTool('repo.search', {
+      description: 'Search tracked repository files for a literal string.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        query: z.string().min(1).refine(validSearchQuery),
+        ignore_case: z.boolean().optional(),
+        max_results: z.number().int().min(1).max(50).optional(),
+        context_lines: z.number().int().min(0).max(2).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    }, async ({ workspace_id, query, ignore_case, max_results, context_lines }) => {
+      if (!validSearchQuery(query)) throw new Error('Gateway denied search query');
+      return toolResult(await gateway.repoSearch(workspace_id, query, {
+        ignoreCase: ignore_case, maxResults: max_results, contextLines: context_lines,
+      }));
+    });
+  }
   server.registerTool('repo.snapshot', { description: 'Return bounded repository status, HEAD, diff summary, and tracked files.', inputSchema: z.object({ workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }), annotations: { readOnlyHint: true } }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
   server.registerTool('file.read', { description: 'Read bounded text from an opened workspace.', inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }), annotations: { readOnlyHint: true } }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
   server.registerTool('verify.run', {

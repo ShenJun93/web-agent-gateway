@@ -90,7 +90,10 @@ The stdio caller context is derived locally and is not negotiable by the client:
 - `adapterId` is the fixed literal for this surface;
 - no field may be read from tool arguments, transport metadata, environment supplied by the client, or repository text.
 
-A restarted gateway is a new session. It inherits no pending approval authority.
+A restarted gateway is a new session, so no MCP caller can read, resume or replay a record proposed by a previous
+process. Local operator authority stays independent of the caller session and is unchanged by this ADR: a proposal
+still pending across a restart keeps its original, never-refreshed deadline and remains subject to explicit local
+review until it expires.
 
 ## Why this is not authority widening
 

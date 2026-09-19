@@ -107,7 +107,9 @@ Tests must prove:
 
 Tests must prove:
 
-- `doctor` reports the resolved capability profile and closes the engineering runtime before returning;
+- `doctor` reports the resolved capability profile, binds no operator review port, issues no bootstrap URL, and closes
+  the engineering runtime before returning;
+- nothing at all is emitted for the shipped default profile, so unconfigured output is byte-unchanged;
 - the operator bootstrap URL is emitted on stderr and never on stdout;
 - stdout carries MCP transport bytes only;
 - teardown order is stdio server, engineering runtime, private gateway runtime, on success and on each failure path,
@@ -141,8 +143,19 @@ Four exact windows, applied to stdio mutation:
 - propose a mutation;
 - restart the gateway;
 - the original review deadline is unchanged and is not refreshed;
-- the record does not execute;
-- the new session cannot read or approve it.
+- the record does not execute on restart alone;
+- the new session's MCP caller cannot read it;
+- an already-expired record is expired by `reconcile()` and can never be approved afterwards.
+
+Local operator authority is independent of the caller session and this milestone does not change that, so a pending
+record that survives a restart inside its original deadline remains locally reviewable. That must be recorded as the
+verified behavior rather than claimed as cross-session fail-closed.
+
+Windows B, C and D below are properties of the accepted durable mutation core, which this milestone reuses without
+relaxation. They are satisfied by the existing committed coverage in `test/durable-mutation.test.ts` and
+`test/durable-mutation.acceptance.test.ts`, which run in the full suite. The acceptance receipt must name that
+inherited coverage rather than duplicate it, and must state that projecting the coordinator onto stdio changed none of
+those semantics.
 
 ### B. Approved before claim, then restart
 

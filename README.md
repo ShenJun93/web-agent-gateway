@@ -83,6 +83,25 @@ tunnel-client run --profile web-agent-gateway
 
 Those tunnel/account steps are a post-upgrade acceptance gate, not local pre-upgrade evidence. Do not commit owner tokens, control-plane API keys, tunnel credentials, or machine-specific private config files.
 
+## Repository-engineering profile (DC replacement)
+
+By default `serve-stdio` exposes exactly five tools: `health`, `workspace.open`, `repo.snapshot`, `file.read`, `verify.run`.
+
+A local operator may opt in to the repository-engineering profile that carries WAG's Desktop Commander replacement scope. It is off unless the private config asks for it, and it can never be requested by the model, the provider, the transport, or repository content:
+
+```jsonc
+"repositoryEngineering": {
+  "search": true,
+  "mutation": { "statePath": "C:\\path\\to\\control-plane.sqlite", "ownerId": "local.private.stdio" }
+}
+```
+
+`search` adds read-only `repo.search`. `mutation` adds `mutation.preview` and `mutation.result`, and starts the loopback operator review server whose one-time bootstrap URL is printed on stderr, never on the MCP transport. `mutation.preview` writes nothing: a separate, locally authenticated operator must approve the exact record before any file changes, approval is single-use and TTL-bounded, and reject or expiry leaves the repository byte-identical.
+
+WAG stays deliberately narrower than Desktop Commander on every profile. It exposes no shell, process control, PTY, arbitrary argv, file create/move/delete, directory tools, Git writes, or runtime configuration mutation, and `allowedRoots` is enforced rather than advisory.
+
+Authority: `docs/adr/0020-make-private-stdio-the-dc-replacement-surface.md`. Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`. Acceptance: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`.
+
 ## Windows native host
 The Windows native host is currently a development/pre-release component. Installation changes one per-user Chromium Native Messaging registration and stores exact-owned files under `%LOCALAPPDATA%`.
 

@@ -9,6 +9,16 @@ const verifyProfileSchema = z.object({
   maxOutputTokens: z.number().int().min(100).max(10_000).optional(),
 }).strict();
 
+export const DEFAULT_PRIVATE_STDIO_OWNER_ID = 'local.private.stdio';
+
+const repositoryEngineeringSchema = z.object({
+  search: z.boolean().default(false),
+  mutation: z.object({
+    statePath: z.string().min(1),
+    ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).default(DEFAULT_PRIVATE_STDIO_OWNER_ID),
+  }).strict().optional(),
+}).strict();
+
 const privateGatewayConfigSchema = z.object({
   allowedRoots: z.array(z.string().min(1)).min(1),
   devspace: z.object({
@@ -19,14 +29,24 @@ const privateGatewayConfigSchema = z.object({
   browserVerifyProfiles: z.array(
     z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
   ).max(32).default([]),
+  repositoryEngineering: repositoryEngineeringSchema.optional(),
 }).strict();
 
 export type PrivateVerifyProfile = z.infer<typeof verifyProfileSchema>;
+export interface PrivateRepositoryEngineeringMutation {
+  statePath: string;
+  ownerId: string;
+}
+export interface PrivateRepositoryEngineering {
+  search: boolean;
+  mutation?: PrivateRepositoryEngineeringMutation;
+}
 export interface PrivateGatewayConfig {
   allowedRoots: string[];
   devspace: { baseUrl: string; resourceUrl: string };
   verifyProfiles: Record<string, PrivateVerifyProfile>;
   browserVerifyProfiles?: string[];
+  repositoryEngineering?: PrivateRepositoryEngineering;
 }
 export async function loadPrivateGatewayConfig(configPath: string): Promise<PrivateGatewayConfig> {
   if (!isAbsolute(configPath)) throw new Error('Private gateway config path must be absolute');
@@ -38,6 +58,11 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
   }
   if (parsed.browserVerifyProfiles.some((name) => parsed.verifyProfiles[name] === undefined)) {
     throw new Error('Private gateway browser verify profile is not configured');
+  }
+
+  const mutation = parsed.repositoryEngineering?.mutation;
+  if (mutation && !isAbsolute(mutation.statePath)) {
+    throw new Error('Private gateway repository engineering mutation statePath must be absolute');
   }
 
   const allowedRoots: string[] = [];
@@ -53,6 +78,12 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
     devspace: { baseUrl, resourceUrl },
     verifyProfiles: parsed.verifyProfiles,
     browserVerifyProfiles: parsed.browserVerifyProfiles,
+    ...(parsed.repositoryEngineering === undefined ? {} : {
+      repositoryEngineering: {
+        search: parsed.repositoryEngineering.search,
+        ...(mutation === undefined ? {} : { mutation: { statePath: mutation.statePath, ownerId: mutation.ownerId } }),
+      },
+    }),
   };
 }
 

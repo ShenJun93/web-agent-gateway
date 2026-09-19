@@ -145,9 +145,14 @@ adapterId = 'private.stdio.v1'                               (fixed literal)
 ```
 
 No field is readable or influenceable by the client. Because `sessionId` is per process and
-`DurableMutationCoordinator` enforces owner+session+adapter identity on both `result` and approval, a restarted gateway
-cannot read, approve, resume or inherit a mutation proposed by a previous process. That fail-closed restart behavior is
-intentional and is an acceptance requirement, not an accident.
+`DurableMutationCoordinator` enforces owner+session+adapter identity on `mutation.result`, a restarted gateway cannot
+read a mutation proposed by a previous process, and no MCP caller can inherit another session's record.
+
+Local operator authority is deliberately independent of the caller session, and this milestone does not change that.
+A proposal left pending across a restart therefore keeps its original, never-refreshed deadline and remains reviewable
+by the local operator until it expires; `reconcile()` expires it on startup if the deadline has already passed. The
+operator sees the exact workspace, path, diff and fingerprint before approving, so this is a reviewed decision, not an
+inherited authority. What a restart can never do is let a *remote* caller read, approve, resume or replay a record.
 
 ## Component changes
 
@@ -225,13 +230,18 @@ load config
 start repository-engineering runtime        (store + caller context, or nothing)
 bootstrap private gateway                   (with openWorkspaceId when present)
 attach(executor)                            (coordinator + reconcile + operator server)
-emit {"type":"gateway.operator","bootstrapUrl":"..."} on stderr when mutation is enabled
+emit {"type":"gateway.profile",...} and, when mutation is enabled,
+     {"type":"gateway.operator","bootstrapUrl":"..."}  on stderr
 start stdio server with { repoSearch, mutationContext }
-emit {"type":"gateway.ready","mode":"stdio","profile":{...}} on stderr
+emit {"type":"gateway.ready","mode":"stdio"} on stderr
 ```
 
-`doctor` additionally prints the resolved capability profile so an operator can confirm locally what a given config
-would expose, and closes the engineering runtime before returning.
+`doctor` stays a read-only preflight. It prints the resolved capability profile so an operator can confirm locally what
+a given config would expose, but it does **not** attach: no coordinator is built, no operator review port is bound and
+no bootstrap URL is issued. It then closes the engineering runtime before returning.
+
+Nothing is emitted at all for the shipped default profile, so existing `doctor` and `serve-stdio` output is unchanged
+for an unconfigured gateway.
 
 Teardown order on every exit path, including failures: stdio server, engineering runtime, private gateway runtime.
 Each step is individually guarded so one failure cannot skip the others.
@@ -288,8 +298,9 @@ Preserved without relaxation:
   bounded review deadline;
 - no backend call occurs before a local operator approves that exact record;
 - approval is single-use and terminal; reject and expiry are terminal and produce no write;
-- caller identity is validated on `result` and on approval; a foreign owner/session/adapter fails closed;
-- a restarted gateway is a new session and inherits no pending approval authority;
+- caller identity is validated on `result`; a foreign owner/session/adapter fails closed;
+- a restarted gateway is a new session; it cannot read a prior session's record, and the review deadline is never
+  refreshed by restart, reconnect, re-preview or repeated approval;
 - the operator channel is loopback-only with one-time bootstrap, HttpOnly session cookie, CSRF, Origin checks, CSP,
   `X-Frame-Options`, `no-store`, `nosniff`, and HTML escaping of workspace/path labels;
 - repository content is untrusted input; a note in the repository cannot approve a mutation, widen a root, select a

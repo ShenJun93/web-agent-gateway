@@ -18,6 +18,7 @@ function fakeGateway(): GatewayApi {
     readFile: async () => ({ content: 'legacy' }),
     verifyRun: async () => ({ profile: 'none', exitCode: 0, output: '' }),
     repoSnapshot: async () => ({ branch: '', head: '', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false }),
+    repoSearch: async () => ({ matches: [], truncated: false }),
   };
 }
 async function admissionFixture(t: test.TestContext) {

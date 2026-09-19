@@ -8,6 +8,10 @@ import {
   type PrivateGatewayRuntime,
 } from './private-runtime.js';
 import {
+  startRepositoryEngineeringRuntime,
+  type RepositoryEngineeringRuntime,
+} from './repository-engineering-runtime.js';
+import {
   startGatewayStdioServer,
   type GatewayStdioServer,
 } from './stdio-server.js';
@@ -23,6 +27,8 @@ export interface CliDependencies {
   startStdio: typeof startGatewayStdioServer;
   waitForShutdown: () => Promise<void>;
   telemetry: TelemetrySink;
+  /** Defaults to the real assembly; injected only by tests. */
+  startRepositoryEngineering?: typeof startRepositoryEngineeringRuntime;
 }
 type CliCommand = 'doctor' | 'serve-stdio';
 interface ParsedCli { command: CliCommand; configPath: string; }
@@ -54,23 +60,50 @@ export async function main(
     emitError(deps.stderr, 'CONFIG_INVALID', error);
     return 1;
   }
+  let engineering: RepositoryEngineeringRuntime;
+  try {
+    engineering = await (deps.startRepositoryEngineering ?? startRepositoryEngineeringRuntime)(config);
+  } catch (error) {
+    emitError(deps.stderr, 'REPOSITORY_ENGINEERING_START_FAILED', error);
+    return 1;
+  }
+
   let runtime: PrivateGatewayRuntime;
   try {
-    runtime = await deps.bootstrap(config, { env: deps.env, telemetry: deps.telemetry });
+    runtime = await deps.bootstrap(config, {
+      env: deps.env,
+      telemetry: deps.telemetry,
+      openWorkspaceId: engineering.openWorkspaceId,
+    });
   } catch (error) {
+    await closeQuietly(engineering);
     const code = error instanceof PrivateRuntimeError ? error.code : 'CLI_INTERNAL';
     emitError(deps.stderr, code, error);
     return 1;
   }
 
+  // doctor is a read-only preflight: report what the config would expose without binding
+  // the operator review port or opening a review session.
   if (parsed.command === 'doctor') {
     try {
+      emitProfile(deps.stderr, engineering);
       deps.stdout.write(`${JSON.stringify(runtime.health)}\n`);
       return 0;
     } finally {
+      await closeQuietly(engineering);
       await runtime.close();
     }
   }
+
+  try {
+    await engineering.attach(runtime.executor);
+  } catch (error) {
+    await closeQuietly(engineering);
+    await runtime.close().catch(() => undefined);
+    emitError(deps.stderr, 'REPOSITORY_ENGINEERING_START_FAILED', error);
+    return 1;
+  }
+  emitProfile(deps.stderr, engineering);
 
   let stdio: GatewayStdioServer;
   try {
@@ -78,8 +111,11 @@ export async function main(
       gateway: runtime.gateway,
       input: deps.stdin,
       output: deps.stdout,
+      repoSearch: engineering.profile.repoSearch,
+      mutationContext: engineering.mutationContext,
     });
   } catch (error) {
+    await closeQuietly(engineering);
     await runtime.close();
     emitError(deps.stderr, 'STDIO_START_FAILED', error);
     return 1;
@@ -92,20 +128,38 @@ export async function main(
     emitError(deps.stderr, 'CLI_INTERNAL', error);
     exitCode = 1;
   } finally {
-    try {
-      await stdio.close();
-    } catch (error) {
-      emitError(deps.stderr, 'CLI_INTERNAL', error);
-      exitCode = 1;
-    }
-    try {
-      await runtime.close();
-    } catch (error) {
-      emitError(deps.stderr, 'CLI_INTERNAL', error);
-      exitCode = 1;
+    for (const step of [
+      () => stdio.close(),
+      () => engineering.close(),
+      () => runtime.close(),
+    ]) {
+      try {
+        await step();
+      } catch (error) {
+        emitError(deps.stderr, 'CLI_INTERNAL', error);
+        exitCode = 1;
+      }
     }
   }
   return exitCode;
+}
+
+async function closeQuietly(engineering: RepositoryEngineeringRuntime): Promise<void> {
+  await engineering.close().catch(() => undefined);
+}
+
+/**
+ * Local-only capability and operator-review diagnostics. Nothing is emitted for the shipped
+ * default profile, and the operator bootstrap URL never reaches stdout, which carries MCP
+ * transport bytes only.
+ */
+function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime): void {
+  const { repoSearch, mutation } = engineering.profile;
+  if (!repoSearch && !mutation) return;
+  stderr.write(`${JSON.stringify({ type: 'gateway.profile', repoSearch, mutation })}\n`);
+  if (engineering.operator) {
+    stderr.write(`${JSON.stringify({ type: 'gateway.operator', bootstrapUrl: engineering.operator.bootstrapUrl })}\n`);
+  }
 }
 
 function parseCli(argv: string[]): ParsedCli {
