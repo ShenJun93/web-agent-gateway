@@ -18,9 +18,12 @@ Passing an earlier phase does not imply a later one.
 
 ## Gate 0 — Authority/ADR lock
 
+ADR-0019 satisfies the architecture decision prerequisite by accepting bounded proposal/control-plane writes under the current same-user Browser admission while keeping direct consequential browser authority forbidden.
+
 Before implementation:
-- an accepted successor ADR or explicit ADR-0017 amendment authorizes the chosen trust decomposition;
-- that decision explicitly addresses that `verify.preview` is a durable control-plane write even though browser execution authority remains zero;
+- ADR-0019 remains authoritative and unchanged for this milestone;
+- `verify.preview` stays inside ADR-0019's bounded proposal class with zero direct process/repository/Git/browser effect;
+- local operator approval remains mandatory before internal verify-job creation/dispatch;
 - exact base SHA recorded;
 - no dependency upgrade;
 - no raw shell/process/PTY/Git/browser-mutation API;
@@ -386,6 +389,7 @@ LOCAL_OPERATOR_APPROVAL_FOR_V1 = REQUIRED
 DIRECT_BROWSER_VERIFY_RUN = FORBIDDEN
 NEGATIVE_SECURITY_EVIDENCE = REQUIRED
 EXACT_RESIDUE_VERIFICATION = REQUIRED
-NEXT_ARCHITECTURE_GATE = ADR_0017_SUCCESSOR_DECISION
-NEXT_IMPLEMENTATION_GATE = REQUIRES_SEPARATE_EXPLICIT_AUTHORIZATION_AFTER_ADR
+ADR_0017_SUCCESSOR_DECISION = SATISFIED_BY_ADR_0019
+NEXT_ARCHITECTURE_GATE = SATISFIED
+NEXT_IMPLEMENTATION_GATE = REQUIRES_SEPARATE_EXPLICIT_AUTHORIZATION
 ```
