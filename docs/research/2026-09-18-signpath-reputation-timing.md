@@ -57,48 +57,68 @@ The sample therefore does **not** support:
 - a minimum five-month rule;
 - a required contributor count.
 
-It does support treating a 9-day-old executable project with no public release history as materially higher-risk than the sampled accepted projects.
+It does support treating a newly public executable project with no independent public trust signal as materially higher-risk than the sampled accepted projects.
+
+## 2026-09-19 decision refresh
+
+The earlier publication prerequisites are now complete:
+- WAG is public under Apache-2.0;
+- the public README/security/privacy/code-signing/install surface is available;
+- `v0.1.0-preview.1` is an immutable unsigned Windows prerelease;
+- GitHub release and asset attestations verify the frozen release identity;
+- GitHub source-repository MFA is `PASS_VERIFIED_UI`;
+- GitHub-hosted build provenance and the pre-sign candidate path are established.
+
+Current live public-signal snapshot:
+- stars: `0`;
+- forks: `0`;
+- subscribers/watchers: `0`;
+- contributor list: `ShenJun93` only;
+- release download counter: `4`, contaminated by maintainer verification downloads and therefore not usable as adoption evidence.
+
+Accepted-project comparison still does not reveal a numeric threshold. AMIGOpy remains a useful low-star counterexample, but it had substantially longer public history and an independent research identity/footprint before its Foundation listing. This supports treating reputation as multidimensional rather than equating it with stars.
+
+Discoverability is a separate supporting risk:
+- GitHub-native repository search finds `ShenJun93/web-agent-gateway`;
+- general public-web exact-name search is still weak/ambiguous against similarly named projects;
+- the live form guidance says a Google search for the project name should clearly identify the project.
 
 ## WAG timing recommendation
 
 Do not manufacture activity and do not wait for an invented numeric threshold.
 
-Recommended sequence:
+The repository/release prerequisites are already complete. The next decision hinge is evidence, not elapsed time.
 
-1. complete the authorized public-readiness integration;
-2. publish the repository with the real Apache-2.0 license and policies;
-3. choose a non-placeholder product version;
-4. publish the honest unsigned preview release required by the documented SignPath release condition;
-5. accumulate **real** public evidence naturally:
-   - subsequent source commits;
-   - issue/discussion activity if users create it;
-   - real preview downloads;
-   - bug fixes or documentation improvements;
-   - additional preview/release history only when warranted;
-6. submit when the project can show a credible maintained public history, rather than immediately after flipping visibility solely to satisfy the form.
+Decision state:
+- `WAIT_REPUTATION_SIGNAL`
+
+Resume application-readiness review when at least one genuine independent signal appears or exact-project public-web discoverability materially improves. Examples:
+- an independent user/reference;
+- a non-maintainer issue or contribution;
+- independent community/blog/media discussion;
+- uncontaminated usage/download evidence;
+- materially clearer exact-name public-web indexing.
+
+A truthful `Reputation` form answer can already disclose that WAG is newly public and provide verifiable repository/release/security/build evidence without claiming broad adoption. That makes the field answerable, but does not convert project-controlled evidence into independent reputation.
 
 There is no defensible numeric waiting period from SignPath's published policy.
 
 ### Practical decision rule
 
-Submitting immediately after publication is technically possible once the documented hard requirements are met, but has elevated discretionary rejection risk.
+Submission is technically possible once human form inputs and explicit submission authority exist, but current reputation/discoverability evidence creates elevated discretionary rejection risk.
 
-A stronger application point is reached when WAG can honestly show:
-- public repository continuity rather than a same-day publication;
-- at least one genuine downloadable Windows release in the intended form;
-- visible maintenance after that release;
-- an understandable README/security/privacy/signing posture;
-- verifiable GitHub-hosted build provenance.
-
-Do not delay a clearly useful real release just to age the repository. Conversely, do not submit on the same day as publication and describe nine days of private development as public reputation.
+A stronger application point is reached when WAG can add at least one genuine independent public signal to the technical evidence already complete. Do not delay a useful real release merely to age the repository, and do not create synthetic activity to trigger the decision rule.
 
 ## Current state
 
 ```text
-WAG_REPOSITORY_AGE_2026_09_18 = 9_DAYS
 SIGNPATH_NUMERIC_REPUTATION_THRESHOLD = NONE_PUBLISHED
-IMMEDIATE_POST_PUBLIC_APPLICATION = POSSIBLE_BUT_HIGHER_DISCRETIONARY_RISK
-RECOMMENDED = BUILD_REAL_PUBLIC_RELEASE_AND_MAINTENANCE_EVIDENCE
+TECHNICAL_REPOSITORY_PREREQUISITES = PASS
+PUBLIC_UNSIGNED_RELEASE = PASS
+REPUTATION_FORM_ANSWER = READY_AS_TRUTHFUL_DISCLOSURE
+INDEPENDENT_REPUTATION_SIGNAL = NOT_YET_VERIFIED
+PUBLIC_WEB_DISCOVERABILITY = WEAK
+SUBMISSION_DECISION = WAIT_REPUTATION_SIGNAL
 FAKE_ACTIVITY_OR_POPULARITY = PROHIBITED_BY_PROJECT_POLICY
 ```
 
