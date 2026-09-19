@@ -18,188 +18,158 @@ Fresh-read in this order:
 2. `README.md`.
 3. `docs/adr/0018-lock-webchat-local-coding-mission.md`.
 4. `docs/adr/0019-separate-browser-proposal-from-consequential-authority.md`.
-5. Current research receipts:
-   - `docs/research/2026-09-19-ai-native-browser-community-experience-scan.md`
-   - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-2.md`
-   - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-3.md`
-   - `docs/research/2026-09-19-ai-native-browser-community-experience-scan-pass-4.md`
-   - `docs/research/2026-09-19-ai-native-browser-replacement-pressure-audit.md`
-   - `docs/research/2026-09-20-ai-native-browser-research-pass-5.md`
+5. Current research receipts through:
    - `docs/research/2026-09-20-ai-native-browser-research-pass-6.md`
+   - `docs/research/2026-09-20-ai-native-browser-research-pass-7.md`
+   plus Pass 1–5 and the replacement-pressure audit referenced by earlier receipts.
 6. Chat history last.
 
 This handoff is not authority when Git disagrees.
 
 ## Verified research state
 
-Passes 1–6 plus the replacement-pressure audit are complete.
+Passes 1–7 plus the replacement-pressure audit are complete.
 
-No local install/benchmark was run in Pass 6.
+No local install/benchmark was run in Pass 7.
 
 Remote `main` was fresh-verified at:
-`e8ac691b09e80a2a9925163ed04e652479928d05`
-before the Pass 6 branch was created.
+`2b811148fc3e8ee2499397acb0fd64066cb97a5f`
+before the Pass 7 branch was created.
 
 ## Current architecture direction
 
 ```text
 DO NOT BUILD A NEW AI-NATIVE BROWSER.
 
-provider-specific workflow
-  -> provider-native browser where accepted
-
-Chrome-specific live debugging / real Chrome
-  -> Chrome DevTools for agents first-party comparator
+Chrome-specific live debugging
+  -> Chrome DevTools for agents comparator
 
 provider-neutral browser automation
   -> Playwright primary substrate
+  -> explicit isolated BrowserContext per independent owner
 
-real-profile multi-agent ownership
-  -> Browser Controller / Chrome Agent Bridge / Panerelay / vetted bridge donors
+provider-specific ChatGPT/Codex Desktop browser path
+  -> reuse thin adapter/native pipe
+  -> do not clone private transport into WAG core
 
-consequential local effects
-  -> WAG ADR-0019 proposal -> local approval -> durable effect core
+real-profile multi-agent browser control
+  -> source donors only until Windows ACL/ownership evidence is adequate
+
+consequential authority
+  -> WAG ADR-0019
+
+effect truth
+  -> generation-bound preconditions
+  -> CONFIRMED / FAILED / UNKNOWN
+  -> no blind replay after UNKNOWN
 
 local runtime/process lifecycle
-  -> SessionCommander / Cleanup Sidecar exact-owned supervision until upstream proves zero-residue recovery
+  -> SessionCommander/Cleanup exact-owned supervision retained
 ```
 
-## Pass 6 changes
+## Pass 7 material changes
 
-### Chrome DevTools for agents — PROMOTED
+### Browser Controller — Windows ACL gate discovered
 
-Now treat Google Chrome DevTools for agents as a first-party Chrome comparator.
+Source confirms strong application-level auth/session design, but its token/enrollment files rely on Node `mode: 0600`.
 
-Strong:
-- stable official surface;
-- existing logged-in Chrome via `--autoConnect`;
-- explicit Chrome permission prompt;
-- live tabs/extensions/application state;
-- concurrent-page routing experiment;
-- WebMCP/custom page tooling.
+Node documents that Windows does not implement owner/group/others POSIX mode distinctions. Therefore `0600` is not proof of owner-only NTFS ACL.
 
-Current blockers:
-- Windows `--autoConnect` timeout issue #2675;
-- orphan isolated Chrome issue #2621;
-- long-lived memory/CPU retention reports;
-- duplicate/reconnect process conflicts.
+The named pipe is also created without project-visible explicit Windows security descriptor. Token auth remains useful, but actual file/pipe DACLs must be verified/hardened before promotion.
+
+### LAPSrj/browser-mcp — lifecycle donor strengthened
+
+Commit history confirms:
+
+- atomic shared-profile coordination;
+- dead-session pruning;
+- kill exact browser tree before sidecar finalization;
+- wait for Windows PID death before deleting coordination state;
+- orphaned authenticated browser adoption using launch signature;
+- stale relay health probe and relay-only repair.
+
+Keep as lifecycle prior art, not authority. Sidecar authentication/PID-reuse/tamper resistance remains unresolved; do not copy the WSL `0.0.0.0` relay.
+
+### Chrome DevTools — blocker set corrected
+
+- #2431 memory issue is closed/fixed in 1.7.0.
+- #2675 Windows autoConnect timeout remains open.
+- new #2778 shows lazy autoConnect + consent + host tool timeout can form a restart loop on Windows.
+- latest public release found in Pass 7 remains 1.9.0 (2026-09-08).
+- #2621 follow-up reproduces stale temp-profile cleanup after SIGKILL but did not reproduce the original long-lived Chrome-root symptom on current stable; issue remains open.
 
 Conclusion:
-**do not recreate generic Chrome DevTools/CDP features, but do not make it lifecycle authority.**
+first-party Chrome action/debug comparator, **not lifecycle authority**.
 
-### Playwright — still provider-neutral primary, but shared context is not isolation
+### Playwright — fix velocity better than Pass 6 wording
 
-Recent issues demonstrate cross-client DOM/page/recorder bleed under shared BrowserContext modes.
+- #1631 closed.
+- #42608 closed/fixed.
+- concurrent clients require explicit topology:
+  - isolated BrowserContext per client for separate agents; or
+  - shared BrowserContext only when shared state is intentional.
 
-Conclusion:
-- keep Playwright as action substrate;
-- keep owner/session identity outside Playwright shared context;
-- do not use shared context as WAG authority boundary.
+Playwright remains primary provider-neutral substrate. BrowserContext isolation is useful infrastructure, not WAG authority.
 
-### Browser Controller — remains top source-review candidate
+### whg517/browser-bridge
 
-Source review confirms:
-- separate enrollment secret;
-- exact extension Origin pin;
-- token-authenticated IPC and WebSocket;
-- Windows named-pipe IPC;
-- unique session IDs;
-- heartbeat eviction;
-- per-session rate limits;
-- bounded per-tool timeouts;
-- abort in-flight calls + release exact session locks on disconnect.
+Issue #192 remains open with no Windows Job Object result. Do not promote shared broker lifetime contract.
 
-Gap:
-- independent sustained-use evidence remains thin;
-- Windows named-pipe ACL / hostile-same-user evidence still needed.
+### Agent360
 
-### Agent360 — improving but #19 class still open
+Issue #19 remains open.
 
-v1.29.2 adds stronger event/effect checks and honest failures for several interaction classes.
+The durable lesson is tri-state effect truth:
 
-But project's own docs still point to issue #19 for remaining false-success behavior.
+```text
+CONFIRMED
+FAILED
+UNKNOWN
+```
 
-Use as effect-verification donor, not primary substrate yet.
+Transport success, DOM movement or unrelated page movement is not enough to prove target effect. `UNKNOWN` must not cause blind replay.
 
-### LAPSrj/browser-mcp — PROMOTED Windows lifecycle donor
+### codex-browser-bridge / ChatGPT-Codex Desktop native pipe
 
-Distinctive Windows mechanics:
-- exact root browser PID;
-- `taskkill /F /T` exact tree teardown;
-- sidecar with root PID/CDP port/attached sessions;
-- shared-profile refcount;
-- last-session teardown;
-- session-scoped tabs;
-- Edge + Chrome stated live-validated.
+Thin reuse is valuable and creates strong pressure against rebuilding the provider-specific pipe.
 
-Security caution:
-- WSL relay may bind `0.0.0.0`; threat review required.
-- community/adoption evidence remains tiny.
+But the bridge inherits upstream pipe ACL/lifecycle and can enumerate/claim tabs; that is not WAG opaque ownership.
 
-### browser-rs-mcp — PROMOTED authority donor, not Windows candidate
+Public OpenAI issue evidence also shows Windows browser-use pipes can exist while integration/handshake still fails.
 
-Useful:
-- per-owner capability auth;
-- managed multi-tenant mode;
-- secret-broker design.
+### Hronaut — new authority/effect donor
 
-Current public builds are macOS/Linux, not Windows.
+Hronaut adds genuinely relevant prior art:
 
-### uiuing/browser-agent — PROMOTED effect-verification donor
+- durable named workspaces;
+- restart-safe resume capability;
+- human pause/takeover;
+- pre-dispatch generation/action fences;
+- `OUTCOME_UNKNOWN` after uncertain dispatch;
+- proposed independent observer context.
 
-Useful design:
-- post-action verification against live DOM;
-- expected vs actual evidence;
-- risk tiers;
-- site policies;
-- confirmation prompts;
-- authorization memory;
-- audit traces.
+But:
+- project/community is very new;
+- Windows build unsigned;
+- source-available subscription license;
+- explicit multi-agent lease model is still an open issue;
+- independent public-outcome observer is still an open issue.
 
-This is strong prior art for WAG result/effect verification without requiring adoption of the whole runtime.
+Use as authority/effect-verification donor, not replacement.
 
-### whg517/browser-bridge — Windows gate remains open
+### Hark / Polar
 
-Issue #192 still requests real Windows evidence that broker survives client/server death under Windows Job Object `KILL_ON_JOB_CLOSE`.
-
-Do not assume its multi-client broker lifetime on the user's workload until that is verified.
-
-## Proprietary / funded browser layer
-
-### Polar
-
-$5.7M seed led by Madrona, ex-Comet team, focused on long-running authenticated knowledge-work automation.
-
-Relevant as product/UX comparator.
-Not a provider-neutral local infrastructure replacement.
-
-### Hark Handoff
-
-Very heavily funded browser/computer-use system. Current public evidence is still preview/vendor-demo heavy; independent sustained-use evidence is not yet enough for architecture decisions.
-
-### Aside
-
-Mixed community experience:
-- strong logged-in cross-site automation reports;
-- also bloat/crash/sign-out/privacy complaints.
-
-UX comparator only.
-
-### Phi
-
-Interesting local/open browser direction but currently macOS-only, so not the Windows operational base.
+Remain product/UX comparators. Hark is still research-preview/vendor-demo heavy; Polar has independent early reports of resource/reliability problems.
 
 ## Current replacement/freeze map
 
 Freeze:
-- new generic DOM/action catalog in WAG;
+- generic DOM/action catalog in WAG;
 - generic CDP wrappers;
-- custom browser launch/profile engine;
-- another general multi-client browser protocol;
-- ChatGPT Desktop private pipe clone while codex-browser-bridge/native path is sufficient;
-- cloud browser fleet infrastructure;
-- Guardian generic browser automation;
-- SessionCommander browser-semantic features.
+- custom browser launcher/profile engine;
+- new provider-specific ChatGPT Desktop pipe clone;
+- generic browser automation in Guardian;
+- browser-semantic features in SessionCommander.
 
 Retain:
 - WAG caller/admission/opaque ownership;
@@ -210,53 +180,67 @@ Retain:
 - audit/evidence;
 - Guardian context/continuity;
 - SessionCommander exact-owned process/runtime supervision;
-- Cleanup Sidecar as independent fallback/verifier.
+- Cleanup Sidecar independent fallback/verifier.
 
 Strengthen:
-- explicit post-action/effect verification;
-- fail-closed ownership;
-- bounded timeout/recovery;
-- exact process-tree cleanup evidence.
+- Windows native ACL evidence for secrets and local IPC;
+- process identity beyond PID liveness;
+- validated coordination state;
+- generation-bound preconditions;
+- tri-state effect reconciliation;
+- independent observer evidence where audience matters.
 
-## Pass 7 — still research only
+## Pass 8 — still research only
 
 Research next:
 
-1. Browser Controller Windows named-pipe ACL and NTFS token/enrollment permissions.
-2. LAPSrj stale/malicious sidecar handling, PID reuse, crash recovery and Windows process ownership.
-3. Chrome DevTools #2675/#2621/#2431 fix velocity/current release state.
-4. Playwright fixes after #1631/#42608 and recommended safe multi-client topology.
-5. whg517/browser-bridge #192 Windows Job Object result.
-6. Agent360 #19 full closure.
-7. codex-browser-bridge inherited ChatGPT Desktop named-pipe ACL and multi-client semantics.
-8. independent Polar/Hark long-duration failure evidence.
-9. additional projects only when they add a genuinely new authority/ownership/lifecycle primitive.
-10. convert best external effect-verification ideas into a WAG-level contract before any browser implementation grows.
+1. Compare Windows-native ACL hardening in Browser Controller, Hronaut and other local browser daemons.
+2. Find donors using explicit Windows DACL/SID/DPAPI/Credential Manager rather than POSIX mode assumptions.
+3. Audit Hronaut token storage, resume capability persistence, connection ownership and Windows ACL behavior.
+4. Audit LAPSrj sidecar trust against PID reuse/tampering and find stronger coordination-identity patterns.
+5. Re-check Chrome DevTools #2675/#2778/#2621 and releases.
+6. Re-check Agent360 1.30 and #19 closure.
+7. Inspect Playwright extension/shared-browser ownership after current fixes.
+8. Research Chromium/Edge/WebMCP native standardization that could obsolete custom bridges.
+9. Continue independent sustained-use failure/recovery evidence for Hark/Polar/Hronaut/BrowserOS only when signal is real.
+10. Keep the proposed WAG effect-verification contract as research output; do not implement yet.
 
 ## Decision markers
 
 ```text
-AI_NATIVE_BROWSER_PASS_6 = COMPLETE
+AI_NATIVE_BROWSER_PASS_7 = COMPLETE
 LOCAL_BENCHMARK_RUN = NO
 USER_REQUEST_MORE_RESEARCH = ACTIVE
 BUILD_NEW_BROWSER = NO
 
-PLAYWRIGHT_PROVIDER_NEUTRAL_PRIMARY = YES
-CHROME_DEVTOOLS_FOR_AGENTS = FIRST_PARTY_CHROME_COMPARATOR
+BROWSER_CONTROLLER_WINDOWS_ACL = UNPROVEN
+LAPSRJ_BROWSER_MCP = STRONG_WINDOWS_LIFECYCLE_DONOR
+
+CHROME_DEVTOOLS_2431_MEMORY = FIXED_1_7_0
+CHROME_DEVTOOLS_2675 = OPEN
+CHROME_DEVTOOLS_2778 = OPEN
+CHROME_DEVTOOLS_2621 = OPEN_NARROWED
+CHROME_DEVTOOLS_LIFECYCLE_BASELINE = NO
+
+PLAYWRIGHT_1631 = CLOSED
+PLAYWRIGHT_42608 = CLOSED
+PLAYWRIGHT_MULTI_CLIENT = EXPLICIT_TOPOLOGY_REQUIRED
 PLAYWRIGHT_SHARED_CONTEXT = NOT_AUTHORITY_BOUNDARY
 
-BROWSER_CONTROLLER = HIGH_SOURCE_REVIEW
-LAPSRJ_BROWSER_MCP = WINDOWS_LIFECYCLE_DONOR
-BROWSER_RS_MCP = AUTHORITY_DONOR_NO_WINDOWS
-UIUING_BROWSER_AGENT = EFFECT_VERIFICATION_DONOR
-AGENT360 = EFFECT_VERIFICATION_DONOR_ISSUE19_OPEN
-WHG517_BROWSER_BRIDGE = WINDOWS_LIFETIME_GATE_OPEN
+WHG517_192 = OPEN
+AGENT360_19 = OPEN
+WAG_EFFECT_RESULT = CONFIRMED_FAILED_UNKNOWN
+UNKNOWN_BLIND_RETRY = FORBIDDEN
+
+CODEX_BROWSER_BRIDGE = PROVIDER_ADAPTER_DONOR
+CODEX_BROWSER_PIPE_ACL = INHERITED_UNPROVEN
+
+HRONAUT = AUTHORITY_EFFECT_DONOR
+HRONAUT_REPLACEMENT = NO
 
 WAG_AUTHORITY_CORE = RETAIN
-ADR_0019_APPROVAL_BOUNDARY = RETAIN
 OWNER_AWARE_LOCAL_CLEANUP = RETAIN
 GENERIC_BROWSER_ACTION_BUILD = FREEZE
-EFFECT_VERIFICATION_REQUIREMENT = STRENGTHEN
 
-NEXT_ACTION = PASS_7_TARGETED_SOURCE_AND_FIX_VELOCITY_RESEARCH
+NEXT_ACTION = PASS_8_WINDOWS_SECURITY_AND_EFFECT_TRUTH_RESEARCH
 ```
