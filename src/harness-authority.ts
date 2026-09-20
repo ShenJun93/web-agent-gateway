@@ -48,6 +48,7 @@ import { createGatewayCallerContext } from './caller-context.js';
 import { SqliteDurableStore } from './durable-store.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { canonicalWorkspace } from './path-policy.js';
+import { startOperatorServer, type OperatorDenialCode } from './operator-server.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
 
 /** The literal a caller must pass. A boolean would be easy to set by accident. */
@@ -59,9 +60,28 @@ const MARKER_FILE = 'harness-lane.json';
 const FIXTURE_DIR = 'fixture';
 const BACKEND_KIND = 'harness-lane-fs';
 
+/**
+ * A real operator review server bound to *this lane's* store.
+ *
+ * This is what lets the CSRF, Origin, cookie and single-use-transition loops run without a human:
+ * it is the production `startOperatorServer`, with production's checks intact, in front of a
+ * coordinator that can only ever see lane records. Nothing here relaxes a check — the point is to
+ * exercise them, so a regression has somewhere to fail.
+ */
+export interface LaneOperator {
+  readonly origin: string;
+  /** Single-use, exactly as in production. The lane holds it; it is not a production credential. */
+  readonly bootstrapUrl: string;
+  /** Every refusal this server made, in order — the assertion surface for the CSRF/Origin loops. */
+  readonly denials: ReadonlyArray<{ status: number; code: OperatorDenialCode; path: string }>;
+  close(): Promise<void>;
+}
+
 export interface HarnessLane {
   readonly laneId: string;
   readonly fixtureRoot: string;
+  /** Persisted in the marker so `reopen` rebinds to it rather than creating a second workspace. */
+  readonly workspaceId: string;
   /**
    * The Run equivalent: submits a proposal to WAG, exactly as pressing Run does. It creates a
    * durable record awaiting review and causes no effect on its own.
@@ -74,7 +94,24 @@ export interface HarnessLane {
   pending(): Promise<Array<{ mutationId: string; path: string }>>;
   readFixture(path: string): Promise<string>;
   writeFixture(path: string, content: string): Promise<void>;
-  close(): void;
+  /**
+   * The lane's clock. TTL behaviour is a function of time, and a test that waited for real
+   * seconds would be slow and flaky; this makes expiry exact and instant instead.
+   */
+  now(): number;
+  advanceClock(ms: number): void;
+  /**
+   * Close the store and open it again from the same file, rebinding to the same workspace.
+   *
+   * This is the restart loop: it is the same thing a gateway restart does to durable state, minus
+   * the process. A record proposed before it must still be there, with the deadline it already
+   * had, afterwards.
+   */
+  reopen(): Promise<void>;
+  /** Start a real operator review server over this lane's store. See {@link LaneOperator}. */
+  serveOperator(): Promise<LaneOperator>;
+  /** Async because a lane may be hosting operator servers, and a live port is a leak. */
+  close(): Promise<void>;
   destroy(): Promise<void>;
 }
 
@@ -84,6 +121,12 @@ interface LaneMarker {
   storePath: string;
   fixtureRoot: string;
   createdAt: number;
+  /**
+   * Written once, when the lane's single workspace is created. `reopen` needs it because
+   * `openWorkspaceRecord` always inserts: without it, every reopen would add another workspace
+   * and orphan the records belonging to the previous one.
+   */
+  workspaceId: string;
 }
 
 function within(root: string, candidate: string): boolean {
@@ -144,6 +187,10 @@ export async function createHarnessLane(options: {
   lane: typeof HARNESS_LANE;
   root: string;
   env?: NodeJS.ProcessEnv;
+  /** The review window for this lane's records. Bounded by the coordinator, as in production. */
+  reviewTtlMs?: number;
+  /** Where the lane's clock starts. Defaults to the wall clock. */
+  startMs?: number;
 }): Promise<HarnessLane> {
   const env = options.env ?? process.env;
   if (env.WAG_HARNESS_LANE !== '1') {
@@ -214,15 +261,23 @@ export async function createHarnessLane(options: {
       storePath: resolve(join(canonicalRoot, STORE_FILE)),
       fixtureRoot: admitted,
       createdAt: Date.now(),
+      // Filled in by `build`, which is where the store is opened and the workspace created.
+      workspaceId: '',
     };
+    built = build(canonicalRoot, marker, stateDir, {
+      reviewTtlMs: options.reviewTtlMs,
+      startMs: options.startMs,
+    });
+    // Written after the build rather than before it: the workspace id does not exist until the
+    // store is open. Nothing has read this file yet — `assertLaneIntact` consults it lazily, at
+    // operation time, and the first operation cannot run before this function returns.
     await writeFile(join(canonicalRoot, MARKER_FILE), JSON.stringify(marker, null, 2), { encoding: 'utf8', mode: 0o600 });
-    built = build(canonicalRoot, marker, stateDir);
     return built;
   } catch (error) {
     // Close before removing: `build` opens the store, and anything throwing after that would
     // otherwise leave an open handle, a directory Windows refuses to delete, and a root
     // permanently blocked by EEXIST — the opposite of "leaves nothing behind".
-    try { built?.close(); } catch { /* nothing to close */ }
+    try { await built?.close(); } catch { /* nothing to close */ }
     // The canonical root when it is known: removing the path as written would follow a retargeted
     // parent link to a directory this lane never created.
     await rm(cleanupRoot, { recursive: true, force: true }).catch(() => undefined);
@@ -230,20 +285,44 @@ export async function createHarnessLane(options: {
   }
 }
 
-function build(root: string, marker: LaneMarker, stateDir: string): HarnessLane {
+function build(root: string, marker: LaneMarker, stateDir: string, config: {
+  reviewTtlMs?: number;
+  startMs?: number;
+}): HarnessLane {
   if (within(stateDir, resolve(marker.storePath))) {
     throw new Error('Harness lane refuses a store inside the production state directory');
   }
 
-  const store = new SqliteDurableStore(marker.storePath);
-  const backend = fixtureBackend(marker.fixtureRoot);
-  const coordinator = new DurableMutationCoordinator({ store, backends: [backend] });
+  // The lane's clock. Injected into the coordinator so `reviewTtlMs` and the overdue sweep are
+  // driven by it rather than by the wall clock, which is what makes the TTL loop exact.
+  let clockMs = config.startMs ?? Date.now();
+  const now = (): number => clockMs;
+
   const caller = createGatewayCallerContext({
     ownerId: `owner_${marker.laneId}`, sessionId: `session_${marker.laneId}`, adapterId: 'harness.lane.test-only',
   });
-  const workspace = store.openWorkspaceRecord({
-    ...caller, canonicalRoot: marker.fixtureRoot, backendKind: BACKEND_KIND, createdAt: Date.now(),
-  });
+
+  // Rebound by `reopen`, so every closure below must read them rather than capture a snapshot.
+  let store!: SqliteDurableStore;
+  let coordinator!: DurableMutationCoordinator;
+
+  const openStore = (): void => {
+    store = new SqliteDurableStore(marker.storePath);
+    coordinator = new DurableMutationCoordinator({
+      store,
+      backends: [fixtureBackend(marker.fixtureRoot)],
+      now,
+      ...(config.reviewTtlMs === undefined ? {} : { reviewTtlMs: config.reviewTtlMs }),
+    });
+    // Reuse the lane's one workspace when reopening. `openWorkspaceRecord` always inserts, so
+    // calling it again would strand every record proposed before the reopen.
+    const existing = marker.workspaceId ? store.getWorkspace(marker.workspaceId) : undefined;
+    if (existing) return;
+    marker.workspaceId = store.openWorkspaceRecord({
+      ...caller, canonicalRoot: marker.fixtureRoot, backendKind: BACKEND_KIND, createdAt: now(),
+    }).workspaceId;
+  };
+  openStore();
 
   /**
    * Re-read the marker and confirm it still describes this lane.
@@ -266,7 +345,7 @@ function build(root: string, marker: LaneMarker, stateDir: string): HarnessLane 
   const assertOwnRecord = (mutationId: string): void => {
     const record = store.getMutation(mutationId);
     if (!record) throw new Error('Harness lane: no such record in this lane');
-    if (record.workspaceId !== workspace.workspaceId) {
+    if (record.workspaceId !== marker.workspaceId) {
       throw new Error('Harness lane: record belongs to another workspace');
     }
     const ws = store.getWorkspace(record.workspaceId);
@@ -281,9 +360,48 @@ function build(root: string, marker: LaneMarker, stateDir: string): HarnessLane 
     return full;
   };
 
+  // Servers this lane started, closed with the lane so a test that forgets one cannot leave a
+  // listening socket behind. `destroy()` claims to leave nothing behind, and a live port is
+  // something behind.
+  const operators = new Set<LaneOperator>();
+
   return {
     laneId: marker.laneId,
     fixtureRoot: marker.fixtureRoot,
+    get workspaceId() { return marker.workspaceId; },
+    now,
+    advanceClock(ms) {
+      if (!Number.isFinite(ms) || ms < 0) throw new Error('Harness lane clock only moves forward');
+      clockMs += ms;
+    },
+    async reopen() {
+      await assertLaneIntact();
+      store.close();
+      openStore();
+    },
+    async serveOperator() {
+      await assertLaneIntact();
+      const denials: Array<{ status: number; code: OperatorDenialCode; path: string }> = [];
+      // `coordinator` is read through the closure rather than passed by value, so an operator
+      // started before a `reopen` keeps working against the store that replaced it.
+      const server = await startOperatorServer({
+        coordinator: {
+          listPendingLocal: (limit) => coordinator.listPendingLocal(limit),
+          reviewLocal: (id) => coordinator.reviewLocal(id),
+          approveLocal: (id) => coordinator.approveLocal(id),
+          rejectLocal: (id) => coordinator.rejectLocal(id),
+        },
+        onDeny: (event) => { denials.push(event); },
+      });
+      const lane: LaneOperator = {
+        origin: server.origin,
+        bootstrapUrl: server.bootstrapUrl,
+        denials,
+        async close() { operators.delete(lane); await server.close(); },
+      };
+      operators.add(lane);
+      return lane;
+    },
     async propose(input) {
       await assertLaneIntact();
       // The caller may supply the base hash, so a proposal can be made to refer to bytes other
@@ -291,7 +409,7 @@ function build(root: string, marker: LaneMarker, stateDir: string): HarnessLane 
       // drift refusal reachable here at all.
       const baseSha256 = input.baseSha256
         ?? createHash('sha256').update(await readFile(fixturePath(input.path), 'utf8'), 'utf8').digest('hex');
-      const preview = await coordinator.preview(caller, workspace.workspaceId, {
+      const preview = await coordinator.preview(caller, marker.workspaceId, {
         path: input.path, baseSha256, before: input.before, after: input.after,
       });
       if (preview.status !== 'approval_required' || !preview.mutationId) {
@@ -315,7 +433,7 @@ function build(root: string, marker: LaneMarker, stateDir: string): HarnessLane 
     async pending() {
       await assertLaneIntact();
       return coordinator.listPendingLocal(50)
-        .filter((r) => store.getMutation(r.mutationId)?.workspaceId === workspace.workspaceId)
+        .filter((r) => store.getMutation(r.mutationId)?.workspaceId === marker.workspaceId)
         .map((r) => ({ mutationId: r.mutationId, path: r.path }));
     },
     async readFixture(path) { return readFile(fixturePath(path), 'utf8'); },
@@ -323,8 +441,12 @@ function build(root: string, marker: LaneMarker, stateDir: string): HarnessLane 
       await mkdir(resolve(join(fixturePath(path), '..')), { recursive: true });
       await writeFile(fixturePath(path), content, 'utf8');
     },
-    close() { store.close(); },
+    async close() {
+      for (const operator of [...operators]) await operator.close();
+      store.close();
+    },
     async destroy() {
+      for (const operator of [...operators]) await operator.close();
       store.close();
       await rm(root, { recursive: true, force: true });
     },

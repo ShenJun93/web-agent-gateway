@@ -31,9 +31,9 @@ async function laneRoot(t: AfterHost): Promise<string> {
 }
 
 /** Creates a lane and registers its teardown *before* anything else needs removing. */
-async function openLane(t: AfterHost) {
+async function openLane(t: AfterHost, options: { reviewTtlMs?: number; startMs?: number } = {}) {
   const parent = await mkdtemp(join(tmpdir(), 'wag-lane-'));
-  const lane = await createHarnessLane({ lane: HARNESS_LANE, root: join(parent, 'lane'), env: enabled });
+  const lane = await createHarnessLane({ lane: HARNESS_LANE, root: join(parent, 'lane'), env: enabled, ...options });
   t.after(async () => {
     await lane.destroy();
     await rm(parent, { recursive: true, force: true });
@@ -317,8 +317,12 @@ test('production carries no auto-approve bypass and does not know this lane exis
   const imports = [...lane.matchAll(/^import[\s\S]*?from '([^']+)';$/gm)].map((m) => m[1]);
   assert.deepEqual(
     imports.filter((m) => m?.startsWith('./')).sort(),
-    ['./caller-context.js', './durable-mutation.js', './durable-store.js', './file-mutation-backend.js', './path-policy.js'],
-    'the lane reaches only the coordinator, the store, the caller context and the path policy',
+    // `operator-server.js` is here deliberately. The lane hosts a real review server over its own
+    // store so the CSRF, Origin and single-use loops run against production's checks rather than a
+    // stub. The direction is what matters and is asserted above: the lane may reach into
+    // production, production may never reach into the lane.
+    ['./caller-context.js', './durable-mutation.js', './durable-store.js', './file-mutation-backend.js', './operator-server.js', './path-policy.js'],
+    'the lane reaches only the coordinator, the store, the caller context, the path policy and the review server',
   );
   // A static import list is blind to a dynamic one, and this file used to contain one. Matching
   // only the awaited form would still miss `import(x).then(...)`, `void import(x)` and
