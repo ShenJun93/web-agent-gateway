@@ -17,20 +17,20 @@ Fresh-read in order:
 1. Git `main` / remote HEAD.
 2. `README.md`.
 3. ADR-0018 and ADR-0019.
-4. Browser research receipts through:
-   - `docs/research/2026-09-20-ai-native-browser-research-pass-8.md`
+4. Browser/identity research receipts through:
    - `docs/research/2026-09-20-ai-native-browser-research-pass-9.md`
-   plus Pass 1–7 and replacement-pressure receipts referenced there.
+   - `docs/research/2026-09-20-ai-native-browser-research-pass-10.md`
+   plus earlier receipts referenced there.
 5. Chat history last.
 
 This handoff is not authority when Git disagrees.
 
 ## Verified state
 
-Passes 1–9 plus the replacement-pressure audit are complete on the Pass 9 research branch. No local install or browser benchmark was run.
+Passes 1–10 plus the replacement-pressure audit are complete on the Pass 10 research branch. No local install or browser benchmark was run.
 
-Pass 9 started from canonical remote `main`:
-`5f9f3ff4ad02a6f65677cfdc789b5e94a840906f`.
+Pass 10 started from canonical remote `main`:
+`ec2ca8f0f32ff7ae8199558f409e0ffd9ea6c286`.
 
 ## Current architecture direction
 
@@ -43,32 +43,36 @@ SITE ACTIONS
   -> generic DOM/screenshot reasoning last
 
 REMOTE WEBCHAT -> WAG
-  standard MCP Streamable HTTP
-  -> MCP OAuth / protected-resource identity
-  -> replaceable reachability transport
-  -> WAG capability/policy reduction
+  MCP Streamable HTTP
+  -> standard OAuth / protected-resource identity
+  -> optional enterprise/workload/proof-of-possession extensions
+  -> replaceable transport
+  -> WAG capability/ownership reduction
 
-OPENAI PRIVATE REACHABILITY
-  OpenAI Secure MCP Tunnel
-  -> do not build WAG-specific OpenAI relay
-
-PROVIDER-NEUTRAL REACHABILITY
-  public HTTPS MCP or managed outbound tunnel
-  -> application OAuth remains separate from transport
-
-REMOTE BROWSER DEVICE IDENTITY
-  browserControl-style device-scoped credential + OAuth donor
-  -> not browser-wide URL bearer
+IDENTITY
+  OAuth/EMA for user + enterprise ingress
+  client_credentials/private_key_jwt for machine auth
+  WIF/SPIFFE for managed workloads when justified
+  DPoP for sender-constrained token hardening when supported
+  -> none of these alone is exact effect approval
 
 LOCAL APPROVAL
   outside browser DOM authority
-  -> URL-mode elicitation for external OOB flows
-  -> Windows Hello/WebAuthn worth deeper exact-proposal-binding research
+  -> UserConsentVerifier for lightweight local re-verification
+  -> Win32 WebAuthn for signed challenge binding where justified
+  -> WAG-owned local UI must display the exact immutable proposal
+
+OPENAI PRIVATE REACHABILITY
+  Secure MCP Tunnel
+  -> private network reachability, not strict-local-auth
+  -> MCP payloads/results traverse OpenAI
+  -> forwarded bearer may traverse OpenAI
+  -> tunnel ID is not WAG authority
 
 WINDOWS LOCAL SECRET/IPC
   explicit SID/DACL
-  -> DPAPI CurrentUser for at-rest hardening
-  -> app auth
+  -> DPAPI CurrentUser where persistent secret is unavoidable
+  -> application auth
   -> no hostile-same-user claim
 
 PROCESS OWNERSHIP
@@ -80,151 +84,159 @@ EFFECT TRUTH
   -> no blind replay after UNKNOWN
 
 CONSEQUENTIAL AUTHORITY
-  WAG ADR-0019 retained
+  ADR-0019 retained
 
 LOCAL LIFECYCLE
   SessionCommander/Cleanup exact-owned supervision retained
 ```
 
-## Pass 9 material changes
+## Pass 10 material changes
 
-### MCP 2026-era protocol/auth should replace custom remote WAG protocol ideas
+### Standard auth can replace more WAG custom code
 
-The current standard direction favors stateless Streamable HTTP, protected-resource metadata, issuer/resource-bound OAuth and Client ID Metadata Documents (CIMD). Dynamic Client Registration remains compatibility material but is no longer the target design.
+Do not build custom:
+- OAuth discovery;
+- client registration;
+- machine auth;
+- HTTP proof-of-possession;
+- OpenAI relay protocol.
 
-MCP client/server self-reported name/version metadata is not authority.
+Keep only a thin normalization layer from verified external identity into WAG-owned caller/owner/capability state.
 
-Use standard OAuth identity to enter WAG, then reduce authority again using WAG workspace/capability/proposal policy.
+### MCP agent identity is still incomplete
 
-### OpenAI Secure MCP Tunnel is the OpenAI-native private path
+Current MCP can authenticate users, clients and some workloads, but first-class agent-instance identity and delegation lineage remain active/future standardization areas.
 
-Current OpenAI documentation provides an outbound-only tunnel path for private/on-prem/developer-machine MCP servers.
+Self-reported `clientInfo` is explicitly not authority. MCP 2026 transport/connection identity is not conversation/session authority.
 
-Therefore:
+### EMA / Cross-App Access
 
-```text
-CUSTOM_OPENAI_RELAY = DO_NOT_BUILD
-OPENAI_PRIVATE_WAG_REACHABILITY = SECURE_MCP_TUNNEL_WHEN_AVAILABLE
-TUNNEL_ID = TRANSPORT_REFERENCE_NOT_CAPABILITY
-```
+Enterprise Managed Authorization is stable and useful for enterprise user identity/policy.
 
-Keep WAG semantics independent from tunnel internals because entitlement/product surfaces can change.
+It is not:
+- exact effect approval;
+- local physical presence;
+- agent-instance ownership;
+- single-use consequential authorization.
 
-### browserControl is the strongest remote authority donor found
+### DPoP
 
-Useful source patterns:
+Use DPoP rather than a proprietary WAG proof-of-possession scheme when bearer theft is a material threat and the auth path supports it.
 
-- proof-bound, short-lived device enrollment;
-- separate device and MCP connector credentials;
-- only credential digests in shared state;
-- Protected Resource Metadata / OAuth;
-- PKCE S256;
-- rotating refresh tokens;
-- device-bound grants/revocation;
-- outbound authenticated WSS;
-- observationId invalidation;
-- exclusive interactive lease;
-- local Pause/Disconnect wins.
+DPoP proves key possession. It does not prove human approval or exact Windows process identity.
 
-Its current broad `browser:control` authority is still wider than WAG should grant.
+### Workload identity
 
-Its current DCR client-registration path should evolve with MCP toward CIMD.
+MCP WIF is promising for cloud/Kubernetes/SPIFFE-style workloads, but SDK adoption is still evolving.
 
-### Vibe remains reachability donor, not authority donor
+SPIRE has real Windows workload attestation using user/group/path/SHA-256 selectors, but running a SPIRE control plane solely for one solo Windows desktop WAG path is disproportionate.
 
-Outbound relay gives excellent no-inbound-port UX.
+### Windows local approval
 
-But remote URL/UUID is itself browser-wide bearer authority. Public history includes a real credential-exposure incident and remote reconnect instability.
+`UserConsentVerifier` gives light native Windows Hello/PIN/biometric re-verification.
 
-Do not copy that authority model.
+Win32 WebAuthn can sign a challenge that binds WAG's proposal fingerprint.
 
-### Managed transport donors
+Important limitation:
+plain WebAuthn does not standardize trusted display of arbitrary exact-effect text. A WAG-owned local UI still has to render the immutable proposal independently from the agent-controlled browser.
 
-Cloudflare Tunnel provides mature outbound-only origin connectivity; Access/MCP OAuth can provide external identity. Keep WAG authority separate.
+### OAuth RAR/PAR
 
-Tailscale Serve is strong for private local operator/admin UI across a tailnet. Funnel makes a service public and therefore still needs application authorization.
+RFC 9396 RAR is useful prior art for structured fine-grained authorization vocabulary. PAR protects authorization requests from front-channel tampering.
 
-### Out-of-band approval
+Do not introduce a full local OAuth Authorization Server just to replace WAG `verify.preview`. RAR/PAR do not replace local approval, atomic dispatch or effect reconciliation.
 
-MCP URL-mode elicitation is accepted prior art for moving sensitive flows such as credentials/OAuth outside model context.
+### Secure MCP Tunnel boundary
 
-WAG-specific rule remains:
+Current OpenAI docs make the data path explicit:
 
-```text
-AGENT_CAN_CONTROL_APPROVAL_SURFACE => NOT_INDEPENDENT_OPERATOR_AUTHORITY
-```
+- private MCP listener stays private;
+- MCP requests/tool arguments/responses/events traverse OpenAI;
+- forwarded `Authorization` may traverse OpenAI;
+- strict-local-auth is not provided by Tunnel;
+- final-hop MCP mTLS can keep a backend private key local;
+- tunnel RBAC separates Read / Use / Manage.
 
-Do not treat an approval URL opened in the same agent-controlled browser as ADR-0019 local approval.
+Therefore Tunnel remains transport/reachability, never WAG effect authority.
 
-Windows UserConsentVerifier supplies local Windows Hello/PIN/fingerprint verification. Win32 WebAuthn is stronger prior art when approval must be bound to the exact immutable proposal fingerprint.
-
-## Retain / freeze
+## Freeze / retain
 
 Freeze:
 - custom remote WAG protocol;
-- custom client-registration/auth protocol;
-- static browser-wide remote bearer URL;
-- OpenAI-specific public relay;
-- generic browser action/catalog code;
-- provider-specific browser transport clones.
+- custom auth/client-registration;
+- custom HTTP PoP;
+- generic browser action/catalog work;
+- OpenAI-specific relay;
+- provider-specific browser clones;
+- authority from MCP clientInfo/connection/tunnel ID.
 
 Retain:
-- authenticated caller normalization;
-- opaque workspace/resource ownership;
+- thin authenticated-caller normalization;
+- workspace/resource ownership;
 - semantic capability/risk policy;
+- exact proposal ownership;
 - ADR-0019 proposal/effect split;
 - independent local approval;
 - durable effect truth/reconciliation;
 - Guardian continuity;
-- SessionCommander exact-owned local lifecycle.
+- SessionCommander exact-owned lifecycle.
 
-## Pass 10 — research only
+## Pass 11 — research only
 
 Still no local benchmark or implementation.
 
 Research next:
 
-1. current MCP agent-identity/workload-identity roadmap and active proposals;
-2. Enterprise Managed Authorization and Cross-App Access boundaries vs user OAuth;
-3. whether newer MCP authorization primitives can reduce WAG caller-context custom code;
-4. Windows WebAuthn/UserConsentVerifier exact-proposal binding and lighter OSS/native wrappers;
-5. existing local approval brokers outside browser DOM authority;
-6. OpenAI Secure MCP Tunnel threat/data-path/RBAC evidence as current documentation evolves;
-7. whether remote transport can be fully interchangeable between Secure MCP Tunnel, public HTTPS, Cloudflare-style edge and private admin transport without changing WAG semantics;
-8. device-bound/proof-of-possession options only if bearer theft remains a material unresolved gap;
-9. watch browserControl/Vibe/Playwright/Chrome DevTools only when state changes;
-10. no implementation until a concrete uncovered gap survives this research.
+1. MCP agent delegation / fine-grained authorization / tool-scope proposals and maintainer direction;
+2. stable vs draft status and interoperability of DPoP, WIF, client-credentials and fine-grained auth extensions;
+3. whether a standards-based delegation format can replace WAG parent/child capability lineage;
+4. Windows native approval-broker OSS prior art with independent UI + Hello/WebAuthn;
+5. WebAuthn enrollment/revocation/recovery for a single-user local desktop tool;
+6. Windows Hello KeyCredential / TPM-backed signing vs full WebAuthn for proposal signatures;
+7. OAuth RAR/JAR/PAR only where they eliminate real enterprise custom code;
+8. Secure MCP Tunnel security/release/issues watch;
+9. DPoP + Secure MCP Tunnel end-to-end semantics through an intermediary;
+10. no implementation until a concrete uncovered gap survives.
 
 ## Decision markers
 
 ```text
-AI_NATIVE_BROWSER_PASS_9 = COMPLETE
+AI_NATIVE_BROWSER_PASS_10 = COMPLETE
 LOCAL_BENCHMARK_RUN = NO
 USER_REQUEST_MORE_RESEARCH = ACTIVE
 
-MCP_2026_REMOTE_PROTOCOL = PREFERRED_STANDARD
-MCP_CIMD = TARGET_CLIENT_REGISTRATION
-MCP_DCR = COMPATIBILITY_DEPRECATED
-MCP_OAUTH = EXTERNAL_IDENTITY_NOT_COMPLETE_WAG_AUTHORITY
+BUILD_CUSTOM_IDENTITY_PROTOCOL = NO
+MCP_OAUTH_CORE = REUSE
+MCP_EMA_XAA = ENTERPRISE_IDENTITY_POLICY_NOT_EFFECT_APPROVAL
+MCP_MACHINE_AUTH = REUSE
+MCP_DPOP = PREFERRED_BEARER_THEFT_HARDENING_WHEN_SUPPORTED
+CUSTOM_WAG_HTTP_POP = DO_NOT_BUILD
+MCP_WIF = FUTURE_REMOTE_WORKLOAD_IDENTITY
+SPIFFE_SPIRE = ENTERPRISE_DONOR_NOT_SOLO_DESKTOP_DEFAULT
 
-OPENAI_SECURE_MCP_TUNNEL = PRIMARY_OPENAI_PRIVATE_REACHABILITY
-CUSTOM_OPENAI_RELAY = DO_NOT_BUILD
-TUNNEL_ID = NOT_CAPABILITY
+MCP_AGENT_INSTANCE_IDENTITY = STILL_EVOLVING
+MCP_DELEGATION_CHAIN = STILL_EVOLVING
+MCP_CLIENTINFO = NOT_AUTHORITY
+MCP_CONNECTION = NOT_SESSION_AUTHORITY
 
-BROWSERCONTROL = PRIMARY_REMOTE_DEVICE_OAUTH_DONOR
-VIBE = OUTBOUND_REACHABILITY_DONOR_NOT_AUTHORITY_MODEL
-CLOUDFLARE_TUNNEL_ACCESS = PROVIDER_NEUTRAL_MANAGED_DONOR
-TAILSCALE_SERVE = PRIVATE_OPERATOR_UI_DONOR
+WINDOWS_USERCONSENTVERIFIER = LIGHTWEIGHT_LOCAL_REVERIFICATION
+WINDOWS_WEBAUTHN = STRONGER_PROPOSAL_CHALLENGE_BINDING
+PLAIN_WEBAUTHN = DOES_NOT_PROVE_EXACT_HUMAN_DISPLAY
+LOCAL_WAG_OWNED_APPROVAL_UI = REQUIRED_FOR_EXACT_EFFECT_DISPLAY
 
-MCP_URL_ELICITATION = PREFERRED_OOB_EXTERNAL_FLOW
-BROWSER_DOM_APPROVAL = NOT_INDEPENDENT_AUTHORITY
-WINDOWS_USERCONSENTVERIFIER = LOCAL_VERIFICATION_DONOR
-WINDOWS_WEBAUTHN = EXACT_TRANSACTION_APPROVAL_DONOR_TO_STUDY
+OAUTH_RAR = STRUCTURED_AUTHORIZATION_VOCABULARY_DONOR
+OAUTH_RAR = NOT_ADR_0019_REPLACEMENT
 
-REMOTE_TRANSPORT = REPLACEABLE
-WAG_AUTHORITY_CORE = RETAIN
+OPENAI_SECURE_MCP_TUNNEL = REACHABILITY_NOT_LOCAL_AUTH_BOUNDARY
+OPENAI_TUNNEL_PAYLOADS = TRANSIT_OPENAI
+OPENAI_TUNNEL_FORWARDED_BEARER = MAY_TRANSIT_OPENAI
+TUNNEL_ID = NOT_WAG_CAPABILITY
+
+REMOTE_TRANSPORT = INTERCHANGEABLE_IF_AUTHORITY_STAYS_ABOVE_TRANSPORT
+WAG_CUSTOM_AUTH_CODE = REDUCE
+WAG_SEMANTIC_AUTHORITY = RETAIN
 SESSIONCOMMANDER_EXACT_OWNED_LIFECYCLE = RETAIN
 GUARDIAN_BROWSER_CONTROL_EXPANSION = NO
 
-NEXT_ACTION = PASS_10_AGENT_IDENTITY_AND_LOCAL_APPROVAL_STANDARDIZATION
+NEXT_ACTION = PASS_11_DELEGATION_AND_NATIVE_APPROVAL_BROKER_RESEARCH
 ```
