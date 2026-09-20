@@ -116,6 +116,14 @@ The committed blob is the bytes you reviewed. The one transformation WAG applies
 
 WAG binds the resulting **tree delta**, not just the paths you named, and refuses anything that is not an addition or a modification — so a directory replaced by a file cannot quietly delete the subtree it shadows. It also binds the repository itself: the worktree root, the git dir and the common dir must all still match at approval, which is what stops a repository-supplied `core.worktree`, a workspace nested inside a larger repository, and an inherited `GIT_DIR` from redirecting the commit somewhere else.
 
+### How WAG runs a verification
+
+`verify.run` executes one locally configured profile by name. The profile names an argv, a bounded environment, a timeout and an output budget; the model chooses the name and nothing else.
+
+The argv reaches the process directly rather than through a shell, and the environment is built upwards from an allowlist (ADR-0025). Nothing the operator's shell exported and nothing the execution backend added reaches the verification unless WAG names it or the profile declares it — `NODE_OPTIONS` is excluded by construction, because it can inject `--require` into every Node-based run. Cancellation and abandonment reap the whole process tree; unrelated processes are untouched.
+
+What WAG does **not** do is isolate a verification from the network. Enforcing that would mean changing machine-wide firewall or security policy, which WAG will not do. The narrower guarantee it does give is that a verification reaches the network with no credential, token or proxy setting WAG passed it: profile environment keys matching `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `PRIVATE_KEY` or `CREDENTIAL` are rejected at config load, and nothing else is inherited. The supported repository-engineering workflow does not need network-capable execution.
+
 ### How WAG runs git
 
 Every git subprocess WAG starts goes through one policy (`src/safe-git.ts`, ADR-0024). The repository is untrusted and so is the environment WAG inherited, so the policy: builds the child environment upwards from an allowlist, so no `GIT_*` and no unrelated secret is inherited; pins `core.hooksPath` at an empty directory; enumerates the repository's configured content filters and config-defined hooks and disables each one by name; overrides every configuration key whose value git would execute; passes `--literal-pathspecs`, so a filename means itself; and disables the pager, external diff and textconv.
@@ -132,7 +140,7 @@ Not available in v1: amend, merge commits, empty commits, signing, force, reset,
 
 WAG stays deliberately narrower than Desktop Commander on every profile. It exposes no shell, process control, PTY, arbitrary argv, file move or delete, directory tools, Git writes, or runtime configuration mutation, and `allowedRoots` is enforced rather than advisory.
 
-Authority: `docs/adr/0020-make-private-stdio-the-dc-replacement-surface.md`, `docs/adr/0021-complete-the-bounded-repository-inspection-set.md` and `docs/adr/0024-isolate-the-git-execution-surface.md`. Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`. Acceptance: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`.
+Authority: `docs/adr/0020-make-private-stdio-the-dc-replacement-surface.md`, `docs/adr/0021-complete-the-bounded-repository-inspection-set.md` , `docs/adr/0024-isolate-the-git-execution-surface.md` and `docs/adr/0025-run-verifications-through-an-argv-runner.md`. Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`. Acceptance: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`.
 
 ## Windows native host
 The Windows native host is currently a development/pre-release component. Installation changes one per-user Chromium Native Messaging registration and stores exact-owned files under `%LOCALAPPDATA%`.
