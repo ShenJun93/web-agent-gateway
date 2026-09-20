@@ -381,6 +381,56 @@ excluded 409 and left 401 or 403 — a distinction the surface itself cannot exp
 body uninformative to a caller is defensible; giving the local operator no signal at all is not
 the same choice, and it is currently the same code path.
 
+### 4. The operator's own security header makes every approval fail the CSRF Origin check
+
+This is the serious one. `setSecurityHeaders` sets `referrer-policy: no-referrer` on every
+response (`src/operator-server.ts:182`). Per the Fetch specification, a navigation request whose
+method is not GET or HEAD serialises its `Origin` as `null` when the referrer policy is
+`no-referrer`. The review page's Approve button is a form POST — a navigation request — so the
+browser sends `Origin: null`, and `validPost` rejects it:
+
+```js
+if (req.headers.origin !== origin) return false;   // 'null' !== 'http://127.0.0.1:52172'
+```
+
+Measured, not reasoned. An isolated server on its own port served two pages identical in every
+respect except that one header, each with a form POSTing a dummy token, submitted in the same
+Edge profile minutes apart:
+
+```text
+control  (no referrer-policy)             Origin: http://127.0.0.1:51370   referer present
+strict   (referrer-policy: no-referrer)   Origin: null                     referer absent
+```
+
+Content type, field name and field value were byte-identical in both (`csrf` present and intact,
+27-byte body). The only variable was the header, and it decides the outcome.
+
+Consequences:
+
+- **The local operator cannot approve anything through the review page.** `validPost` returns
+  false before it ever reads the form, so the CSRF value is never even compared.
+- **Reject is equally affected**, as are verify and commit decisions: all four call sites share
+  `validPost` (`:93`, `:112`, `:124`).
+- The failure is indistinguishable from any other refusal, because of defect 3.
+
+Diagnosed from a live refusal: the durable row still read `PENDING_APPROVAL` with `reviewed_at`
+unset after an Approve click from an authenticated session, which proves the coordinator was
+never reached and excludes a 409; the operator root rendered the review list, which excludes a
+401; leaving 403, which the experiment then reproduced deterministically.
+
+Not fixed here, and the fix must not be to drop the Origin check. The two candidates worth
+considering are relaxing the review pages to `same-origin` or `strict-origin-when-cross-origin`
+(which still withholds the referrer cross-origin while preserving a real Origin), or validating
+`Sec-Fetch-Site: same-origin`, which no referrer policy can alter. Choosing between them is a
+trust-boundary decision for the operator server's own design.
+
+**Unresolved:** `docs/benchmarks/2026-09-20-wag-local-operator-primary-cutover.md` records
+approvals succeeding on this same code and this same browser earlier the same day
+(`mut_b66d75d5` reached `SUCCEEDED`). Nothing found here explains that, and no attempt was made
+to reconstruct it retroactively. Either the browser's behaviour changed between those runs or the
+cutover's approval reached the server by a path not exercised here. That contradiction should be
+resolved before the cutover receipt's approval evidence is relied on again.
+
 ## Acceptance decision
 
 ```text
