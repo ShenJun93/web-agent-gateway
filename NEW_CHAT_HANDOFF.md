@@ -5,8 +5,8 @@ Read `NEW_CHAT_HANDOFF_2026-09-19_AI_NATIVE_BROWSER_COMMUNITY_SCAN.md` first.
 Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, ADR-0018, ADR-0019, and current research receipts before any decision or mutation.
 
 Current research now reaches:
-- `docs/research/2026-09-20-ai-native-browser-research-pass-11.md`
 - `docs/research/2026-09-20-ai-native-browser-research-pass-12.md`
+- `docs/research/2026-09-20-ai-native-browser-research-pass-13.md`
 plus all earlier receipts referenced by the detailed handoff.
 
 The user explicitly requested more research. **Do not run local benchmarks yet.**
@@ -29,7 +29,7 @@ Current direction:
 - keep Guardian continuity and SessionCommander exact-owned lifecycle;
 - keep generic browser mechanics frozen.
 
-Next action: **Pass 13 WIMSE evidence + Windows native-approval maturity research, still no local benchmark.**
+Next action: **Pass 14 Windows WebAuthn + isolated approval-broker research, still no local benchmark.**
 
 
 Pass 11 adds:
@@ -46,3 +46,10 @@ Pass 12 adds:
 - Biscuit stays prior-art/watch rather than trust core;
 - KeyCredential remains promising but unpackaged/native-host support needs proof;
 - DPoP over Secure MCP Tunnel remains unproven and must not be claimed.
+
+
+Pass 13 adds:
+- WIMSE delegation/evidence drafts are high-fit but still individual drafts;
+- KeyCredential is not a reliable full-trust same-user app/process boundary and is downgraded to an optional verification/signing factor;
+- independent WAG-owned exact-effect UI/authority remains necessary;
+- Win32 WebAuthn same-user isolation is now the next security question.

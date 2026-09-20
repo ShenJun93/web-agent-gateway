@@ -27,7 +27,7 @@ This handoff is not authority when Git disagrees.
 
 ## Verified state
 
-Passes 1–12 plus the replacement-pressure audit are complete through the Pass 12 research branch. No local install or browser benchmark was run.
+Passes 1–13 plus the replacement-pressure audit are complete through the Pass 13 research branch. No local install or browser benchmark was run.
 
 Pass 10 started from canonical remote `main`:
 `ec2ca8f0f32ff7ae8199558f409e0ffd9ea6c286`.
@@ -238,7 +238,7 @@ WAG_SEMANTIC_AUTHORITY = RETAIN
 SESSIONCOMMANDER_EXACT_OWNED_LIFECYCLE = RETAIN
 GUARDIAN_BROWSER_CONTROL_EXPANSION = NO
 
-NEXT_ACTION = PASS_13_WIMSE_EVIDENCE_AND_WINDOWS_NATIVE_APPROVAL_MATURITY
+NEXT_ACTION = PASS_14_WINDOWS_WEBAUTHN_AND_ISOLATED_APPROVAL_BROKER_RESEARCH
 ```
 
 
@@ -299,3 +299,31 @@ Research:
 8. Secure MCP Tunnel DPoP/sender-constrained-token watch;
 9. MCP fine-grained authorization evolution;
 10. no implementation until an architecture reduction is justified.
+
+
+## Pass 13 material additions
+
+- WIMSE agent delegation chain and authorization-evidence drafts map closely to WAG grant -> proposal -> effect truth, but remain individual Internet-Drafts; do not implement their wire formats yet.
+- OAuth Transaction Tokens are useful actor/principal propagation prior art, not complete delegated authority or local approval.
+- Windows Hello KeyCredential is downgraded: for full-trust/unpackaged same-user processes it must not be treated as process/application isolation. It may remain a user-verification/signing factor only.
+- Exact-effect approval therefore still requires WAG-owned immutable proposal, independent local display, single-use authority transition and durable effect validation.
+- Win32 WebAuthn must now be tested conceptually against the same same-user caller problem rather than assumed safer.
+
+Detailed receipt:
+- `docs/research/2026-09-20-ai-native-browser-research-pass-13.md`
+
+## Pass 14 — research only
+
+Still no local benchmark or implementation.
+
+Research:
+1. Win32 WebAuthn RP/application/same-user isolation semantics;
+2. whether another same-user native process can request an assertion for the same RP/credential;
+3. WebAuthn native caller/origin model;
+4. Win32 App Isolation/AppContainer as a minimal approval-broker boundary;
+5. IPC from isolated broker to full-trust WAG;
+6. existing Windows broker patterns that avoid a custom privileged service;
+7. WIMSE delegation/evidence adoption watch;
+8. Permit/Closure mapping to WAG ledger;
+9. OAuth Transaction Token maturity;
+10. no implementation until local approval trust boundary is resolved.
