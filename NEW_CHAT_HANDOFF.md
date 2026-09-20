@@ -5,8 +5,8 @@ Read `NEW_CHAT_HANDOFF_2026-09-19_AI_NATIVE_BROWSER_COMMUNITY_SCAN.md` first.
 Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, ADR-0018, ADR-0019, and current research receipts before any decision or mutation.
 
 Current research now reaches:
-- `docs/research/2026-09-20-ai-native-browser-research-pass-13.md`
 - `docs/research/2026-09-20-ai-native-browser-research-pass-14.md`
+- `docs/research/2026-09-20-ai-native-browser-research-pass-15.md`
 plus all earlier receipts referenced by the detailed handoff.
 
 The user explicitly requested more research. **Do not run local benchmarks yet.**
@@ -29,7 +29,7 @@ Current direction:
 - keep Guardian continuity and SessionCommander exact-owned lifecycle;
 - keep generic browser mechanics frozen.
 
-Next action: **Pass 15 short-lived approval broker + process-hardening research, still no local benchmark.**
+Next action: **Pass 16 loopback-operator security + browser-localhost evolution research, still no local benchmark.**
 
 
 Pass 11 adds:
@@ -61,3 +61,10 @@ Pass 14 adds:
 - current ADR-0019 threat model does not require hostile-same-user containment;
 - short-lived native child broker + inherited anonymous handles is now the primary minimal approval research direction;
 - AppContainer/service broker stays a future stronger-isolation gate.
+
+
+Pass 15 corrects Pass 14:
+- existing hardened WAG loopback operator server remains the default approval transport;
+- native child broker is fallback only if a measured loopback gap appears;
+- UIInspect.MCP is strong Windows approval prior art, not a reason to copy a persistent broker;
+- standard Windows Job Object/handle-list primitives are enough if a future broker is justified.
