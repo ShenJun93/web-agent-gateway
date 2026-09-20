@@ -330,6 +330,57 @@ A second proposal (`mutation.preview` against `ticket-id.js`) is queued and veri
 Run. Restart/reconnect evidence and live duplicate-proposal evidence were not reached. None of it
 is inferred.
 
+## What the live run found that the tests did not
+
+Three defects, all in accepted production code rather than in the harness, all found by driving
+the real product and all reproduced from live evidence. None is fixed here: they are in shipped,
+accepted behaviour, and changing that needs its own decision.
+
+### 1. The side panel never refreshes its pending list
+
+`browser/extension/sidepanel.js` calls `refresh()` only on document load and after
+`panel.execute` / `panel.dismiss`. Its one live listener is for `panel.result`, and
+`service-worker.js` pushes `panel.result` on completion but sends nothing when a proposal is
+queued. The side panel document survives the panel being hidden and shown —
+`chrome.runtime.getContexts()` showed the same `SIDE_PANEL` context alive throughout — so
+reopening the panel does not re-run `refresh()`.
+
+Measured: `chrome.storage.session` held `queueLength: 1` for `mutation.preview` while the panel
+displayed an empty pending list across two opens. The result of the *previous* proposal was
+displayed correctly, because results are pushed. Recovery is to close the panel so its document
+is destroyed, then reopen.
+
+This cost about forty minutes and produced a convincing false signal that the proposal had been
+lost somewhere between the content script and the worker. It had not: the accepted attach path
+(`executeScript` + `provider.rescan`) was exercised and proved idempotent — queue stayed at 1,
+seen stayed at 2, correlation unchanged.
+
+It is the mirror image of the cutover's defect 3. There the queue was discarded and the panel was
+honestly empty; here the queue survives and the panel is wrong.
+
+### 2. The review page offers an Approve button the server will always refuse
+
+`listPendingMutations` selects `WHERE state = 'PENDING_APPROVAL'` with no deadline predicate
+(`src/durable-store.ts:459`), while `approveMutation` enforces `AND review_deadline > ?`
+(`:466`). A proposal past its review deadline therefore still renders with an Approve button, and
+pressing it can only ever produce a refusal.
+
+The safety property is intact — the deadline is enforced where it matters — but the operator is
+invited to take an action that cannot succeed, at exactly the moment they are trying to beat a
+five-minute clock.
+
+### 3. A failed approval cannot be diagnosed from the operator surface
+
+`deny()` writes the body `Denied` for 401, 403 and 409 alike (`src/operator-server.ts:188`), and
+the operator server logs no requests. An operator who is refused learns nothing about whether
+their session lapsed, their CSRF or Origin failed, or the record had expired.
+
+Diagnosing this run's refusal required inferring it from durable state: because the row still read
+`PENDING_APPROVAL` with `reviewed_at` unset, the coordinator could not have been reached, which
+excluded 409 and left 401 or 403 — a distinction the surface itself cannot express. Keeping the
+body uninformative to a caller is defensible; giving the local operator no signal at all is not
+the same choice, and it is currently the same code path.
+
 ## Acceptance decision
 
 ```text
