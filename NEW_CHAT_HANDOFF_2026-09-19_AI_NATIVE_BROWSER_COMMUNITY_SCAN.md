@@ -27,7 +27,7 @@ This handoff is not authority when Git disagrees.
 
 ## Verified state
 
-Passes 1–11 plus the replacement-pressure audit are complete through the Pass 11 research branch. No local install or browser benchmark was run.
+Passes 1–12 plus the replacement-pressure audit are complete through the Pass 12 research branch. No local install or browser benchmark was run.
 
 Pass 10 started from canonical remote `main`:
 `ec2ca8f0f32ff7ae8199558f409e0ffd9ea6c286`.
@@ -238,7 +238,7 @@ WAG_SEMANTIC_AUTHORITY = RETAIN
 SESSIONCOMMANDER_EXACT_OWNED_LIFECYCLE = RETAIN
 GUARDIAN_BROWSER_CONTROL_EXPANSION = NO
 
-NEXT_ACTION = PASS_12_STANDARDS_MATURITY_AND_NATIVE_APPROVAL_PATH_RESEARCH
+NEXT_ACTION = PASS_13_WIMSE_EVIDENCE_AND_WINDOWS_NATIVE_APPROVAL_MATURITY
 ```
 
 
@@ -270,3 +270,32 @@ Research:
 8. local approval UI isolation/broker patterns;
 9. Hello reset/account/device recovery threat model;
 10. no implementation until evidence converges.
+
+
+## Pass 12 material additions
+
+- MCP core OAuth dynamic scope/step-up and Enterprise Managed Authorization are reusable now; RAR/tool-scope/delegation work remains evolving.
+- WIMSE is now the primary future standards watch for workload/agent identity, attenuated delegation and authorization evidence.
+- Biscuit remains useful prior art but not a WAG trust-core dependency; project still seeks broader cryptographic audit and had a historical v1 critical signature-forgery vulnerability fixed in v2.
+- Windows KeyCredential remains a promising lighter Windows-only exact-challenge signing path; unpackaged/native-host viability needs more evidence.
+- KeyCredential attestation should be optional rather than default local complexity.
+- DPoP over Secure MCP Tunnel remains unproven because of RFC 9449 target-URI binding versus tunnel URL rewriting.
+
+Detailed receipt:
+- `docs/research/2026-09-20-ai-native-browser-research-pass-12.md`
+
+## Pass 13 — research only
+
+Still no local benchmark or implementation.
+
+Research:
+1. WIMSE agent-delegation/evidence draft maturity/adoption;
+2. authorization-evidence record schema vs WAG proposal/approval/effect records;
+3. transaction/execution-context-token adjacent standards;
+4. KeyCredential unpackaged Win32/native-host viability;
+5. CNG/NCrypt alternatives only if KeyCredential path is blocked;
+6. security/community evidence for desktop Hello signing;
+7. OAuth/IETF DPoP proxy canonical-URI guidance;
+8. Secure MCP Tunnel DPoP/sender-constrained-token watch;
+9. MCP fine-grained authorization evolution;
+10. no implementation until an architecture reduction is justified.
