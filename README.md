@@ -142,6 +142,27 @@ WAG stays deliberately narrower than Desktop Commander on every profile. It expo
 
 Authority: `docs/adr/0020-make-private-stdio-the-dc-replacement-surface.md`, `docs/adr/0021-complete-the-bounded-repository-inspection-set.md` , `docs/adr/0024-isolate-the-git-execution-surface.md` and `docs/adr/0025-run-verifications-through-an-argv-runner.md`. Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`. Acceptance: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`.
 
+## Browser operator profile (proposal only)
+
+The accepted read-only browser profile is Browser Inspect v2, and Browser Verify Approval v1 added a verification *proposal* under `browser.chatgpt.native.verify.v3`. Both remain exactly as accepted.
+
+A successor adapter, `browser.chatgpt.native.operator.v4` on protocol 4, extends that same proposal class to the three reviewed changes (ADR-0026). Its surface is the accepted seven tools plus five proposal and result operations:
+
+```text
+health  workspace.open  repo.search  repo.snapshot  file.read
+verify.preview  verify.result
+mutation.preview  file.create  mutation.result
+git.commit  git.commit.result
+```
+
+Every consequential tool there is a **proposal**. `git.commit` proposes; it does not commit. The coordinators behind them are the same ones the private stdio surface uses, so there is one review contract rather than a browser-shaped copy of it, and the local operator remains the only authority that can turn a proposal into a change.
+
+The browser is never given the operator origin, its bootstrap token, its session cookie or its CSRF token — the discovery file the native host reads carries only the admission URL and its one-time admission bootstrap. A request id is correlation evidence, not a credential: another browser session that knows one cannot read the record, reuse the workspace, or propose against it.
+
+v1, v2 and v3 sessions never acquire v4 authority. The adapter id and protocol revision are distinct precisely so that cannot happen by talking a newer dialect.
+
+Two bounds apply to every proposal, because they bound different things. Each caller may hold **8 live proposals** awaiting review, which is what keeps the operator's list legible; and each caller may make **30 proposal attempts per minute**, charged before any backend work, which is what a record count cannot bound — a proposal that fails while being computed leaves no record but still ran the planner. On v4 the session correlation must be a server-minted `session_<uuid>`; rebinding the same one is the service-worker reconnect path, but a correlation a caller chose is not accepted.
+
 ## Windows native host
 The Windows native host is currently a development/pre-release component. Installation changes one per-user Chromium Native Messaging registration and stores exact-owned files under `%LOCALAPPDATA%`.
 

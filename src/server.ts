@@ -472,3 +472,84 @@ export function createGatewayMcpServer(
 function toolResult(value: object) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> };
 }
+
+/**
+ * The browser operator surface (ADR-0026): the accepted v3 read and verify tools, plus proposals
+ * for the three reviewed changes and their bounded results.
+ *
+ * Every consequential tool here is a *proposal*. `mutation.preview`, `file.create` and
+ * `git.commit` persist a caller-owned record and cause no effect; the local operator is still
+ * the only authority that can turn one into a change. The coordinators are the same ones the
+ * private stdio surface uses, so there is one review contract rather than a browser-shaped copy.
+ */
+export interface BrowserOperatorAdmittedMcpContext extends BrowserVerifyAdmittedMcpContext {
+  mutation: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
+  commit: Pick<DurableCommitCoordinator, 'preview' | 'result'>;
+}
+
+export function createBrowserOperatorAdmittedMcpServer(
+  gateway: Pick<GatewayApi, 'health'>,
+  context: BrowserOperatorAdmittedMcpContext,
+): McpServer {
+  const server = createBrowserVerifyAdmittedMcpServer(gateway, context);
+
+  server.registerTool('mutation.preview', {
+    description: 'Propose one bounded reviewed edit for separate local operator review; nothing is written until approved.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      path: z.string().min(1).max(4096),
+      base_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      before: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      after: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ workspace_id, path, base_sha256, before, after }) => toolResult(
+    await context.mutation.preview(context.callerContext, workspace_id, {
+      path, baseSha256: base_sha256, before, after,
+    }),
+  ));
+
+  server.registerTool('file.create', {
+    description: 'Propose creating one new file for separate local operator review; an existing path is refused.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      path: z.string().min(1).max(4096),
+      content: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ workspace_id, path, content }) => toolResult(
+    await context.mutation.preview(context.callerContext, workspace_id, {
+      path, baseSha256: EMPTY_FILE_SHA256, before: '', after: content,
+    }),
+  ));
+
+  server.registerTool('mutation.result', {
+    description: 'Read the durable state and bounded result of one caller-owned reviewed edit.',
+    inputSchema: z.object({
+      mutation_id: z.string().min(1).max(256).regex(/^mut_[A-Za-z0-9-]+$/),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ mutation_id }) => toolResult(context.mutation.result(context.callerContext, mutation_id)));
+
+  server.registerTool('git.commit', {
+    description: 'Propose one commit of an exact path set for separate local operator review; nothing is committed until approved.',
+    inputSchema: z.object({
+      workspace_id: z.string().min(1).max(256),
+      paths: z.array(z.string().min(1).max(1024)).min(1).max(64),
+      message: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 8 * 1024),
+    }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ workspace_id, paths, message }) => toolResult(
+    await context.commit.preview(context.callerContext, workspace_id, { paths, message }),
+  ));
+
+  server.registerTool('git.commit.result', {
+    description: 'Read the durable state and bounded result of one caller-owned proposed commit.',
+    inputSchema: z.object({
+      commit_id: z.string().min(1).max(256).regex(/^cmt_[A-Za-z0-9-]+$/),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ commit_id }) => toolResult(context.commit.result(context.callerContext, commit_id)));
+
+  return server;
+}

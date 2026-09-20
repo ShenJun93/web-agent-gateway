@@ -4,7 +4,13 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { BrowserAdmissionRegistry, BROWSER_ADAPTER_V1_ID, BROWSER_INSPECT_ADAPTER_ID } from '../src/adapter-admission.js';
+import {
+  BrowserAdmissionRegistry,
+  BROWSER_ADAPTER_V1_ID,
+  BROWSER_INSPECT_ADAPTER_ID,
+  BROWSER_OPERATOR_ADAPTER_ID,
+  OPERATOR_CORRELATION_PATTERN,
+} from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import { AdmittedWorkspaceService } from '../src/admitted-workspace.js';
 
@@ -139,4 +145,39 @@ test('v2 adapter admission persists inspect identity and denies v1 workspaces', 
     workspaces.read(aV2.callerContext, wsV1.workspaceId, 'foo.txt'),
     /Gateway denied workspace/
   );
+});
+
+test('the operator adapter requires a minted correlation while the frozen adapters keep theirs', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wag-admission-shape-'));
+  const store = new SqliteDurableStore(join(dir, 'state.sqlite'));
+  const operator = new BrowserAdmissionRegistry(
+    BROWSER_OPERATOR_ADAPTER_ID, store, () => 1_000, OPERATOR_CORRELATION_PATTERN,
+  );
+  const frozen = new BrowserAdmissionRegistry(BROWSER_ADAPTER_V1_ID, store, () => 1_000);
+  t.after(async () => {
+    operator.close(); frozen.close(); store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // The correlation is the session key, so on the adapter that can propose changes a caller
+  // must not be able to choose or guess one and join someone else's session.
+  const minted = 'session_11111111-1111-4111-8111-111111111111';
+  assert.equal(operator.admit(minted).callerContext.adapterId, BROWSER_OPERATOR_ADAPTER_ID);
+  assert.equal(
+    operator.admit(minted).callerContext.sessionId,
+    operator.admit(minted).callerContext.sessionId,
+    'the same minted correlation still reconnects, which is what a worker restart needs',
+  );
+  for (const rejected of [
+    'session_corr_A', 'session_1', 'session_', 'sess_11111111-1111-4111-8111-111111111111',
+    'session_11111111111141118111111111111111', 'session_zzzzzzzz-1111-4111-8111-111111111111',
+    `${minted}x`,
+  ]) {
+    assert.throws(() => operator.admit(rejected), /correlation shape rejected/, `${rejected} must be refused`);
+  }
+  // A padded correlation is refused too, by the character validator that already ran.
+  assert.throws(() => operator.admit(` ${minted}`));
+
+  // v1/v2/v3 are accepted contracts. Constraining them here would change them.
+  assert.equal(frozen.admit('session_corr_A').callerContext.adapterId, BROWSER_ADAPTER_V1_ID);
 });
