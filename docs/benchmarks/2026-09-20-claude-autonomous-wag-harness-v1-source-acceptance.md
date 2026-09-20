@@ -297,10 +297,38 @@ durable baseline          10 workspaces, captured read-only before the gate
 operator chose a brand-new worker rather than authorizing adoption, which is what the canonical
 browser policy requires of a new worker.
 
-**Not obtained**: the Run gate was never performed. Two polls totalling 40 minutes saw no
-transition in the durable store. Therefore this receipt does **not** carry Run-gate evidence,
-operator-approval evidence, restart/reconnect evidence, duplicate-proposal evidence from a live
-rescan, or any end-to-end effect. None of it is inferred.
+### The Run gate was performed, once, and the chain held
+
+At 17:04:22 the operator pressed Run on the `workspace.open` proposal. Measured from the durable
+store, read-only, against the baseline captured before the gesture:
+
+```text
+adapter_sessions  7 -> 8    session_043946ee-9ccd-4f40-b1b3-97b4c8983a23
+                            adapter browser.chatgpt.native.operator.v4
+                            correlation is a server-minted UUID  (ADR-0026 V4_CORRELATION)
+workspaces       10 -> 11   ws_e17a4e57-4eca-4fe5-ba28-90444d5a0b71
+                            owned by exactly that session
+native host       absent -> wag-native-host.exe pid 31948, spawned 17:04:22
+```
+
+The whole chain ran: signed-in page → content script → service worker → **human Run** → Chromium
+native messaging → the registered native host → WAG admission → a durable record owned by the
+caller tuple. Nothing before the gesture produced a record, and the gesture is what produced one.
+
+**Claude then continued without being told.** The transition was detected from the store by a
+poller, not reported by the operator; the new `workspace_id` was read out of the store and used to
+compose the next proposal; and that proposal was verified on the page as byte-identical to the
+intended payload — both sides SHA-256 `25da4d9c98e384be…`, 377 characters, exactly one code block.
+
+That is worth separating from the cutover's `RESULTS_DO_NOT_RETURN_TO_THE_PAGE` limitation. The
+limitation is real for the model *inside the page*, which still needs ids carried to it. It is not
+a limitation for an agent that can read WAG's durable state: that relay is no longer manual.
+
+**Still not obtained**: the operator approval was never performed, so there is no approved
+mutation, no effect on disk, and no byte-fidelity measurement of reviewed-versus-written content.
+A second proposal (`mutation.preview` against `ticket-id.js`) is queued and verified but was not
+Run. Restart/reconnect evidence and live duplicate-proposal evidence were not reached. None of it
+is inferred.
 
 ## Acceptance decision
 
@@ -314,7 +342,11 @@ HOOK_FAILS_OPEN_ON_A_BENIGN_80KB_COMMAND = YES
 WAG_AUTHORITY_WIDENED                   = NONE
 DESKTOP_COMMANDER_IN_THE_LOOP           = NONE
 COMPUTER_USE_EXERCISED                  = NO
-LIVE_RUN_GATE_EVIDENCE                  = NOT OBTAINED
+LIVE_RUN_GATE_EVIDENCE                  = OBTAINED (one gesture, full chain, measured)
+CLAUDE_RESUMED_WITHOUT_STEERING         = YES (transition detected from durable state)
+LIVE_OPERATOR_APPROVAL_EVIDENCE         = NOT OBTAINED
+LIVE_EFFECT_ON_DISK                     = NONE
+RESTART_RECONNECT_EVIDENCE              = NOT OBTAINED
 AUTONOMOUS_WORKFLOW_END_TO_END          = NOT ACCEPTED
 ```
 
