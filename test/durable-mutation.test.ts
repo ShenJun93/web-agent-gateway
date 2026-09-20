@@ -159,3 +159,41 @@ class FsTestBackend implements FileMutationBackend {
     await writeFile(target, candidate);
   }
 }
+
+/**
+ * The review window, from the live dogfood on 2026-09-20.
+ *
+ * The browser operator profile puts a window switch between the two human gestures — click Run
+ * in the side panel, then open the operator review page — and a one-minute window expired in
+ * exactly that gap. The default is unchanged; the ceiling now matches what the commit path has
+ * always allowed for a strictly more consequential operation.
+ */
+test('the review window is configurable up to five minutes and no further', async (t) => {
+  const { root, store, workspace } = await setup(t);
+  const original = 'alpha\n';
+  await writeFile(join(root, 'note.txt'), original);
+
+  const backend = new FsTestBackend();
+  const at = { value: 10_000 };
+  const propose = async (reviewTtlMs?: number) => {
+    const coordinator = new DurableMutationCoordinator({
+      store, backends: [backend], now: () => at.value,
+      ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
+    });
+    return coordinator.preview(caller, workspace.workspaceId, {
+      path: 'note.txt', baseSha256: sha256(original), before: 'alpha', after: 'ALPHA',
+    });
+  };
+
+  // Unchanged default.
+  assert.equal((await propose()).expiresAt - at.value, 60_000);
+  // The ceiling the commit path already allows.
+  assert.equal((await propose(5 * 60_000)).expiresAt - at.value, 5 * 60_000);
+  // And nothing beyond it, in either direction.
+  assert.throws(() => new DurableMutationCoordinator({
+    store, backends: [backend], reviewTtlMs: 5 * 60_000 + 1,
+  }), /Invalid mutation TTL/);
+  assert.throws(() => new DurableMutationCoordinator({
+    store, backends: [backend], reviewTtlMs: 0,
+  }), /Invalid mutation TTL/);
+});

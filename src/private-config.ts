@@ -19,6 +19,12 @@ const repositoryEngineeringSchema = z.object({
   mutation: z.object({
     statePath: z.string().min(1),
     ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).default(DEFAULT_PRIVATE_STDIO_OWNER_ID),
+    /**
+     * How long a proposal stays approvable. The default is one minute; the browser operator
+     * profile needs longer because the operator switches windows between the two human
+     * gestures. Five minutes is the ceiling the commit path already allows.
+     */
+    reviewTtlMs: z.number().int().min(1_000).max(5 * 60_000).optional(),
   }).strict().optional(),
 }).strict();
 
@@ -39,6 +45,7 @@ export type PrivateVerifyProfile = z.infer<typeof verifyProfileSchema>;
 export interface PrivateRepositoryEngineeringMutation {
   statePath: string;
   ownerId: string;
+  reviewTtlMs?: number;
 }
 export interface PrivateRepositoryEngineeringGitCommit {
   protectedBranches?: string[];
@@ -100,7 +107,13 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
               : { protectedBranches: parsed.repositoryEngineering.gitCommit.protectedBranches }),
           },
         }),
-        ...(mutation === undefined ? {} : { mutation: { statePath: mutation.statePath, ownerId: mutation.ownerId } }),
+        ...(mutation === undefined ? {} : {
+          mutation: {
+            statePath: mutation.statePath,
+            ownerId: mutation.ownerId,
+            ...(mutation.reviewTtlMs === undefined ? {} : { reviewTtlMs: mutation.reviewTtlMs }),
+          },
+        }),
       },
     }),
   };

@@ -98,6 +98,41 @@ correlation stays allowed — it is the reconnect path, not a weakness.
 This constrains v4 only. v1, v2 and v3 keep their permissive correlation shape, because
 narrowing it would alter an accepted contract.
 
+### A proposal has an identity, and it is not the observation
+
+The page is re-observed constantly: a DOM rescan, a page reload, an MV3 suspension, an extension
+reload and the side panel reopening all re-read the same assistant message. Each observation
+mints a fresh request id, so request id cannot be what makes a proposal unique.
+
+A proposal is identified by the WAG session, the tab, the provider's own message id, the tool
+and the exact arguments. Two observations agreeing on all five are one proposal; two different
+messages carrying byte-identical payloads are two. A turn with no provider-assigned message id
+has no stable identity, and an unstable identity is worse than none, so it is refused.
+
+The identity and the queue live in `chrome.storage.session`, not in worker memory: MV3 discards
+an idle worker after about thirty seconds, and a human is what moves a proposal. That storage is
+not durable authority — it is memory-backed, per browser session, and revalidated on the way
+back in. The durable record still only exists once WAG has admitted the call.
+
+### Attachment is automated; approval is not
+
+An extension reload orphans the content script in tabs that are already open. Re-injecting it,
+and rescanning when the side panel opens, is attachment, not authority: a rescan can only
+re-offer proposals, and the identity above makes it idempotent. The consequential gesture — Run
+in the side panel — stays human, and so does the operator approval behind it.
+
+### The review window is a usability bound, not the safety property
+
+Approval re-reads the file and refuses on any drift from the reviewed bytes; a commit
+revalidates branch, HEAD, tree and identity and moves the ref by compare-and-swap. The review
+TTL only bounds how stale a human's understanding may be.
+
+One minute was chosen for a surface where the operator is already at the review page. The
+browser profile adds a window switch between two human gestures, and a one-minute window
+expired in exactly that gap. The ceiling is therefore five minutes — what the commit path has
+always allowed for a strictly more consequential operation — and the value is configurable. The
+default is unchanged.
+
 ### The side panel is identified, not asserted
 
 Only the side panel may move a queued proposal toward the native host. A content script reaches
@@ -180,8 +215,14 @@ PROPOSAL_OBJECT_WRITES = NONE
 PROPOSAL_LIVE_LIMIT_PER_CALLER = 8
 PROPOSAL_ATTEMPT_WINDOW = 30_PER_60S_CHARGED_BEFORE_BACKEND_WORK
 V4_CORRELATION = SERVER_MINTED_UUID_REQUIRED
+ONE_TAB = ONE_WAG_SESSION
+PROPOSAL_IDENTITY = SESSION_TAB_MESSAGE_TOOL_ARGUMENTS
+PROPOSAL_RESCAN = IDEMPOTENT
 REPOSITORY_IDENTITY_TO_BROWSER = NEVER
 SIDE_PANEL_ACTOR = DERIVED_FROM_SENDER
+ATTACHMENT_AND_RESCAN = AUTOMATED
+RUN_AND_APPROVAL = HUMAN
+REVIEW_WINDOW = CONFIGURABLE_UP_TO_5_MIN_DEFAULT_60S
 ```
 
 ## Decision markers

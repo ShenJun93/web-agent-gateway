@@ -161,6 +161,28 @@ The browser is never given the operator origin, its bootstrap token, its session
 
 v1, v2 and v3 sessions never acquire v4 authority. The adapter id and protocol revision are distinct precisely so that cannot happen by talking a newer dialect.
 
+### Running it
+
+```bash
+web-agent-gateway serve-browser-operator --config <absolute-path>
+```
+
+The profile is asked for in the config — `repositoryEngineering.mutation` and `.gitCommit`, as on the stdio surface — not implied by the command. The command binds the loopback admission server and the operator review server, and never speaks stdio.
+
+It publishes `%LOCALAPPDATA%\WebAgentGateway\browser-adapter-v4.json`, which is exactly the path the native host reads by default, so neither side is configured with the other's. That file carries the admission URL and its one-time bootstrap and nothing else. The operator review **origin** is announced on stderr; its single-use bootstrap is not — that goes to `<statePath>.operator-url`, mode 0600, removed on shutdown.
+
+The browser side needs the extension loaded and the native host registered per user. On Windows the registration is one HKCU `NativeMessagingHosts` value under the key for the Chromium-family browser in use. Note, measured on 2026-09-20: **Google Chrome refuses to side-load an unpacked extension at all** — `--load-extension` and `--disable-extensions-except` are ignored in Google-Chrome-branded builds since Chrome 137, and the `--enable-unsafe-extension-debugging` escape hatch was deleted in Chrome 149. Microsoft Edge 153 still accepts `--load-extension`; Chromium and Chrome for Testing builds always have. For an automated harness, the documented successor is the CDP `Extensions.loadUnpacked` command on the browser-level target.
+
+### What the human does, and what the extension does for them
+
+Attachment is automatic. An extension reload orphans the content script in tabs that are already open, so the worker re-injects it into allowed tabs on install and startup, and opening the side panel re-attaches and rescans before it answers — you never have to reload the conversation by hand.
+
+A rescan is idempotent. A proposal is identified by the WAG session, the tab, the provider's own message id, the tool and the exact arguments, so the same assistant message stays one proposal across a DOM rescan, a page reload, a service-worker suspension, an extension reload and a side-panel reopen. Two different messages proposing byte-identical payloads are still two proposals. A turn with no provider message id is refused rather than given an unstable identity.
+
+Two gestures stay human: **Run** in the side panel, and **Approve** on the local operator review server. Neither is automated, and they are deliberately on different channels. The native host connects lazily when a proposal is run; there is no manual reconnect step.
+
+The review window defaults to one minute and can be raised to five (`repositoryEngineering.mutation.reviewTtlMs`). The browser profile usually wants the longer value, because the operator switches windows between those two gestures. The window is not what makes approval safe — approval re-reads the file and refuses on any drift, and a commit revalidates branch, HEAD, tree and identity and moves the ref by compare-and-swap.
+
 Two bounds apply to every proposal, because they bound different things. Each caller may hold **8 live proposals** awaiting review, which is what keeps the operator's list legible; and each caller may make **30 proposal attempts per minute**, charged before any backend work, which is what a record count cannot bound — a proposal that fails while being computed leaves no record but still ran the planner. On v4 the session correlation must be a server-minted `session_<uuid>`; rebinding the same one is the service-worker reconnect path, but a correlation a caller chose is not accepted.
 
 ## Windows native host

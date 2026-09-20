@@ -394,8 +394,24 @@ function toPreview(record: MutationRecord): MutationPreview {
   };
 }
 
+/**
+ * The review window, bounded.
+ *
+ * The default stays one minute: on the stdio surface the operator is already at the review
+ * page. The ceiling is five minutes, which is what the commit path has always allowed for a
+ * strictly more consequential operation, because the browser operator profile adds a window
+ * switch between the two human gestures — the live dogfood produced an EXPIRED record in
+ * exactly that gap, which makes the intended workflow impractical rather than safe.
+ *
+ * The TTL is not what makes approval safe. Approval re-reads the file and refuses on any drift
+ * from the reviewed bytes; the window only bounds how stale a human's understanding may be.
+ */
+const MAX_MUTATION_TTL_MS = 5 * 60_000;
+
 function boundedTtl(value: number): number {
-  if (!Number.isFinite(value) || value <= 0 || value > 60_000) throw new Error('Invalid mutation TTL');
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_MUTATION_TTL_MS) {
+    throw new Error('Invalid mutation TTL');
+  }
   return value;
 }
 

@@ -3,8 +3,12 @@ const pendingEl = document.querySelector('#pending');
 const resultEl = document.querySelector('#result');
 
 async function refresh() {
+  // `panel.state` re-attaches the bridge to open conversations and rescans before answering,
+  // so opening the panel is enough — the user never has to reload the page by hand.
   const state = await chrome.runtime.sendMessage({ type: 'panel.state' });
-  statusEl.textContent = state.nativeConnected ? 'Native host connected' : 'Native host disconnected';
+  statusEl.textContent = state.nativeConnected
+    ? 'Native host connected'
+    : 'Native host idle; it connects when you run a proposal';
   pendingEl.replaceChildren();
   for (const item of state.pending ?? []) pendingEl.append(renderPending(item));
 }

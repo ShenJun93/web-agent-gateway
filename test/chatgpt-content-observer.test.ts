@@ -31,6 +31,10 @@ async function runObserver(document: object) {
     queueMicrotask: (callback: () => void) => callback(),
     chrome: {
       runtime: {
+        // The content script also answers a rescan from the side panel, so the stub needs the
+        // listener surface as well as the sender.
+        id: 'wag-test-extension',
+        onMessage: { addListener() {} },
         sendMessage(message: unknown) {
           messages.push(message);
           return { catch() {} };
@@ -65,6 +69,9 @@ test('chatgpt content observer forwards current assistant turn wrappers with ren
     type: 'provider.observed_text',
     text: json,
     codeBlocks: [{ language: 'wag-tool', text: json }],
+    // These fixtures carry no data-message-id or data-turn-id, so the turn has no
+    // provider identity; the service worker refuses a proposal without one.
+    messageId: '',
     conversationHint: '/uc/test',
   }]);
 });
@@ -92,6 +99,9 @@ test('chatgpt content observer aggregates all rendered containers in one assista
     type: 'provider.observed_text',
     text: `Reasoning summary\n${json}`,
     codeBlocks: [{ language: 'wag-tool', text: json }],
+    // These fixtures carry no data-message-id or data-turn-id, so the turn has no
+    // provider identity; the service worker refuses a proposal without one.
+    messageId: '',
     conversationHint: '/uc/test',
   }]);
 });
@@ -226,10 +236,14 @@ test('chatgpt content observer waits for live completion and observes completion
     document, MutationObserver, TextEncoder,
     location: { pathname: '/uc/live' },
     queueMicrotask: (value: () => void) => value(),
-    chrome: { runtime: { sendMessage(message: unknown) {
-      messages.push(message);
-      return { catch() {} };
-    } } },
+    chrome: { runtime: {
+      id: 'wag-test-extension',
+      onMessage: { addListener() {} },
+      sendMessage(message: unknown) {
+        messages.push(message);
+        return { catch() {} };
+      },
+    } },
   });
   runInContext(source, context);
   assert.equal(messages.length, 0);
@@ -290,4 +304,28 @@ test('chatgpt content observer rejects explicit false completion without compati
   };
   const messages = await runObserver(document);
   assert.equal(messages.length, 0);
+});
+
+/**
+ * The second half of the duplicate-proposal finding (live dogfood, 2026-09-20).
+ *
+ * `assistantMessageNodes` returns turn nodes or message nodes depending on which the page has
+ * rendered yet, and both describe the same assistant message. Reading whichever attribute the
+ * matched node happened to carry produced two identities for one message, so the panel showed
+ * two proposals for it.
+ */
+test('one assistant message has one identity, whichever node kind the scan matched', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../browser/extension/content/chatgpt.js', import.meta.url), 'utf8');
+
+  // The innermost, most specific attribute wins, and it is looked for inside the matched node.
+  const messageFirst = source.indexOf("matches?.('[data-message-id]')");
+  const turnFallback = source.indexOf("getAttribute?.('data-turn-id')");
+  assert.ok(messageFirst > 0, 'the message id is checked');
+  assert.ok(turnFallback > messageFirst, 'the turn id is only the fallback');
+  assert.ok(source.includes("querySelector?.('[data-message-id]')"),
+    'a turn node must be searched for the message id it contains');
+
+  // Both ids are bounded, because they come from the page.
+  assert.equal((source.match(/slice\(0, 128\)/g) ?? []).length, 2);
 });

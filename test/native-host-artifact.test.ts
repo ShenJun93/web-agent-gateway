@@ -6,13 +6,17 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { BROWSER_VERIFY_ADAPTER_ID, BrowserAdmissionRegistry } from '../src/adapter-admission.js';
+import {
+  BROWSER_OPERATOR_ADAPTER_ID,
+  BrowserAdmissionRegistry,
+  OPERATOR_CORRELATION_PATTERN,
+} from '../src/adapter-admission.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
-import { createBrowserVerifyAdmittedMcpServer, createGateway } from '../src/server.js';
+import { createBrowserOperatorAdmittedMcpServer, createGateway } from '../src/server.js';
 import { encodeNativeMessage, NativeMessageDecoder } from '../src/browser-adapter/native-framing.js';
-import { BROWSER_VERIFY_PROTOCOL_VERSION } from '../src/browser-adapter/protocol-v3.js';
+import { BROWSER_OPERATOR_PROTOCOL_VERSION } from '../src/browser-adapter/protocol-v4.js';
 
 const root = process.cwd();
 const extensionOrigin = 'chrome-extension://nnhhhppkpogkedpjnijeagcbfjaoogec/';
@@ -62,6 +66,11 @@ test('artifact harness selects a supplied prebuilt directory without rebuilding'
   assert.equal(resolved.builtLocally, false);
 });
 
+/**
+ * The shipped SEA binary is the operator host now, so this exercises it against an operator
+ * runtime. What it proves is unchanged: the real built executable, spawned as a real process,
+ * really speaks the framed protocol to a real local WAG and leaks neither credential.
+ */
 test('Windows SEA native host speaks framed protocol against local WAG', async (t) => {
   if (process.platform !== 'win32') return t.skip('Windows v1 artifact');
   const temp = await mkdtemp(join(tmpdir(), 'wag-native-host-artifact-'));
@@ -76,7 +85,9 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
   const gateway = createGateway({ executor, allowedRoots: [root] });
   const store = new SqliteDurableStore(':memory:');
-  const admission = new BrowserAdmissionRegistry(BROWSER_VERIFY_ADAPTER_ID, store);
+  const admission = new BrowserAdmissionRegistry(
+    BROWSER_OPERATOR_ADAPTER_ID, store, Date.now, OPERATOR_CORRELATION_PATTERN,
+  );
   const workspaces = {
     open: async () => ({ workspaceId: 'ws_unused' }),
     read: async () => ({ content: 'unused' }),
@@ -87,11 +98,16 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
     preview: () => ({ status: 'approval_required' as const, request_id: 'verifyreq_unused', profile: 'unit', fingerprint: '0'.repeat(64), expires_at: 1 }),
     result: () => ({ request_id: 'verifyreq_unused', profile: 'unit', state: 'REJECTED' as const, expires_at: 1 }),
   };
+  const unreachable = () => { throw new Error('this artifact test never reaches a coordinator'); };
+  const mutation = { preview: unreachable, result: unreachable };
+  const commit = { preview: unreachable, result: unreachable };
   const http = await startBrowserAdmissionHttpServer({
     gateway,
     browserAdmission: {
       bootstrapToken, admission,
-      browserMcp: (caller) => createBrowserVerifyAdmittedMcpServer(gateway, { callerContext: caller, workspaces, verify }),
+      browserMcp: (caller) => createBrowserOperatorAdmittedMcpServer(
+        gateway, { callerContext: caller, workspaces, verify, mutation, commit } as never,
+      ),
     },
   });
   t.after(async () => { await http.close(); admission.close(); store.close(); });
@@ -101,8 +117,8 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   await writeFile(discoveryPath, JSON.stringify({
     admissionUrl: http.admissionUrl,
     bootstrapToken,
-    protocolVersion: BROWSER_VERIFY_PROTOCOL_VERSION,
-    adapterId: BROWSER_VERIFY_ADAPTER_ID,
+    protocolVersion: BROWSER_OPERATOR_PROTOCOL_VERSION,
+    adapterId: BROWSER_OPERATOR_ADAPTER_ID,
   }), 'utf8');
   const child = spawn(executable, [extensionOrigin, '--discovery', discoveryPath], {
     cwd: outputDir,
@@ -113,11 +129,12 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
   child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
 
-  const sessionId = 'session_artifact_01';
+  // The operator adapter requires a server-minted correlation, not a chosen label.
+  const sessionId = 'session_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   for (const message of [
-    { version: BROWSER_VERIFY_PROTOCOL_VERSION, type: 'hello', requestId: 'req_artifact_hello' },
-    { version: BROWSER_VERIFY_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_artifact_bind', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
-    { version: BROWSER_VERIFY_PROTOCOL_VERSION, type: 'tools.list', requestId: 'req_artifact_tools', sessionId },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'hello', requestId: 'req_artifact_hello' },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_artifact_bind', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'tools.list', requestId: 'req_artifact_tools', sessionId },
   ]) child.stdin.write(encodeNativeMessage(message));
   child.stdin.end();
   const code = await new Promise<number | null>((resolve, reject) => {
@@ -129,7 +146,10 @@ test('Windows SEA native host speaks framed protocol against local WAG', async (
   const responses = new NativeMessageDecoder().push(Buffer.concat(stdout)) as Array<{ requestId?: string; result?: { tools?: string[] } }>;
   assert.deepEqual(responses.map((response) => response.requestId), ['req_artifact_hello', 'req_artifact_bind', 'req_artifact_tools']);
   assert.deepEqual(responses[2]?.result?.tools, [
-    'health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read', 'verify.preview', 'verify.result',
+    'health', 'workspace.open', 'repo.search', 'repo.snapshot', 'file.read',
+    'verify.preview', 'verify.result',
+    'mutation.preview', 'file.create', 'mutation.result',
+    'git.commit', 'git.commit.result',
   ]);
   const rendered = JSON.stringify(responses);
   assert.equal(rendered.includes(bootstrapToken), false);

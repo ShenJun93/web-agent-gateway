@@ -19,14 +19,30 @@ test('v3 ChatGPT parser accepts proposal/result only and rejects direct conseque
   assert.equal(parseChatGptVerifyToolCall(block('{"tool":"verify.preview","arguments":{"workspace_id":"ws_1","profile":"unit","argv":["cmd"]}}')), undefined);
 });
 
-test('production service-worker entry is pinned to protocol v3 and verify-specific modules', async () => {
+/**
+ * Which generation the product ships is pinned by `test/browser-extension-v4.test.ts`, because
+ * that is now v4. What belongs here is the other half of the same guarantee: the v3 modules are
+ * frozen, so the successor must not have been built by editing them.
+ */
+test('the v3 modules are still verify-only and still speak protocol 3', async () => {
   const { readFile } = await import('node:fs/promises');
-  const source = await readFile(new URL('../browser/extension/service-worker.js', import.meta.url), 'utf8');
-  assert.match(source, /service-worker-core-v3\.js/);
-  assert.match(source, /chatgpt-call-parser-v3\.js/);
-  assert.match(source, /native-session-core-v3\.js/);
-  assert.match(source, /version:\s*3/);
-  assert.doesNotMatch(source, /version:\s*2/);
+  const read = (name: string) => readFile(new URL(`../browser/extension/${name}`, import.meta.url), 'utf8');
+
+  const core = await read('service-worker-core-v3.js');
+  assert.match(core, /request\.version === 3/);
+  assert.doesNotMatch(core, /version === 4/);
+  for (const proposal of ['mutation.preview', 'file.create', 'mutation.result', 'git.commit']) {
+    assert.equal(core.includes(proposal), false, `v3 must not have gained ${proposal}`);
+  }
+
+  const parser = await read('chatgpt-call-parser-v3.js');
+  for (const proposal of ['mutation.preview', 'file.create', 'git.commit']) {
+    assert.equal(parser.includes(proposal), false, `the v3 parser must not have gained ${proposal}`);
+  }
+
+  const session = await read('native-session-core-v3.js');
+  assert.match(session, /verify\.v3/);
+  assert.equal(session.includes('operator.v4'), false, 'the v3 session must not accept the v4 adapter');
 });
 
 test('v3 extension core accepts only trusted-origin protocol-3 seven-tool requests', () => {

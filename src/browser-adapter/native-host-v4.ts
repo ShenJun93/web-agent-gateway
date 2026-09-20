@@ -5,8 +5,11 @@
  * framing and session rules are the accepted ones; what differs is the identity it announces,
  * the exact extension origin it accepts, and a bounded replay guard.
  *
- * A malformed or oversized frame is still connection-fatal by design: the decoder cannot be
- * assumed to be in a known position afterwards, so the host closes rather than guessing.
+ * Two different failures, deliberately handled differently. A frame the *decoder* rejects is
+ * connection-fatal, because the stream position cannot be assumed afterwards. A frame that
+ * decoded cleanly and only failed the *schema* is answered with an error and the session
+ * continues: the stream is in a known position, and killing an admitted session over one bad
+ * page-derived frame loses the operator's live workspace for no security gain.
  */
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
@@ -16,6 +19,7 @@ import {
   parseBrowserOperatorRequest,
   parseBrowserOperatorResponse,
   BROWSER_OPERATOR_PROTOCOL_VERSION,
+  REQUEST_ID_PATTERN,
   type BrowserOperatorAdapterRequest,
   type BrowserOperatorAdapterResponse,
 } from './protocol-v4.js';
@@ -42,6 +46,20 @@ function isAcceptedOrigin(value: string): boolean {
 
 /** One session cannot replay ids forever; the guard is bounded rather than unbounded. */
 const MAX_TRACKED_REQUEST_IDS = 4096;
+/** Malformed frames carrying no usable request id cannot be answered, so they are only tolerated. */
+const MAX_UNANSWERABLE_FRAMES = 64;
+
+/**
+ * The request id of a frame the schema refused, when there is one worth answering.
+ *
+ * Only a well-formed id is salvaged: the point is to correlate a refusal back to a caller, and
+ * echoing an arbitrary value would make the error frame itself a place to smuggle content.
+ */
+function salvageRequestId(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const candidate = (value as { requestId?: unknown }).requestId;
+  return typeof candidate === 'string' && REQUEST_ID_PATTERN.test(candidate) ? candidate : undefined;
+}
 
 export interface NativeOperatorHostInvocation {
   expectedOrigin: string;
@@ -85,6 +103,7 @@ export async function runNativeOperatorHost(options: {
   const seen = new Set<string>();
   let boundSession: string | undefined;
   let link: LocalOperatorAdapterLink | undefined;
+  let unanswerable = 0;
 
   try {
     if (!isAcceptedOrigin(expectedOrigin)) throw new Error('Invalid native host caller origin');
@@ -92,7 +111,27 @@ export async function runNativeOperatorHost(options: {
       const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
       const messages = decoder.push(chunk);
       for (const value of messages) {
-        const request = parseBrowserOperatorRequest(value);
+        // Everything arriving here is page-derived and therefore malformed sooner or later. A
+        // frame the schema refuses used to throw out of this loop, which ended the process and
+        // took the admitted session with it: one bad frame silently killed a live workspace and
+        // the extension saw only "native host has exited". A refusal is a refusal, not a death.
+        let request: BrowserOperatorAdapterRequest;
+        try {
+          request = parseBrowserOperatorRequest(value);
+        } catch {
+          const salvaged = salvageRequestId(value);
+          if (salvaged === undefined) {
+            // Nobody to answer. Tolerate a few, then stop: an unanswerable flood is the one
+            // case where staying alive is worse than closing.
+            unanswerable += 1;
+            if (unanswerable > MAX_UNANSWERABLE_FRAMES) throw new Error('Too many malformed native frames');
+            continue;
+          }
+          output.write(encodeNativeMessage(
+            hostError(salvaged, 'MALFORMED_REQUEST', 'Request rejected by the protocol schema'),
+          ));
+          continue;
+        }
         const response = await handleRequest(request);
         output.write(encodeNativeMessage(parseBrowserOperatorResponse(response)));
       }

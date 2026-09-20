@@ -123,7 +123,16 @@ export function parseChatGptOperatorObservation(value) {
   if (!Array.isArray(value.codeBlocks) || value.codeBlocks.length !== 1) return undefined;
   const block = value.codeBlocks[0];
   if (!plainObject(block) || !exactKeys(block, ['language', 'text'])) return undefined;
-  if (block.language !== 'wag-tool' || typeof block.text !== 'string') return undefined;
+  // Measured on chatgpt.com, 2026-09-20: the current renderer puts code blocks in a CodeMirror
+  // viewer and drops the fence info string from the DOM entirely, so a `wag-tool` fence arrives
+  // with no language at all. An untagged block is therefore accepted; any *other* language is
+  // still refused, so a ```json block is never a proposal.
+  //
+  // The tag was only ever a selector. Authority does not rest on it: the payload must still be
+  // exactly one compact JSON object with exactly the keys {tool, arguments} and a tool from the
+  // twelve-name set, and the result is a proposal that a human approves twice.
+  if (block.language !== 'wag-tool' && block.language !== '') return undefined;
+  if (typeof block.text !== 'string') return undefined;
   if (block.text.includes('~~~') || block.text.includes('```')) return undefined;
   return parseChatGptOperatorToolCall('```wag-tool\n' + block.text.trim() + '\n```');
 }

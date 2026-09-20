@@ -28,7 +28,9 @@ export type BrowserOperatorToolName =
   | 'git.commit'
   | 'git.commit.result';
 
-const requestId = z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
+/** Exported so the native host can answer a refused frame without re-deriving the shape. */
+export const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const requestId = z.string().min(8).max(128).regex(REQUEST_ID_PATTERN);
 const sessionId = z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 const workspaceId = z.string().min(1).max(256);
 const pathValue = z.string().min(1).max(4096);

@@ -103,3 +103,53 @@ test('CLI preserves stable private runtime error codes without leaking causes', 
   assert.match(h.stderr.text(), /"code":"DEVSPACE_AUTH_FAILED"/);
   assert.equal(h.stderr.text().includes('sensitive upstream body'), false);
 });
+
+test('serve-browser-operator announces the review channel on stderr and never on stdout', async () => {
+  const h = makeCliHarness();
+  let started: Parameters<NonNullable<CliDependencies['startBrowserOperator']>>[0] | undefined;
+  let closed = 0;
+  const localAppData = String.raw`C:\Users\wag\AppData\Local`;
+  h.deps.env.LOCALAPPDATA = localAppData;
+  h.deps.startBrowserOperator = async (options) => {
+    started = options;
+    return {
+      admissionUrl: 'http://127.0.0.1:41111/admit',
+      operatorOrigin: 'http://127.0.0.1:41112',
+      operatorBootstrapUrl: 'http://127.0.0.1:41112/bootstrap?token=secret-bootstrap',
+      operatorUrlFile: `${options.statePath}.operator-url`,
+      close: async () => { closed += 1; },
+    };
+  };
+
+  const running = main(['serve-browser-operator', '--config', resolve('private.json')], h.deps);
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+
+  // The host reads this exact discovery path by default, so neither side configures the other.
+  assert.equal(started?.discoveryPath, String.raw`${localAppData}\WebAgentGateway\browser-adapter-v4.json`);
+  assert.equal(started?.statePath, String.raw`${localAppData}\WebAgentGateway\browser-operator-v4.sqlite`);
+
+  const lines = h.stderr.text().trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.deepEqual(lines.map((line) => line.type), ['gateway.ready', 'gateway.operator']);
+  assert.equal(lines[0]!.mode, 'browser-operator');
+  assert.equal(lines[0]!.adapterId, 'browser.chatgpt.native.operator.v4');
+  // stdout is untouched: this mode has no MCP framing of its own, and the review channel is a
+  // local secret that must not be piped anywhere.
+  assert.equal(h.stdout.text(), '');
+  assert.equal(h.stderr.text().includes('secret-bootstrap'), false, 'the bootstrap token stays local');
+
+  h.requestShutdown();
+  assert.equal(await running, 0);
+  assert.equal(closed, 1);
+  assert.equal(h.stdioClosed(), 0, 'no stdio server is started in this mode');
+});
+
+test('serve-browser-operator refuses to start without a usable LOCALAPPDATA', async () => {
+  const h = makeCliHarness();
+  delete h.deps.env.LOCALAPPDATA;
+  let started = 0;
+  h.deps.startBrowserOperator = async () => { started += 1; throw new Error('must not be reached'); };
+
+  assert.equal(await main(['serve-browser-operator', '--config', resolve('private.json')], h.deps), 1);
+  assert.equal(started, 0);
+  assert.equal(JSON.parse(h.stderr.text()).code, 'CLI_USAGE');
+});

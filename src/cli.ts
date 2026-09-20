@@ -1,6 +1,11 @@
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
+import { BROWSER_OPERATOR_ADAPTER_ID } from './adapter-admission.js';
+import {
+  startBrowserOperatorRuntime,
+  type BrowserOperatorRuntime,
+} from './browser-operator-runtime.js';
 import { loadPrivateGatewayConfig } from './private-config.js';
 import {
   bootstrapPrivateGateway,
@@ -29,8 +34,10 @@ export interface CliDependencies {
   telemetry: TelemetrySink;
   /** Defaults to the real assembly; injected only by tests. */
   startRepositoryEngineering?: typeof startRepositoryEngineeringRuntime;
+  /** Defaults to the real assembly; injected only by tests. */
+  startBrowserOperator?: typeof startBrowserOperatorRuntime;
 }
-type CliCommand = 'doctor' | 'serve-stdio';
+type CliCommand = 'doctor' | 'serve-stdio' | 'serve-browser-operator';
 interface ParsedCli { command: CliCommand; configPath: string; }
 
 class CliUsageError extends Error {}
@@ -51,6 +58,13 @@ export async function main(
   } catch (error) {
     emitError(deps.stderr, 'CLI_USAGE', error);
     return 1;
+  }
+
+  // The browser operator is its own assembly: it binds a loopback admission server and the
+  // operator review server, and it never speaks stdio. It therefore does not pass through the
+  // stdio bootstrap below, and the shipped stdio profile cannot reach it.
+  if (parsed.command === 'serve-browser-operator') {
+    return serveBrowserOperator(deps, parsed.configPath);
   }
 
   let config;
@@ -150,6 +164,66 @@ async function closeQuietly(engineering: RepositoryEngineeringRuntime): Promise<
 }
 
 /**
+ * Serve the proposal-only browser operator adapter (ADR-0026).
+ *
+ * The discovery file is the one the native host reads by default, so the two agree on a path
+ * without either being configured with the other's. It carries the admission URL and its
+ * one-time bootstrap and nothing else; the operator review origin is announced here, on this
+ * process's own stderr, which the browser cannot see.
+ */
+async function serveBrowserOperator(deps: CliDependencies, configPath: string): Promise<number> {
+  const localAppData = deps.env.LOCALAPPDATA;
+  if (!localAppData || !isAbsolute(localAppData)) {
+    emitError(deps.stderr, 'CLI_USAGE', new Error('LOCALAPPDATA is required'));
+    return 1;
+  }
+  const home = join(localAppData, 'WebAgentGateway');
+
+  let runtime: BrowserOperatorRuntime;
+  try {
+    runtime = await (deps.startBrowserOperator ?? startBrowserOperatorRuntime)({
+      configPath,
+      discoveryPath: join(home, 'browser-adapter-v4.json'),
+      statePath: join(home, 'browser-operator-v4.sqlite'),
+      env: deps.env,
+    });
+  } catch (error) {
+    emitError(deps.stderr, 'BROWSER_OPERATOR_START_FAILED', error);
+    return 1;
+  }
+
+  deps.stderr.write(`${JSON.stringify({
+    type: 'gateway.ready',
+    mode: 'browser-operator',
+    adapterId: BROWSER_OPERATOR_ADAPTER_ID,
+    admissionUrl: runtime.admissionUrl,
+  })}\n`);
+  // The origin is announced; the single-use bootstrap is not. Whoever launched this process may
+  // log or forward its stderr, so the token lives in a 0600 file the local operator opens.
+  deps.stderr.write(`${JSON.stringify({
+    type: 'gateway.operator',
+    origin: runtime.operatorOrigin,
+    urlFile: runtime.operatorUrlFile,
+  })}\n`);
+
+  let exitCode = 0;
+  try {
+    await deps.waitForShutdown();
+  } catch (error) {
+    emitError(deps.stderr, 'CLI_INTERNAL', error);
+    exitCode = 1;
+  } finally {
+    try {
+      await runtime.close();
+    } catch (error) {
+      emitError(deps.stderr, 'CLI_INTERNAL', error);
+      exitCode = 1;
+    }
+  }
+  return exitCode;
+}
+
+/**
  * Local-only capability and operator-review diagnostics. Nothing is emitted for the shipped
  * default profile.
  *
@@ -173,7 +247,9 @@ function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime
 
 function parseCli(argv: string[]): ParsedCli {
   if (argv.length !== 3 || argv[1] !== '--config') throw new CliUsageError('Invalid CLI arguments');
-  if (argv[0] !== 'doctor' && argv[0] !== 'serve-stdio') throw new CliUsageError('Unknown command');
+  if (argv[0] !== 'doctor' && argv[0] !== 'serve-stdio' && argv[0] !== 'serve-browser-operator') {
+    throw new CliUsageError('Unknown command');
+  }
   if (!isAbsolute(argv[2])) throw new CliUsageError('Config path must be absolute');
   return { command: argv[0], configPath: argv[2] };
 }
@@ -195,6 +271,7 @@ function usageText(): string {
     'Usage:',
     '  web-agent-gateway doctor --config <absolute-path>',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
+    '  web-agent-gateway serve-browser-operator --config <absolute-path>',
     '',
   ].join('\n');
 }

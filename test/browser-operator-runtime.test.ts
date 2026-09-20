@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import { McpLocalOperatorAdapterLink, parseOperatorAdapterDiscovery } from '../src/browser-adapter/local-link-v4.js';
-import { startBrowserOperatorRuntime } from '../scripts/browser-operator-runtime.js';
+import { startBrowserOperatorRuntime } from '../src/browser-operator-runtime.js';
 import { BROWSER_OPERATOR_ADAPTER_ID } from '../src/adapter-admission.js';
 import { BROWSER_OPERATOR_PROTOCOL_VERSION } from '../src/browser-adapter/protocol-v4.js';
 import { DEVSPACE_TEST_OWNER_TOKEN, startPinnedDevspace } from './devspace-fixture.js';
@@ -75,11 +75,17 @@ async function fixture(t: test.TestContext) {
   await git(root, ['commit', '-m', 'base']);
 
   const configPath = join(temp, 'private.json');
-  await writeFile(configPath, JSON.stringify({
+  // The operator profile is asked for in the config, not implied by the entry point.
+  const config = {
     allowedRoots: [root],
     devspace: { baseUrl: devspace.baseUrl, resourceUrl: `${devspace.baseUrl}/mcp` },
     verifyProfiles: {},
-  }), 'utf8');
+    repositoryEngineering: {
+      mutation: { statePath: join(temp, 'engineering.sqlite') },
+      gitCommit: {},
+    },
+  };
+  await writeFile(configPath, JSON.stringify(config), 'utf8');
 
   const discoveryPath = join(temp, 'browser-adapter.json');
   const runtime = await startBrowserOperatorRuntime({
@@ -214,4 +220,40 @@ test('discovery carries no operator credential and no approval channel', async (
   for (const fragment of ['/bootstrap', 'csrf', 'wag_operator_session', DEVSPACE_TEST_OWNER_TOKEN]) {
     assert.equal(raw.includes(fragment), false, `discovery must not contain ${fragment}`);
   }
+});
+
+test('the operator profile is refused unless the config asks for it', async (t) => {
+  const devspace = await startPinnedDevspace();
+  const temp = await mkdtemp(join(tmpdir(), 'wag-operator-gate-'));
+  t.after(async () => { await devspace.stop(); await rm(temp, { recursive: true, force: true }); });
+
+  const base = {
+    allowedRoots: [devspace.workspaceRoot],
+    devspace: { baseUrl: devspace.baseUrl, resourceUrl: `${devspace.baseUrl}/mcp` },
+    verifyProfiles: {},
+  };
+  const discoveryPath = join(temp, 'browser-adapter.json');
+  const start = async (repositoryEngineering: unknown) => {
+    const configPath = join(temp, `private-${Math.random().toString(36).slice(2)}.json`);
+    await writeFile(configPath, JSON.stringify(
+      repositoryEngineering === undefined ? base : { ...base, repositoryEngineering },
+    ), 'utf8');
+    return startBrowserOperatorRuntime({
+      configPath,
+      discoveryPath,
+      statePath: join(temp, 'state.sqlite'),
+      env: { ...process.env, DEVSPACE_OAUTH_OWNER_TOKEN: DEVSPACE_TEST_OWNER_TOKEN },
+    });
+  };
+
+  await assert.rejects(start(undefined), /requires repositoryEngineering\.mutation/);
+  await assert.rejects(start({ inspect: true }), /requires repositoryEngineering\.mutation/);
+  // gitCommit needs mutation on this surface too; half the pair is a mistake, not a capability.
+  await assert.rejects(
+    start({ mutation: { statePath: join(temp, 'engineering.sqlite') } }),
+    /requires repositoryEngineering\.gitCommit/,
+  );
+
+  // Nothing was published for any refused start.
+  await assert.rejects(readFile(discoveryPath, 'utf8'));
 });

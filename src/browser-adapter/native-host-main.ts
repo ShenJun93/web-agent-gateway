@@ -1,18 +1,25 @@
-import { McpLocalVerifyAdapterLink } from './local-link-v3.js';
+import { McpLocalOperatorAdapterLink } from './local-link-v4.js';
 import {
-  loadVerifyAdapterDiscovery,
-  parseNativeVerifyHostInvocation,
-  runNativeVerifyHost,
-} from './native-host-v3.js';
+  loadOperatorAdapterDiscovery,
+  parseNativeOperatorHostInvocation,
+  runNativeOperatorHost,
+} from './native-host-v4.js';
 
+/**
+ * The shipped native host, now the operator adapter (ADR-0026).
+ *
+ * The host is a relay, not an authority: it validates the framing, pins the exact extension
+ * origin, and hands each request to a link that can only reach the admitted proposal surface.
+ * Its discovery file is versioned, so a v4 runtime cannot overwrite a v3 runtime's.
+ */
 async function main(): Promise<void> {
-  const invocation = parseNativeVerifyHostInvocation(process.argv, process.env);
-  const discovery = await loadVerifyAdapterDiscovery(invocation.discoveryPath);
-  await runNativeVerifyHost({
+  const invocation = parseNativeOperatorHostInvocation(process.argv, process.env);
+  const discovery = await loadOperatorAdapterDiscovery(invocation.discoveryPath);
+  await runNativeOperatorHost({
     input: process.stdin,
     output: process.stdout,
     expectedOrigin: invocation.expectedOrigin,
-    linkFactory: (correlationId) => McpLocalVerifyAdapterLink.admit(discovery, correlationId),
+    linkFactory: (correlationId) => McpLocalOperatorAdapterLink.admit(discovery, correlationId),
   });
 }
 

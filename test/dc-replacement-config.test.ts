@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -150,4 +150,49 @@ test('existing private config behavior is unchanged by the repository engineerin
   assert.deepEqual(loaded.browserVerifyProfiles, ['unit']);
   assert.deepEqual(loaded.verifyProfiles.unit.argv, ['npm', 'test']);
   assert.equal(loaded.devspace.resourceUrl, 'http://127.0.0.1:7676/mcp');
+});
+
+/**
+ * The loader projects the parsed config field by field, so a field the schema accepts can still
+ * be dropped on the way out. That is exactly what happened in the live dogfood on 2026-09-20:
+ * `reviewTtlMs` validated, never reached the coordinator, and the review window stayed at sixty
+ * seconds while the config said five minutes. A silently ignored setting is worse than a
+ * rejected one, so this asserts the whole projection rather than one field.
+ */
+test('every accepted repositoryEngineering field survives the loader', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wag-config-projection-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const root = await realpath(dir);
+  const configPath = join(dir, 'private.json');
+
+  const repositoryEngineering = {
+    inspect: true,
+    mutation: {
+      statePath: join(root, 'state.sqlite'),
+      ownerId: 'local.custom.owner',
+      reviewTtlMs: 300_000,
+    },
+    gitCommit: { protectedBranches: ['main', 'release'] },
+  };
+  await writeFile(configPath, JSON.stringify({
+    allowedRoots: [root],
+    devspace: { baseUrl: 'http://127.0.0.1:7676', resourceUrl: 'http://127.0.0.1:7676/mcp' },
+    verifyProfiles: {},
+    repositoryEngineering,
+  }), 'utf8');
+
+  const loaded = await loadPrivateGatewayConfig(configPath);
+  assert.deepEqual(loaded.repositoryEngineering, repositoryEngineering);
+
+  // And the bound is enforced rather than silently clamped.
+  await writeFile(configPath, JSON.stringify({
+    allowedRoots: [root],
+    devspace: { baseUrl: 'http://127.0.0.1:7676', resourceUrl: 'http://127.0.0.1:7676/mcp' },
+    verifyProfiles: {},
+    repositoryEngineering: {
+      ...repositoryEngineering,
+      mutation: { ...repositoryEngineering.mutation, reviewTtlMs: 300_001 },
+    },
+  }), 'utf8');
+  await assert.rejects(loadPrivateGatewayConfig(configPath));
 });

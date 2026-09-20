@@ -1,34 +1,35 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
-import { AdmittedWorkspaceService } from '../src/admitted-workspace.js';
+import { AdmittedWorkspaceService } from './admitted-workspace.js';
 import {
   BrowserAdmissionRegistry,
   BROWSER_OPERATOR_ADAPTER_ID,
   OPERATOR_CORRELATION_PATTERN,
-} from '../src/adapter-admission.js';
-import { BrowserVerifyRequestCoordinator } from '../src/browser-verify-request.js';
-import { SqliteDurableStore } from '../src/durable-store.js';
-import { DurableMutationCoordinator } from '../src/durable-mutation.js';
-import { DurableVerifyJobCoordinator } from '../src/durable-verify-job.js';
-import { DurableCommitCoordinator } from '../src/git-commit.js';
-import { DevspaceFileMutationBackend } from '../src/executor/devspace-file-mutation.js';
-import { DevspaceGitCommitBackend } from '../src/executor/devspace-git-commit.js';
-import { DevspaceVerifyExecutionPort } from '../src/executor/devspace-verify.js';
-import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
-import { startOperatorServer } from '../src/operator-server.js';
-import { loadPrivateGatewayConfig } from '../src/private-config.js';
-import { bootstrapPrivateGateway } from '../src/private-runtime.js';
-import { createBrowserOperatorAdmittedMcpServer } from '../src/server.js';
-import { DevspaceRepositoryInspectionBackend } from '../src/repository-inspection.js';
-import { BROWSER_OPERATOR_PROTOCOL_VERSION } from '../src/browser-adapter/protocol-v4.js';
+} from './adapter-admission.js';
+import { BrowserVerifyRequestCoordinator } from './browser-verify-request.js';
+import { SqliteDurableStore } from './durable-store.js';
+import { DurableMutationCoordinator } from './durable-mutation.js';
+import { DurableVerifyJobCoordinator } from './durable-verify-job.js';
+import { DurableCommitCoordinator } from './git-commit.js';
+import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
+import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
+import { DevspaceVerifyExecutionPort } from './executor/devspace-verify.js';
+import { startBrowserAdmissionHttpServer } from './http-server.js';
+import { startOperatorServer } from './operator-server.js';
+import { loadPrivateGatewayConfig } from './private-config.js';
+import { bootstrapPrivateGateway } from './private-runtime.js';
+import { createBrowserOperatorAdmittedMcpServer } from './server.js';
+import { DevspaceRepositoryInspectionBackend } from './repository-inspection.js';
+import { BROWSER_OPERATOR_PROTOCOL_VERSION } from './browser-adapter/protocol-v4.js';
 
 /**
  * The browser operator runtime (ADR-0026).
  *
- * A parallel assembly to `browser-adapter-runtime.ts` rather than a flag on it, because the two
- * expose different capability profiles under different adapter identities and must not be one
- * switch away from each other.
+ * A parallel assembly to `scripts/browser-adapter-runtime.ts` rather than a flag on it, because
+ * the two expose different capability profiles under different adapter identities and must not
+ * be one switch away from each other. This one lives in `src` because the CLI serves it: the
+ * v3 assembly is still only reached by tests.
  *
  * The consequential coordinators here are the same classes the private stdio surface uses. The
  * browser reaches their *proposal* half; the operator server reaches their approval half. There
@@ -38,6 +39,8 @@ export interface BrowserOperatorRuntime {
   admissionUrl: string;
   operatorOrigin: string;
   operatorBootstrapUrl: string;
+  /** Where the single-use bootstrap URL was written, 0600, removed on shutdown. */
+  operatorUrlFile: string;
   close(): Promise<void>;
 }
 
@@ -52,7 +55,19 @@ export async function startBrowserOperatorRuntime(options: {
   if (!isAbsolute(options.statePath)) throw new Error('Browser operator state path must be absolute');
 
   const env = options.env ?? process.env;
+  const operatorUrlFile = `${options.statePath}.operator-url`;
   const config = await loadPrivateGatewayConfig(options.configPath);
+  // The capability profile is asked for in the config, exactly as the stdio surface requires,
+  // rather than being implied by which command was run. `gitCommit` needs `mutation` for the
+  // same reason there: they share one durable store and one review server, so half of the pair
+  // is a configuration mistake, not a quieter capability.
+  const engineering = config.repositoryEngineering;
+  if (!engineering?.mutation) {
+    throw new Error('Browser operator requires repositoryEngineering.mutation in the config');
+  }
+  if (!engineering.gitCommit) {
+    throw new Error('Browser operator requires repositoryEngineering.gitCommit in the config');
+  }
   const bootstrapToken = randomBytes(32).toString('base64url');
   let store: SqliteDurableStore | undefined;
   let admission: BrowserAdmissionRegistry | undefined;
@@ -94,18 +109,22 @@ export async function startBrowserOperatorRuntime(options: {
     });
     verify.reconcile();
 
+    // One review window for both record kinds, so the operator does not have to learn two.
+    const reviewTtlMs = engineering.mutation.reviewTtlMs;
     const mutation = new DurableMutationCoordinator({
       store,
       backends: [new DevspaceFileMutationBackend(privateRuntime.executor)],
+      ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
     });
     await mutation.reconcile();
 
     const commit = new DurableCommitCoordinator({
       store,
       backend: new DevspaceGitCommitBackend(privateRuntime.executor),
-      ...(config.repositoryEngineering?.gitCommit?.protectedBranches === undefined
+      ...(engineering.gitCommit.protectedBranches === undefined
         ? {}
-        : { protectedBranches: config.repositoryEngineering.gitCommit.protectedBranches }),
+        : { protectedBranches: engineering.gitCommit.protectedBranches }),
+      ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
     });
     await commit.reconcile();
 
@@ -115,6 +134,11 @@ export async function startBrowserOperatorRuntime(options: {
       verifyCoordinator: verify,
       commitCoordinator: commit,
     });
+    // The single-use bootstrap goes to a file beside the state database, never to stderr, for
+    // the same reason the stdio surface does it: whoever launched this process may log or
+    // forward its stderr. The file carries the same exposure as the state database and is
+    // removed on shutdown.
+    await writeFile(operatorUrlFile, `${operator.bootstrapUrl}\n`, { encoding: 'utf8', mode: 0o600 });
 
     http = await startBrowserAdmissionHttpServer({
       gateway: privateRuntime.gateway,
@@ -143,10 +167,12 @@ export async function startBrowserOperatorRuntime(options: {
       admissionUrl: http.admissionUrl,
       operatorOrigin: operator.origin,
       operatorBootstrapUrl: operator.bootstrapUrl,
+      operatorUrlFile,
       async close() {
         if (closed) return;
         closed = true;
         await rm(options.discoveryPath, { force: true });
+        await rm(operatorUrlFile, { force: true }).catch(() => undefined);
         await http?.close();
         await operator?.close();
         admission?.close();
@@ -156,6 +182,7 @@ export async function startBrowserOperatorRuntime(options: {
     };
   } catch (error) {
     await rm(options.discoveryPath, { force: true }).catch(() => undefined);
+    await rm(operatorUrlFile, { force: true }).catch(() => undefined);
     await http?.close().catch(() => undefined);
     await operator?.close().catch(() => undefined);
     admission?.close();
