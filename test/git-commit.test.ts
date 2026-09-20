@@ -129,7 +129,7 @@ test('a reviewed commit lands exactly one single-parent commit and runs no hook'
 
   assert.equal(await coordinator.approveLocal(preview.commitId), true);
   const view = coordinator.result(context, preview.commitId);
-  assert.equal(view.state, 'SUCCEEDED');
+  assert.equal(view.state, 'SUCCEEDED', 'errorClass=' + String(view.errorClass));
   assert.match(view.commit!, /^[0-9a-f]{40}$/);
 
   assert.equal(await git(root, ['rev-parse', 'HEAD']), view.commit);
@@ -384,7 +384,7 @@ test('a directory replaced by a file cannot delete the subtree it shadows', asyn
 
   await assert.rejects(
     () => coordinator.preview(context, workspaceId, { paths: ['lib'], message: 'swap' }),
-    /UNSUPPORTED_CHANGE/,
+    /UNSUPPORTED_ENTRY_MODE|UNSUPPORTED_CHANGE/,
     'a change set containing a deletion must be refused',
   );
   assert.equal(await git(root, ['rev-parse', 'HEAD']), head);
@@ -467,7 +467,7 @@ test('a sha-256 repository commits normally rather than failing on object-id len
 
   assert.equal(await coordinator.approveLocal(preview.commitId), true);
   const view = coordinator.result(context, preview.commitId);
-  assert.equal(view.state, 'SUCCEEDED');
+  assert.equal(view.state, 'SUCCEEDED', 'errorClass=' + String(view.errorClass));
   assert.match(view.commit!, /^[0-9a-f]{64}$/);
   assert.equal(await git(root, ['rev-parse', 'HEAD']), view.commit);
   assert.equal(await git(root, ['rev-parse', 'HEAD^']), oldHead, 'exactly one parent');
@@ -650,7 +650,7 @@ test('a commit message cannot forge the helper result sentinel', async (t) => {
   const preview = await coordinator.preview(context, workspaceId, { paths: ['tracked.txt'], message });
   assert.equal(await coordinator.approveLocal(preview.commitId), true);
   const view = coordinator.result(context, preview.commitId);
-  assert.equal(view.state, 'SUCCEEDED');
+  assert.equal(view.state, 'SUCCEEDED', 'errorClass=' + String(view.errorClass));
   assert.equal(view.commit, await git(root, ['rev-parse', 'HEAD']));
   assert.equal(view.treeSha, preview.treeSha, 'the forged tree must not be believed');
   assert.equal(await git(root, ['show', '-s', '--format=%B', 'HEAD']).then((v) => v.trim()), message.trim());
@@ -694,4 +694,156 @@ test('the git.commit tools expose no authority fields and write nothing before a
   const view = JSON.parse((read as { content: { text: string }[] }).content[0]!.text) as { state: string; commit: string };
   assert.equal(view.state, 'SUCCEEDED');
   assert.equal(await git(root, ['rev-parse', 'HEAD']), view.commit);
+});
+
+/**
+ * The committed blob must be the reviewed bytes, with exactly one transformation allowed: the
+ * end-of-line normalization git itself would apply, performed by WAG and reported.
+ *
+ * Both halves matter. Before this, `git add` silently applied whatever the repository asked:
+ * a `.gitattributes` of `text=auto` turned reviewed `alpha\r\nbeta\r\n` into `alpha\nbeta\n`,
+ * and `working-tree-encoding=UTF-16` turned a 30-byte file into a 14-byte blob, with
+ * `check-attr filter` reporting `unspecified` in both cases so the filter gate never saw them.
+ */
+test('the committed blob is the reviewed bytes, with only reported EOL normalization', async (t) => {
+  const { root, context, workspaceId, coordinator } = await fixture(t);
+
+  // -text: the repository asks for no conversion, so exact bytes reach the object store.
+  await writeFile(join(root, '.gitattributes'), 'exact.bin -text\nnormal.txt text=auto\n');
+  await writeFile(join(root, 'exact.bin'), 'alpha\r\nbeta\r\n');
+  await writeFile(join(root, 'normal.txt'), 'gamma\r\ndelta\r\n');
+  await git(root, ['add', '.gitattributes']);
+  await git(root, ['commit', '-m', 'attributes']);
+
+  const preview = await coordinator.preview(context, workspaceId, {
+    paths: ['exact.bin', 'normal.txt'], message: 'chore: byte fidelity\n',
+  });
+  assert.deepEqual(preview.eolNormalized, ['normal.txt'],
+    'only the path the repository asked to convert may be reported as converted');
+
+  assert.equal(await coordinator.approveLocal(preview.commitId), true);
+  assert.equal(coordinator.result(context, preview.commitId).state, 'SUCCEEDED');
+
+  const exact = await execFileAsync('git', ['cat-file', 'blob', 'HEAD:exact.bin'],
+    { cwd: root, encoding: 'buffer' });
+  assert.deepEqual([...exact.stdout], [...Buffer.from('alpha\r\nbeta\r\n')],
+    'a path the repository excludes from conversion keeps its exact reviewed bytes');
+
+  const normal = await execFileAsync('git', ['cat-file', 'blob', 'HEAD:normal.txt'],
+    { cwd: root, encoding: 'buffer' });
+  assert.deepEqual([...normal.stdout], [...Buffer.from('gamma\ndelta\n')],
+    'a path the repository asks to convert is normalized exactly as git would');
+});
+
+/** A repository that re-encodes content on the way in is refused, not silently honoured. */
+test('an encoding attribute is refused rather than applied', async (t) => {
+  const { root, context, workspaceId, coordinator } = await fixture(t);
+  await writeFile(join(root, '.gitattributes'), 'wide.txt working-tree-encoding=UTF-16\n');
+  await writeFile(join(root, 'wide.txt'), 'hello encoded\n');
+  await git(root, ['add', '.gitattributes']);
+  await git(root, ['commit', '-m', 'encoding']);
+
+  await assert.rejects(
+    () => coordinator.preview(context, workspaceId, { paths: ['wide.txt'], message: 'm\n' }),
+    /PATH_HAS_ENCODING_ATTRIBUTE/,
+  );
+});
+
+/** Proposing must leave the object database exactly as it found it. */
+test('a proposal writes no object into the repository', async (t) => {
+  const { root, context, workspaceId, coordinator, executor } = await fixture(t);
+  const count = async () => (await git(root, ['count-objects', '-v'])).match(/count: (\d+)/)![1];
+
+  // Opening a workspace is the execution backend's own operation, and it writes a fresh review
+  // checkpoint commit every time. That cost is not WAG's, so it is measured first and then
+  // subtracted: a proposal must add nothing beyond one more backend open.
+  await writeFile(join(root, 'tracked.txt'), 'proposed but not approved, and never seen before\n');
+  await executor.openWorkspace(root);
+  const settled = Number(await count());
+  await executor.openWorkspace(root);
+  const perOpen = Number(await count()) - settled;
+
+  const before = Number(await count());
+  const preview = await coordinator.preview(context, workspaceId, {
+    paths: ['tracked.txt'], message: 'never approved\n',
+  });
+  assert.equal(preview.status, 'approval_required');
+  assert.equal(Number(await count()) - before, perOpen,
+    'a proposal must write no object of its own; only the backend open may cost anything');
+
+  // Approving is what persists them, because a commit has to outlive the helper process.
+  assert.equal(await coordinator.approveLocal(preview.commitId), true);
+  assert.equal(coordinator.result(context, preview.commitId).state, 'SUCCEEDED');
+  assert.ok(Number(await count()) - before > perOpen, 'approval is what persists the objects');
+});
+
+/**
+ * WAG's end-of-line conversion has to match git's, including when git declines to convert.
+ * git's `convert_is_binary` refuses under the `auto` forms on a NUL, a lone CR, or too few
+ * printable characters in the first 8000 bytes; checking only the NUL made WAG strip CR bytes
+ * that `git add` would have kept, which is neither the reviewed bytes nor what git would store.
+ */
+test('end-of-line conversion declines exactly where git declines', async (t) => {
+  const { root, context, workspaceId, coordinator } = await fixture(t);
+
+  const loneCr = Buffer.from('one\rtwo\r\nthree\r\n');
+  const nonPrintable = Buffer.concat([Buffer.from('AAAA\r\nBBBB\r\n'), Buffer.alloc(300, 1)]);
+  const ordinary = Buffer.from('gamma\r\ndelta\r\n');
+
+  await writeFile(join(root, '.gitattributes'), '* text=auto\nunknown.txt text=garbage\n');
+  await writeFile(join(root, 'lonecr.txt'), loneCr);
+  await writeFile(join(root, 'nonprint.bin'), nonPrintable);
+  await writeFile(join(root, 'ordinary.txt'), ordinary);
+  await writeFile(join(root, 'unknown.txt'), Buffer.from('eps\r\nzet\r\n'));
+  await git(root, ['add', '.gitattributes']);
+  await git(root, ['commit', '-m', 'attributes']);
+
+  const preview = await coordinator.preview(context, workspaceId, {
+    paths: ['lonecr.txt', 'nonprint.bin', 'ordinary.txt', 'unknown.txt'],
+    message: 'chore: eol parity\n',
+  });
+  // unknown.txt is included deliberately: an unrecognized `text` value is not a refusal to
+  // convert, it falls through to core.autocrlf, which is true in this environment.
+  assert.deepEqual(preview.eolNormalized, ['ordinary.txt', 'unknown.txt'],
+    'only content git would convert may be reported as converted');
+
+  assert.equal(await coordinator.approveLocal(preview.commitId), true);
+  assert.equal(coordinator.result(context, preview.commitId).state, 'SUCCEEDED');
+
+  const blob = async (path: string) => (await execFileAsync('git', ['cat-file', 'blob', `HEAD:${path}`],
+    { cwd: root, encoding: 'buffer' })).stdout;
+
+  assert.deepEqual([...(await blob('lonecr.txt'))], [...loneCr],
+    'a lone CR makes git call the content binary, so WAG must not convert it');
+  assert.deepEqual([...(await blob('nonprint.bin'))], [...nonPrintable],
+    'content git would call binary must reach the object store unchanged');
+  assert.deepEqual([...(await blob('ordinary.txt'))], [...Buffer.from('gamma\ndelta\n')],
+    'ordinary text under text=auto is converted, as git would');
+  // core.autocrlf is true in this environment's global config, so an unrecognized text value
+  // falls through to it rather than forcing conversion either way.
+  assert.equal((await blob('unknown.txt')).includes(13), false,
+    'an unrecognized text value falls back to core.autocrlf, which is true here');
+});
+
+/**
+ * `commit-tree` stamps a committer as well as an author, from the same untrusted repository
+ * configuration. Binding only the author left the committer free to differ from what the
+ * operator was shown.
+ */
+test('the committer is bound and revalidated alongside the author', async (t) => {
+  const { root, context, workspaceId, coordinator } = await fixture(t);
+  await git(root, ['config', 'committer.name', 'Original Committer']);
+  await git(root, ['config', 'committer.email', 'original@example.invalid']);
+  await writeFile(join(root, 'tracked.txt'), 'committer bound\n');
+
+  const preview = await coordinator.preview(context, workspaceId, {
+    paths: ['tracked.txt'], message: 'chore: committer\n',
+  });
+  assert.equal(preview.committer, 'Original Committer <original@example.invalid>');
+
+  await git(root, ['config', 'committer.email', 'someone-else@example.invalid']);
+  assert.equal(await coordinator.approveLocal(preview.commitId), true);
+  const view = coordinator.result(context, preview.commitId);
+  assert.equal(view.state, 'FAILED');
+  assert.equal(view.errorClass, 'COMMITTER_DRIFT');
 });

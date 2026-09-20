@@ -37,8 +37,11 @@ export interface GitCommitPreview {
   oldHead: string;
   treeSha: string;
   author: string;
+  committer: string;
   paths: string[];
   changes: GitCommitChange[];
+  /** Paths whose CRLF endings WAG normalized before hashing, as git itself would have. */
+  eolNormalized: string[];
   messageSha256: string;
   fingerprint: string;
   expiresAt: number;
@@ -51,8 +54,10 @@ export interface GitCommitResultView {
   oldHead: string;
   treeSha: string;
   author: string;
+  committer: string;
   paths: string[];
   changes: GitCommitChange[];
+  eolNormalized: string[];
   fingerprint: string;
   reviewDeadline: number;
   commit?: string;
@@ -121,6 +126,10 @@ export class DurableCommitCoordinator {
       oldHead: plan.head,
       treeSha: plan.tree,
       author: plan.author,
+      committer: plan.committer,
+      gitDir: plan.gitDir,
+      commonDir: plan.commonDir,
+      eolNormalized: plan.eolNormalized,
       paths,
       changes: plan.changes,
       message,
@@ -195,6 +204,9 @@ export class DurableCommitCoordinator {
         expectedOldHead: claimed.oldHead,
         expectedTree: claimed.treeSha,
         expectedAuthor: claimed.author,
+        expectedCommitter: claimed.committer,
+        expectedGitDir: claimed.gitDir,
+        expectedCommonDir: claimed.commonDir,
       });
       if (!OBJECT_ID_RE.test(result.commit) || result.tree !== claimed.treeSha || result.previousHead !== claimed.oldHead) {
         this.options.store.finishCommit(commitId, 'OUTCOME_UNKNOWN', this.now(), undefined, 'UnexpectedBackendResult');
@@ -273,8 +285,18 @@ function assertPlanShape(plan: GitCommitPlan): void {
   if (!OBJECT_ID_RE.test(plan.head) || !OBJECT_ID_RE.test(plan.tree)) {
     throw new Error('Gateway rejected backend commit plan');
   }
-  if (typeof plan.author !== 'string' || plan.author === '' || plan.author.length > 512) {
+  for (const identity of [plan.author, plan.committer]) {
+    if (typeof identity !== 'string' || identity === '' || identity.length > 512) {
+      throw new Error('Gateway rejected backend commit plan');
+    }
+  }
+  if (!Array.isArray(plan.eolNormalized) || plan.eolNormalized.some((value) => typeof value !== 'string')) {
     throw new Error('Gateway rejected backend commit plan');
+  }
+  for (const value of [plan.gitDir, plan.commonDir]) {
+    if (typeof value !== 'string' || value === '' || value.length > 4096) {
+      throw new Error('Gateway rejected backend commit plan');
+    }
   }
   // The change set is what the operator reviews and what v1 restricts to additions and
   // modifications. That rule is enforced inside the helper; it is re-checked here so the review
@@ -289,7 +311,10 @@ function assertPlanShape(plan: GitCommitPlan): void {
 }
 
 function fingerprintOf(workspaceId: string, plan: GitCommitPlan, paths: readonly string[], messageSha256: string): string {
-  return sha256([workspaceId, plan.branch, plan.head, plan.tree, plan.author, messageSha256, ...paths].join('\0'));
+  return sha256([
+    workspaceId, plan.branch, plan.head, plan.tree, plan.author, plan.committer, plan.gitDir, plan.commonDir,
+    messageSha256, ...paths, '|eol|', ...plan.eolNormalized,
+  ].join('\0'));
 }
 
 function authorityOf(caller: GatewayCallerContext): GatewayAuthority {
@@ -310,8 +335,10 @@ function toPreview(record: CommitRecord): GitCommitPreview {
     oldHead: record.oldHead,
     treeSha: record.treeSha,
     author: record.author,
+    committer: record.committer,
     paths: [...record.paths],
     changes: [...record.changes],
+    eolNormalized: [...record.eolNormalized],
     messageSha256: record.messageSha256,
     fingerprint: record.fingerprint,
     expiresAt: record.reviewDeadline,
@@ -326,8 +353,10 @@ function toResultView(record: CommitRecord): GitCommitResultView {
     oldHead: record.oldHead,
     treeSha: record.treeSha,
     author: record.author,
+    committer: record.committer,
     paths: [...record.paths],
     changes: [...record.changes],
+    eolNormalized: [...record.eolNormalized],
     fingerprint: record.fingerprint,
     reviewDeadline: record.reviewDeadline,
     ...(record.resultCommit === undefined ? {} : { commit: record.resultCommit }),

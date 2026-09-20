@@ -76,6 +76,17 @@ export interface CreateCommitRecord extends GatewayAuthority {
   treeSha: string;
   /** `Name <email>` the commit would be attributed to, read from the untrusted repository. */
   author: string;
+  /** `Name <email>` git would stamp as committer. */
+  committer: string;
+  /**
+   * The exact repository the proposal was planned against. The worktree root alone is not
+   * enough: an inherited `GIT_DIR` leaves the worktree looking right while refs, HEAD and the
+   * branch all come from somewhere else.
+   */
+  gitDir: string;
+  commonDir: string;
+  /** Paths whose CRLF endings WAG normalized, exactly as git would have. */
+  eolNormalized: readonly string[];
   paths: readonly string[];
   changes: readonly GitCommitChange[];
   message: string;
@@ -256,6 +267,10 @@ export class SqliteDurableStore {
         old_head TEXT NOT NULL,
         tree_sha TEXT NOT NULL,
         author TEXT NOT NULL,
+        committer TEXT NOT NULL,
+        git_dir TEXT NOT NULL,
+        common_dir TEXT NOT NULL,
+        eol_normalized TEXT NOT NULL,
         paths TEXT NOT NULL,
         changes TEXT NOT NULL,
         message TEXT NOT NULL,
@@ -723,10 +738,10 @@ export class SqliteDurableStore {
     const record: CommitRecord = { commitId: `cmt_${randomUUID()}`, ...input, state: 'PENDING_APPROVAL' };
     this.db.prepare(`INSERT INTO commits
       (commit_id, owner_id, session_id, adapter_id, workspace_id, backend_kind, branch, old_head,
-       tree_sha, author, paths, changes, message, message_sha256, fingerprint, state, created_at, review_deadline)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       tree_sha, author, committer, git_dir, common_dir, eol_normalized, paths, changes, message, message_sha256, fingerprint, state, created_at, review_deadline)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(record.commitId, record.ownerId, record.sessionId, record.adapterId, record.workspaceId,
-        record.backendKind, record.branch, record.oldHead, record.treeSha, record.author, JSON.stringify(record.paths),
+        record.backendKind, record.branch, record.oldHead, record.treeSha, record.author, record.committer, record.gitDir, record.commonDir, JSON.stringify(record.eolNormalized), JSON.stringify(record.paths),
         JSON.stringify(record.changes), record.message, record.messageSha256, record.fingerprint, record.state, record.createdAt,
         record.reviewDeadline);
     return record;
@@ -921,7 +936,9 @@ function commitFromRow(row: Record<string, unknown>): CommitRecord {
     sessionId: String(row.session_id), adapterId: String(row.adapter_id),
     workspaceId: String(row.workspace_id), backendKind: String(row.backend_kind),
     branch: String(row.branch), oldHead: String(row.old_head), treeSha: String(row.tree_sha),
-    author: String(row.author),
+    author: String(row.author), committer: String(row.committer),
+    gitDir: String(row.git_dir), commonDir: String(row.common_dir),
+    eolNormalized: JSON.parse(String(row.eol_normalized)) as string[],
     paths: JSON.parse(String(row.paths)) as string[],
     changes: JSON.parse(String(row.changes)) as GitCommitChange[],
     message: String(row.message), messageSha256: String(row.message_sha256),

@@ -35,7 +35,7 @@ class FakeInspectionBackend {
     return { matches: [], truncated: false };
   }
 
-  async snapshot(devspaceWorkspaceId: string, options?: { maxFiles?: number }) {
+  async snapshot(devspaceWorkspaceId: string, _canonicalRoot: string, options?: { maxFiles?: number }) {
     this.snapshots.push({ devspaceWorkspaceId, options });
     return { branch: 'main', head: 'abc', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false };
   }

@@ -43,12 +43,20 @@ function stubExecutor(result: ExecResult, calls: StubCall[] = []) {
 }
 
 /** The search helper encodes `<helper64> <query64> <ignoreCase> <contextLines>`. */
+/**
+ * The search command is `node -e "<stub>" <helper> <query> <ignoreCase> <contextLines> <root>`,
+ * all base64url except the two small literals. Counted from the end so a future argument does
+ * not silently shift what these assertions read — which is exactly what happened when the
+ * admitted root was appended for the repository-identity assertion (ADR-0024).
+ */
 function decodeSearchCommand(command: string) {
   const parts = command.trim().split(' ');
+  const decode = (value: string) => Buffer.from(value, 'base64url').toString('utf8');
   return {
-    query: Buffer.from(parts[parts.length - 3]!, 'base64url').toString('utf8'),
-    ignoreCase: parts[parts.length - 2],
-    contextLines: parts[parts.length - 1],
+    query: decode(parts[parts.length - 4]!),
+    ignoreCase: parts[parts.length - 3],
+    contextLines: parts[parts.length - 2],
+    canonicalRoot: decode(parts[parts.length - 1]!),
   };
 }
 
@@ -87,6 +95,8 @@ test('gateway repo.search delegates through the shared inspection backend with a
   assert.equal(decoded.query, 'canonicalizeTicketId');
   assert.equal(decoded.ignoreCase, '0', 'ignoreCase must default to false');
   assert.equal(decoded.contextLines, '1', 'contextLines must default to 1');
+  assert.equal(decoded.canonicalRoot, process.cwd(),
+    'the helper must be told which repository it is allowed to read');
   assert.equal(calls[0]!.workspaceId, `devspace_${process.cwd().length}`,
     'search must use the same workspace binding as file.read and repo.snapshot');
 });

@@ -96,7 +96,7 @@ export class AdmittedWorkspaceService {
   ): Promise<RepoSnapshotResult> {
     const { binding } = await this.getAuthorizedBinding(caller, workspaceId);
     const maxFiles = Math.min(Math.max(options.maxFiles ?? 100, 1), 200);
-    return this.options.inspection.snapshot(binding.devspaceWorkspaceId, { maxFiles });
+    return this.options.inspection.snapshot(binding.devspaceWorkspaceId, binding.canonicalRoot, { maxFiles });
   }
 
   private async resolveBinding(record: WorkspaceRecord): Promise<RuntimeBinding> {

@@ -252,6 +252,8 @@ function renderCommitReview(review: GitCommitLocalReviewView, csrf: string): str
     // The author comes from the repository's own configuration, which is untrusted, so the
     // operator is told who the commit will be attributed to rather than left to assume.
     + `<p>Author: ${escapeHtml(review.author)}</p>`
+    + (review.committer === review.author ? ''
+      : `<p>Committer: ${escapeHtml(review.committer)}</p>`)
     + `<p>Fingerprint: ${escapeHtml(review.fingerprint)}</p>`
     + `<p>Review expires: ${review.reviewDeadline}</p>`
     + `<h3>Selected paths</h3><ul>${paths}</ul>`
@@ -261,6 +263,8 @@ function renderCommitReview(review: GitCommitLocalReviewView, csrf: string): str
     + `<h3>Resulting changes</h3><ul>${review.changes
       .map((change) => `<li>${escapeHtml(change.status)} ${escapeHtml(change.path)}</li>`)
       .join('')}</ul>`
+    + (review.eolNormalized.length === 0 ? ''
+      : `<p>End-of-line normalized, as this repository asks: ${review.eolNormalized.map(escapeHtml).join(', ')}</p>`)
     + `<h3>Message</h3><pre>${escapeHtml(review.message)}</pre>`
     + '<p>Approval creates one commit and moves the branch only if HEAD and content are unchanged.</p>'
     + actionForm('commits', actionId, 'approve', csrf)

@@ -230,6 +230,54 @@ test('inspection failures surface as bounded tool errors', async (t) => {
   const backend = new DevspaceRepositoryInspectionBackend(executor);
   const devspaceWorkspaceId = await executor.openWorkspace(fixture.workspaceRoot);
 
-  await assert.rejects(() => backend.list(devspaceWorkspaceId), /repo\.list command failed/);
-  await assert.rejects(() => backend.diff(devspaceWorkspaceId), /repo\.diff command failed/);
+  await assert.rejects(() => backend.list(devspaceWorkspaceId, fixture.workspaceRoot), /repo\.list command failed/);
+  await assert.rejects(() => backend.diff(devspaceWorkspaceId, fixture.workspaceRoot), /repo\.diff command failed/);
+});
+
+/**
+ * A repository controls its own `.git/config`, and `core.worktree` redirects git at any directory
+ * the operator can read. Every per-path guard still passes, because the host validates
+ * `<root>/f.txt` — which exists — while the bytes git returns came from somewhere else.
+ *
+ * The commit path has asserted the repository since ADR-0023. The four read tools had not, which
+ * made them a file-disclosure primitive for any directory on the machine.
+ */
+test('a hostile core.worktree cannot make the read tools return another directory', async (t) => {
+  const fixture = await startPinnedDevspace();
+  t.after(() => fixture.stop());
+  const root = fixture.workspaceRoot;
+  const outside = join(root, '..', 'wag-outside-secrets');
+  await mkdir(outside, { recursive: true });
+  await writeFile(join(outside, 'f.txt'), 'TOPSECRET-OUTSIDE-CONTENT\n');
+  await writeFile(join(outside, 'only-outside.txt'), 'also outside\n');
+
+  await writeFile(join(root, 'f.txt'), 'harmless\n');
+  await git(root, ['init', '--initial-branch=main', '.']);
+  await git(root, ['config', 'user.email', 'wag@example.invalid']);
+  await git(root, ['config', 'user.name', 'WAG Test']);
+  await git(root, ['add', '-A']);
+  await git(root, ['commit', '-m', 'fixture']);
+
+  const executor = new DevspaceExecutor({ baseUrl: fixture.baseUrl, accessToken: fixture.accessToken });
+  const backend = new DevspaceRepositoryInspectionBackend(executor);
+  const workspaceId = await executor.openWorkspace(root);
+
+  // Control: the redirection really does take effect before the assertion refuses it.
+  await git(root, ['config', 'core.worktree', outside.replace(/\\/g, '/')]);
+  const redirected = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8' });
+  const normalize = (value: string) => value.trim().toLowerCase().split('\\').join('/');
+  assert.notEqual(normalize(redirected.stdout), normalize(root),
+    'control: core.worktree must really redirect git');
+
+  for (const run of [
+    () => backend.list(workspaceId, root),
+    () => backend.diff(workspaceId, root),
+    () => backend.snapshot(workspaceId, root),
+    () => backend.search({
+      devspaceWorkspaceId: workspaceId, canonicalRoot: root,
+      query: 'TOPSECRET', ignoreCase: false, maxResults: 20, contextLines: 1,
+    }),
+  ]) {
+    await assert.rejects(run, 'a redirected worktree must be refused, not read');
+  }
 });

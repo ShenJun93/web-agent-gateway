@@ -17,6 +17,13 @@ export interface GitCommitPlan {
    * than assumed.
    */
   author: string;
+  /** `Name <email>` git would stamp as committer, also from the untrusted repository config. */
+  committer: string;
+  /** Absolute git dir and common dir, so approval can prove the repository did not move. */
+  gitDir: string;
+  commonDir: string;
+  /** Paths whose CRLF line endings WAG normalized, exactly as git would have. */
+  eolNormalized: string[];
 }
 
 export interface GitCommitRequest {
@@ -26,6 +33,9 @@ export interface GitCommitRequest {
   expectedOldHead: string;
   expectedTree: string;
   expectedAuthor: string;
+  expectedCommitter: string;
+  expectedGitDir: string;
+  expectedCommonDir: string;
 }
 
 export interface GitCommitResult {

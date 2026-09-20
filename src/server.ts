@@ -120,7 +120,7 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       const trace = startTrace('repo.snapshot', telemetry); trace.markIngress();
       try {
         const workspace = binding(workspaceId);
-        const value = await trace.phase('executorMs', () => inspection.snapshot(workspace.devspaceWorkspaceId, options));
+        const value = await trace.phase('executorMs', () => inspection.snapshot(workspace.devspaceWorkspaceId, workspace.canonicalRoot, options));
         trace.finish(true); return value;
       } catch (error) { trace.finish(false, error); throw error; }
     },
@@ -133,7 +133,7 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
           await assertScopedTarget(value.canonicalRoot, options.path);
           return value;
         });
-        const value = await trace.phase('executorMs', () => inspection.list(workspace.devspaceWorkspaceId, options));
+        const value = await trace.phase('executorMs', () => inspection.list(workspace.devspaceWorkspaceId, workspace.canonicalRoot, options));
         trace.finish(true); return value;
       } catch (error) { trace.finish(false, error); throw error; }
     },
@@ -146,7 +146,7 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
           await assertScopedTarget(value.canonicalRoot, options.path);
           return value;
         });
-        const value = await trace.phase('executorMs', () => inspection.diff(workspace.devspaceWorkspaceId, options));
+        const value = await trace.phase('executorMs', () => inspection.diff(workspace.devspaceWorkspaceId, workspace.canonicalRoot, options));
         trace.finish(true); return value;
       } catch (error) { trace.finish(false, error); throw error; }
     },

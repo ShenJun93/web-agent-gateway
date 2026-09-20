@@ -1,4 +1,5 @@
 import { gzipSync } from 'node:zlib';
+import { SAFE_GIT_RUNNER_SOURCE, minifyHelperSource } from '../safe-git.js';
 import type { DevspaceExecutor } from './devspace.js';
 import type { GitCommitBackend, GitCommitPlan, GitCommitRequest, GitCommitResult } from '../git-commit-backend.js';
 
@@ -30,22 +31,21 @@ const MAX_COMMAND_LENGTH = 8_000;
  * directory this process owns. Both properties are verified against this machine's git and
  * recorded in ADR-0023.
  */
-const COMMIT_HELPER_SOURCE = String.raw`
-const { spawnSync } = require('child_process');
-const { mkdtempSync, realpathSync, rmSync, statSync } = require('fs');
-const { tmpdir } = require('os');
-const { join } = require('path');
-const { gunzipSync } = require('zlib');
+const COMMIT_HELPER_SOURCE = minifyHelperSource(`
+${SAFE_GIT_RUNNER_SOURCE}
+const { realpathSync, statSync, readFileSync } = require('fs');
+const { mkdtempSync: mkdtempSync2, rmSync: rmSync2 } = require('fs');
+const { tmpdir: tmpdir2 } = require('os');
+const { join: join2 } = require('path');
 
 const mode = process.argv[2];
 // The payload is gzipped as well as base64url-encoded: the executor runs one bounded command
 // string, and an 8 KiB message or a large path set does not fit uncompressed.
-const input = JSON.parse(gunzipSync(Buffer.from(process.argv[3], 'base64url')).toString('utf8'));
+const input = JSON.parse(require('zlib').gunzipSync(Buffer.from(process.argv[3], 'base64url')).toString('utf8'));
 
 /**
  * Compares two paths by identity rather than by spelling: git prints forward slashes, Windows
- * compares case-insensitively and may hand back 8.3 short names. Both sides are resolved with
- * the native realpath before comparison.
+ * compares case-insensitively and may hand back 8.3 short names.
  */
 function samePath(left, right) {
   var a;
@@ -55,30 +55,6 @@ function samePath(left, right) {
   if (process.platform === 'win32') return a.toLowerCase() === b.toLowerCase();
   return a === b;
 }
-
-// Plumbing does not run the porcelain hooks, but it DOES run post-index-change on every index
-// write and reference-transaction on every ref update, from .git/hooks or from a core.hooksPath
-// the repository can point into its own worktree. Every git invocation is therefore pinned to an
-// empty hooks directory this process owns, which makes hook execution impossible rather than
-// merely unlikely.
-const hooksDir = mkdtempSync(join(tmpdir(), 'wag-no-hooks-'));
-
-function git(args, options) {
-  const result = spawnSync('git', [
-    '--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=' + hooksDir,
-  ].concat(args), {
-    encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, ...options,
-  });
-  if (result.error) throw new Error('git spawn failed');
-  return result;
-}
-function gitOk(args, options) {
-  const result = git(args, options);
-  if (result.status !== 0) throw new Error('git ' + args[0] + ' failed: ' + String(result.stderr).trim().split('\n')[0]);
-  return result.stdout;
-}
-function fail(reason) { throw new Error(reason); }
-
 function inspectRepository() {
   // The repository is untrusted, and so is .git/config. A hostile core.worktree makes every
   // later git add read a directory of the attacker's choosing while statSync, check-attr and
@@ -89,6 +65,10 @@ function inspectRepository() {
   const topLevel = git(['rev-parse', '--show-toplevel']);
   if (topLevel.status !== 0) fail('WORKTREE_MISMATCH');
   if (!samePath(topLevel.stdout.trim(), input.root)) fail('WORKTREE_MISMATCH');
+  // Every statSync and every pathspec below is relative to the working directory, which the
+  // execution backend chose. A cwd one level down would still satisfy the check above while
+  // resolving 'a.txt' to a different file than the host validated.
+  if (!samePath(process.cwd(), input.root)) fail('WORKTREE_MISMATCH');
 
   // Load-bearing: the recursing form is required. update-ref dereferences a symref, so a HEAD
   // pointing at a branch that is itself a symref to main would otherwise move main while this
@@ -100,9 +80,14 @@ function inspectRepository() {
   if (!ref.startsWith('refs/heads/')) fail('DETACHED_HEAD');
   const branch = ref.slice('refs/heads/'.length);
 
+  // The worktree assertion alone is not enough: an inherited GIT_DIR leaves --show-toplevel
+  // reporting the admitted worktree while every ref, HEAD and branch comes from another
+  // repository. The environment that could do that is now constructed rather than inherited,
+  // and the git dir is bound into the preview so approval can prove it did not move.
   const gitDir = gitOk(['rev-parse', '--absolute-git-dir']).trim();
+  const commonDir = gitOk(['rev-parse', '--path-format=absolute', '--git-common-dir']).trim();
   for (const marker of ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply']) {
-    try { statSync(join(gitDir, marker)); fail('OPERATION_IN_PROGRESS'); }
+    try { statSync(join2(gitDir, marker)); fail('OPERATION_IN_PROGRESS'); }
     catch (error) { if (String(error.message).indexOf('OPERATION_IN_PROGRESS') !== -1) throw error; }
   }
   if (gitOk(['ls-files', '--unmerged']).trim() !== '') fail('UNMERGED_ENTRIES');
@@ -118,48 +103,208 @@ function inspectRepository() {
   const author = ident.stdout.trim().replace(/ [0-9]+ [+-][0-9]{4}$/, '');
   if (author === '') fail('IDENTITY_UNSET');
 
-  return { ref, branch, head: head.stdout.trim(), author: author };
+  // commit-tree stamps a committer as well, from committer.name/committer.email in the same
+  // untrusted configuration. Binding only the author left that free to differ from what the
+  // operator was shown.
+  const committerIdent = git(['var', 'GIT_COMMITTER_IDENT']);
+  if (committerIdent.status !== 0) fail('IDENTITY_UNSET');
+  const committer = committerIdent.stdout.trim().replace(/ [0-9]+ [+-][0-9]{4}$/, '');
+  if (committer === '') fail('IDENTITY_UNSET');
+
+  return {
+    ref, branch, head: head.stdout.trim(), author: author, committer: committer,
+    gitDir: gitDir, commonDir: commonDir,
+  };
 }
 
-function assertSelectable(paths) {
+/**
+ * v1 commits the exact bytes the operator reviewed. That is only the same thing as what git
+ * would have stored when the repository asks for no conversion, so a path whose attributes
+ * would transform it is refused rather than silently resolved one way or the other.
+ *
+ * Measured: with a .gitattributes of text=auto, the reviewed bytes alpha\\r\\nbeta\\r\\n were
+ * committed as alpha\\nbeta\\n by the previous git-add pipeline, and check-attr filter reported
+ * unspecified throughout, so the existing filter gate never saw it. working-tree-encoding is
+ * worse: a 30-byte reviewed file became a 14-byte blob.
+ *
+ * Returns the tree entry mode for each path: the mode HEAD already records, so an executable
+ * stays executable on a checkout where core.fileMode is false, and 100644 for a new file.
+ */
+function assertSelectable(paths, head, eol, autoForm) {
+  const autocrlf = git(['config', '--get', 'core.autocrlf']).stdout.trim().toLowerCase();
+  const eolConvertsByDefault = autocrlf === 'true' || autocrlf === 'input';
+  const modes = {};
   for (const path of paths) {
     let stats;
     try { stats = statSync(path); }
     catch { fail('PATH_MISSING:' + path); }
     if (!stats.isFile()) fail('PATH_NOT_REGULAR_FILE:' + path);
-    // A filter attribute makes git add execute a configured clean command.
-    const attr = gitOk(['check-attr', 'filter', '--', path]).trim();
-    const value = attr.slice(attr.lastIndexOf(': ') + 2);
-    if (value !== 'unspecified' && value !== 'unset') fail('PATH_HAS_FILTER_ATTRIBUTE:' + path);
+
+    const attrs = {};
+    const raw = gitOk(['check-attr', 'filter', 'text', 'working-tree-encoding', '--', path]);
+    for (const line of raw.split('\\n')) {
+      const marker = ': ';
+      const last = line.lastIndexOf(marker);
+      if (last === -1) continue;
+      const value = line.slice(last + marker.length).trim();
+      const rest = line.slice(0, last);
+      const name = rest.slice(rest.lastIndexOf(marker) + marker.length);
+      attrs[name] = value;
+    }
+    const unset = function (value) { return value === undefined || value === 'unspecified' || value === 'unset'; };
+
+    // A filter driver is both an execution vector and a content contract: an lfs repository
+    // expects a pointer blob, not the file. v1 refuses rather than guessing which is meant.
+    if (!unset(attrs.filter)) fail('PATH_HAS_FILTER_ATTRIBUTE:' + path);
+    if (!unset(attrs['working-tree-encoding'])) fail('PATH_HAS_ENCODING_ATTRIBUTE:' + path);
+
+    // End-of-line conversion only changes anything when there is a CR to convert, so a file
+    // with LF endings is never refused for it.
+    // 'unset' is the explicit -text form: the repository is saying do not convert this, and it
+    // overrides core.autocrlf. 'unspecified' means the attribute is silent, so the config
+    // default decides. Anything else (set, auto, a value) means convert.
+    // 'unset' is -text and means no. 'set' and 'auto' mean yes. Anything else is a value git
+    // does not recognize, and git falls back to core.autocrlf rather than converting.
+    const textAttr = attrs.text;
+    eol[path] = textAttr === 'unset' ? false
+      : (textAttr === 'set' || textAttr === 'auto') ? true
+        : eolConvertsByDefault;
+    // Only the 'auto' forms skip content git would call binary; an explicit 'text' converts
+    // regardless. Recorded per path so contentFor does not have to re-derive it.
+    autoForm[path] = textAttr !== 'set';
+
+    const listed = gitOk(['ls-tree', '-z', head, '--', path]).split('\\u0000')[0] || '';
+    if (listed === '') {
+      modes[path] = '100644';
+    } else {
+      const entryMode = listed.slice(0, listed.indexOf(' '));
+      // 120000 is a symlink and 160000 a gitlink; neither is a regular file whose bytes a
+      // human reviewed, and replacing one with a blob would be a silent type change.
+      if (entryMode !== '100644' && entryMode !== '100755') fail('UNSUPPORTED_ENTRY_MODE:' + path);
+      modes[path] = entryMode;
+    }
   }
+  return modes;
+}
+/** Builds the resulting tree in a private index; the real index is never opened for writing. */
+/**
+ * Opens the object/index context a plan runs in.
+ *
+ * Proposing must not change the repository. The previous git-add pipeline wrote loose blobs
+ * and trees into the real object store before any human saw the proposal. Here the primary
+ * object directory is a WAG-owned temporary one and the repository own objects are reachable
+ * as an alternate, so reads still resolve and every write lands in the scratch directory.
+ *
+ * The candidate tree only exists inside that context, so it has to stay open until the delta
+ * has been read back out of it. On approval the same objects are written for real, because a
+ * commit has to outlive this process.
+ */
+/**
+ * The bytes that will become the blob.
+ *
+ * End-of-line conversion cannot simply be refused: with core.autocrlf=true, which is the
+ * common Windows setting, every text file git checks out has CRLF on disk while the blob in
+ * HEAD has LF. Committing the worktree bytes verbatim would rewrite every such file.
+ *
+ * So WAG does the conversion itself, in code, only when the effective attributes say git
+ * would, and reports which paths it touched so the operator approves a known transformation
+ * rather than an invisible one. What is never allowed is the repository performing the
+ * conversion through a filter or an encoding attribute, which is a program or a re-encode.
+ */
+function looksBinaryToGit(probe) {
+  // git's convert_is_binary, over the first 8000 bytes: a NUL, a lone CR, or too few printable
+  // characters. Checking only the NUL made WAG strip CR bytes that git add would have kept.
+  let printable = 0;
+  let nonprintable = 0;
+  for (let index = 0; index < probe.length; index += 1) {
+    const byte = probe[index];
+    if (byte === 0) return true;
+    if (byte === 13 && probe[index + 1] !== 10) return true;
+    if (byte === 8 || byte === 12 || byte === 27 || byte === 127) { nonprintable += 1; continue; }
+    if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) { nonprintable += 1; continue; }
+    printable += 1;
+  }
+  return (printable >> 7) < nonprintable;
 }
 
-/** Builds the resulting tree in a private index; the real index is never opened for writing. */
-function buildTree(oldHead, paths) {
-  const indexDir = mkdtempSync(join(tmpdir(), 'wag-commit-index-'));
-  const indexFile = join(indexDir, 'index');
-  const env = { ...process.env, GIT_INDEX_FILE: indexFile };
-  try {
-    gitOk(['read-tree', oldHead], { env });
-    for (const path of paths) {
-      gitOk(['add', '--', ':(literal)' + path], { env });
-      // git add stages a deletion for a removed file; prove the path is still present.
-      if (gitOk(['ls-files', '--', ':(literal)' + path], { env }).trim() === '') fail('PATH_NOT_STAGED:' + path);
-    }
-    return gitOk(['write-tree'], { env }).trim();
-  } finally {
-    try { rmSync(indexDir, { recursive: true, force: true }); } catch { /* best effort */ }
+function contentFor(path, convertEol, isAutoForm) {
+  const raw = readFileSync(path);
+  if (!convertEol) return { data: raw, normalized: false };
+  if (isAutoForm && looksBinaryToGit(raw.subarray(0, 8000))) return { data: raw, normalized: false };
+  const out = Buffer.alloc(raw.length);
+  let length = 0;
+  for (let index = 0; index < raw.length; index += 1) {
+    if (raw[index] === 13 && raw[index + 1] === 10) continue;
+    out[length] = raw[index];
+    length += 1;
   }
+  const data = out.subarray(0, length);
+  return { data: data, normalized: length !== raw.length };
+}
+function openScratch(persist) {
+  const scratch = mkdtempSync2(join2(tmpdir2(), 'wag-commit-scratch-'));
+  const overrides = { GIT_INDEX_FILE: join2(scratch, 'index') };
+  if (!persist) {
+    const objects = join2(scratch, 'objects');
+    const fsModule = require('fs');
+    fsModule.mkdirSync(join2(objects, 'info'), { recursive: true });
+    overrides.GIT_OBJECT_DIRECTORY = objects;
+    // The repository's own objects are reached through the alternates FILE, not through
+    // GIT_ALTERNATE_OBJECT_DIRECTORIES: git splits that variable on the platform path
+    // separator, which on Windows is ';' — a legal NTFS filename character — and quoting it
+    // makes git refuse to normalize the path at all. The file is one path per line.
+    fsModule.writeFileSync(join2(objects, 'info', 'alternates'), join2(gitCommonDir(), 'objects') + '\\n');
+  }
+  return {
+    env: gitEnv(overrides),
+    dispose: function () {
+      try { rmSync2(scratch, { recursive: true, force: true }); } catch { /* best effort */ }
+    },
+  };
+}
+
+let cachedCommonDir = null;
+function gitCommonDir() {
+  if (cachedCommonDir === null) {
+    cachedCommonDir = gitOk(['rev-parse', '--path-format=absolute', '--git-common-dir']).trim();
+  }
+  return cachedCommonDir;
+}
+
+function buildTree(env, oldHead, paths, modes, eol, autoForm, normalizedOut) {
+  gitOk(['read-tree', oldHead], { env });
+  for (const path of paths) {
+    // --no-filters is the whole point: no clean filter runs, and no attribute-driven re-encode
+    // happens between disk and object. The only transformation is the end-of-line one WAG
+    // performed itself above, and it is reported.
+    const prepared = contentFor(path, eol[path] === true, autoForm[path] !== false);
+    if (prepared.normalized) normalizedOut.push(path);
+    const blob = gitOk(['hash-object', '-w', '--no-filters', '-t', 'blob', '--stdin'], {
+      env, input: prepared.data,
+    }).trim();
+    if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(blob)) fail('HASH_OBJECT_BAD_OUTPUT:' + path);
+    // The mode is chosen explicitly rather than sampled from a filesystem that does not record
+    // it on Windows. update-index accepts a nonsense mode with exit 0 and silently coerces it,
+    // so the entry it produced is read back and compared rather than assumed.
+    gitOk(['update-index', '--add', '--cacheinfo', modes[path] + ',' + blob + ',' + path], { env });
+    const staged = gitOk(['ls-files', '--stage', '-z', '--', path], { env }).split('\\u0000')[0] || '';
+    if (staged.slice(0, staged.indexOf(' ')) !== modes[path]) fail('UNSUPPORTED_ENTRY_MODE:' + path);
+    if (staged.indexOf(blob) === -1) fail('PATH_NOT_STAGED:' + path);
+  }
+  return gitOk(['write-tree'], { env }).trim();
 }
 
 /**
- * The authoritative statement of what the commit does. Per-path guards are not enough: adding a
- * regular file whose path is a directory in HEAD resolves the conflict by dropping the whole
+ * The authoritative statement of what the commit does. Per-path guards are not enough: adding
+ * a regular file whose path is a directory in HEAD resolves the conflict by dropping the whole
  * subtree, so the only safe check is the resulting tree delta itself.
  */
-function describeChanges(oldHead, tree) {
-  const raw = gitOk(['diff-tree', '--name-status', '--no-renames', '-r', '-z', oldHead, tree]);
-  const fields = raw.split('\u0000').filter(function (value) { return value !== ''; });
+function describeChanges(env, oldHead, tree) {
+  const raw = gitOk([
+    'diff-tree', '--no-ext-diff', '--no-textconv', '--name-status', '--no-renames', '-r', '-z',
+    oldHead, tree,
+  ], { env });
+  const fields = raw.split('\\u0000').filter(function (value) { return value !== ''; });
   const changes = [];
   for (let index = 0; index + 1 < fields.length; index += 2) {
     const status = fields[index];
@@ -171,33 +316,46 @@ function describeChanges(oldHead, tree) {
   return changes;
 }
 
-function plan() {
+function plan(persist) {
   const state = inspectRepository();
-  assertSelectable(input.paths);
+  const eol = Object.create(null);
+  const autoForm = Object.create(null);
+  const modes = assertSelectable(input.paths, state.head, eol, autoForm);
   const oldTree = gitOk(['rev-parse', state.head + '^{tree}']).trim();
-  const tree = buildTree(state.head, input.paths);
-  if (tree === oldTree) fail('NO_CHANGES_SELECTED');
-  const changes = describeChanges(state.head, tree);
-  return {
-    branch: state.branch, ref: state.ref, head: state.head,
-    tree: tree, changes: changes, author: state.author,
-  };
+  const normalized = [];
+  const scratch = openScratch(persist === true);
+  try {
+    const tree = buildTree(scratch.env, state.head, input.paths, modes, eol, autoForm, normalized);
+    if (tree === oldTree) fail('NO_CHANGES_SELECTED');
+    const changes = describeChanges(scratch.env, state.head, tree);
+    return {
+      branch: state.branch, ref: state.ref, head: state.head,
+      tree: tree, changes: changes, author: state.author, committer: state.committer,
+      gitDir: state.gitDir, commonDir: state.commonDir,
+      eolNormalized: normalized,
+    };
+  } finally {
+    scratch.dispose();
+  }
 }
-
 function commit() {
-  const planned = plan();
+  // persist: the objects must outlive this process now, so they go to the real object store.
+  const planned = plan(true);
   if (planned.branch !== input.expectedBranch) fail('BRANCH_DRIFT');
   if (planned.head !== input.expectedOldHead) fail('HEAD_DRIFT');
   if (planned.tree !== input.expectedTree) fail('CONTENT_DRIFT');
   if (planned.author !== input.expectedAuthor) fail('AUTHOR_DRIFT');
+  if (planned.committer !== input.expectedCommitter) fail('COMMITTER_DRIFT');
+  if (!samePath(planned.gitDir, input.expectedGitDir)) fail('REPOSITORY_DRIFT');
+  if (!samePath(planned.commonDir, input.expectedCommonDir)) fail('REPOSITORY_DRIFT');
 
   // Message arrives as stdin data, never as an argument and never as shell syntax.
   const created = git(['commit-tree', planned.tree, '-p', planned.head], { input: input.message });
-  if (created.status !== 0) fail('COMMIT_TREE_FAILED:' + String(created.stderr).trim().split('\n')[0]);
+  if (created.status !== 0) fail('COMMIT_TREE_FAILED:' + String(created.stderr).trim().split('\\n')[0]);
   const commitSha = created.stdout.trim();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commitSha)) fail('COMMIT_TREE_BAD_OUTPUT');
 
-  const parents = gitOk(['rev-list', '--parents', '-n', '1', commitSha]).trim().split(/\s+/);
+  const parents = gitOk(['rev-list', '--parents', '-n', '1', commitSha]).trim().split(/\\s+/);
   if (parents.length !== 2 || parents[1] !== planned.head) fail('UNEXPECTED_PARENTS');
 
   // Compare-and-swap: a branch that moved since the preview loses instead of being clobbered.
@@ -208,13 +366,13 @@ function commit() {
 }
 
 try {
-  const output = mode === 'commit' ? commit() : plan();
+  const output = mode === 'commit' ? commit() : plan(false);
   process.stdout.write('__WAG_BEGIN__' + JSON.stringify(output));
 } finally {
   // The empty hooks directory outlives every git call in this process and nothing else.
-  try { rmSync(hooksDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  disposeGitRunner();
 }
-`;
+`);
 
 export class DevspaceGitCommitBackend implements GitCommitBackend {
   readonly kind = 'devspace';
@@ -293,9 +451,11 @@ export class DevspaceGitCommitBackend implements GitCommitBackend {
  */
 function classifyFailure(output: string): string {
   const known = [
-    'WORKTREE_MISMATCH', 'IDENTITY_UNSET', 'AUTHOR_DRIFT',
+    'WORKTREE_MISMATCH', 'REPOSITORY_DRIFT', 'IDENTITY_UNSET', 'AUTHOR_DRIFT',
+    'PATH_HAS_ENCODING_ATTRIBUTE', 'UNSUPPORTED_ENTRY_MODE', 'PATH_NOT_STAGED',
+    'HASH_OBJECT_BAD_OUTPUT', 'TOO_MANY_CONFIGURED_DRIVERS', 'COMMITTER_DRIFT',
     'DETACHED_HEAD', 'OPERATION_IN_PROGRESS', 'UNMERGED_ENTRIES', 'NO_HEAD_COMMIT',
-    'PATH_MISSING', 'PATH_NOT_REGULAR_FILE', 'PATH_HAS_FILTER_ATTRIBUTE', 'PATH_NOT_STAGED',
+    'PATH_MISSING', 'PATH_NOT_REGULAR_FILE', 'PATH_HAS_FILTER_ATTRIBUTE',
     'NO_CHANGES_SELECTED', 'UNSUPPORTED_CHANGE', 'BRANCH_DRIFT', 'HEAD_DRIFT', 'CONTENT_DRIFT',
     'COMMIT_TREE_FAILED', 'COMMIT_TREE_BAD_OUTPUT', 'UNEXPECTED_PARENTS', 'REF_CAS_FAILED',
   ];

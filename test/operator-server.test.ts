@@ -69,6 +69,8 @@ function fakeCommitCoordinator() {
     commitId: 'cmt_test', state: 'PENDING_APPROVAL' as const,
     branch: 'work', oldHead: 'a'.repeat(40), treeSha: 'b'.repeat(40),
     author: 'Someone Else <someone@example.invalid>',
+    committer: 'Different Committer <evil@example.invalid>',
+    eolNormalized: ['src/inno​cent.ts'],
     workspaceRoot: 'C:\\repos\\project',
     // A right-to-left override in a filename displays the name in a different order than it
     // will be committed under; a zero-width space hides a difference entirely.
