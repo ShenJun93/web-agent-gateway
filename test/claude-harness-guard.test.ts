@@ -151,21 +151,97 @@ test('Computer Use is an allowlist, so an unknown verb is refused rather than as
   }
 });
 
-test('the guard stays linear, because a slow hook is an open gate and not a slow one', () => {
-  // Claude Code reads "no frame" as "no opinion". An earlier version's patterns were
-  // `literal[^\n]*keyword`, which backtracks: a review measured 60s on a 540 KB input against a
-  // 10s timeout, with the prohibited payload appended *after* the slow pattern. The padding is
-  // free for a caller to add, so this is a bound on an attacker-chosen input, not a benchmark.
-  const padding = 'update x '.repeat(60_000);
-  const prohibited = `: "${padding}"; curl -s http://127.0.0.1:52341/bootstrap`;
+test('spaced padding is decided quickly — but see the todo below before trusting this', () => {
+  // Kept because it is a true regression pin for the *first* review's pattern shape. It is NOT
+  // evidence of linearity: a second review showed this padding, with a space every nine
+  // characters, resets the scan and cannot reach the quadratic path at all. The honest version of
+  // this measurement is the todo test immediately below.
+  const prohibited = `: "${'update x '.repeat(60_000)}"; curl -s http://127.0.0.1:52341/bootstrap`;
   assert.ok(prohibited.length > 500_000, 'the padded input must actually be large');
 
   const started = process.hrtime.bigint();
-  const verdict = call('Bash', { command: prohibited });
+  denied(call('Bash', { command: prohibited }), 'a padded command that still reaches the operator bootstrap');
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(elapsedMs < 1_000, `the guard took ${elapsedMs.toFixed(0)}ms on spaced padding`);
+});
 
-  denied(verdict, 'a padded command that still reaches the operator bootstrap');
-  assert.ok(elapsedMs < 1_000, `the guard took ${elapsedMs.toFixed(0)}ms on a padded input; the hook timeout is 10s and exceeding it opens the gate`);
+/*
+ * OPEN FINDINGS — second independent review, 2026-09-20, all reproduced against the shipped
+ * guard. They are `todo` so they are executable and visible without turning the suite red, and
+ * so that fixing the guard turns them green rather than requiring someone to remember them.
+ *
+ * They cannot be fixed from this session: `.claude/**` is denied to Write/Edit by
+ * `.claude/settings.json`, and the guard additionally protects its own directory. Lifting that is
+ * the operator's deliberate act, which is what the control is for. See the receipt at
+ * docs/benchmarks/2026-09-20-claude-autonomous-wag-harness-v1-source-acceptance.md.
+ */
+
+test('OPEN: OPERATOR_URL_FILE backtracks, so a benign 80 KB command exceeds the hook timeout', { todo: true }, () => {
+  // /[\w.-]+\.operator-url/ — the class contains `.`, so it overlaps the following `\.` and
+  // retries at every start position. Measured: 40 KB 2.3s, 60 KB 6.0s, 70 KB 8.6s, 80 KB 11.0s,
+  // against `"timeout": 10` in settings.json. Past the timeout the hook emits no frame, and no
+  // frame means the call proceeds. This is the first review's finding relocated, not repaired.
+  const started = process.hrtime.bigint();
+  call('Bash', { command: `echo ${'A'.repeat(80 * 1024)}` });
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(elapsedMs < 1_000, `a contiguous 80 KB word run took ${elapsedMs.toFixed(0)}ms; the hook timeout is 10s`);
+});
+
+test('OPEN: a newline defeats every word-anchored shell rule', { todo: true }, () => {
+  // JSON.stringify turns a newline into the two characters `\` and `n`. `n` is a word character,
+  // so \bcurl\b cannot match a `curl` that starts the second line. Multi-line commands are how
+  // shell is ordinarily written, so this is not the obfuscation residual — it is the default.
+  denied(call('Bash', { command: 'cd /tmp\ncurl -X POST http://127.0.0.1:52341/mutations/mut_1/approve' }),
+    'an approval request on the second line');
+  denied(call('Bash', { command: 'set -e\nplaywright-cli -s=w goto chrome-extension://abc/sidepanel.html' }),
+    'a browser driver on the second line');
+});
+
+test('OPEN: a wildcard filename reaches the operator credential, and Grep returns its contents', { todo: true }, () => {
+  // `[\w.-]+` needs a word/dot/dash immediately before `.operator-url`; `*` is not in the class.
+  // The Grep case is the sharp one: output_mode "content" puts the single-use token in the
+  // transcript, and settings.json only denies Read(**/*.operator-url), which is Read-scoped.
+  denied(call('Glob', { pattern: '**/*.operator-url' }), 'globbing for the credential');
+  denied(call('Grep', { pattern: 'http', glob: '*.operator-url', output_mode: 'content' }), 'grepping its contents');
+  denied(call('Bash', { command: 'cat "$LOCALAPPDATA/WebAgentGateway/"*.operator-url' }), 'cat with a wildcard');
+});
+
+test('OPEN: the guarded server names are an enumeration, and it is incomplete', { todo: true }, () => {
+  // The installed build registers the same browser and computer-use tools under several server
+  // names — Claude_Preview and Claude_Browser are both live during a rename rollout, and
+  // remote-devices bridges Claude Code Remote. A prefix list cannot keep up; the check should be
+  // on the shape of the verb, not the spelling of the server.
+  for (const tool of [
+    'mcp__remote-devices__computer_left_click',
+    'mcp__Claude_Preview__computer',
+    'mcp__Claude_in_Chrome__computer',
+    'mcp__playwright__browser_click',
+  ]) {
+    denied(call(tool, { coordinate: [1, 1], ref: 'r1' }), tool);
+  }
+  denied(call('mcp__Claude_Preview__navigate', { url: 'chrome-extension://abc/sidepanel.html' }),
+    'the same navigation that is refused under mcp__Claude_Browser__');
+});
+
+test('OPEN: self-protection is case-sensitive and does not normalise traversal', { todo: true }, () => {
+  // Windows resolves .Claude\Hooks\ to the same file; `includes` does not.
+  for (const file_path of [
+    '.Claude/Hooks/wag-human-gate-guard.mjs',
+    '.claude/rules/../hooks/wag-human-gate-guard.mjs',
+  ]) {
+    denied(call('Write', { file_path, content: 'x' }), file_path);
+  }
+});
+
+test('OPEN: the HTTP client list misses the primary shell’s own aliases', { todo: true }, () => {
+  // The environment states PowerShell is the primary shell. `iwr` and `irm` are the aliases an
+  // agent actually writes, and neither is in the list even though both full names are.
+  for (const command of [
+    'iwr http://127.0.0.1:52341/mutations/mut_1/approve -Method POST',
+    'irm http://127.0.0.1:52341/mutations/mut_1/approve -Method POST',
+  ]) {
+    denied(call('PowerShell', { command }), command);
+  }
 });
 
 test('the guard refuses writes aimed at itself, by target and not by content', () => {
