@@ -51,7 +51,7 @@ test('the lane drives both gestures, so an iteration needs no human', async (t) 
     path: 'ticket-id.js', before: 'String(raw).trim()', after: 'String(raw).trim().toUpperCase()',
   });
   assert.match(proposed.mutationId, /^mut_/);
-  assert.equal(lane.pending().length, 1);
+  assert.equal((await lane.pending()).length, 1);
   assert.equal(await lane.readFixture('ticket-id.js'), 'export const id = (raw) => String(raw).trim();\n',
     'proposing alone changes nothing, exactly as in production');
 
@@ -60,7 +60,7 @@ test('the lane drives both gestures, so an iteration needs no human', async (t) 
   const after = await lane.readFixture('ticket-id.js');
   assert.equal(after, 'export const id = (raw) => String(raw).trim().toUpperCase();\n');
   assert.equal(sha256(after), proposed.resultSha256, 'reviewed bytes equal written bytes');
-  assert.equal(lane.pending().length, 0);
+  assert.equal((await lane.pending()).length, 0);
 
   // Single use, as in production.
   assert.equal(await lane.approve(proposed.mutationId), false, 'a second approval does nothing');
@@ -155,7 +155,7 @@ test('a record id from another store is simply not there, which is what isolates
   assert.equal(foreign.status, 'approval_required');
 
   await assert.rejects(lane.approve(foreign.mutationId!), /no such record in this lane/i);
-  assert.throws(() => lane.reject(foreign.mutationId!), /no such record in this lane/i);
+  await assert.rejects(lane.reject(foreign.mutationId!), /no such record in this lane/i);
 
   // The foreign record is untouched, and still approvable by its own authority.
   assert.equal(foreignStore.getMutation(foreign.mutationId!)?.state, 'PENDING_APPROVAL');
@@ -203,6 +203,68 @@ test('the workspace guard fires when a record in this store belongs elsewhere', 
   assert.equal(await readFile(join(otherDir, 'note.txt'), 'utf8'), 'alpha\n', 'and nothing was written');
 });
 
+test('each defence-in-depth guard is exercised, not merely present', async (t) => {
+  // Three reviews in a row found guards on this branch that no test reached, so deleting them
+  // would have failed nothing. These are the ones that were still in that state.
+
+  // 1. The marker check. Tamper with it and every durable-state operation must stop.
+  const parent = await mkdtemp(join(tmpdir(), 'wag-lane-'));
+  const lane = await createHarnessLane({ lane: HARNESS_LANE, root: join(parent, 'lane'), env: enabled });
+  t.after(async () => {
+    await lane.destroy().catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  });
+  await lane.writeFixture('a.txt', 'one\n');
+  const proposed = await lane.propose({ path: 'a.txt', before: 'one', after: 'two' });
+
+  const markerPath = join(resolve(parent), 'lane', 'harness-lane.json');
+  const marker = JSON.parse(await readFile(markerPath, 'utf8')) as { laneId: string };
+  await writeFile(markerPath, JSON.stringify({ ...marker, laneId: 'lane_someone_else' }));
+
+  await assert.rejects(lane.approve(proposed.mutationId), /marker no longer describes this lane/i);
+  await assert.rejects(lane.reject(proposed.mutationId), /marker no longer describes this lane/i);
+  await assert.rejects(lane.pending(), /marker no longer describes this lane/i,
+    'listing writes durable state through the overdue sweep, so it is checked too');
+  await assert.rejects(lane.propose({ path: 'a.txt', before: 'one', after: 'three' }),
+    /marker no longer describes this lane/i);
+  assert.equal(await lane.readFixture('a.txt'), 'one\n', 'and nothing was written while it was refused');
+
+  // Put it back so the lane can be torn down cleanly.
+  await writeFile(markerPath, JSON.stringify(marker));
+
+  // 2. LOCALAPPDATA fail-closed. The suite inherits a real one, so no other test omits it.
+  const bare = { WAG_HARNESS_LANE: '1' } as NodeJS.ProcessEnv;
+  await assert.rejects(
+    createHarnessLane({ lane: HARNESS_LANE, root: join(parent, 'lane-2'), env: bare }),
+    /LOCALAPPDATA/i, 'an absent LOCALAPPDATA refuses rather than dropping the check');
+  await assert.rejects(
+    createHarnessLane({ lane: HARNESS_LANE, root: join(parent, 'lane-3'), env: { ...bare, LOCALAPPDATA: 'relative' } }),
+    /LOCALAPPDATA/i, 'and so does a relative one');
+
+  // 3. A UNC root is refused before anything is created.
+  await assert.rejects(
+    createHarnessLane({ lane: HARNESS_LANE, root: '\\\\localhost\\C$\\wag-lane', env: enabled }),
+    /UNC or device-namespace/i);
+  await assert.rejects(
+    createHarnessLane({ lane: HARNESS_LANE, root: '//localhost/C$/wag-lane', env: enabled }),
+    /UNC or device-namespace/i);
+});
+
+test('the fixture backend rethrows a read failure that is not absence', async (t) => {
+  // The backend contract requires absence to be distinguishable from every other read failure,
+  // because a creation that read a permission error as "absent" would become an overwrite. The
+  // previous version swallowed everything, including its own containment refusal, and no test
+  // noticed. A directory where a file is expected produces EISDIR on read.
+  const lane = await openLane(t);
+  await mkdir(join(lane.fixtureRoot, 'adir'), { recursive: true });
+
+  await assert.rejects(
+    lane.propose({ path: 'adir', before: 'x', after: 'y' }),
+    (error: Error) => !/no such file|ENOENT/i.test(error.message),
+    'a directory read must surface as a failure, never as absence',
+  );
+});
+
 test('the lane cannot write outside its own fixture', async (t) => {
   const lane = await openLane(t);
   await lane.writeFixture('in.txt', 'x\n');
@@ -230,16 +292,23 @@ test('production carries no auto-approve bypass and does not know this lane exis
     }
     return out;
   };
-  const production = (await walk(srcRoot)).filter((f) => !f.endsWith('harness-authority.ts'));
-  assert.ok(production.length >= 20, `expected to walk the whole of src/, saw ${production.length} files`);
+  // Everything that ships: src/, the scripts that assemble runtimes, and the extension itself —
+  // a review pointed out the shipped v4 service worker was outside the previous walk.
+  const extensionRoot = fileURLToPath(new URL('../browser/extension/', import.meta.url));
+  const scriptsRoot = fileURLToPath(new URL('../scripts/', import.meta.url));
+  const production = [
+    ...await walk(srcRoot), ...await walk(extensionRoot), ...await walk(scriptsRoot),
+  ].filter((f) => !f.endsWith('harness-authority.ts') && !f.endsWith('harness-authority.js'));
+  assert.ok(production.length >= 60, `expected to walk everything shipped, saw ${production.length} files`);
 
+  // Spellings, not one spelling. `testMode` and `approveAll` passed the previous four-token list.
+  const bypass = /TEST_MODE|testMode|autoApprove|auto_approve|approveAll|bypassApproval|forceApprove|skipApproval|skip_approval/i;
   for (const file of production) {
     const source = await readFile(file, 'utf8');
-    const name = relative(srcRoot, file);
+    const name = relative(fileURLToPath(new URL('../', import.meta.url)), file);
     assert.equal(source.includes('harness-authority'), false, `${name} must not import the lane`);
     assert.equal(/HARNESS_LANE|WAG_HARNESS_LANE/.test(source), false, `${name} must not know the lane exists`);
-    assert.equal(/TEST_MODE|autoApprove|auto_approve|skipApproval/i.test(source), false,
-      `${name} must carry no approval bypass`);
+    assert.equal(bypass.test(source), false, `${name} must carry no approval bypass`);
   }
 
   // The lane reaches approval through the ordinary coordinator, not a private door into it.
@@ -251,9 +320,12 @@ test('production carries no auto-approve bypass and does not know this lane exis
     ['./caller-context.js', './durable-mutation.js', './durable-store.js', './file-mutation-backend.js', './path-policy.js'],
     'the lane reaches only the coordinator, the store, the caller context and the path policy',
   );
-  // A static import list is blind to `await import(...)`, and this file used to contain one.
-  assert.equal(/await\s+import\s*\(/.test(lane), false,
+  // A static import list is blind to a dynamic one, and this file used to contain one. Matching
+  // only the awaited form would still miss `import(x).then(...)`, `void import(x)` and
+  // `createRequire`, so match the call in any form.
+  assert.equal(/(^|[^.\w])import\s*\(/m.test(lane), false,
     'the lane uses no dynamic import, so the list above is the whole of its reach');
+  assert.equal(/createRequire/.test(lane), false, 'nor does it reach for require');
 });
 
 test('the lane is disposable and leaves nothing behind', async (t) => {

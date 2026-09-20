@@ -21,9 +21,19 @@
  *    fails atomically if anything is already there — so an existing directory cannot be adopted,
  *    and there is no check-then-create window to race.
  *
- * Everything below those two is defence in depth, and is described as such: the lane id stamped
- * into the store and re-checked on every operation, the canonicalised containment, the workspace
- * re-derivation. Each would catch a mistake; none of them is the reason production is out of reach.
+ * Everything below those two is defence in depth, and is described as such. Each would catch a
+ * mistake; none of them is the reason production is out of reach.
+ *
+ *   - the marker is re-read before every operation that writes durable state — `propose`,
+ *     `approve`, `reject` and `pending`, the last because listing runs an overdue sweep that
+ *     transitions records. It is *not* checked by the fixture read/write helpers, which touch no
+ *     durable state. It catches an accidental swap, not a deliberate one: an adversary who can
+ *     rewrite the directory can copy the marker across with it.
+ *   - containment is judged lexically, then again on the realpath, which catches a junction or an
+ *     8.3 short name. A UNC spelling is refused separately and earlier, before anything is created.
+ *   - the fixture is admitted through the production path policy, whose real contribution here is
+ *     refusing sensitive segments and system directories — the allowed-root argument is satisfied
+ *     by construction and buys nothing.
  *
  * ## What it still is not
  *
@@ -59,8 +69,9 @@ export interface HarnessLane {
   propose(input: { path: string; before: string; after: string; baseSha256?: string }): Promise<{ mutationId: string; resultSha256: string }>;
   /** The operator-approval equivalent: the only thing that causes an effect. */
   approve(mutationId: string): Promise<boolean>;
-  reject(mutationId: string): boolean;
-  pending(): Array<{ mutationId: string; path: string }>;
+  reject(mutationId: string): Promise<boolean>;
+  /** Async because listing runs the overdue sweep, which writes durable state. */
+  pending(): Promise<Array<{ mutationId: string; path: string }>>;
   readFixture(path: string): Promise<string>;
   writeFixture(path: string, content: string): Promise<void>;
   close(): void;
@@ -162,7 +173,14 @@ export async function createHarnessLane(options: {
     }
   };
 
-  // Lexically first, so an obviously wrong root is refused before anything is created.
+  // A UNC or device-namespace root is refused here, before anything is created. The realpath
+  // check cannot do it: `path.win32.relative` compares a UNC path against a drive-letter path as
+  // unrelated roots, so `\\localhost\C$\…\WebAgentGateway\lane` reads as "outside" a directory it
+  // is physically inside. The path policy refuses it too, but only after `mkdir` has run.
+  if (/^[\\/]{2}/.test(options.root)) {
+    throw new Error('Harness lane root must not be a UNC or device-namespace path');
+  }
+  // Then lexically, so an obviously wrong root is refused before anything is created.
   assertOutside(root);
 
   // Non-recursive: this both creates the root and asserts nothing was there, in one atomic step.
@@ -175,10 +193,13 @@ export async function createHarnessLane(options: {
     throw error;
   }
 
+  let cleanupRoot = root;
+  let built: HarnessLane | undefined;
   try {
-    // Then again on the canonical path: a junction, an 8.3 short name or a UNC spelling all name
-    // the same directory as a path that would otherwise look "outside".
+    // Then again on the canonical path: a junction or an 8.3 short name names the same directory
+    // as a path that would otherwise look "outside".
     const canonicalRoot = await realpath(root);
+    cleanupRoot = canonicalRoot;
     assertOutside(canonicalRoot);
 
     const fixtureRoot = resolve(join(canonicalRoot, FIXTURE_DIR));
@@ -195,9 +216,16 @@ export async function createHarnessLane(options: {
       createdAt: Date.now(),
     };
     await writeFile(join(canonicalRoot, MARKER_FILE), JSON.stringify(marker, null, 2), { encoding: 'utf8', mode: 0o600 });
-    return build(canonicalRoot, marker, stateDir);
+    built = build(canonicalRoot, marker, stateDir);
+    return built;
   } catch (error) {
-    await rm(root, { recursive: true, force: true }).catch(() => undefined);
+    // Close before removing: `build` opens the store, and anything throwing after that would
+    // otherwise leave an open handle, a directory Windows refuses to delete, and a root
+    // permanently blocked by EEXIST — the opposite of "leaves nothing behind".
+    try { built?.close(); } catch { /* nothing to close */ }
+    // The canonical root when it is known: removing the path as written would follow a retargeted
+    // parent link to a directory this lane never created.
+    await rm(cleanupRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -276,12 +304,19 @@ function build(root: string, marker: LaneMarker, stateDir: string): HarnessLane 
       assertOwnRecord(mutationId);
       return coordinator.approveLocal(mutationId);
     },
-    reject(mutationId) {
+    async reject(mutationId) {
+      await assertLaneIntact();
       assertOwnRecord(mutationId);
       return coordinator.rejectLocal(mutationId);
     },
-    pending() {
-      return coordinator.listPendingLocal(50).map((r) => ({ mutationId: r.mutationId, path: r.path }));
+    // Async and lane-checked, because this is not the read it looks like: listing runs the overdue
+    // sweep, which transitions records to EXPIRED and writes audit rows. It is also filtered to
+    // this lane's workspace, so it cannot offer a record `approve` would then refuse.
+    async pending() {
+      await assertLaneIntact();
+      return coordinator.listPendingLocal(50)
+        .filter((r) => store.getMutation(r.mutationId)?.workspaceId === workspace.workspaceId)
+        .map((r) => ({ mutationId: r.mutationId, path: r.path }));
     },
     async readFixture(path) { return readFile(fixturePath(path), 'utf8'); },
     async writeFixture(path, content) {
