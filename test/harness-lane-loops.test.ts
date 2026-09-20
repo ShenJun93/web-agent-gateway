@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { createHarnessLane, HARNESS_LANE, type HarnessLane, type LaneOperator } from '../src/harness-authority.js';
 
@@ -192,6 +193,129 @@ test('the operator loop is single-use: a replayed approval changes nothing a sec
   assert.equal(replay.status, 409, 'the transition already happened, and it happens once');
   assert.equal(await lane.readFixture('ticket-id.js'), 'tampered\n',
     'a replayed approval writes nothing');
+});
+
+test('the HTTP path is guarded too: a tampered marker stops the review server mid-flight', async (t) => {
+  // The server's coordinator entries used to forward straight through, so the one path that
+  // actually causes an effect was the only one with neither the marker check nor the workspace
+  // check on it — while the module header claimed both ran before every durable write.
+  const parent = await mkdtemp(join(tmpdir(), 'wag-loop-'));
+  const lane = await createHarnessLane({
+    lane: HARNESS_LANE, root: join(parent, 'lane'), env: enabled, reviewTtlMs: 60_000,
+  });
+  t.after(async () => {
+    await lane.destroy().catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  });
+
+  await lane.writeFixture('ticket-id.js', BEFORE);
+  const proposed = await lane.propose({ path: 'ticket-id.js', before: BEFORE, after: AFTER });
+  const operator = await lane.serveOperator();
+  const { cookie, csrf } = await bootstrap(operator);
+
+  // Tamper *after* the server is up, so only a per-request check can catch it.
+  const markerPath = join(resolve(parent), 'lane', 'harness-lane.json');
+  const marker = JSON.parse(await readFile(markerPath, 'utf8')) as { laneId: string };
+  await writeFile(markerPath, JSON.stringify({ ...marker, laneId: 'lane_someone_else' }));
+
+  const approve = await fetch(`${operator.origin}/mutations/${proposed.mutationId}/approve`, {
+    method: 'POST', redirect: 'manual',
+    headers: { cookie, origin: operator.origin, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ csrf }).toString(),
+  });
+  assert.notEqual(approve.status, 303, 'the approval must not go through a swapped lane');
+
+  await writeFile(markerPath, JSON.stringify(marker));
+  assert.equal(await lane.readFixture('ticket-id.js'), BEFORE, 'and nothing reached disk');
+});
+
+test('the review server offers only this lane workspace, so it cannot show what approve would refuse', async (t) => {
+  const parent = await mkdtemp(join(tmpdir(), 'wag-loop-'));
+  const lane = await createHarnessLane({
+    lane: HARNESS_LANE, root: join(parent, 'lane'), env: enabled, reviewTtlMs: 60_000,
+  });
+  t.after(async () => {
+    await lane.destroy().catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  });
+  await lane.writeFixture('ticket-id.js', BEFORE);
+  await lane.propose({ path: 'ticket-id.js', before: BEFORE, after: AFTER });
+
+  // A second workspace inside the lane's OWN store, with a pending record against it. The lane's
+  // own `pending()` filters these out; before the fix the HTTP listing did not, so the page
+  // rendered a record with a working Approve button that `lane.approve()` would have rejected.
+  const storePath = join(resolve(parent), 'lane', 'harness-lane.sqlite');
+  const db = new DatabaseSync(storePath);
+  const foreignWorkspace = 'ws_not_this_lane';
+  const row = db.prepare('SELECT * FROM workspaces LIMIT 1').get() as Record<string, unknown>;
+  const cols = Object.keys(row);
+  db.prepare(`INSERT INTO workspaces (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`)
+    .run(...cols.map((c) => (c === 'workspace_id' ? foreignWorkspace : row[c] as never)));
+  const mutation = db.prepare("SELECT * FROM mutations WHERE state='PENDING_APPROVAL' LIMIT 1").get() as Record<string, unknown>;
+  const mcols = Object.keys(mutation);
+  db.prepare(`INSERT INTO mutations (${mcols.join(',')}) VALUES (${mcols.map(() => '?').join(',')})`)
+    .run(...mcols.map((c) => (
+      c === 'mutation_id' ? 'mut_foreign'
+        : c === 'workspace_id' ? foreignWorkspace
+          : mutation[c] as never)));
+  db.close();
+
+  const operator = await lane.serveOperator();
+  const { cookie, csrf } = await bootstrap(operator);
+
+  const list = await (await fetch(`${operator.origin}/`, { headers: { cookie } })).text();
+  assert.equal(list.includes('mut_foreign'), false, 'a record from another workspace is not offered');
+
+  const approve = await fetch(`${operator.origin}/mutations/mut_foreign/approve`, {
+    method: 'POST', redirect: 'manual',
+    headers: { cookie, origin: operator.origin, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ csrf }).toString(),
+  });
+  assert.notEqual(approve.status, 303, 'and approving it directly is refused too');
+});
+
+test('approval re-derives the workspace, not just its id', async (t) => {
+  // `assertOwnRecord` has two arms. The id comparison is covered; this is the second — the one
+  // the lane receipt has claimed since fabd369 was covered, and which would pass deleted.
+  const parent = await mkdtemp(join(tmpdir(), 'wag-loop-'));
+  const lane = await createHarnessLane({
+    lane: HARNESS_LANE, root: join(parent, 'lane'), env: enabled, reviewTtlMs: 60_000,
+  });
+  t.after(async () => {
+    await lane.destroy().catch(() => undefined);
+    await rm(parent, { recursive: true, force: true });
+  });
+  await lane.writeFixture('ticket-id.js', BEFORE);
+  const proposed = await lane.propose({ path: 'ticket-id.js', before: BEFORE, after: AFTER });
+
+  // Repoint the lane's own workspace at somewhere else. The record's workspace_id still matches,
+  // so only the re-derivation arm can catch this.
+  const storePath = join(resolve(parent), 'lane', 'harness-lane.sqlite');
+  const db = new DatabaseSync(storePath);
+  db.prepare('UPDATE workspaces SET canonical_root = ? WHERE workspace_id = ?')
+    .run(join(resolve(parent), 'elsewhere'), lane.workspaceId);
+  db.close();
+
+  await assert.rejects(lane.approve(proposed.mutationId), /does not resolve to this lane fixture/i);
+  assert.equal(await lane.readFixture('ticket-id.js'), BEFORE);
+});
+
+test('the clock only moves forward', async (t) => {
+  const lane = await openLane(t);
+  assert.throws(() => lane.advanceClock(-1), /only moves forward/);
+  assert.throws(() => lane.advanceClock(Number.NaN), /only moves forward/);
+  assert.throws(() => lane.advanceClock(Number.POSITIVE_INFINITY), /only moves forward/);
+});
+
+test('the lane is still excluded from the shipped build', async () => {
+  // ADR-0027 condition 7. It held only because a line in tsconfig.build.json says so, and
+  // nothing failed if that line were deleted — which is how the lane shipped into dist/ once
+  // already, before af5f14b removed it.
+  const config = JSON.parse(await readFile(new URL('../tsconfig.build.json', import.meta.url), 'utf8')) as {
+    exclude?: string[];
+  };
+  assert.ok(config.exclude?.includes('src/harness-authority.ts'),
+    'a test-only authority surface must not land in dist/ beside the production modules');
 });
 
 test('the lane closes its own review servers, so an iteration leaves no listening port', async (t) => {

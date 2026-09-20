@@ -227,7 +227,18 @@ test('each defence-in-depth guard is exercised, not merely present', async (t) =
     'listing writes durable state through the overdue sweep, so it is checked too');
   await assert.rejects(lane.propose({ path: 'a.txt', before: 'one', after: 'three' }),
     /marker no longer describes this lane/i);
+  // The two call-sites that arrived with the loop capabilities. Both shipped uncovered, in the
+  // very commit whose message said the new guards had been mutation-tested; a review caught it.
+  await assert.rejects(lane.reopen(), /marker no longer describes this lane/i);
+  await assert.rejects(lane.serveOperator(), /marker no longer describes this lane/i);
   assert.equal(await lane.readFixture('a.txt'), 'one\n', 'and nothing was written while it was refused');
+
+  // The workspace id is part of the comparison. It was persisted and read by nothing, which is
+  // the same "written and never read" defect this branch has now produced three times — and it
+  // is the field a future `openHarnessLane()` would most want to be able to trust.
+  await writeFile(markerPath, JSON.stringify({ ...marker, workspaceId: 'ws_somewhere_else' }));
+  await assert.rejects(lane.approve(proposed.mutationId), /marker no longer describes this lane/i);
+  await assert.rejects(lane.pending(), /marker no longer describes this lane/i);
 
   // Put it back so the lane can be torn down cleanly.
   await writeFile(markerPath, JSON.stringify(marker));

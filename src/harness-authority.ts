@@ -26,9 +26,14 @@
  *
  *   - the marker is re-read before every operation that writes durable state — `propose`,
  *     `approve`, `reject` and `pending`, the last because listing runs an overdue sweep that
- *     transitions records. It is *not* checked by the fixture read/write helpers, which touch no
- *     durable state. It catches an accidental swap, not a deliberate one: an adversary who can
- *     rewrite the directory can copy the marker across with it.
+ *     transitions records; and, since the lane can host a review server, on every entry the
+ *     server reaches too, synchronously, because that interface cannot await. It is *not*
+ *     checked by the fixture read/write helpers, which touch no durable state. It catches an
+ *     accidental swap, not a deliberate one: an adversary who can rewrite the directory can copy
+ *     the marker across with it.
+ *   - every route that can transition a record confines itself to this lane's one workspace,
+ *     including the ones reached over HTTP. A review found the server's entries forwarding
+ *     straight through while this comment claimed otherwise; the claim is now the behaviour.
  *   - containment is judged lexically, then again on the realpath, which catches a junction or an
  *     8.3 short name. A UNC spelling is refused separately and earlier, before anything is created.
  *   - the fixture is admitted through the production path policy, whose real contribution here is
@@ -41,6 +46,7 @@
  * the containment claim. See `docs/benchmarks/2026-09-20-harness-test-lane-decision.md`.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -331,14 +337,33 @@ function build(root: string, marker: LaneMarker, stateDir: string, config: {
    * that a lane whose directory has been swapped underneath it stops rather than continues, and so
    * the marker is something the code consults rather than decoration.
    */
-  const assertLaneIntact = async (): Promise<void> => {
-    const raw = await readFile(join(root, MARKER_FILE), 'utf8');
+  const checkMarker = (raw: string): void => {
     const seen = JSON.parse(raw) as LaneMarker;
     if (seen.laneId !== marker.laneId || seen.lane !== HARNESS_LANE
       || resolve(seen.storePath) !== resolve(marker.storePath)
-      || resolve(seen.fixtureRoot) !== resolve(marker.fixtureRoot)) {
+      || resolve(seen.fixtureRoot) !== resolve(marker.fixtureRoot)
+      // The workspace id is compared too. It used to be written and never read — the third time
+      // on this branch that a marker field was persisted and then trusted by nothing — which
+      // left the one field a future `openHarnessLane()` would most want to trust unvalidated.
+      || seen.workspaceId !== marker.workspaceId) {
       throw new Error('Harness lane marker no longer describes this lane');
     }
+  };
+
+  const assertLaneIntact = async (): Promise<void> => {
+    checkMarker(await readFile(join(root, MARKER_FILE), 'utf8'));
+  };
+
+  /**
+   * The same check, synchronously.
+   *
+   * The operator server's coordinator interface is partly synchronous — `listPendingLocal` and
+   * `rejectLocal` return values, not promises — so the HTTP path cannot await. Without this the
+   * lane's own header would be false: an approve POST would transition a record and write audit
+   * rows with no marker re-read at all.
+   */
+  const assertLaneIntactSync = (): void => {
+    checkMarker(readFileSync(join(root, MARKER_FILE), 'utf8'));
   };
 
   /** Defence in depth: a record must belong to this store's one workspace and resolve to it. */
@@ -386,10 +411,34 @@ function build(root: string, marker: LaneMarker, stateDir: string, config: {
       // started before a `reopen` keeps working against the store that replaced it.
       const server = await startOperatorServer({
         coordinator: {
-          listPendingLocal: (limit) => coordinator.listPendingLocal(limit),
-          reviewLocal: (id) => coordinator.reviewLocal(id),
-          approveLocal: (id) => coordinator.approveLocal(id),
-          rejectLocal: (id) => coordinator.rejectLocal(id),
+          // Every entry re-checks the marker and confines itself to this lane's workspace. The
+          // first version of this forwarded straight through, which meant the HTTP path — the
+          // one that actually causes effects — was the only path with neither guard on it, while
+          // the file's header claimed both ran before every durable write. `listPendingLocal`
+          // matters as much as the rest: it runs the overdue sweep, and unfiltered it would
+          // render a record from another workspace with a working Approve button that
+          // `lane.approve()` would have refused.
+          listPendingLocal: (limit) => {
+            assertLaneIntactSync();
+            return coordinator.listPendingLocal(limit)
+              .filter((r) => store.getMutation(r.mutationId)?.workspaceId === marker.workspaceId);
+          },
+          reviewLocal: (id) => {
+            assertLaneIntactSync();
+            return store.getMutation(id)?.workspaceId === marker.workspaceId
+              ? coordinator.reviewLocal(id)
+              : undefined;
+          },
+          approveLocal: async (id) => {
+            assertLaneIntactSync();
+            assertOwnRecord(id);
+            return coordinator.approveLocal(id);
+          },
+          rejectLocal: (id) => {
+            assertLaneIntactSync();
+            assertOwnRecord(id);
+            return coordinator.rejectLocal(id);
+          },
         },
         onDeny: (event) => { denials.push(event); },
       });

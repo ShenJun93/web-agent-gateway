@@ -14,17 +14,21 @@
  * long as the browser ran, which is precisely the exposure this helper exists to avoid. Writing it
  * to a temporary `.url` shortcut has the same problem in a different place: a readable file.
  *
- * So the token is never passed anywhere. Instead this starts a loopback redirect on a random port
- * and the browser is opened at *that* — a URL with no secret in it. The first navigation gets a
- * 303 to the real bootstrap URL, and the redirect closes. The token exists only in this process's
+ * So the token is never passed anywhere. Instead this serves one loopback redirect on a random
+ * port, and a *human* opens that — a URL with no secret in it. The first navigation gets a 303 to
+ * the real bootstrap URL, and the redirect disarms. The token exists only in this process's
  * memory and in one HTTP response to the browser.
+ *
+ * `scripts/open-operator.ts` explains why the browser is not opened automatically: doing that
+ * would let an authenticated operator session come into existence with nobody present, which is
+ * the boundary ADR-0026 is about.
  *
  * ## What this does not defend against, stated plainly
  *
- * A same-user process that reaches the redirect before the browser does gets the token. The
- * `Sec-Fetch` check below makes a plain `curl` miss, but it is a speed bump and nothing more —
- * headers are trivially set by anything deliberate. ADR-0019 already places a same-user adversary
- * outside the containment claim, and this does not move that line.
+ * A same-user process that reaches the redirect before the human does gets the token. The
+ * `Sec-Fetch` check below is a speed bump and nothing more: it makes an incurious `curl` miss,
+ * and a raw HTTP client sets those headers trivially. ADR-0019 already places a same-user
+ * adversary outside the containment claim, and this does not move that line.
  *
  * What it does buy is real: in ordinary operation the token never reaches argv, a log, a file, or
  * this tool's output. And because the bootstrap is single-use, a theft is *loud* — the operator's
@@ -62,6 +66,12 @@ export async function createBootstrapRedirect(options: {
     throw new Error('Operator launch refuses a bootstrap URL that is not loopback');
   }
   const host = options.host ?? '127.0.0.1';
+  // Validated rather than merely documented. An earlier version said "loopback-only" in a comment
+  // and checked nothing, which would have published the token-bearing redirect to every interface
+  // for the life of the TTL. `operator-server.ts` refuses the same way, and so does this.
+  if (host !== '127.0.0.1' && host !== '::1') {
+    throw new Error('Operator launch must bind loopback');
+  }
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
 
   let armed = true;
@@ -84,7 +94,11 @@ export async function createBootstrapRedirect(options: {
       return;
     }
     armed = false;
-    res.writeHead(303, { location: options.bootstrapUrl, 'content-type': 'text/plain' }).end('Opening the operator review page\n');
+    // `target.href`, not the raw text that was validated. Validating one string and emitting
+    // another is how an emitter and its check drift apart: WHATWG URL strips TAB/CR/LF before
+    // parsing, so a file containing an embedded newline would pass the loopback check above and
+    // then reach Node's header validation as a raw value — which throws inside this handler.
+    res.writeHead(303, { location: target.href, 'content-type': 'text/plain' }).end('Opening the operator review page\n');
     settle('handed-off');
   });
 

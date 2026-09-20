@@ -1,21 +1,34 @@
 /**
- * Open the operator review page for a running WAG runtime.
+ * Prepare the operator review page for a running WAG runtime.
  *
  * `npm run operator:open`
  *
- * Exists so a runtime restart does not mean running a PowerShell line by hand. It prints the
- * origin — which the runtime already logs — and never the bootstrap URL or its token. See
- * `src/operator-launch.ts` for why it goes through a loopback redirect instead of handing the URL
- * to the browser on a command line.
+ * Exists so a runtime restart does not mean running a PowerShell line by hand. It prints a
+ * handoff link — loopback, single-use, carrying no secret — which a human opens. It prints the
+ * origin, which the runtime already logs. It never prints the bootstrap URL or its token.
  *
- * This opens a page. It does not approve anything: approval is a human gesture on the page that
- * opens, and nothing here touches it.
+ * ## Why it does not open the browser itself
+ *
+ * It used to. A security review pointed out what that composes into: opening the review page is
+ * the step that previously required the operator to act, so automating it means an *authenticated
+ * operator session can come into existence with no human present*. Put that beside two residuals
+ * this branch already records — a reference-based click is invisible to the guard, and a shell is
+ * a same-user escape hatch — and the chain "open the page, then click Approve by reference" has
+ * no human gesture anywhere in it.
+ *
+ * So the last step is deliberately left to a person. Running this is safe for anyone, including
+ * an agent: on its own it produces a link and nothing else. Only a human opening that link
+ * creates a session. That keeps the human-presence boundary where ADR-0026 puts it while still
+ * removing the thing the operator actually complained about, which was the PowerShell.
+ *
+ * It approves nothing, and it has no HTTP client in it with which it could.
  */
-import { spawn } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
 import { createBootstrapRedirect, operatorOrigin, readBootstrapUrl } from '../src/operator-launch.js';
 
 const DEFAULT_STORE = 'browser-operator-v4.sqlite';
+/** Long enough to walk to the browser, short enough that a forgotten handoff is not left armed. */
+const HANDOFF_TTL_MS = 5 * 60_000;
 
 function stateFile(env: NodeJS.ProcessEnv, store: string): string {
   if (isAbsolute(store)) return `${store}.operator-url`;
@@ -26,46 +39,36 @@ function stateFile(env: NodeJS.ProcessEnv, store: string): string {
   return join(localAppData, 'WebAgentGateway', `${store}.operator-url`);
 }
 
-/**
- * Hands the URL to the platform's default browser.
- *
- * The URL here is the loopback redirect, never the bootstrap — so although this *is* a command
- * line, there is no secret on it.
- */
-function openInBrowser(url: string): void {
-  const [command, args] = process.platform === 'win32'
-    // `start` is a cmd builtin; the empty string is the window title, which `start` otherwise
-    // takes from the first quoted argument and then fails to open anything.
-    ? ['cmd', ['/c', 'start', '', url]]
-    : process.platform === 'darwin'
-      ? ['open', [url]]
-      : ['xdg-open', [url]];
-  const child = spawn(command, args, { stdio: 'ignore', detached: true });
-  child.unref();
-}
-
 async function main(): Promise<number> {
   const store = process.argv[2] ?? DEFAULT_STORE;
   const file = stateFile(process.env, store);
   const bootstrapUrl = await readBootstrapUrl(file);
 
-  const redirect = await createBootstrapRedirect({ bootstrapUrl });
+  const redirect = await createBootstrapRedirect({ bootstrapUrl, ttlMs: HANDOFF_TTL_MS });
   // Reduced to the origin *before* any output, so that no logging statement in this file so much
   // as names the bootstrap URL. A test pins that, which makes the rule mechanical rather than a
   // thing a later edit has to remember.
   const origin = operatorOrigin(bootstrapUrl);
+
   console.log(`operator origin : ${origin}`);
-  console.log(`handoff         : ${redirect.url}  (single-use, carries no secret)`);
-  openInBrowser(redirect.url);
+  console.log(`open this       : ${redirect.url}`);
+  console.log('');
+  console.log('That link is single-use and carries no secret. Opening it in your browser');
+  console.log('collects the bootstrap and signs you in to the review page.');
+  console.log(`Waiting up to ${HANDOFF_TTL_MS / 60_000} minutes...`);
 
   const outcome = await redirect.settled;
   await redirect.close();
 
   if (outcome === 'handed-off') {
-    console.log('opened          : the review page should now be in your browser');
+    // Deliberately not "signed in": all that is known here is that the redirect was collected.
+    // Whether the bootstrap was still unspent is something only the browser can report.
+    console.log('collected       : the review page should now be open in your browser');
+    console.log('                  if it shows Denied, the bootstrap was already spent —');
+    console.log('                  restart the runtime to mint a fresh one');
     return 0;
   }
-  console.error('not opened      : the browser did not collect the handoff before it expired');
+  console.error('not collected   : nobody opened the handoff before it expired');
   console.error('                  the bootstrap is unspent; run this again');
   return 1;
 }
