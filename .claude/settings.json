@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "mcp__computer-use__left_click",
+      "mcp__computer-use__right_click",
+      "mcp__computer-use__middle_click",
+      "mcp__computer-use__double_click",
+      "mcp__computer-use__triple_click",
+      "mcp__computer-use__left_click_drag",
+      "mcp__computer-use__left_mouse_down",
+      "mcp__computer-use__left_mouse_up",
+      "mcp__computer-use__type",
+      "mcp__computer-use__key",
+      "mcp__computer-use__hold_key",
+      "mcp__computer-use__write_clipboard",
+      "mcp__computer-use__teach_step",
+      "mcp__computer-use__teach_batch",
+      "mcp__computer-use__computer_batch",
+      "mcp__2edf08a6-1887-47fb-b0b1-4d239bf7e310__*",
+      "mcp__plugin_desktop-commander_desktop-commander__*"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [".claude/hooks/wag-human-gate-guard.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
