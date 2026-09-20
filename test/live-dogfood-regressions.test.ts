@@ -236,6 +236,74 @@ test('a record past its review deadline is not offered as pending, and is reconc
     'and the durable state is reconciled by the same transition reconcile() uses, not merely hidden');
 });
 
+test('a pending mutation survives a store reopen, and the sweep does not eat a live one', async (t) => {
+  // The overdue sweep is new and runs in front of every render, so it meets restart recovery
+  // head-on: a runtime restart reconciles, and the review page then lists. A record whose window
+  // is still open must come back listed, with the deadline it already had — `browser-verify-request`
+  // has had this property tested since it was written, and the mutation path now needs it too,
+  // because before this change nothing on that path wrote during a read.
+  const dir = await mkdtemp(join(tmpdir(), 'wag-restart-'));
+  const original = 'alpha\n';
+  await writeFile(join(dir, 'note.txt'), original);
+
+  const backend: FileMutationBackend = {
+    kind: 'test-fs',
+    async readExact(root, path) { return readFile(join(root, path), 'utf8'); },
+    async readExactIfPresent(root, path) {
+      try { return await readFile(join(root, path), 'utf8'); } catch { return undefined; }
+    },
+    async createNew(root, path, candidate) { await writeFile(join(root, path), candidate, { flag: 'wx' }); },
+    async updateExisting(root, path, _before, candidate) { await writeFile(join(root, path), candidate); },
+  };
+
+  const at = { value: 5_000_000 };
+  const caller = createGatewayCallerContext({ ownerId: 'o', sessionId: 's', adapterId: 'a' });
+  const storePath = join(dir, 'state.sqlite');
+
+  let store = new SqliteDurableStore(storePath);
+  const opened: SqliteDurableStore[] = [store];
+  t.after(async () => {
+    for (const handle of opened) { try { handle.close(); } catch { /* already closed */ } }
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const workspace = store.openWorkspaceRecord({
+    ...caller, canonicalRoot: dir, backendKind: backend.kind, createdAt: at.value,
+  });
+  const before = new DurableMutationCoordinator({
+    store, backends: [backend], reviewTtlMs: 60_000, now: () => at.value,
+  });
+  const created = await before.preview(caller, workspace.workspaceId, {
+    path: 'note.txt', baseSha256: sha256(original), before: 'alpha', after: 'ALPHA',
+  });
+  assert.equal(created.status, 'approval_required');
+  const mutationId = created.mutationId!;
+  const deadline = store.getMutation(mutationId)!.reviewDeadline;
+
+  // Restart: the store is closed and reopened, exactly as a runtime restart does.
+  store.close();
+  at.value += 10_000; // time passes while nothing is running, well inside the window
+  store = new SqliteDurableStore(storePath);
+  opened.push(store);
+  const after = new DurableMutationCoordinator({
+    store, backends: [backend], reviewTtlMs: 60_000, now: () => at.value,
+  });
+  await after.reconcile();
+
+  const listed = after.listPendingLocal();
+  assert.equal(listed.length, 1, 'a live record comes back listed after a restart');
+  assert.equal(listed[0]!.mutationId, mutationId);
+  assert.equal(store.getMutation(mutationId)!.reviewDeadline, deadline,
+    'and its deadline is the one it already had — a restart does not buy more review time');
+  assert.equal(await readFile(join(dir, 'note.txt'), 'utf8'), original, 'nothing was written by any of this');
+
+  // Past the deadline the same call expires it, which is the whole point of the sweep.
+  at.value = deadline + 1;
+  assert.equal(after.listPendingLocal().length, 0);
+  assert.equal(store.getMutation(mutationId)!.state, 'EXPIRED');
+  assert.equal(await after.approveLocal(mutationId), false, 'and it cannot be approved afterwards');
+});
+
 // --- A. The side panel never learned about a newly queued proposal -------------------------
 
 test('the core announces a newly queued proposal, and stays silent on a repeat observation', async () => {
