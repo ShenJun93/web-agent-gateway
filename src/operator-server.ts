@@ -210,6 +210,7 @@ function renderMutationReview(review: MutationLocalReviewView, csrf: string): st
   const id = escapeHtml(review.mutationId);
   const actionId = encodeURIComponent(review.mutationId);
   return `<article><h2>${escapeHtml(review.path)}</h2>`
+    + `<p>Repository: ${escapeHtml(review.workspaceRoot)}</p>`
     + `<p>State: ${escapeHtml(review.state)}</p>`
     + `<p>Mutation: ${id}</p>`
     + `<p>Base SHA-256: ${escapeHtml(review.baseSha256)}</p>`

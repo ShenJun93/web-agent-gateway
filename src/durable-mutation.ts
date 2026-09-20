@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
+import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
 import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
 
+/** Outstanding proposals one caller may have awaiting review, as for commits. */
+const MAX_PENDING_PER_CALLER = 8;
 const MAX_FRAGMENT_BYTES = 32 * 1024;
 const MAX_FILE_BYTES = 64 * 1024;
 const SHA256_RE = /^[a-f0-9]{64}$/;
@@ -44,6 +47,12 @@ export interface MutationResultView {
 }
 
 export interface MutationLocalReviewView extends MutationResultView {
+  /**
+   * Which repository the edit lands in. The commit review has named it since ADR-0023; the
+   * mutation review did not, and with an untrusted page as the proposer an operator could be
+   * shown several indistinguishable `src/index.ts` diffs from different roots.
+   */
+  workspaceRoot: string;
   before: string;
   after: string;
 }
@@ -53,6 +62,7 @@ export class DurableMutationCoordinator {
   private readonly now: () => number;
   private readonly reviewTtlMs: number;
   private readonly admissionTtlMs: number;
+  private readonly rateLimit: ProposalRateLimit;
 
   constructor(private readonly options: {
     store: SqliteDurableStore;
@@ -60,12 +70,16 @@ export class DurableMutationCoordinator {
     now?: () => number;
     reviewTtlMs?: number;
     admissionTtlMs?: number;
+    rateLimit?: ProposalRateLimit;
   }) {
     this.backends = new Map(options.backends.map((backend) => [backend.kind, backend]));
     if (this.backends.size !== options.backends.length) throw new Error('Duplicate file mutation backend kind');
     this.now = options.now ?? Date.now;
     this.reviewTtlMs = boundedTtl(options.reviewTtlMs ?? 60_000);
     this.admissionTtlMs = boundedTtl(options.admissionTtlMs ?? 60_000);
+    this.rateLimit = options.rateLimit ?? createProposalRateLimit({
+      message: 'Gateway denied mutation: too many proposal attempts',
+    });
   }
 
   async preview(caller: GatewayCallerContext, workspaceId: string, input: DurableMutationInput): Promise<MutationPreview> {
@@ -75,6 +89,16 @@ export class DurableMutationCoordinator {
     const backend = this.backend(workspace.backendKind);
     const path = validateReadPath(input.path);
     validateInput(input);
+
+    // Two different bounds, both of which were missing here while the commit path had one.
+    // The live cap is what keeps the operator's review list legible; the attempt window is what
+    // stops a caller driving unbounded backend reads with proposals that never become records.
+    const chargedAt = this.now();
+    if (this.options.store.countPendingMutations(authorityOf(caller), chargedAt) >= MAX_PENDING_PER_CALLER) {
+      throw new Error('Gateway denied mutation: too many proposals awaiting review');
+    }
+    this.rateLimit.charge(authorityOf(caller), chargedAt);
+
     if (isCreationInput(input)) await assertCreateTarget(workspace.canonicalRoot, path);
     else await assertReadTarget(workspace.canonicalRoot, path);
     const original = await readBase(backend, workspace.canonicalRoot, path, input);
@@ -106,12 +130,21 @@ export class DurableMutationCoordinator {
   }
 
   listPendingLocal(limit = 20): MutationLocalReviewView[] {
-    return this.options.store.listPendingMutations(limit).map(toLocalReviewView);
+    return this.options.store.listPendingMutations(limit).map((record) => this.toLocalReviewView(record));
+  }
+
+  private toLocalReviewView(record: MutationRecord): MutationLocalReviewView {
+    return {
+      ...toResultView(record),
+      before: record.before,
+      after: record.after,
+      workspaceRoot: this.options.store.getWorkspace(record.workspaceId)?.canonicalRoot ?? '',
+    };
   }
 
   reviewLocal(mutationId: string): MutationLocalReviewView | undefined {
     const record = this.options.store.getMutation(mutationId);
-    return record ? toLocalReviewView(record) : undefined;
+    return record ? this.toLocalReviewView(record) : undefined;
   }
 
   async approveLocal(mutationId: string): Promise<boolean> {
@@ -347,10 +380,6 @@ function toResultView(record: MutationRecord): MutationResultView {
   };
 }
 
-function toLocalReviewView(record: MutationRecord): MutationLocalReviewView {
-  return { ...toResultView(record), before: record.before, after: record.after };
-}
-
 function toPreview(record: MutationRecord): MutationPreview {
   return {
     status: 'approval_required',
@@ -387,4 +416,9 @@ async function readBase(
 ): Promise<string> {
   if (!isCreationInput(record)) return backend.readExact(root, path);
   return (await backend.readExactIfPresent(root, path)) ?? '';
+}
+
+/** The exact tuple the store counts and fences on; never anything else from the caller. */
+function authorityOf(caller: GatewayCallerContext): GatewayAuthority {
+  return { ownerId: caller.ownerId, sessionId: caller.sessionId, adapterId: caller.adapterId };
 }

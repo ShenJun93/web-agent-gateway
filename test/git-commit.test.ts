@@ -573,7 +573,12 @@ test('author identity is required, bound to the preview and revalidated at appro
   await git(root, ['config', 'user.email', 'wag@example.invalid']);
   await git(root, ['config', 'user.name', 'WAG Test']);
   const preview = await coordinator.preview(context, workspaceId, { paths: ['tracked.txt'], message: 'm\n' });
-  assert.equal(preview.author, 'WAG Test <wag@example.invalid>');
+  // The identity is the operator's, so it is on the review page and not in the caller's
+  // projection: .git/config is unreadable through file.read and repo.search, and a preview
+  // must not become the channel that discloses it.
+  assert.equal('author' in preview, false, 'the caller must not learn the operator identity');
+  assert.equal(coordinator.reviewLocal(preview.commitId)?.author,
+    'WAG Test <wag@example.invalid>');
 
   // Re-attributing the commit after the operator saw the preview is drift like any other.
   await git(root, ['config', 'user.name', 'Somebody Else']);
@@ -686,13 +691,25 @@ test('the git.commit tools expose no authority fields and write nothing before a
     name: 'git.commit',
     arguments: { workspace_id: workspaceId, paths: ['tracked.txt'], message: 'through the tool' },
   });
-  const preview = JSON.parse((response as { content: { text: string }[] }).content[0]!.text) as { commitId: string };
+  const previewText = (response as { content: { text: string }[] }).content[0]!.text;
+  const preview = JSON.parse(previewText) as { commitId: string };
   assert.equal(await git(root, ['rev-parse', 'HEAD']), head, 'the tool proposes only');
+  // The author and committer come from the repository's own configuration, which on this
+  // machine is the operator's name and email. The operator must see them; the caller that
+  // proposed the commit has no reason to learn them.
+  for (const withheld of ['author', 'committer', 'gitDir', 'commonDir']) {
+    assert.equal(previewText.includes(withheld), false, `the preview must withhold ${withheld}`);
+  }
+  assert.ok(coordinator.reviewLocal(preview.commitId)?.author, 'the operator still sees the author');
 
   assert.equal(await coordinator.approveLocal(preview.commitId), true);
   const read = await client.callTool({ name: 'git.commit.result', arguments: { commit_id: preview.commitId } });
-  const view = JSON.parse((read as { content: { text: string }[] }).content[0]!.text) as { state: string; commit: string };
+  const resultText = (read as { content: { text: string }[] }).content[0]!.text;
+  const view = JSON.parse(resultText) as { state: string; commit: string };
   assert.equal(view.state, 'SUCCEEDED');
+  for (const withheld of ['author', 'committer', 'gitDir', 'commonDir']) {
+    assert.equal(resultText.includes(withheld), false, `the result must withhold ${withheld}`);
+  }
   assert.equal(await git(root, ['rev-parse', 'HEAD']), view.commit);
 });
 
@@ -842,7 +859,9 @@ test('the committer is bound and revalidated alongside the author', async (t) =>
   const preview = await coordinator.preview(context, workspaceId, {
     paths: ['tracked.txt'], message: 'chore: committer\n',
   });
-  assert.equal(preview.committer, 'Original Committer <original@example.invalid>');
+  assert.equal('committer' in preview, false, 'the caller must not learn the committer either');
+  assert.equal(coordinator.reviewLocal(preview.commitId)?.committer,
+    'Original Committer <original@example.invalid>');
 
   await git(root, ['config', 'committer.email', 'someone-else@example.invalid']);
   assert.equal(await coordinator.approveLocal(preview.commitId), true);

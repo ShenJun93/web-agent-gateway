@@ -515,6 +515,18 @@ export class SqliteDurableStore {
     }));
   }
 
+  /**
+   * Outstanding proposals for one caller. The review list is finite and ordered by age, so an
+   * uncapped caller can bury a genuine proposal under lookalikes inside the review window.
+   */
+  countPendingMutations(authority: GatewayAuthority, now: number): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS pending FROM mutations
+      WHERE state = 'PENDING_APPROVAL' AND review_deadline > ?
+        AND owner_id = ? AND session_id = ? AND adapter_id = ?`)
+      .get(now, authority.ownerId, authority.sessionId, authority.adapterId) as { pending: number };
+    return Number(row.pending);
+  }
+
   listRecoverableMutations(): MutationRecord[] {
     const rows = this.db.prepare("SELECT * FROM mutations WHERE state IN ('PENDING_APPROVAL','QUEUED','EXECUTING') ORDER BY created_at").all();
     return rows.map((row) => mutationFromRow(row as Record<string, unknown>));

@@ -8,6 +8,7 @@ function fakeCoordinator() {
   const review = {
     mutationId: 'mut_test', state: 'PENDING_APPROVAL' as const,
     path: '<script>.txt', before: '<b>old</b>', after: '<script>alert(1)</script>',
+    workspaceRoot: String.raw`C:\repos\<mutation>-project`,
     baseSha256: 'a'.repeat(64), resultSha256: 'b'.repeat(64), fingerprint: 'c'.repeat(64),
     additions: 1, removals: 1, reviewDeadline: Date.now() + 60_000,
   };
@@ -58,6 +59,9 @@ test('operator page escapes review content and emits restrictive headers', async
   assert.match(html, /&lt;script&gt;\.txt/);
   assert.match(html, /&lt;b&gt;old&lt;\/b&gt;/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  // Which repository the change lands in is part of what is being approved: two workspaces can
+  // hold the same relative path, and the page used to name only the path.
+  assert.match(html, /Repository: C:\\repos\\&lt;mutation&gt;-project/);
   assert.doesNotMatch(html, /canonicalRoot|ownerId|sessionId|adapterId/i);
 });
 /**

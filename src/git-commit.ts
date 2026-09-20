@@ -3,6 +3,7 @@ import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js
 import type { CommitRecord, SqliteDurableStore } from './durable-store.js';
 import type { GitCommitBackend, GitCommitChange, GitCommitPlan } from './git-commit-backend.js';
 import { assertReadTarget, validateReadPath } from './path-policy.js';
+import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 
 const MAX_MESSAGE_BYTES = 8 * 1024;
 const MAX_PATHS = 64;
@@ -36,8 +37,6 @@ export interface GitCommitPreview {
   branch: string;
   oldHead: string;
   treeSha: string;
-  author: string;
-  committer: string;
   paths: string[];
   changes: GitCommitChange[];
   /** Paths whose CRLF endings WAG normalized before hashing, as git itself would have. */
@@ -53,8 +52,6 @@ export interface GitCommitResultView {
   branch: string;
   oldHead: string;
   treeSha: string;
-  author: string;
-  committer: string;
   paths: string[];
   changes: GitCommitChange[];
   eolNormalized: string[];
@@ -66,13 +63,22 @@ export interface GitCommitResultView {
 }
 
 /**
- * What the local operator sees. It adds the message body the remote caller proposed and the
- * repository the commit would land in, so an operator with several pending reviews approves a
- * named repository rather than a bare branch name. Neither field is in the remote projection.
+ * What the local operator sees, and only the operator.
+ *
+ * It adds the message body, the repository the commit would land in — so an operator with
+ * several pending reviews approves a named repository rather than a bare branch name — and the
+ * author and committer git would stamp.
+ *
+ * Those two identities are deliberately absent from the remote projection. They come from
+ * `.git/config` and `~/.gitconfig`, which the path policy makes unreadable through
+ * `file.read` and `repo.search`; returning them in a preview would have made the commit
+ * proposal a disclosure channel for the operator's own name and address.
  */
 export interface GitCommitLocalReviewView extends GitCommitResultView {
   message: string;
   workspaceRoot: string;
+  author: string;
+  committer: string;
 }
 
 /**
@@ -86,16 +92,21 @@ export class DurableCommitCoordinator {
   private readonly now: () => number;
   private readonly reviewTtlMs: number;
   private readonly protectedBranches: ReadonlySet<string>;
+  private readonly rateLimit: ProposalRateLimit;
 
   constructor(private readonly options: {
     store: SqliteDurableStore;
     backend: GitCommitBackend;
     protectedBranches?: readonly string[];
+    rateLimit?: ProposalRateLimit;
     now?: () => number;
     reviewTtlMs?: number;
   }) {
     this.now = options.now ?? Date.now;
     this.reviewTtlMs = Math.min(Math.max(options.reviewTtlMs ?? DEFAULT_REVIEW_TTL_MS, 1_000), MAX_TTL_MS);
+    this.rateLimit = options.rateLimit ?? createProposalRateLimit({
+      message: 'Gateway denied commit: too many proposal attempts',
+    });
     this.protectedBranches = new Set(
       (options.protectedBranches ?? DEFAULT_PROTECTED_BRANCHES).map((branch) => branch.toLowerCase()),
     );
@@ -112,6 +123,9 @@ export class DurableCommitCoordinator {
     if (this.options.store.countPendingCommits(authorityOf(caller), createdAt) >= MAX_PENDING_PER_CALLER) {
       throw new Error('Gateway denied commit: too many proposals awaiting review');
     }
+    // Charged before the planner, because the planner is the expensive part and a plan that
+    // fails creates no record — so a record-counting cap never sees it.
+    this.rateLimit.charge(authorityOf(caller), createdAt);
 
     const plan = await this.options.backend.plan(workspace.canonicalRoot, paths, message);
     assertPlanShape(plan);
@@ -162,6 +176,8 @@ export class DurableCommitCoordinator {
       ...toResultView(record),
       message: record.message,
       workspaceRoot: this.options.store.getWorkspace(record.workspaceId)?.canonicalRoot ?? '',
+      author: record.author,
+      committer: record.committer,
     };
   }
 
@@ -334,8 +350,6 @@ function toPreview(record: CommitRecord): GitCommitPreview {
     branch: record.branch,
     oldHead: record.oldHead,
     treeSha: record.treeSha,
-    author: record.author,
-    committer: record.committer,
     paths: [...record.paths],
     changes: [...record.changes],
     eolNormalized: [...record.eolNormalized],
@@ -352,8 +366,6 @@ function toResultView(record: CommitRecord): GitCommitResultView {
     branch: record.branch,
     oldHead: record.oldHead,
     treeSha: record.treeSha,
-    author: record.author,
-    committer: record.committer,
     paths: [...record.paths],
     changes: [...record.changes],
     eolNormalized: [...record.eolNormalized],
