@@ -5,8 +5,8 @@ Read `NEW_CHAT_HANDOFF_2026-09-19_AI_NATIVE_BROWSER_COMMUNITY_SCAN.md` first.
 Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, ADR-0018, ADR-0019, and current research receipts before any decision or mutation.
 
 Current research now reaches:
-- `docs/research/2026-09-20-ai-native-browser-research-pass-12.md`
 - `docs/research/2026-09-20-ai-native-browser-research-pass-13.md`
+- `docs/research/2026-09-20-ai-native-browser-research-pass-14.md`
 plus all earlier receipts referenced by the detailed handoff.
 
 The user explicitly requested more research. **Do not run local benchmarks yet.**
@@ -29,7 +29,7 @@ Current direction:
 - keep Guardian continuity and SessionCommander exact-owned lifecycle;
 - keep generic browser mechanics frozen.
 
-Next action: **Pass 14 Windows WebAuthn + isolated approval-broker research, still no local benchmark.**
+Next action: **Pass 15 short-lived approval broker + process-hardening research, still no local benchmark.**
 
 
 Pass 11 adds:
@@ -53,3 +53,11 @@ Pass 13 adds:
 - KeyCredential is not a reliable full-trust same-user app/process boundary and is downgraded to an optional verification/signing factor;
 - independent WAG-owned exact-effect UI/authority remains necessary;
 - Win32 WebAuthn same-user isolation is now the next security question.
+
+
+Pass 14 adds:
+- native Win32 WebAuthn is not a documented process/app identity boundary;
+- AppContainer is real isolation but Win32 App Isolation remains preview;
+- current ADR-0019 threat model does not require hostile-same-user containment;
+- short-lived native child broker + inherited anonymous handles is now the primary minimal approval research direction;
+- AppContainer/service broker stays a future stronger-isolation gate.
