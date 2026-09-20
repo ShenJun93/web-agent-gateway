@@ -72,10 +72,13 @@ const BROWSER_READ_ONLY = new Set([
  *   Spending that credential does not merely bypass a gate; it takes the operator's approval
  *   session away from them.
  */
-const AUTHORITY_PATTERNS = [
+const RUN_SURFACE_PATTERNS = [
   [/panel\.execute/i, 'sends the side panel Run message'],
   [/sidepanel(\.html|\.js)?\b/i, 'targets the WAG side panel document'],
   [/chrome-extension:\/\//i, 'targets an extension document, where the Run control lives'],
+];
+
+const OPERATOR_PATTERNS = [
   [/\/(mutations|commits|verifications)\/[^/\s"'`]+\/(approve|reject)/i,
     'is a local operator approve/reject route'],
   [/operator-url/i, 'reads the operator single-use bootstrap file'],
@@ -84,6 +87,19 @@ const AUTHORITY_PATTERNS = [
   [/\b(insert|update|delete|drop)\b[^\n]*browser-operator-v4\.sqlite/i,
     'writes WAG durable state directly'],
 ];
+
+/**
+ * A shell cannot send `panel.execute` on its own. That message only travels inside an extension
+ * document, so reaching it from a command line means driving a browser. Naming the Run surface is
+ * therefore refused in a shell only when something that drives a browser is named with it —
+ * otherwise `grep panel.execute browser/extension/service-worker.js`, which is how anyone reads
+ * the gate they are reasoning about, would be refused for no gain. The browser tools keep the
+ * unconditional rule, because they have no reason to name the surface except to reach it.
+ */
+const BROWSER_DRIVER =
+  // A leading \b cannot match in front of "--", because a space and a dash are both non-word
+  // characters, so the flag-shaped drivers are a separate alternative with no boundary anchor.
+  /\b(?:playwright(?:-cli)?|puppeteer|chrome-remote-interface|websocat|msedge|chrome\.exe|Runtime\.evaluate|Page\.navigate|devtools-protocol)\b|--remote-debugging-port|--load-extension/i;
 
 /**
  * The operator bootstrap route, matched only where it is actually being fetched. A bare
@@ -102,10 +118,30 @@ function serialize(value) {
   }
 }
 
-function matchAuthority(text) {
-  for (const [pattern, why] of AUTHORITY_PATTERNS) if (pattern.test(text)) return why;
+function matchOperator(text) {
+  for (const [pattern, why] of OPERATOR_PATTERNS) if (pattern.test(text)) return why;
   if (OPERATOR_BOOTSTRAP_PATTERN.test(text)) return OPERATOR_BOOTSTRAP_REASON;
   return undefined;
+}
+
+function matchRunSurface(text) {
+  for (const [pattern, why] of RUN_SURFACE_PATTERNS) if (pattern.test(text)) return why;
+  return undefined;
+}
+
+/** Browser tools: naming either surface is reaching for it. */
+function matchForBrowser(text) {
+  return matchRunSurface(text) ?? matchOperator(text);
+}
+
+/** Shell: the operator's credential and decision routes always; the Run surface only when
+ *  something that can drive a browser is named alongside it. */
+function matchForShell(text) {
+  const operator = matchOperator(text);
+  if (operator) return operator;
+  if (!BROWSER_DRIVER.test(text)) return undefined;
+  const surface = matchRunSurface(text);
+  return surface ? `drives a browser at something that ${surface}` : undefined;
 }
 
 const BOUNDARY_RULE = 'See .claude/rules/human-presence-boundary.md.';
@@ -136,7 +172,7 @@ export function decide(event) {
   const server = BROWSER_SERVERS.find((prefix) => tool.startsWith(prefix));
   if (server) {
     if (BROWSER_READ_ONLY.has(tool.slice(server.length))) return { deny: false };
-    const why = matchAuthority(text);
+    const why = matchForBrowser(text);
     if (!why) return { deny: false };
     return {
       deny: true,
@@ -145,7 +181,7 @@ export function decide(event) {
   }
 
   if (tool === 'Bash' || tool === 'PowerShell') {
-    const why = matchAuthority(text);
+    const why = matchForShell(text);
     if (!why) return { deny: false };
     return {
       deny: true,
