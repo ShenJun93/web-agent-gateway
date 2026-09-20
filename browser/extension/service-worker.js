@@ -17,7 +17,15 @@ import { createNativeOperatorSessionController } from './native-session-core-v4.
  * panel forwards it to the native host; and everything consequential the proposal asks for is
  * decided by the local operator on a channel this worker cannot see.
  */
-const core = createBrowserOperatorExtensionCore(chrome.storage.session);
+const core = createBrowserOperatorExtensionCore(chrome.storage.session, {
+  // Tell an already-open side panel that the pending list changed. The panel refreshes on load
+  // and after an action, and its document survives being hidden and shown — so before this, a
+  // proposal queued while the panel was open stayed invisible until the panel was closed
+  // outright. The message carries a count and nothing else: the panel asks for the real state.
+  onQueued: (pending) => {
+    chrome.runtime.sendMessage({ type: 'panel.pending', pending }).catch(() => undefined);
+  },
+});
 const sessionCorrelations = createSessionCorrelationStore(chrome.storage.session, () => crypto.randomUUID());
 // A suspended worker must not silently lose a proposal a human has not looked at yet.
 const restored = core.restore().catch(() => undefined);

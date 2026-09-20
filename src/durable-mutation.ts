@@ -7,6 +7,8 @@ import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
 
 /** Outstanding proposals one caller may have awaiting review, as for commits. */
 const MAX_PENDING_PER_CALLER = 8;
+/** The store's own ceiling for a pending query, so the overdue sweep sees everything it lists. */
+const PENDING_SCAN_LIMIT = 100;
 const MAX_FRAGMENT_BYTES = 32 * 1024;
 const MAX_FILE_BYTES = 64 * 1024;
 const SHA256_RE = /^[a-f0-9]{64}$/;
@@ -130,7 +132,31 @@ export class DurableMutationCoordinator {
   }
 
   listPendingLocal(limit = 20): MutationLocalReviewView[] {
+    this.expireOverduePending();
     return this.options.store.listPendingMutations(limit).map((record) => this.toLocalReviewView(record));
+  }
+
+  /**
+   * Expire every pending record whose review window has already closed, before any of them is
+   * offered for review.
+   *
+   * `listPendingMutations` selects on state alone, while `approveMutation` additionally requires
+   * `review_deadline > now`. Without this pass the review page renders an Approve button that the
+   * server can only ever refuse — which is exactly what a live operator hit, at the moment they
+   * were racing the clock, and the refusal told them nothing about why.
+   *
+   * The transition is the one `reconcile()` already performs, so durable semantics are unchanged:
+   * the record genuinely becomes EXPIRED rather than being hidden from one view while staying
+   * actionable in another. `browser-verify-request` has reconciled before listing since it was
+   * written; this brings mutations into line with it.
+   */
+  private expireOverduePending(): void {
+    const now = this.now();
+    for (const record of this.options.store.listPendingMutations(PENDING_SCAN_LIMIT)) {
+      if (record.reviewDeadline <= now) {
+        this.options.store.expireMutation(record.mutationId, 'PENDING_APPROVAL', now);
+      }
+    }
   }
 
   private toLocalReviewView(record: MutationRecord): MutationLocalReviewView {

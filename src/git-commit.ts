@@ -12,6 +12,8 @@ const MAX_TTL_MS = 5 * 60_000;
 /** A git object id: 40 hex for a sha-1 repository, 64 for a sha-256 one. */
 const OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const MAX_PENDING_PER_CALLER = 8;
+/** The store's own ceiling for a pending query, so the overdue sweep sees everything it lists. */
+const COMMIT_PENDING_SCAN_LIMIT = 100;
 
 /**
  * Backend failures whose outcome is genuinely unknown to this process: the executor call failed,
@@ -163,7 +165,20 @@ export class DurableCommitCoordinator {
   }
 
   listPendingLocal(limit = 20): GitCommitLocalReviewView[] {
+    this.expireOverduePending();
     return this.options.store.listPendingCommits(limit).map((record) => this.toLocalReviewView(record));
+  }
+
+  /**
+   * The same correction the mutation coordinator carries: a commit past its review deadline must
+   * not be offered with an Approve button the compare-and-swap will refuse. The transition is the
+   * one `reconcile()` performs, so the record becomes EXPIRED rather than merely hidden.
+   */
+  private expireOverduePending(): void {
+    const now = this.now();
+    for (const record of this.options.store.listPendingCommits(COMMIT_PENDING_SCAN_LIMIT)) {
+      if (record.reviewDeadline <= now) this.options.store.expireCommit(record.commitId, now);
+    }
   }
 
   reviewLocal(commitId: string): GitCommitLocalReviewView | undefined {

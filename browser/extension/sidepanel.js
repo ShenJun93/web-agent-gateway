@@ -29,6 +29,16 @@ function renderPending(item) {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === 'panel.result') resultEl.textContent = JSON.stringify(message.response, null, 2);
+  // A proposal was queued while this panel was already open. Results were always pushed; pending
+  // was not, so the list could sit empty while storage held a proposal. Ask for the real state
+  // rather than trusting the count in the message.
+  if (message?.type === 'panel.pending') refresh().catch(() => undefined);
+});
+
+// Belt and braces for the case the push cannot cover: the worker was asleep when the proposal
+// arrived, or the panel was hidden rather than closed. Showing the panel re-reads the queue.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refresh().catch(() => undefined);
 });
 
 refresh().catch(() => { statusEl.textContent = 'Adapter unavailable'; });

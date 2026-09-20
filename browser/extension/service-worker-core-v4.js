@@ -46,8 +46,14 @@ function canonicalJson(value) {
 /**
  * @param storageSession `chrome.storage.session` when the worker builds it. Optional so unit
  *   tests can exercise the pure in-memory behaviour, but production always passes it.
+ * @param hooks.onQueued Called with the new pending count when — and only when — a proposal is
+ *   actually queued. The side panel refreshes on load and after an action, and its document
+ *   survives being hidden and shown, so without this a panel that was already open never learned
+ *   about a proposal queued afterwards: storage held it and the panel showed an empty list.
+ *   A repeat observation of the same message is deliberately silent, because a rescan is
+ *   idempotent and a panel that flickered on every rescan would be lying about what changed.
  */
-export function createBrowserOperatorExtensionCore(storageSession) {
+export function createBrowserOperatorExtensionCore(storageSession, hooks = {}) {
   const queued = new Map();
   const inflight = new Map();
   // Proposal identities this browser session has already offered, in first-seen order. A
@@ -116,6 +122,8 @@ export function createBrowserOperatorExtensionCore(storageSession) {
       remembered.delete(remembered.values().next().value);
     }
     persist();
+    try { hooks.onQueued?.(queued.size); }
+    catch { /* a panel that is not open, or has gone away, must not fail the queue */ }
     return true;
   }
 

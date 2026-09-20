@@ -37,6 +37,12 @@ export async function startOperatorServer(options: {
   commitCoordinator?: OperatorCommitCoordinator;
   host?: string;
   port?: number;
+  /**
+   * Called on every refusal, on this machine only. The review server answers the operator in a
+   * browser, so it cannot explain itself in the body without also explaining itself to whatever
+   * else reaches loopback; this is how the local process gets to say which check failed.
+   */
+  onDeny?: (event: { status: number; code: OperatorDenialCode; path: string }) => void;
 }): Promise<OperatorServer> {
   if (!options.coordinator && !options.verifyCoordinator && !options.commitCoordinator) {
     throw new Error('Operator server requires a review coordinator');
@@ -47,13 +53,18 @@ export async function startOperatorServer(options: {
   const sessions = new Map<string, { csrf: string }>();
   let origin = '';
 
+  const refuse = (res: ServerResponse, status: number, code: OperatorDenialCode, path: string): void => {
+    options.onDeny?.({ status, code, path });
+    deny(res, status, code);
+  };
+
   const server = createServer(async (req, res) => {
     setSecurityHeaders(res);
     try {
       const url = new URL(req.url ?? '/', origin || `http://${host}`);
       if (req.method === 'GET' && url.pathname === '/bootstrap') {
         const supplied = url.searchParams.get('token');
-        if (!bootstrapToken || !supplied || !sameSecret(supplied, bootstrapToken)) return deny(res, 403);
+        if (!bootstrapToken || !supplied || !sameSecret(supplied, bootstrapToken)) return refuse(res, 403, 'BOOTSTRAP_INVALID', url.pathname);
         bootstrapToken = undefined;
         const sessionId = secret();
         sessions.set(sessionId, { csrf: secret() });
@@ -63,7 +74,7 @@ export async function startOperatorServer(options: {
       }
 
       const session = getSession(req, sessions);
-      if (!session) return deny(res, 401);
+      if (!session) return refuse(res, 401, 'UNAUTHENTICATED', url.pathname);
 
       if (req.method === 'GET' && url.pathname === '/') {
         return html(res, renderList(
@@ -77,25 +88,26 @@ export async function startOperatorServer(options: {
       const mutationDetail = /^\/mutations\/([^/]+)$/.exec(url.pathname);
       if (req.method === 'GET' && mutationDetail && options.coordinator) {
         const review = options.coordinator.reviewLocal(decodeURIComponent(mutationDetail[1]!));
-        if (!review) return deny(res, 404);
+        if (!review) return refuse(res, 404, 'NOT_FOUND', url.pathname);
         return html(res, renderMutationReview(review, session.csrf));
       }
 
       const verifyDetail = /^\/verifications\/([^/]+)$/.exec(url.pathname);
       if (req.method === 'GET' && verifyDetail && options.verifyCoordinator) {
         const review = options.verifyCoordinator.reviewLocal(decodeURIComponent(verifyDetail[1]!));
-        if (!review) return deny(res, 404);
+        if (!review) return refuse(res, 404, 'NOT_FOUND', url.pathname);
         return html(res, renderVerifyReview(review, session.csrf));
       }
 
       const mutationAction = /^\/mutations\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
       if (req.method === 'POST' && mutationAction && options.coordinator) {
-        if (!(await validPost(req, session.csrf, origin))) return deny(res, 403);
+        const failure = await postFailure(req, session.csrf, origin);
+        if (failure) return refuse(res, 403, failure, url.pathname);
         const mutationId = decodeURIComponent(mutationAction[1]!);
         const ok = mutationAction[2] === 'approve'
           ? await options.coordinator.approveLocal(mutationId)
           : options.coordinator.rejectLocal(mutationId);
-        if (!ok) return deny(res, 409);
+        if (!ok) return refuse(res, 409, 'NOT_ACTIONABLE', url.pathname);
         res.writeHead(303, { location: '/' }).end();
         return;
       }
@@ -103,37 +115,39 @@ export async function startOperatorServer(options: {
       const commitDetail = /^\/commits\/([^/]+)$/.exec(url.pathname);
       if (req.method === 'GET' && commitDetail && options.commitCoordinator) {
         const review = options.commitCoordinator.reviewLocal(decodeURIComponent(commitDetail[1]!));
-        if (!review) return deny(res, 404);
+        if (!review) return refuse(res, 404, 'NOT_FOUND', url.pathname);
         return html(res, renderCommitReview(review, session.csrf));
       }
 
       const commitAction = /^\/commits\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
       if (req.method === 'POST' && commitAction && options.commitCoordinator) {
-        if (!(await validPost(req, session.csrf, origin))) return deny(res, 403);
+        const failure = await postFailure(req, session.csrf, origin);
+        if (failure) return refuse(res, 403, failure, url.pathname);
         const commitId = decodeURIComponent(commitAction[1]!);
         const ok = commitAction[2] === 'approve'
           ? await options.commitCoordinator.approveLocal(commitId)
           : options.commitCoordinator.rejectLocal(commitId);
-        if (!ok) return deny(res, 409);
+        if (!ok) return refuse(res, 409, 'NOT_ACTIONABLE', url.pathname);
         res.writeHead(303, { location: '/' }).end();
         return;
       }
 
       const verifyAction = /^\/verifications\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
       if (req.method === 'POST' && verifyAction && options.verifyCoordinator) {
-        if (!(await validPost(req, session.csrf, origin))) return deny(res, 403);
+        const failure = await postFailure(req, session.csrf, origin);
+        if (failure) return refuse(res, 403, failure, url.pathname);
         const requestId = decodeURIComponent(verifyAction[1]!);
         const ok = verifyAction[2] === 'approve'
           ? await options.verifyCoordinator.approveLocal(requestId)
           : options.verifyCoordinator.rejectLocal(requestId);
-        if (!ok) return deny(res, 409);
+        if (!ok) return refuse(res, 409, 'NOT_ACTIONABLE', url.pathname);
         res.writeHead(303, { location: '/' }).end();
         return;
       }
 
-      deny(res, 404);
+      refuse(res, 404, 'NO_ROUTE', url.pathname);
     } catch {
-      if (!res.headersSent) deny(res, 500);
+      if (!res.headersSent) refuse(res, 500, 'INTERNAL', '');
       else res.end();
     }
   });
@@ -151,11 +165,24 @@ export async function startOperatorServer(options: {
   };
 }
 
-async function validPost(req: IncomingMessage, csrf: string, origin: string): Promise<boolean> {
-  if (req.headers.origin !== origin) return false;
+/**
+ * Returns the reason a decision POST is unacceptable, or undefined when it is fine.
+ *
+ * Origin is still compared exactly, and the CSRF token is still compared in constant time; the
+ * only change from returning a bare boolean is that the caller can now say *which* check failed.
+ * `Sec-Fetch-Site` is read as corroboration and never as a substitute: a browser that omits it
+ * is not penalised, and a request that claims `same-origin` while carrying the wrong Origin is
+ * still refused.
+ */
+async function postFailure(
+  req: IncomingMessage, csrf: string, origin: string,
+): Promise<'ORIGIN_MISMATCH' | 'CSRF_INVALID' | undefined> {
+  const site = req.headers['sec-fetch-site'];
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return 'ORIGIN_MISMATCH';
+  if (req.headers.origin !== origin) return 'ORIGIN_MISMATCH';
   const form = await readForm(req);
   const supplied = form.get('csrf');
-  return Boolean(supplied && sameSecret(supplied, csrf));
+  return supplied && sameSecret(supplied, csrf) ? undefined : 'CSRF_INVALID';
 }
 
 function getSession(req: IncomingMessage, sessions: Map<string, { csrf: string }>) {
@@ -179,13 +206,46 @@ async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
 function setSecurityHeaders(res: ServerResponse): void {
   res.setHeader('content-security-policy', "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
   res.setHeader('x-frame-options', 'DENY');
-  res.setHeader('referrer-policy', 'no-referrer');
+  // `same-origin`, not `no-referrer`.
+  //
+  // Per Fetch, a request whose mode is not "cors" and whose method is not GET or HEAD serialises
+  // its Origin as the string "null" when the referrer policy is `no-referrer`. A form submission
+  // is a navigation, so the Approve button sent `Origin: null` and the CSRF Origin check refused
+  // it before ever reading the form — measured in Edge, and the reason a live approval failed
+  // while every test passed, because `fetch()` is mode "cors" and is exempt from that rule.
+  //
+  // `same-origin` still withholds the referrer entirely on cross-origin requests, which is what
+  // the original header was protecting, while preserving a real Origin on our own form POST.
+  res.setHeader('referrer-policy', 'same-origin');
   res.setHeader('cache-control', 'no-store');
   res.setHeader('x-content-type-options', 'nosniff');
 }
 
-function deny(res: ServerResponse, status: number): void {
-  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }).end('Denied');
+/**
+ * Why a request was refused.
+ *
+ * The body used to be `Denied` for every case, and the server logs no requests, so an operator
+ * who was refused could not tell an expired record from a failed CSRF check — during a live
+ * dogfood the cause had to be inferred from durable state instead. The codes below are reported
+ * to the local process through `onDeny`, and echoed in the body only once the caller has already
+ * proved it holds a session. Unauthenticated callers still learn nothing.
+ */
+export type OperatorDenialCode =
+  | 'BOOTSTRAP_INVALID'
+  | 'UNAUTHENTICATED'
+  | 'ORIGIN_MISMATCH'
+  | 'CSRF_INVALID'
+  | 'NOT_ACTIONABLE'
+  | 'NOT_FOUND'
+  | 'NO_ROUTE'
+  | 'INTERNAL';
+
+/** Codes that must not be echoed to the caller, because the caller is not yet trusted. */
+const OPAQUE_DENIALS: ReadonlySet<OperatorDenialCode> = new Set(['BOOTSTRAP_INVALID', 'UNAUTHENTICATED']);
+
+function deny(res: ServerResponse, status: number, code: OperatorDenialCode): void {
+  const body = OPAQUE_DENIALS.has(code) ? 'Denied' : `Denied: ${code}`;
+  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' }).end(body);
 }
 function html(res: ServerResponse, body: string): void {
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(body);

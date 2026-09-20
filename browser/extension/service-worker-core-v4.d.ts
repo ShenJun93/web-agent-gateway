@@ -38,6 +38,12 @@ export function proposalIdentity(
 ): string;
 export function createBrowserOperatorExtensionCore(
   storageSession?: SessionStorageArea,
+  hooks?: {
+    /** Called with the new pending count when a proposal is queued, and never on a repeat
+     *  observation of the same message, so an already-open side panel can refresh without
+     *  flickering on every idempotent rescan. */
+    onQueued?: (pending: number) => void;
+  },
 ): BrowserOperatorExtensionCore;
 export interface SessionStorageArea {
   get(key: string): Promise<Record<string, unknown>>;
