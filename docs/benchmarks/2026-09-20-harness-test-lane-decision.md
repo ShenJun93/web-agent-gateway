@@ -1,8 +1,8 @@
 # Harness test-authority lane — decision and bounds
 
-Date: 2026-09-20
+Date: 2026-09-20, extended 2026-09-21
 Status: DECIDED — test-only authority surface, locally authorised
-Candidate: `fabd369`
+Candidate: `fabd369`, extended by `f79d718` and `2fd3b0f`
 Base: `fc0541c`
 Authority: operator decision of 2026-09-20 (quoted below)
 Related: ADR-0019, ADR-0023, ADR-0026,
@@ -73,7 +73,10 @@ that did not, in fact, cover five of them:
   is now created with a non-recursive `mkdir`, `destroy()` can only remove a directory the lane
   itself made, so this is belt over braces rather than the thing preventing a loss;
 - approval re-derives the record's workspace and refuses anything that does not resolve to this
-  lane's fixture.
+  lane's fixture. This one was listed here from `fabd369` and was **not** in fact covered until
+  2026-09-21: the existing test exercised the id comparison, the first of the guard's two arms,
+  and the re-derivation arm would have passed deleted. A fourth review found it. The heading
+  above this list is true now; it was not when it was written.
 
 The lane can **create** files in its fixture, not only edit them: `propose` accepts a caller-supplied
 `baseSha256`, and an empty base routes approval through the creation path. That is a capability, and
@@ -144,6 +147,54 @@ test/harness-authority.test.ts   9 pass / 0 fail
 The lane keeps the shape of what it stands in for: proposing creates a durable record and changes
 nothing on disk, approval is what causes the effect, reviewed bytes equal written bytes, and a
 second approval does nothing.
+
+## What `f79d718` and `2fd3b0f` added, 2026-09-21
+
+The lane could propose and approve. It could not iterate the things the mission actually needed
+iterated, so it gained three capabilities:
+
+- **an injectable clock** (`now`, `advanceClock`) and a `reviewTtlMs`, both passed to the
+  coordinator. Expiry is a function of time; a test that waited real seconds would be slow and
+  flaky, and this makes it exact. `durable-store.ts` contains no `Date.now`, so the clock reaches
+  every timestamp and no deadline check is left on the wall clock while the lane drives the rest;
+- **`reopen()`**, which closes the store and opens it again, rebinding to the same workspace via
+  an id now persisted in the marker. This is the restart loop;
+- **`serveOperator()`**, which stands the **unmodified production review server** in front of the
+  lane's own coordinator. This is what makes the CSRF, Origin, cookie and single-use loops
+  reachable at all: the previous browser-backed check used a stub coordinator, which by
+  construction never reached the checks it claimed to cover.
+
+ADR-0027 gained a condition 8 for the HTTP property, because the original seven were written for
+a lane that was a library.
+
+### What contains the HTTP path
+
+Every coordinator entry the server reaches re-checks the marker — synchronously, because
+`listPendingLocal` and `rejectLocal` return values rather than promises — and confines itself to
+the lane's one workspace. That was not true when first written: the entries forwarded straight
+through, so the only path that causes an effect was the only path with neither guard, while the
+module header claimed both ran before every durable write. A review caught it. Unfiltered listing
+would also have rendered a record from a second workspace with a working Approve button that
+`lane.approve()` refuses — the exact stale-review defect this branch fixed in production.
+
+Two further facts bound it: the lane writes no `.operator-url`, because `operator-server.ts`
+touches the filesystem nowhere — the runtime writes that file — so nothing can mistake a lane
+server for production's; and both take an ephemeral loopback port, so there is no fixed port to
+contend.
+
+### Evidence, and how it was obtained
+
+Ten mutations, each verified to apply before its run, each caught by the test that claims to
+cover it: the Origin check, the CSRF comparison, the overdue sweep, the workspace rebinding, the
+marker re-read on the HTTP approve path, the HTTP listing's workspace filter, the marker's
+`workspaceId` comparison, `assertOwnRecord`'s re-derivation arm, the launcher's loopback bind,
+and its parsed-href emission.
+
+This matters because the thing this branch keeps rediscovering is a guard that passes review,
+reads convincingly, and is reached by no test. Mutation is the only evidence that distinguishes
+the two. One mutation also exposed a test that *hung* rather than failed when its guard was
+removed, which is nearly as useless; that is fixed. Another exposed a stray copy of the lane that
+the mutation harness itself had left in `src/`, caught by the production-bypass walk.
 
 ## Review history
 
