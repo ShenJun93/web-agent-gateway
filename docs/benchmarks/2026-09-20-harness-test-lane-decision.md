@@ -51,19 +51,33 @@ that did nothing while leaving the real reasons unstated:
    atomically if anything is already there. An earlier version used `stat` then create, which left
    a window; that is closed.
 
-Everything else is defence in depth and is labelled that way in the source:
+Everything else is defence in depth and is labelled that way in the source. Each of the following
+has a test that fails without it — an earlier draft listed them above a block of passing test names
+that did not, in fact, cover five of them:
 
-- the lane id is stamped into a marker and re-read and compared before every proposal and approval;
-- containment is judged twice — lexically, and again on the `realpath`, so a junction, an 8.3 short
-  name or a UNC spelling cannot present a path as outside a directory it is inside;
-- the fixture is admitted through `canonicalWorkspace`, the same path policy the production surface
-  uses, so the lane cannot admit a workspace production would refuse;
-- an absent or relative `LOCALAPPDATA` fails closed rather than silently removing the
-  production-directory check;
-- the repository root is derived from the module's own location, not from a caller — a decoy value
-  could otherwise have placed a lane inside the worktree, which `destroy()` removes recursively;
+- the lane id is stamped into a marker and re-read before every operation that writes durable
+  state: `propose`, `approve`, `reject` and `pending`. The last is included because listing runs
+  the overdue sweep, which transitions records and writes audit rows — it is not the read it looks
+  like. The fixture read/write helpers are not checked; they touch no durable state;
+- containment is judged lexically and then again on the `realpath`, which catches a junction or an
+  8.3 short name. **A UNC spelling is not caught by that re-check** — Windows compares a UNC path
+  and a drive-letter path as unrelated roots, so one physically inside the production state
+  directory reads as outside it. It is refused separately and earlier, before anything is created;
+- the fixture is admitted through `canonicalWorkspace`. Its real contribution here is refusing
+  sensitive segments and system directories; the allowed-root argument is satisfied by construction
+  and buys nothing;
+- an absent or relative `LOCALAPPDATA` fails closed. A *wrong absolute* one still points the guard
+  at the wrong directory — this narrows the hole rather than closing it, and the tests themselves
+  pass a synthetic value;
+- the repository root is derived from the module's own location, not from a caller. Since the root
+  is now created with a non-recursive `mkdir`, `destroy()` can only remove a directory the lane
+  itself made, so this is belt over braces rather than the thing preventing a loss;
 - approval re-derives the record's workspace and refuses anything that does not resolve to this
   lane's fixture.
+
+The lane can **create** files in its fixture, not only edit them: `propose` accepts a caller-supplied
+`baseSha256`, and an empty base routes approval through the creation path. That is a capability, and
+it is named here rather than left to be discovered.
 
 ## What it does not bound
 
@@ -81,13 +95,36 @@ parameter that defaults to the process environment. It is closed against anythin
 repository; it is one argument away for any test or script inside it. "Test-only" is accurate;
 "off by default" would overstate it.
 
+And one consequence of shipping this at all, which belongs here rather than in a review: the
+harness guard's tripwire for direct writes to WAG's durable state matches the production store's
+filename *plus* a SQL verb. A program that opens that store through `SqliteDurableStore` and calls
+`approveLocal` matches neither. That was already the documented same-user shell hatch — the guard
+is a tripwire, not a sandbox — but the repository now ships a maintained, copy-pasteable worked
+example of the shape, and that is a real change in how easy the hatch is to find.
+
+## Where the decision lives
+
+At the ADR layer, as `docs/adr/0027-allow-a-fixture-only-harness-authority-lane.md`. A review
+pointed out that recording it only here left ADR-0026's invariant reading as absolute to anyone
+following AGENTS.md's reading order, which puts ADRs before benchmarks. This receipt is the
+evidence; the ADR is the decision.
+
+`.claude/rules/human-presence-boundary.md` still states the invariant without a qualifier. That
+file is covered by a deny rule the harness itself installed, so it was not edited here. Until it
+is, a reader of that rule holds a stronger belief than ADR-0027 supports.
+
 ## Production is untouched, verified rather than asserted
 
-A test walks **every** `.ts` file under `src/` — not a hand-picked list, which is what the first
-version did — and asserts none of them imports the lane, references it, or contains a
-`TEST_MODE` / `autoApprove` / `skipApproval` branch. The lane's own imports are pinned to the
-coordinator, the store, the caller context, the path policy and the backend type, and a dynamic
-import anywhere in the file fails the test, because a static import list cannot see one.
+A test walks **everything that ships** — `src/`, `scripts/` and `browser/extension/`, including the
+v4 service worker — and asserts none of it imports the lane, references it, or contains an
+approval-bypass branch under any of nine spellings. The first version checked four spellings across
+six hand-picked files, and the extension was outside it entirely.
+
+The lane's own imports are pinned to the coordinator, the store, the caller context, the path
+policy and the backend type. A dynamic import in any form — awaited, chained, or via
+`createRequire` — fails the test, because a static import list cannot see one. The lane is also
+excluded from `tsconfig.build.json`, so a test-only authority surface does not land in `dist/`
+beside the production modules.
 
 ## Evidence at `fabd369`
 
