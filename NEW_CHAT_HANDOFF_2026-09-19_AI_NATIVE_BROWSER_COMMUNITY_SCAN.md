@@ -27,7 +27,7 @@ This handoff is not authority when Git disagrees.
 
 ## Verified state
 
-Passes 1–14 plus the replacement-pressure audit are complete through the Pass 14 research branch. No local install or browser benchmark was run.
+Passes 1–15 plus the replacement-pressure audit are complete through the Pass 15 research branch. No local install or browser benchmark was run.
 
 Pass 10 started from canonical remote `main`:
 `ec2ca8f0f32ff7ae8199558f409e0ffd9ea6c286`.
@@ -238,7 +238,7 @@ WAG_SEMANTIC_AUTHORITY = RETAIN
 SESSIONCOMMANDER_EXACT_OWNED_LIFECYCLE = RETAIN
 GUARDIAN_BROWSER_CONTROL_EXPANSION = NO
 
-NEXT_ACTION = PASS_15_SHORT_LIVED_APPROVAL_BROKER_AND_PROCESS_HARDENING_RESEARCH
+NEXT_ACTION = PASS_16_LOOPBACK_OPERATOR_SECURITY_AND_BROWSER_LOCALHOST_EVOLUTION_RESEARCH
 ```
 
 
@@ -356,3 +356,32 @@ Research:
 8. WIMSE only on material state changes;
 9. mapping broker receipt into Browser Verify Approval v1;
 10. no implementation until a minimal architecture survives review.
+
+
+## Pass 15 material additions
+
+- Fresh inspection of WAG's existing operator server shows a hardened, accepted loopback approval channel: loopback-only, one-time bootstrap, HttpOnly/SameSite cookie, exact Origin, CSRF, CSP/XFO/no-store/nosniff, escaped review data and bounded form body.
+- Durable mutation acceptance already exercised this boundary with exact approval/restart/effect evidence.
+- Browser Verify Approval v1 intentionally reuses this operator channel; replacing it with a native broker would be a new design/release/lifecycle surface, not a free hardening.
+- UIInspect.MCP independently validates Windows approval patterns (trusted local dialog, exact PID+creation-time+exe+session, memory-only grants, fail closed), but its persistent broker solves a broader unattended automation problem than WAG needs.
+- Short-lived native broker remains a technically sound fallback if a measured loopback gap appears. Future containment should use exact CreateProcess path + explicit inherited handles + Job Object at creation + KILL_ON_JOB_CLOSE; do not rely on child-process restriction flag as a primary full-trust control.
+- No measured requirement currently justifies UserConsentVerifier/WebAuthn/AppContainer additions.
+
+Detailed receipt:
+- `docs/research/2026-09-20-ai-native-browser-research-pass-15.md`
+
+## Pass 16 — research only
+
+Still no local benchmark or implementation.
+
+Research:
+1. loopback-only operator UI security experience in developer tooling;
+2. Chrome/Edge localhost/private-network access policy evolution;
+3. DNS rebinding / Host header assumptions;
+4. whether exact Host validation is missing from current operator server;
+5. browser-independent launch/open behavior;
+6. comparable local callback/control surfaces in proven tooling;
+7. reopen native broker only if a concrete gap survives;
+8. standards watch only on material changes;
+9. no local benchmark;
+10. no implementation.
