@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createHarnessLane, HARNESS_LANE } from '../src/harness-authority.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
@@ -106,17 +107,22 @@ test('the lane refuses to live in the production state directory or in the repos
     env: { ...enabled, LOCALAPPDATA: localAppData },
   }), /production state directory/i, 'it cannot sit beside the production store');
 
+  // The repository root is taken from this module, not from a caller, so a decoy cannot place a
+  // lane inside the worktree where destroy() would recursively remove it.
   await assert.rejects(createHarnessLane({
     lane: HARNESS_LANE,
-    root: join(repoRoot, 'lane'),
+    root: join(resolve(fileURLToPath(new URL('../', import.meta.url))), '.tmp-lane'),
     env: { ...enabled, LOCALAPPDATA: localAppData },
-    repositoryRoot: repoRoot,
   }), /outside the repository/i, 'it cannot mutate canonical sources');
 });
 
-test('the lane refuses a record that belongs to any other workspace', async (t) => {
-  // The decisive isolation test: a record id from a *different* store, handed over directly.
-  // An id is only a string; the lane resolves where a record would actually write.
+test('a record id from another store is simply not there, which is what isolates the lane', async (t) => {
+  // Renamed to say what it proves. It reaches the not-found arm, not the workspace comparison —
+  // a review pointed out the old name claimed the latter and would have passed with that guard
+  // deleted. The workspace arm is covered separately below.
+  //
+  // What this does show is the containment that actually holds: each lane owns its own SQLite
+  // file under a filename this module controls, so a foreign record simply does not exist here.
   const lane = await openLane(t);
 
   const foreignDir = await mkdtemp(join(tmpdir(), 'wag-foreign-'));
@@ -149,11 +155,52 @@ test('the lane refuses a record that belongs to any other workspace', async (t) 
   assert.equal(foreign.status, 'approval_required');
 
   await assert.rejects(lane.approve(foreign.mutationId!), /no such record in this lane/i);
-  assert.rejects(Promise.resolve().then(() => lane.reject(foreign.mutationId!)), /no such record in this lane/i);
+  assert.throws(() => lane.reject(foreign.mutationId!), /no such record in this lane/i);
 
   // The foreign record is untouched, and still approvable by its own authority.
   assert.equal(foreignStore.getMutation(foreign.mutationId!)?.state, 'PENDING_APPROVAL');
   assert.equal(await readFile(join(foreignDir, 'note.txt'), 'utf8'), 'alpha\n');
+});
+
+test('the workspace guard fires when a record in this store belongs elsewhere', async (t) => {
+  // The arm the previous test does not reach. A second workspace row is added to the lane's own
+  // store, so the record is found and the workspace comparison is what refuses it — the defence
+  // in depth, exercised rather than asserted.
+  const parent = await mkdtemp(join(tmpdir(), 'wag-lane-'));
+  const lane = await createHarnessLane({ lane: HARNESS_LANE, root: join(parent, 'lane'), env: enabled });
+  const store = new SqliteDurableStore(join(resolve(parent), 'lane', 'harness-lane.sqlite'));
+  t.after(async () => {
+    store.close();
+    await lane.destroy();
+    await rm(parent, { recursive: true, force: true });
+  });
+
+  const otherDir = await mkdtemp(join(tmpdir(), 'wag-other-ws-'));
+  t.after(() => rm(otherDir, { recursive: true, force: true }));
+  await writeFile(join(otherDir, 'note.txt'), 'alpha\n');
+
+  const backend: FileMutationBackend = {
+    kind: 'harness-lane-fs',
+    async readExact(root, path) { return readFile(join(root, path), 'utf8'); },
+    async readExactIfPresent(root, path) {
+      try { return await readFile(join(root, path), 'utf8'); } catch { return undefined; }
+    },
+    async createNew(root, path, candidate) { await writeFile(join(root, path), candidate, { flag: 'wx' }); },
+    async updateExisting(root, path, _b, candidate) { await writeFile(join(root, path), candidate); },
+  };
+  const otherCaller = createGatewayCallerContext({ ownerId: 'o2', sessionId: 's2', adapterId: 'a2' });
+  const otherWorkspace = store.openWorkspaceRecord({
+    ...otherCaller, canonicalRoot: otherDir, backendKind: backend.kind, createdAt: Date.now(),
+  });
+  const coordinator = new DurableMutationCoordinator({ store, backends: [backend] });
+  const record = await coordinator.preview(otherCaller, otherWorkspace.workspaceId, {
+    path: 'note.txt', baseSha256: sha256('alpha\n'), before: 'alpha', after: 'BETA',
+  });
+  assert.equal(record.status, 'approval_required');
+
+  // Found in this store, but not this lane's workspace.
+  await assert.rejects(lane.approve(record.mutationId!), /belongs to another workspace/i);
+  assert.equal(await readFile(join(otherDir, 'note.txt'), 'utf8'), 'alpha\n', 'and nothing was written');
 });
 
 test('the lane cannot write outside its own fixture', async (t) => {
@@ -170,29 +217,43 @@ test('production carries no auto-approve bypass and does not know this lane exis
   // A lane is only safe while it stays a separate client. If production ever imports it, or grows
   // a mode of its own, that separation is gone and these tests would be measuring nothing.
   const read = async (path: string) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+  const srcRoot = fileURLToPath(new URL('../src/', import.meta.url));
 
-  for (const path of [
-    'src/operator-server.ts', 'src/durable-mutation.ts', 'src/git-commit.ts',
-    'src/browser-operator-runtime.ts', 'src/repository-engineering-runtime.ts', 'src/cli.ts',
-  ]) {
-    const source = await read(path);
-    assert.equal(source.includes('harness-authority'), false, `${path} must not import the lane`);
-    assert.equal(/HARNESS_LANE|WAG_HARNESS_LANE/.test(source), false, `${path} must not know the lane exists`);
+  // Every production source file, walked — not a hand-written list. A review pointed out the old
+  // version checked six files out of fifty, so anything added later was exempt by default.
+  const walk = async (dir: string): Promise<string[]> => {
+    const out: string[] = [];
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...await walk(full));
+      else if (entry.name.endsWith('.ts')) out.push(full);
+    }
+    return out;
+  };
+  const production = (await walk(srcRoot)).filter((f) => !f.endsWith('harness-authority.ts'));
+  assert.ok(production.length >= 20, `expected to walk the whole of src/, saw ${production.length} files`);
+
+  for (const file of production) {
+    const source = await readFile(file, 'utf8');
+    const name = relative(srcRoot, file);
+    assert.equal(source.includes('harness-authority'), false, `${name} must not import the lane`);
+    assert.equal(/HARNESS_LANE|WAG_HARNESS_LANE/.test(source), false, `${name} must not know the lane exists`);
     assert.equal(/TEST_MODE|autoApprove|auto_approve|skipApproval/i.test(source), false,
-      `${path} must carry no approval bypass`);
+      `${name} must carry no approval bypass`);
   }
 
   // The lane reaches approval through the ordinary coordinator, not a private door into it.
   const lane = await read('src/harness-authority.ts');
   assert.match(lane, /coordinator\.approveLocal/, 'the lane uses the same approval the operator uses');
   const imports = [...lane.matchAll(/^import[\s\S]*?from '([^']+)';$/gm)].map((m) => m[1]);
-  assert.equal(imports.some((m) => m?.includes('operator-server')), false,
-    'the lane does not import the operator server');
   assert.deepEqual(
     imports.filter((m) => m?.startsWith('./')).sort(),
-    ['./caller-context.js', './durable-mutation.js', './durable-store.js', './file-mutation-backend.js'],
-    'the lane reaches only the coordinator, the store and the caller context',
+    ['./caller-context.js', './durable-mutation.js', './durable-store.js', './file-mutation-backend.js', './path-policy.js'],
+    'the lane reaches only the coordinator, the store, the caller context and the path policy',
   );
+  // A static import list is blind to `await import(...)`, and this file used to contain one.
+  assert.equal(/await\s+import\s*\(/.test(lane), false,
+    'the lane uses no dynamic import, so the list above is the whole of its reach');
 });
 
 test('the lane is disposable and leaves nothing behind', async (t) => {
