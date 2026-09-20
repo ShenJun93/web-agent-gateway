@@ -195,19 +195,29 @@ the `\.` that follows and retries at every start position. It is the *first* tes
 call. Measured here:
 
 ```text
-contiguous  40 KB  ->   2 299 ms
-contiguous  60 KB  ->   5 992 ms
-contiguous  70 KB  ->   8 637 ms
-contiguous  80 KB  ->  10 962 ms   <- past the 10 s timeout; the hook emits no frame
-spaced     540 KB  ->      14 ms   <- the shape the test happened to use
+contiguous  40 KB  ->      2 299 ms
+contiguous  80 KB  ->     10 962 ms   <- past the 10 s timeout; the hook emits no frame
+contiguous 100 KB  ->     17 242 ms
+contiguous 200 KB  ->     58 164 ms
+contiguous 540 KB  ->    529 682 ms   <- 8 min 50 s
+spaced     540 KB  ->         14 ms   <- the shape the regression test happened to use
 ```
 
 The padding in the round-1 regression test has a space every nine characters, which resets the
 scan. Any contiguous run of word characters — a base64 heredoc, a minified file, a long token —
 is quadratic, and around 75 KB it exceeds the timeout and **fails open on an entirely benign
-command**. The claim in the previous commit message and in this receipt's earlier draft, that
-every match is linear and decides in ~14 ms, was true only for one input shape. That is exactly
-the "input that flatters the guard" failure the test file's own header claims to prevent.
+command**.
+
+The measurement that matters most: the round-1 review's own case was **60 s on 540 KB**, and
+commit `00c7e7e` claimed to have reduced it to ~14 ms. On the *same 540 KB budget* with a
+caller-chosen contiguous run, the shipped guard takes **530 s — about nine times worse than the
+bug it claimed to close**. The 14 ms was real only for the one padding shape the new test picked.
+That is exactly the "input that flatters the guard" failure the test file's own header claims to
+prevent, and the test is what concealed the regression.
+
+Worse, the verdict at the end of those nine minutes is wrong anyway: the same probe returns
+`ALLOW`, because a two-line command defeats the word-anchored shell rules (F3 below). Two
+independent defects, compounding.
 
 Also reproduced:
 
@@ -221,6 +231,25 @@ Also reproduced:
 
 These are recorded as **open**, as six `todo` tests in `test/claude-harness-guard.test.ts`. They
 run, they are visible, and fixing the guard turns them green. The suite stays at 0 failures.
+
+### A verified patch exists, and is not applied
+
+A complete replacement for the guard, the settings and this rule file was written and verified
+outside `.claude/`: 48 checks covering all six findings and a regression set, all passing. On the
+reviewer's own curve, with the same two-line prohibited command:
+
+```text
+                      shipped            patched
+540 KB word-run       529 682 ms ALLOW      2.1 ms DENY
+540 KB dotted-run     512 630 ms ALLOW      2.5 ms DENY
+ 80 KB contiguous      10 962 ms ALLOW      0.6 ms DENY
+```
+
+Both failures close together: the substring test is linear, and unescaping the JSON before
+matching restores the word boundaries that a newline had broken. The fixes are structural rather
+than another round of pattern-chasing — matching on the *verb* instead of the server name, and
+refusing a fully-formed operator URL outright instead of enumerating HTTP clients, after that list
+had already missed `iwr`, `irm`, `httpx` and `require('http').get`.
 
 ### Why they are not fixed in this candidate
 
