@@ -27,7 +27,7 @@ This handoff is not authority when Git disagrees.
 
 ## Verified state
 
-Passes 1–10 plus the replacement-pressure audit are complete on the Pass 10 research branch. No local install or browser benchmark was run.
+Passes 1–11 plus the replacement-pressure audit are complete through the Pass 11 research branch. No local install or browser benchmark was run.
 
 Pass 10 started from canonical remote `main`:
 `ec2ca8f0f32ff7ae8199558f409e0ffd9ea6c286`.
@@ -181,7 +181,7 @@ Retain:
 - Guardian continuity;
 - SessionCommander exact-owned lifecycle.
 
-## Pass 11 — research only
+## Pass 11 — completed research findings
 
 Still no local benchmark or implementation.
 
@@ -238,5 +238,35 @@ WAG_SEMANTIC_AUTHORITY = RETAIN
 SESSIONCOMMANDER_EXACT_OWNED_LIFECYCLE = RETAIN
 GUARDIAN_BROWSER_CONTROL_EXPANSION = NO
 
-NEXT_ACTION = PASS_11_DELEGATION_AND_NATIVE_APPROVAL_BROKER_RESEARCH
+NEXT_ACTION = PASS_12_STANDARDS_MATURITY_AND_NATIVE_APPROVAL_PATH_RESEARCH
 ```
+
+
+## Pass 11 material additions
+
+- MCP 2026 is per-request/stateless; transport connection/process is not application ownership.
+- MCP Auth WG is actively working on delegated/agentic access, tool scopes and fine-grained/RAR authorization; do not create a large WAG-specific delegation standard.
+- Biscuit is the strongest portable attenuated-capability donor found, but adoption is deferred while MCP standardization is active.
+- Windows Hello KeyCredential is a lighter Windows-only signing primitive than full WebAuthn for local approval; WebAuthn remains stronger when portability/FIDO ecosystem matters.
+- Exact-effect display remains WAG-owned regardless of signing primitive.
+- DPoP + Secure MCP Tunnel is currently unproven because DPoP binds `htu` while Tunnel rewrites connector-facing resource URLs and forwards to a private origin. Do not claim compatibility without explicit provider/protocol evidence.
+- Keep minimal WAG grant lineage, exact proposal ownership, atomic single-use approval->effect transition, effect truth and SessionCommander exact-owned lifecycle.
+
+Detailed receipt:
+- `docs/research/2026-09-20-ai-native-browser-research-pass-11.md`
+
+## Pass 12 — research only
+
+Still no local benchmark or implementation.
+
+Research:
+1. classify current MCP delegation/tool-scope/RAR/OBO/execution-receipt work by stability;
+2. WIMSE/IETF workload/delegation direction;
+3. Biscuit audits/adoption/failure modes;
+4. KeyCredential support from unpackaged Win32/Electron/native-host paths;
+5. KeyCredential attestation value vs complexity;
+6. DPoP + Secure MCP Tunnel compatibility evidence;
+7. standards-based trusted-proxy canonical-URI patterns;
+8. local approval UI isolation/broker patterns;
+9. Hello reset/account/device recovery threat model;
+10. no implementation until evidence converges.

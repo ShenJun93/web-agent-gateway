@@ -5,8 +5,8 @@ Read `NEW_CHAT_HANDOFF_2026-09-19_AI_NATIVE_BROWSER_COMMUNITY_SCAN.md` first.
 Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, ADR-0018, ADR-0019, and current research receipts before any decision or mutation.
 
 Current research now reaches:
-- `docs/research/2026-09-20-ai-native-browser-research-pass-9.md`
 - `docs/research/2026-09-20-ai-native-browser-research-pass-10.md`
+- `docs/research/2026-09-20-ai-native-browser-research-pass-11.md`
 plus all earlier receipts referenced by the detailed handoff.
 
 The user explicitly requested more research. **Do not run local benchmarks yet.**
@@ -29,4 +29,12 @@ Current direction:
 - keep Guardian continuity and SessionCommander exact-owned lifecycle;
 - keep generic browser mechanics frozen.
 
-Next action: **Pass 11 delegation + native approval-broker research, still no local benchmark.**
+Next action: **Pass 12 standards-maturity + native approval-path research, still no local benchmark.**
+
+
+Pass 11 adds:
+- MCP connection/process is not application ownership under 2026 stateless semantics.
+- Delegated/agentic access, tool scopes and RAR remain active MCP standardization work.
+- Biscuit is a strong future capability-token donor but not an adoption decision.
+- Windows Hello KeyCredential is a lightweight local-only exact-challenge signing donor; WebAuthn remains the portable/FIDO path.
+- DPoP over Secure MCP Tunnel is unproven because of target-URI binding versus tunnel URL rewriting.
