@@ -47,7 +47,11 @@ const cookiePair = (value: string | null): string => {
 
 const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 
-test('the review page referrer policy must preserve a same-origin Origin on a form POST', async (t) => {
+test('the review page sends a referrer policy that does not null out a navigation Origin', async (t) => {
+  // This asserts the header, which is all a `fetch()`-driven test can do: Node's fetch is request
+  // mode "cors" and is exempt from the rule this is about, so no test in `npm test` can produce
+  // the navigation that broke. The behaviour itself is pinned by
+  // `npm run test:operator-browser`, which drives a real browser through the real form.
   // Live symptom: an Approve click from an authenticated review page returned Denied, and the
   // durable row kept `reviewed_at` unset, proving the coordinator was never reached.
   //
@@ -108,11 +112,14 @@ test('a refusal is locally diagnosable without disclosing a secret', async (t) =
   // no requests, so the cause had to be inferred from durable state instead of read off the
   // response. An unauthenticated caller still learns nothing; a caller that already holds a
   // session learns which check failed, because it already passed the one that guards secrets.
-  const denials: Array<{ status: number; code: string }> = [];
+  // The whole event, not a projection of it: an earlier version pushed only status and code, so
+  // the "no secret in the diagnostics" assertion below inspected a value this test had built and
+  // was vacuously true. `path` is the field that could carry one.
+  const denials: Array<{ status: number; code: string; path: string }> = [];
   const coordinator = fakeCoordinator();
   const server = await startOperatorServer({
     coordinator,
-    onDeny: (event) => denials.push({ status: event.status, code: event.code }),
+    onDeny: (event) => denials.push(event),
   });
   t.after(() => server.close());
 
@@ -143,6 +150,21 @@ test('a refusal is locally diagnosable without disclosing a secret', async (t) =
   assert.equal(badCsrf.status, 403);
   assert.match(await badCsrf.text(), /CSRF_INVALID/);
 
+  // Fetch metadata is corroboration, and it has its own code: a diagnostic that could not tell a
+  // Sec-Fetch-Site refusal from an Origin refusal would be no better than the single `Denied`
+  // this change replaces. It must never *accept* anything the Origin check would refuse.
+  const wrongSite = await fetch(`${server.origin}/mutations/mut_test/approve`, {
+    method: 'POST',
+    headers: {
+      cookie, origin: server.origin, 'sec-fetch-site': 'cross-site',
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ csrf }),
+  });
+  assert.equal(wrongSite.status, 403);
+  assert.match(await wrongSite.text(), /SITE_MISMATCH/);
+  assert.equal(coordinator.approvals(), 0, 'a correct Origin does not rescue a cross-site claim');
+
   const missing = await fetch(`${server.origin}/mutations/mut_absent/approve`, {
     method: 'POST',
     headers: { cookie, origin: server.origin, 'content-type': 'application/x-www-form-urlencoded' },
@@ -152,13 +174,18 @@ test('a refusal is locally diagnosable without disclosing a secret', async (t) =
   assert.match(await missing.text(), /NOT_ACTIONABLE/);
 
   assert.deepEqual(denials.map((d) => d.code),
-    ['UNAUTHENTICATED', 'ORIGIN_MISMATCH', 'CSRF_INVALID', 'NOT_ACTIONABLE'],
+    ['UNAUTHENTICATED', 'ORIGIN_MISMATCH', 'CSRF_INVALID', 'SITE_MISMATCH', 'NOT_ACTIONABLE'],
     'every refusal is reported locally, in order, with a distinguishable reason');
 
-  // Nothing that could help an attacker may appear in any body or in the local diagnostics.
+  // Nothing that could help an attacker may appear in any body or in the local diagnostics. The
+  // bootstrap token lives in a query string, so this also pins that `path` is the pathname and
+  // not `pathname + search` — the reason a refusal on /bootstrap is safe to report at all.
   const emitted = [badOriginBody, JSON.stringify(denials)].join(' ');
+  const bootstrapToken = new URL(server.bootstrapUrl).searchParams.get('token')!;
   assert.equal(emitted.includes(csrf), false, 'the CSRF value is never echoed');
   assert.equal(emitted.includes(cookie.split('=')[1] ?? 'x'), false, 'the session id is never echoed');
+  assert.equal(emitted.includes(bootstrapToken), false, 'the bootstrap token is never echoed');
+  assert.equal(denials.every((d) => !d.path.includes('?')), true, 'a denial path carries no query string');
 });
 
 // --- B. An expired record was offered with a working Approve button -----------------------
@@ -211,7 +238,11 @@ test('a record past its review deadline is not offered as pending, and is reconc
 
 // --- A. The side panel never learned about a newly queued proposal -------------------------
 
-test('queueing a proposal notifies the panel, so an open panel cannot stay stale', async () => {
+test('the core announces a newly queued proposal, and stays silent on a repeat observation', async () => {
+  // Scope, stated plainly: this covers the core's hook. The wiring that carries it to a panel —
+  // `service-worker.js` sending `panel.pending`, and `sidepanel.js` refreshing on it and on
+  // `visibilitychange` — is extension-host code with no test harness in this repo, and is
+  // verified in the live dogfood instead. Do not read this test as covering the panel.
   // Live symptom: session storage held a queued proposal while the side panel showed an empty
   // pending list across two opens. Results are pushed to the panel; proposals were not, and the
   // panel document survives being hidden and shown, so its load-time refresh never re-ran.

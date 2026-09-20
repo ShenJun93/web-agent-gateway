@@ -153,9 +153,14 @@ export class DurableMutationCoordinator {
   private expireOverduePending(): void {
     const now = this.now();
     for (const record of this.options.store.listPendingMutations(PENDING_SCAN_LIMIT)) {
-      if (record.reviewDeadline <= now) {
-        this.options.store.expireMutation(record.mutationId, 'PENDING_APPROVAL', now);
-      }
+      if (record.reviewDeadline > now) continue;
+      // A failed expiry must not cost the operator their review page. `transition` rolls back and
+      // rethrows, and this sweep now runs in front of every render — so without this the old,
+      // survivable failure (a record shown that cannot be approved) would become a 500 on GET /,
+      // at exactly the moment someone is racing a review window. The approval CAS still refuses
+      // the record either way; only the tidying is best-effort.
+      try { this.options.store.expireMutation(record.mutationId, 'PENDING_APPROVAL', now); }
+      catch { /* leave it listed; reconcile() will try again */ }
     }
   }
 

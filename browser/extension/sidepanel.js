@@ -27,7 +27,12 @@ function renderPending(item) {
   return wrapper;
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender) => {
+  // A content script reaches this same listener, which is why the worker derives its actor from
+  // Chrome's `sender` rather than from what a message claims. The panel had no equivalent check:
+  // neither of these does anything a page could exploit — one renders a result, the other re-reads
+  // authoritative state — but a page should not be able to drive the panel at all.
+  if (sender?.id !== chrome.runtime.id || sender?.tab !== undefined) return;
   if (message?.type === 'panel.result') resultEl.textContent = JSON.stringify(message.response, null, 2);
   // A proposal was queued while this panel was already open. Results were always pushed; pending
   // was not, so the list could sit empty while storage held a proposal. Ask for the real state

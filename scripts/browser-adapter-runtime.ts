@@ -8,7 +8,7 @@ import { SqliteDurableStore } from '../src/durable-store.js';
 import { DurableVerifyJobCoordinator } from '../src/durable-verify-job.js';
 import { DevspaceVerifyExecutionPort } from '../src/executor/devspace-verify.js';
 import { startBrowserAdmissionHttpServer } from '../src/http-server.js';
-import { startOperatorServer } from '../src/operator-server.js';
+import { operatorDenialsToStderr, startOperatorServer } from '../src/operator-server.js';
 import { loadPrivateGatewayConfig } from '../src/private-config.js';
 import { bootstrapPrivateGateway } from '../src/private-runtime.js';
 import { createBrowserVerifyAdmittedMcpServer } from '../src/server.js';
@@ -71,7 +71,10 @@ export async function startBrowserAdapterRuntime(options: {
     });
     verify.reconcile();
 
-    operator = await startOperatorServer({ verifyCoordinator: verify });
+    operator = await startOperatorServer({
+      verifyCoordinator: verify,
+      onDeny: operatorDenialsToStderr(),
+    });
 
     http = await startBrowserAdmissionHttpServer({
       gateway: privateRuntime.gateway,

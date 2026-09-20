@@ -177,7 +177,11 @@ export class DurableCommitCoordinator {
   private expireOverduePending(): void {
     const now = this.now();
     for (const record of this.options.store.listPendingCommits(COMMIT_PENDING_SCAN_LIMIT)) {
-      if (record.reviewDeadline <= now) this.options.store.expireCommit(record.commitId, now);
+      if (record.reviewDeadline > now) continue;
+      // Best-effort for the same reason the mutation sweep is: this runs in front of every render
+      // of the review page, and a store write that fails must not turn a read into a 500.
+      try { this.options.store.expireCommit(record.commitId, now); }
+      catch { /* leave it listed; reconcile() will try again */ }
     }
   }
 

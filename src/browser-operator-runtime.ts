@@ -16,7 +16,7 @@ import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.j
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
 import { DevspaceVerifyExecutionPort } from './executor/devspace-verify.js';
 import { startBrowserAdmissionHttpServer } from './http-server.js';
-import { startOperatorServer } from './operator-server.js';
+import { operatorDenialsToStderr, startOperatorServer } from './operator-server.js';
 import { loadPrivateGatewayConfig } from './private-config.js';
 import { bootstrapPrivateGateway } from './private-runtime.js';
 import { createBrowserOperatorAdmittedMcpServer } from './server.js';
@@ -133,6 +133,9 @@ export async function startBrowserOperatorRuntime(options: {
       coordinator: mutation,
       verifyCoordinator: verify,
       commitCoordinator: commit,
+      // The operator is answered in a browser, where every refusal looks the same. This is the
+      // channel that tells *this machine* which check failed.
+      onDeny: operatorDenialsToStderr(),
     });
     // The single-use bootstrap goes to a file beside the state database, never to stderr, for
     // the same reason the stdio surface does it: whoever launched this process may log or

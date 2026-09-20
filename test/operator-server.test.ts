@@ -55,8 +55,9 @@ test('operator page escapes review content and emits restrictive headers', async
   assert.equal(page.headers.get('x-frame-options'), 'DENY');
   // `same-origin`, not `no-referrer`: under no-referrer a navigation POST serialises its Origin
   // as "null", which the CSRF Origin check then refuses — measured against a real browser, and
-  // the reason a live approval failed while this suite passed. See
-  // test/live-dogfood-regressions.test.ts, which pins the behaviour rather than just the header.
+  // the reason a live approval failed while this suite passed. No test here can reproduce that,
+  // because `fetch()` is request mode "cors" and exempt from the rule; the behaviour is pinned by
+  // `npm run test:operator-browser`, which drives a real browser through the real review form.
   assert.equal(page.headers.get('referrer-policy'), 'same-origin');
   assert.equal(page.headers.get('cache-control'), 'no-store');
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);

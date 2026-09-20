@@ -54,7 +54,11 @@ export async function startOperatorServer(options: {
   let origin = '';
 
   const refuse = (res: ServerResponse, status: number, code: OperatorDenialCode, path: string): void => {
-    options.onDeny?.({ status, code, path });
+    // Guarded, and it must stay guarded: `refuse` is also called from the handler's catch, so a
+    // listener that threw here would escape the async handler as an unhandled rejection and leave
+    // the response un-ended — the request would hang rather than be refused.
+    try { options.onDeny?.({ status, code, path }); }
+    catch { /* a broken observer must not change what the server does */ }
     deny(res, status, code);
   };
 
@@ -176,9 +180,11 @@ export async function startOperatorServer(options: {
  */
 async function postFailure(
   req: IncomingMessage, csrf: string, origin: string,
-): Promise<'ORIGIN_MISMATCH' | 'CSRF_INVALID' | undefined> {
+): Promise<'ORIGIN_MISMATCH' | 'SITE_MISMATCH' | 'CSRF_INVALID' | undefined> {
   const site = req.headers['sec-fetch-site'];
-  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return 'ORIGIN_MISMATCH';
+  // Reported under its own code: a diagnostic that cannot tell a fetch-metadata refusal from an
+  // Origin refusal is no better than the single `Denied` this change exists to replace.
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return 'SITE_MISMATCH';
   if (req.headers.origin !== origin) return 'ORIGIN_MISMATCH';
   const form = await readForm(req);
   const supplied = form.get('csrf');
@@ -234,14 +240,42 @@ export type OperatorDenialCode =
   | 'BOOTSTRAP_INVALID'
   | 'UNAUTHENTICATED'
   | 'ORIGIN_MISMATCH'
+  | 'SITE_MISMATCH'
   | 'CSRF_INVALID'
   | 'NOT_ACTIONABLE'
   | 'NOT_FOUND'
   | 'NO_ROUTE'
   | 'INTERNAL';
 
-/** Codes that must not be echoed to the caller, because the caller is not yet trusted. */
-const OPAQUE_DENIALS: ReadonlySet<OperatorDenialCode> = new Set(['BOOTSTRAP_INVALID', 'UNAUTHENTICATED']);
+/**
+ * Codes that must not be echoed to the caller.
+ *
+ * The first two are returned before the session gate, so the caller has proved nothing. `INTERNAL`
+ * is here for the same reason and not because it is interesting: the handler's catch also covers
+ * work that happens before `getSession`, so echoing it would say something — however little — to
+ * an unauthenticated caller.
+ */
+const OPAQUE_DENIALS: ReadonlySet<OperatorDenialCode> = new Set([
+  'BOOTSTRAP_INVALID', 'UNAUTHENTICATED', 'INTERNAL',
+]);
+
+/**
+ * The default local signal: one JSON line per refusal, on stderr, in the same shape the CLI uses
+ * for its other lifecycle lines.
+ *
+ * This exists because wiring the callback is the half that matters. A review server that answers
+ * a human in a browser cannot explain itself in the body without explaining itself to anything
+ * else that reaches loopback — so if the local process is not told, nobody is, and an operator who
+ * is refused is back to inferring the cause from durable state. It carries a status, a code and a
+ * path; never a token, a cookie, a CSRF value or a query string.
+ */
+export function operatorDenialsToStderr(
+  stderr: NodeJS.WritableStream = process.stderr,
+): (event: { status: number; code: OperatorDenialCode; path: string }) => void {
+  return (event) => {
+    stderr.write(`${JSON.stringify({ type: 'operator.denied', ...event })}\n`);
+  };
+}
 
 function deny(res: ServerResponse, status: number, code: OperatorDenialCode): void {
   const body = OPAQUE_DENIALS.has(code) ? 'Denied' : `Denied: ${code}`;

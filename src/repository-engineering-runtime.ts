@@ -111,6 +111,12 @@ export async function startRepositoryEngineeringRuntime(
           await commitCoordinator.reconcile();
         }
 
+        // No `onDeny` here, deliberately. The browser-operator runtime sends refusals to stderr so
+        // the local operator can see which check failed, but this is the stdio gateway, and its
+        // stderr belongs to whatever spawned it — for the supported deployment a remote-facing
+        // tunnel client that is permitted to log or forward it (see the note below). A denial
+        // event carries the record's path, so routing it here would put review identifiers
+        // somewhere the rest of this file is careful not to.
         operator = await (options.startOperatorServer ?? startOperatorServer)({
           coordinator,
           ...(commitCoordinator === undefined ? {} : { commitCoordinator }),
