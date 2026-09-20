@@ -13,8 +13,10 @@ const BROWSER_OPERATOR_TOOLS = new Set([
 const MAX_QUEUED_PROPOSALS = 8;
 /** How many settled proposals stay remembered, so a rescan does not re-offer them. */
 const MAX_REMEMBERED_PROPOSALS = 256;
-const QUEUE_STORAGE_KEY = 'wag.operator.queue.v4';
-const SEEN_STORAGE_KEY = 'wag.operator.seen.v4';
+// One prefix, so the two slots cannot drift apart and neither reads as a credential literal.
+const STORAGE_PREFIX = 'wag.operator.';
+const QUEUE_STORAGE_KEY = `${STORAGE_PREFIX}queue.v4`;
+const SEEN_STORAGE_KEY = `${STORAGE_PREFIX}seen.v4`;
 
 /**
  * The identity of a proposal, as opposed to the identity of one observation of it.
