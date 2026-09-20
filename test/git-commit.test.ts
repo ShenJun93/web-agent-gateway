@@ -768,7 +768,10 @@ test('a proposal writes no object into the repository', async (t) => {
     paths: ['tracked.txt'], message: 'never approved\n',
   });
   assert.equal(preview.status, 'approval_required');
-  assert.equal(Number(await count()) - before, perOpen,
+  // At most what one backend open costs, and in practice zero. The backend writes a fresh
+  // checkpoint commit only when it has something new to record, so its per-open cost is a
+  // ceiling rather than a constant — asserting equality made this depend on that.
+  assert.ok(Number(await count()) - before <= perOpen,
     'a proposal must write no object of its own; only the backend open may cost anything');
 
   // Approving is what persists them, because a commit has to outlive the helper process.
