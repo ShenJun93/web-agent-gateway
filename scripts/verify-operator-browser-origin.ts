@@ -204,21 +204,31 @@ async function main(): Promise<number> {
     process.stdout.write(`\nlocal denial codes observed: ${denials.map((d) => `${d.status}:${d.code}`).join(', ') || '(none)'}\n`);
   } finally {
     const probeOrigin = server.origin;
-    await server.close();
+    // Tab first, server second. The other order leaves a tab pointed at an origin that has just
+    // stopped answering, and querying it then stalls long enough to look like a hang.
     // Close the tab this probe opened, and *verify* it: swallowing the failure left a dead tab
     // behind in the worker, which is residue this script is responsible for.
     if (tabIndex !== undefined) {
-      try {
-        await cli('tab-close', tabIndex);
-      } catch (error) {
-        process.stderr.write(`could not close probe tab ${tabIndex}: ${String((error as Error)?.message ?? error)}\n`);
+      // Find the tab by its URL at close time rather than trusting an index captured earlier: the
+      // list can shift, and an index that is merely stale closes somebody else's tab.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const listing = await cli('tab-list').catch(() => '');
+        const line = listing.split('\n').find((l) => l.includes(probeOrigin));
+        if (!line) break;
+        const index = /^-\s*(\d+):/.exec(line.trim())?.[1];
+        if (index === undefined) break;
+        try { await cli('tab-close', index); }
+        catch (error) { process.stderr.write(`tab-close ${index}: ${String((error as Error)?.message ?? error)}\n`); }
       }
       const remaining = await cli('tab-list').catch(() => '');
       if (remaining.includes(probeOrigin)) {
         failures += 1;
         check(false, `the probe tab at ${probeOrigin} is still open; close it before reusing this worker`);
+      } else {
+        check(true, 'the probe closed its own tab and left the worker as it found it');
       }
     }
+    await server.close();
   }
 
   process.stdout.write(failures === 0 ? '\nOPERATOR BROWSER ORIGIN: PASS\n' : `\nOPERATOR BROWSER ORIGIN: ${failures} FAILED\n`);
