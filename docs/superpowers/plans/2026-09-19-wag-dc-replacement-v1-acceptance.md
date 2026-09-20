@@ -171,6 +171,27 @@ Independently test, with no real credential, user document, unrelated process or
 - a commit message cannot forge the helper's result sentinel;
 - one caller cannot fill the operator's review list with proposals.
 
+### Git execution surface (ADR-0024)
+
+Every WAG git invocation runs under one policy, and the tests drive that policy directly against a real
+hostile repository rather than only through the execution backend. Each canary must be proven armed by a
+control that fires without the policy:
+
+- hooks in `.git/hooks`, hooks under a repository-supplied `core.hooksPath`, and Git 2.53 config-defined
+  hooks (`hook.<n>.command` + `hook.<n>.event`) — none may execute, and the config-defined case must have
+  a control proving `core.hooksPath` alone does not stop it;
+- a clean filter during `git diff`, with a control proving `--no-ext-diff --no-textconv` does not stop it;
+- `diff.external`, `GIT_EXTERNAL_DIFF`, a textconv driver, `core.fsmonitor`, pager, editor, askpass,
+  credential helper, ssh command and gpg program;
+- an inherited `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` / object-directory / config-injection
+  environment, with a control proving an inherited `GIT_DIR` really does redirect git;
+- awkward filenames — spaces, quotes, brackets, commas, a leading dash — under `--literal-pathspecs`;
+- the committed blob equals the reviewed bytes, with only the reported end-of-line normalization;
+- a `working-tree-encoding` attribute is refused rather than applied;
+- a proposal writes no object into the repository, measured with the execution backend's own per-open
+  cost subtracted rather than ignored;
+- no secret from the parent environment reaches a git child.
+
 ## Gate 7 — Restart gate
 
 Four exact windows, applied to stdio mutation:
