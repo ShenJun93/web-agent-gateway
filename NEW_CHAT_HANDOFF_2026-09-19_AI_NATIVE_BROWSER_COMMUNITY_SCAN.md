@@ -27,7 +27,7 @@ This handoff is not authority when Git disagrees.
 
 ## Verified state
 
-Passes 1–13 plus the replacement-pressure audit are complete through the Pass 13 research branch. No local install or browser benchmark was run.
+Passes 1–14 plus the replacement-pressure audit are complete through the Pass 14 research branch. No local install or browser benchmark was run.
 
 Pass 10 started from canonical remote `main`:
 `ec2ca8f0f32ff7ae8199558f409e0ffd9ea6c286`.
@@ -238,7 +238,7 @@ WAG_SEMANTIC_AUTHORITY = RETAIN
 SESSIONCOMMANDER_EXACT_OWNED_LIFECYCLE = RETAIN
 GUARDIAN_BROWSER_CONTROL_EXPANSION = NO
 
-NEXT_ACTION = PASS_14_WINDOWS_WEBAUTHN_AND_ISOLATED_APPROVAL_BROKER_RESEARCH
+NEXT_ACTION = PASS_15_SHORT_LIVED_APPROVAL_BROKER_AND_PROCESS_HARDENING_RESEARCH
 ```
 
 
@@ -327,3 +327,32 @@ Research:
 8. Permit/Closure mapping to WAG ledger;
 9. OAuth Transaction Token maturity;
 10. no implementation until local approval trust boundary is resolved.
+
+
+## Pass 14 material additions
+
+- Native Win32 WebAuthn is a strong authenticator/challenge factor but is not documented as a native process/application identity boundary. Caller supplies RP ID/client data, and platform credential enumeration is scoped to the current user with caller-supplied RP filtering.
+- AppContainer is a real Windows security boundary, but Win32 App Isolation remains preview/rough enough that it should not become a default WAG dependency yet.
+- ADR-0019 does not claim hostile-same-user containment. For the accepted threat model, the key requirement is browser/model-independent operator authority.
+- The primary minimal approval direction is now a short-lived native child broker: WAG creates exact pending proposal + nonce, launches an exact broker binary with only explicit inherited anonymous-pipe handles, broker displays exact effect and returns one-shot decision, then exits.
+- UserConsentVerifier is the low-complexity local re-verification factor; WebAuthn is optional when a cryptographic receipt/FIDO portability is actually required.
+- AppContainer broker remains a future stronger-isolation gate, not an automatic next implementation.
+
+Detailed receipt:
+- `docs/research/2026-09-20-ai-native-browser-research-pass-14.md`
+
+## Pass 15 — research only
+
+Still no local benchmark or implementation.
+
+Research:
+1. short-lived native approval broker prior art;
+2. Windows trusted UI / anti-spoofing properties of UserConsentVerifier/Credential UI;
+3. exact broker launch hardening: full path, signature/hash, restricted inherited handles, mitigations;
+4. Job Object/process containment and cleanup;
+5. anonymous pipe + future AppContainer compatibility;
+6. minimal AppContainer broker launch options;
+7. native WebAuthn security/community reports;
+8. WIMSE only on material state changes;
+9. mapping broker receipt into Browser Verify Approval v1;
+10. no implementation until a minimal architecture survives review.
