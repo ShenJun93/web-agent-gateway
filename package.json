@@ -17,7 +17,8 @@
     "verify:native-host-candidate": "tsx scripts/verify-signed-native-host-candidate.ts",
     "test:business": "npm run build && tsx --test --test-concurrency=1 test/business-stdio.acceptance.ts",
     "test:dc-replacement": "npm run build && tsx --test --test-concurrency=1 test/dc-replacement.acceptance.ts",
-    "test:operator-browser": "tsx scripts/verify-operator-browser-origin.ts"
+    "test:operator-browser": "tsx scripts/verify-operator-browser-origin.ts",
+    "operator:open": "tsx scripts/open-operator.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
