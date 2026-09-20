@@ -5,42 +5,45 @@
  * WAG's two human gestures are Run in the browser side panel and approve/reject on the local
  * operator review server (ADR-0019, ADR-0026: RUN_AND_APPROVAL = HUMAN). This hook is the
  * deterministic half of keeping Claude automation away from both. It is not the security
- * boundary — WAG's own authority checks are — but it removes the easy paths, and it is the
- * strongest enforcement the installed Claude Code (2.1.278) can actually express.
+ * boundary — WAG's own authority checks are — and `.claude/rules/human-presence-boundary.md`
+ * states exactly where it stops. Read that before trusting anything here.
  *
- * Contract, verified against the installed build:
+ * Contract, verified against the installed Claude Code (2.1.278):
  *   in  : JSON on stdin carrying `tool_name` and `tool_input`
  *   out : {"hookSpecificOutput":{"hookEventName":"PreToolUse",
  *          "permissionDecision":"deny","permissionDecisionReason":"..."}}
  *   Emitting nothing leaves the call to the normal permission flow, so this hook only ever
  *   *adds* denials. It can never widen what Claude may do.
  *
- * What it deliberately does not do: decide whether a screen coordinate is over the Run button.
- * A coordinate carries no target, so that question cannot be answered here. Rather than pretend
- * otherwise, the actuating Computer Use verbs are refused outright and the observational ones
- * are left alone.
+ * Two failure modes are known and neither is theoretical — both were produced while building it.
+ * A hook that crashes, and a hook that exceeds its timeout, produce no frame, and no frame is
+ * read as "no opinion": the call proceeds. So this file must stay syntactically valid and fast,
+ * and `test/claude-harness-guard.test.ts` bounds both. Every match below is linear in the length
+ * of the input; an independent review measured 60 seconds against a 10 second timeout on an
+ * earlier version whose patterns backtracked.
  */
 import { pathToFileURL } from 'node:url';
 
 /**
- * Computer Use verbs that move the mouse buttons or the keyboard. Coordinates are opaque, so
- * there is no safe subset — a click is refused whatever it is aimed at. The observational verbs
- * (screenshot, zoom, cursor_position, wait, scroll, mouse_move, open_application, request_access,
- * list_granted_applications, read_clipboard, switch_display) are untouched, which is what keeps
- * ordinary window handling and visual inspection available.
+ * Computer Use verbs that observe without actuating. This is an allowlist: an unknown verb is
+ * refused, so a verb the server adds later is closed by default rather than open by default.
+ * Everything not named here — every click, every key, the clipboard, the teach and batch
+ * wrappers — is refused, because a screen coordinate carries no target and no honest guard can
+ * tell a click on Run from any other click.
+ *
+ * `read_clipboard` is deliberately absent: the operator copies the bootstrap URL, and the
+ * clipboard is the obvious way for that credential to reach Claude by accident.
+ * `open_application`, `switch_display`, `scroll` and `mouse_move` do change focus, display or
+ * scroll position — they are not observational in the strict sense. They are allowed because
+ * none of them can press anything, which is what keeps ordinary window handling available.
  */
-const COMPUTER_USE_ACTUATING = new Set([
-  'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
-  'left_click_drag', 'left_mouse_down', 'left_mouse_up',
-  'type', 'key', 'hold_key', 'write_clipboard',
-  'teach_step', 'teach_batch', 'computer_batch',
+const COMPUTER_USE_ALLOWED = new Set([
+  'screenshot', 'zoom', 'cursor_position', 'wait', 'mouse_move', 'scroll',
+  'switch_display', 'open_application', 'request_access', 'request_teach_access',
+  'list_granted_applications',
 ]);
 
-/**
- * Browser-automation servers whose calls are inspected for an authority target. Every browser
- * tool from these servers is inspected, not only the clicking ones: reaching the side panel is
- * the precondition for clicking it, so navigation and tab selection are covered too.
- */
+/** Browser-automation servers whose calls are inspected for an authority target. */
 const BROWSER_SERVERS = [
   'mcp__Claude_Browser__',
   'mcp__claude-in-chrome__',
@@ -51,7 +54,9 @@ const BROWSER_SERVERS = [
 
 /**
  * Read-only browser verbs, which may name an authority surface without being able to act on it.
- * Keeping these allowed is what the mission means by "must not block ordinary inspection".
+ * Keeping these allowed is what stops the guard becoming an obstacle people route around.
+ * Anything that selects a page or a tab is absent: making a document the active target is how a
+ * later reference-based click acquires something to click.
  */
 const BROWSER_READ_ONLY = new Set([
   'read_page', 'get_page_text', 'read_console_messages', 'read_network_requests',
@@ -62,52 +67,61 @@ const BROWSER_READ_ONLY = new Set([
   'preview_list', 'preview_logs', 'find', 'browser_find',
 ]);
 
+/** Tools that read a file or a URL, and so can carry a credential out of one. */
+const READERS = new Set(['Read', 'Grep', 'Glob', 'WebFetch', 'NotebookRead']);
+
+/** Tools that write a file, and so could rewrite this guard. */
+const WRITERS = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit']);
+
 /**
- * Strings that identify a WAG human-authority surface.
- *
- * - `panel.execute` is the message the Run button sends; nothing else may send it.
- * - the side panel document, and any chrome-extension:// document, are the Run surface.
- * - the approve/reject routes are the effect gate itself.
- * - the operator-url file is where the single-use bootstrap credential is written, 0600.
- *   Spending that credential does not merely bypass a gate; it takes the operator's approval
- *   session away from them.
+ * The guard's own directory. Scope is deliberately narrow: `.claude/settings.json` and
+ * `.claude/rules/` are declarative and are covered by deny rules in settings.json, while this
+ * file is the executable one. A shell write here is a separate matter — Claude Code's own
+ * auto-mode classifier refuses those as self-modification, which was observed while building
+ * this, not designed here.
  */
-const RUN_SURFACE_PATTERNS = [
+const PROTECTED_DIR = '.claude/hooks/';
+
+// --- Authority surfaces. Every regex below has a bounded quantifier or no quantifier at all. ---
+
+/** The operator's single-use bootstrap credential, as an actual file name. Matching the bare
+ *  word refused `rg operator-url src/`, which is reading, not reaching. */
+const OPERATOR_URL_FILE = /[\w.-]+\.operator-url\b/i;
+const OPERATOR_ROUTE = /\/(?:mutations|commits|verifications)\/[A-Za-z0-9_.:-]{1,64}\/(?:approve|reject)\b/i;
+const OPERATOR_BOOTSTRAP = /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d{1,5})?\/bootstrap\b/i;
+const OPERATOR_ORIGIN = /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}\b/i;
+const WAG_STATE_FILE = 'browser-operator-v4.sqlite';
+const SQL_WRITE = /\b(?:insert|update|delete|drop|attach)\b/i;
+
+/** The Run surface: the side panel document, any extension document, and the message the Run
+ *  button sends. */
+const RUN_SURFACE = [
   [/panel\.execute/i, 'sends the side panel Run message'],
-  [/sidepanel(\.html|\.js)?\b/i, 'targets the WAG side panel document'],
+  [/sidepanel(?:\.html|\.js)?\b/i, 'targets the WAG side panel document'],
   [/chrome-extension:\/\//i, 'targets an extension document, where the Run control lives'],
 ];
 
-const OPERATOR_PATTERNS = [
-  [/\/(mutations|commits|verifications)\/[^/\s"'`]+\/(approve|reject)/i,
-    'is a local operator approve/reject route'],
-  [/operator-url/i, 'reads the operator single-use bootstrap file'],
-  [/browser-operator-v4\.sqlite[^\n]*\b(insert|update|delete|drop|attach)\b/i,
-    'writes WAG durable state directly'],
-  [/\b(insert|update|delete|drop)\b[^\n]*browser-operator-v4\.sqlite/i,
-    'writes WAG durable state directly'],
-];
-
 /**
- * A shell cannot send `panel.execute` on its own. That message only travels inside an extension
- * document, so reaching it from a command line means driving a browser. Naming the Run surface is
- * therefore refused in a shell only when something that drives a browser is named with it —
- * otherwise `grep panel.execute browser/extension/service-worker.js`, which is how anyone reads
- * the gate they are reasoning about, would be refused for no gain. The browser tools keep the
- * unconditional rule, because they have no reason to name the surface except to reach it.
+ * A shell cannot send the Run message or reach an extension document on its own; doing so means
+ * driving a browser. Requiring a driver alongside the surface is what lets `grep panel.execute
+ * browser/extension/service-worker.js` through — reading the gate you are reasoning about.
+ * A leading word boundary cannot match in front of "--", so the flag-shaped drivers are a
+ * separate branch.
  */
 const BROWSER_DRIVER =
-  // A leading \b cannot match in front of "--", because a space and a dash are both non-word
-  // characters, so the flag-shaped drivers are a separate alternative with no boundary anchor.
-  /\b(?:playwright(?:-cli)?|puppeteer|chrome-remote-interface|websocat|msedge|chrome\.exe|Runtime\.evaluate|Page\.navigate|devtools-protocol)\b|--remote-debugging-port|--load-extension/i;
+  /\b(?:playwright(?:-cli)?|puppeteer|browser-use|chrome-remote-interface|websocat|msedge|chrome\.exe|Runtime\.evaluate|Page\.navigate|devtools-protocol|microsoft-edge:)\b|--remote-debugging-port|--load-extension/i;
 
-/**
- * The operator bootstrap route, matched only where it is actually being fetched. A bare
- * "/bootstrap" appears in prose and in this repository's own documents, so a loopback origin is
- * required in front of it; that keeps the guard off ordinary reading and writing.
- */
-const OPERATOR_BOOTSTRAP_PATTERN = /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\/bootstrap/i;
-const OPERATOR_BOOTSTRAP_REASON = 'fetches the operator single-use bootstrap URL';
+/** Something that actually performs an HTTP request, as opposed to a script that merely names a
+ *  route while analysing one. */
+const HTTP_CLIENT =
+  /\b(?:curl|wget|httpie|fetch|axios|Invoke-WebRequest|Invoke-RestMethod|WebClient|HttpClient|urllib|requests\.(?:get|post)|http\.request|nc|telnet)\b/i;
+
+/** Shell verbs that put a file's contents somewhere Claude can read them. A command that merely
+ *  names the credential file while searching for it is doing neither, and is not refused. */
+const FILE_READ_VERB =
+  /\b(?:cat|type|more|less|head|tail|Get-Content|gc|Copy-Item|copy|cp|mv|Move-Item|xargs|base64|od|xxd|strings)\b|[<>|]/;
+
+const BOUNDARY_RULE = 'See .claude/rules/human-presence-boundary.md.';
 
 function serialize(value) {
   if (typeof value === 'string') return value;
@@ -118,38 +132,37 @@ function serialize(value) {
   }
 }
 
-function matchOperator(text) {
-  for (const [pattern, why] of OPERATOR_PATTERNS) if (pattern.test(text)) return why;
-  if (OPERATOR_BOOTSTRAP_PATTERN.test(text)) return OPERATOR_BOOTSTRAP_REASON;
+/**
+ * Whether a write is aimed at this guard itself.
+ *
+ * Only the target matters. An earlier version tested the whole serialised input, which refused
+ * any edit whose *content* merely quoted the path — including the edits that repair this file,
+ * and including ordinary documentation. Separators are normalised because a Windows path arrives
+ * inside JSON with its backslashes doubled, so a single-separator form would never match one.
+ */
+function isProtectedTarget(input) {
+  const target = input && typeof input === 'object'
+    ? input.file_path ?? input.notebook_path
+    : undefined;
+  if (typeof target !== 'string') return false;
+  return target.split('\\').join('/').includes(PROTECTED_DIR);
+}
+
+/** The operator's credential and decision surface. Linear: one `includes` and four anchored
+ *  regexes, none of which can backtrack. */
+function matchOperatorSurface(text) {
+  if (OPERATOR_URL_FILE.test(text)) return 'names the operator single-use bootstrap file';
+  if (OPERATOR_ROUTE.test(text)) return 'is a local operator approve/reject route';
+  if (OPERATOR_BOOTSTRAP.test(text)) return 'is the operator single-use bootstrap URL';
+  if (text.includes(WAG_STATE_FILE) && SQL_WRITE.test(text)) return 'writes WAG durable state directly';
   return undefined;
 }
 
 function matchRunSurface(text) {
-  for (const [pattern, why] of RUN_SURFACE_PATTERNS) if (pattern.test(text)) return why;
+  for (const [pattern, why] of RUN_SURFACE) if (pattern.test(text)) return why;
   return undefined;
 }
 
-/** Browser tools: naming either surface is reaching for it. */
-function matchForBrowser(text) {
-  return matchRunSurface(text) ?? matchOperator(text);
-}
-
-/** Shell: the operator's credential and decision routes always; the Run surface only when
- *  something that can drive a browser is named alongside it. */
-function matchForShell(text) {
-  const operator = matchOperator(text);
-  if (operator) return operator;
-  if (!BROWSER_DRIVER.test(text)) return undefined;
-  const surface = matchRunSurface(text);
-  return surface ? `drives a browser at something that ${surface}` : undefined;
-}
-
-const BOUNDARY_RULE = 'See .claude/rules/human-presence-boundary.md.';
-
-/**
- * @param {{tool_name?: unknown, tool_input?: unknown}} event
- * @returns {{deny: false} | {deny: true, reason: string}}
- */
 export function decide(event) {
   const tool = typeof event?.tool_name === 'string' ? event.tool_name : '';
   if (!tool) {
@@ -160,19 +173,30 @@ export function decide(event) {
   }
   const text = serialize(event?.tool_input);
 
-  if (tool.startsWith('mcp__computer-use__')) {
-    const verb = tool.slice('mcp__computer-use__'.length);
-    if (!COMPUTER_USE_ACTUATING.has(verb)) return { deny: false };
+  // Rewriting the guard is step three of the attack fixture in
+  // test/fixtures/prompt-injection-page-capture.txt, and the hook is re-read on every call, so an
+  // edit would take effect at once.
+  if (WRITERS.has(tool) && isProtectedTarget(event?.tool_input)) {
     return {
       deny: true,
-      reason: `wag-human-gate-guard: Computer Use "${verb}" is refused in this project. A screen coordinate carries no target, so this hook cannot tell a click on WAG's Run button from any other click, and the project will not claim a guarantee it cannot enforce. Screenshot the screen to see it, and ask the operator to perform the gesture. ${BOUNDARY_RULE}`,
+      reason: `wag-human-gate-guard: this writes the hook that decides what is refused. Changing it is the operator's call, made deliberately and reviewed. ${BOUNDARY_RULE}`,
+    };
+  }
+
+  if (tool.startsWith('mcp__computer-use__')) {
+    const verb = tool.slice('mcp__computer-use__'.length);
+    if (COMPUTER_USE_ALLOWED.has(verb)) return { deny: false };
+    return {
+      deny: true,
+      reason: `wag-human-gate-guard: Computer Use "${verb}" is refused in this project. A screen coordinate carries no target, so this hook cannot tell a click on WAG's Run button from any other click, and the project will not claim a guarantee it cannot enforce. Only the observational verbs are allowed, and an unrecognised verb is refused rather than assumed harmless. ${BOUNDARY_RULE}`,
     };
   }
 
   const server = BROWSER_SERVERS.find((prefix) => tool.startsWith(prefix));
   if (server) {
     if (BROWSER_READ_ONLY.has(tool.slice(server.length))) return { deny: false };
-    const why = matchForBrowser(text);
+    // A browser tool has no reason to name either surface except to reach it.
+    const why = matchRunSurface(text) ?? matchOperatorSurface(text);
     if (!why) return { deny: false };
     return {
       deny: true,
@@ -180,13 +204,62 @@ export function decide(event) {
     };
   }
 
+  // Reading a file or a URL cannot press a button, but it can carry the operator's single-use
+  // credential out of the 0600 file it lives in — and spending that credential takes the
+  // operator's own approval session away from them.
+  if (READERS.has(tool)) {
+    if (OPERATOR_URL_FILE.test(text)) {
+      return {
+        deny: true,
+        reason: `wag-human-gate-guard: this reads the operator single-use bootstrap file. It is the operator's credential, it is spent on first use, and taking it locks them out of their own approval session. ${BOUNDARY_RULE}`,
+      };
+    }
+    if (tool === 'WebFetch'
+      && (OPERATOR_BOOTSTRAP.test(text) || OPERATOR_ROUTE.test(text) || OPERATOR_ORIGIN.test(text))) {
+      return {
+        deny: true,
+        reason: `wag-human-gate-guard: this fetches the local operator review server, which is the human's channel and not an API for Claude. ${BOUNDARY_RULE}`,
+      };
+    }
+    return { deny: false };
+  }
+
   if (tool === 'Bash' || tool === 'PowerShell') {
-    const why = matchForShell(text);
-    if (!why) return { deny: false };
-    return {
-      deny: true,
-      reason: `wag-human-gate-guard: this command ${why}. A shell is a same-user escape hatch, so this check is a tripwire rather than a sandbox — ADR-0019 already puts a compromised same-user account outside the containment claim — but the gesture belongs to the operator, so the obvious forms are refused. ${BOUNDARY_RULE}`,
-    };
+    // Naming a route or a credential is not reaching for one: an analysis script may quote both,
+    // and refusing that refused the security review's own scripts. Requiring something that
+    // actually performs a request, reads a file, or drives a browser is what separates the two.
+    // A shell remains an accepted same-user escape hatch either way, so this is a tripwire.
+    if (OPERATOR_URL_FILE.test(text) && FILE_READ_VERB.test(text)) {
+      return {
+        deny: true,
+        reason: `wag-human-gate-guard: this command reads the operator single-use bootstrap file, which is spent on first use. A command that only names it is not refused. ${BOUNDARY_RULE}`,
+      };
+    }
+    if (HTTP_CLIENT.test(text)) {
+      const why = matchOperatorSurface(text);
+      if (why) {
+        return {
+          deny: true,
+          reason: `wag-human-gate-guard: this command requests something that ${why}. The local operator review server is the human's channel. ${BOUNDARY_RULE}`,
+        };
+      }
+    }
+    if (text.includes(WAG_STATE_FILE) && SQL_WRITE.test(text)) {
+      return {
+        deny: true,
+        reason: `wag-human-gate-guard: this command writes WAG durable state directly, going around the review that decides it. ${BOUNDARY_RULE}`,
+      };
+    }
+    if (BROWSER_DRIVER.test(text)) {
+      const why = matchRunSurface(text);
+      if (why) {
+        return {
+          deny: true,
+          reason: `wag-human-gate-guard: this command drives a browser at something that ${why}. Run is a human gesture. ${BOUNDARY_RULE}`,
+        };
+      }
+    }
+    return { deny: false };
   }
 
   return { deny: false };
@@ -199,11 +272,11 @@ async function main() {
   try {
     verdict = decide(JSON.parse(Buffer.concat(chunks).toString('utf8')));
   } catch {
-    // Fail closed on an unparseable event: the guard cannot show the call is safe. The failure is
-    // loud and is repaired by editing this file, which is preferable to silently opening the gate.
+    // Fail closed on an event that cannot be read or decided. The failure is loud and is repaired
+    // by editing this file, which is preferable to silently opening the gate.
     verdict = {
       deny: true,
-      reason: 'wag-human-gate-guard: the hook event did not parse, so this call cannot be shown to be safe.',
+      reason: 'wag-human-gate-guard: the hook event could not be read or decided, so this call cannot be shown to be safe.',
     };
   }
   if (verdict.deny) {

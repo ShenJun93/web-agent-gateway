@@ -42,7 +42,9 @@ operator url  %LOCALAPPDATA%\WebAgentGateway\browser-operator-v4.sqlite.operator
 ```
 
 **Do not open the operator URL file.** It is the operator's credential, it is single-use, and
-spending it takes their approval session away. The guard refuses it.
+spending it takes their approval session away. The guard refuses a read of it through `Read`,
+`Grep`, `Glob`, `WebFetch` and the obvious shell forms — but you are being told its path here, so
+treat not opening it as the rule, not as something enforced for you.
 
 ## The loop
 

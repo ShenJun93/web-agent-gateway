@@ -42,4 +42,7 @@ semantics without its own acceptance decision.
 
 ## The panel and the operator are not automation targets
 
-Inspect them; do not drive them. See `human-presence-boundary.md` — the guard enforces it.
+Inspect them; do not drive them. The guard refuses the calls that *name* them, and settings.json
+denies the actuating browser verbs — but a browser driver reached from a shell can still click by
+reference, and nothing here detects that. `human-presence-boundary.md` sets out exactly which
+part is enforced and which part is a rule you are expected to keep.
