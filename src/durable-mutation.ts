@@ -1,9 +1,18 @@
 import { createHash } from 'node:crypto';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
+import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
 import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
+
+/**
+ * The tool name this coordinator's records are judged as under a lease.
+ *
+ * A constant rather than anything the proposal carries: the lease grants tools, and a proposal
+ * must not be able to nominate which grant it is checked against.
+ */
+const MUTATION_TOOL = 'mutation.preview';
 
 /** Outstanding proposals one caller may have awaiting review, as for commits. */
 const MAX_PENDING_PER_CALLER = 8;
@@ -73,6 +82,16 @@ export class DurableMutationCoordinator {
     reviewTtlMs?: number;
     admissionTtlMs?: number;
     rateLimit?: ProposalRateLimit;
+    /**
+     * Absent by default, which is what makes autonomous admission off by default: with no lease
+     * configured, `admitByPolicy` refuses and the only way to an effect is a human on the
+     * operator's Approve route, exactly as before.
+     */
+    goalLease?: {
+      leaseId: string;
+      /** Consulted on every admission, so engaging it takes effect immediately. */
+      killSwitch: () => boolean;
+    };
   }) {
     this.backends = new Map(options.backends.map((backend) => [backend.kind, backend]));
     if (this.backends.size !== options.backends.length) throw new Error('Duplicate file mutation backend kind');
@@ -176,6 +195,86 @@ export class DurableMutationCoordinator {
   reviewLocal(mutationId: string): MutationLocalReviewView | undefined {
     const record = this.options.store.getMutation(mutationId);
     return record ? this.toLocalReviewView(record) : undefined;
+  }
+
+  /**
+   * Admit a pending record under an Autonomous Goal Lease (ADR-0028), with no human gesture.
+   *
+   * This is not an approval shortcut and shares no code with the Run button or the operator's
+   * Approve route, both of which are untouched and remain the only path when no lease is
+   * configured. What happens here is that a *deterministic local policy* reads a durable lease
+   * and a durable proposal record and decides. The model does not decide; neither does the page.
+   *
+   * Every fact judged is re-read here, immediately before the consequence, rather than taken
+   * from whatever proposed the action:
+   *
+   *   - the lease comes from the store and is re-parsed and re-validated on every call, so a
+   *     lease revoked or expired a millisecond ago is refused;
+   *   - the session, adapter, path and size come from the durable record, which the ordinary
+   *     validation already produced — not from browser text;
+   *   - the workspace root is re-derived from the workspace row, not from the proposal;
+   *   - the file's own bytes are re-checked by `executeQueued`, which refuses a divergent target.
+   *
+   * Returns the decision so a caller can log precisely why something was refused.
+   */
+  async admitByPolicy(mutationId: string): Promise<LeaseDecision> {
+    const lease = this.options.goalLease;
+    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
+
+    const record = this.options.store.getMutation(mutationId);
+    if (!record) return { admitted: false, code: 'NO_LEASE', detail: 'no such mutation' };
+    if (record.state !== 'PENDING_APPROVAL') {
+      return { admitted: false, code: 'NO_LEASE', detail: `record is ${record.state}, not awaiting review` };
+    }
+    const workspace = this.options.store.getWorkspace(record.workspaceId);
+    if (!workspace) return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
+
+    const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
+    if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
+
+    let bindings: GoalLeaseBindings;
+    try {
+      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
+    } catch {
+      // A lease whose bindings will not parse is refused, never treated as absent restrictions.
+      return { admitted: false, code: 'LEASE_MALFORMED', detail: 'the stored bindings are not JSON' };
+    }
+
+    const decision = evaluateGoalLease({
+      lease: {
+        leaseId: stored.leaseId,
+        createdAt: stored.createdAt,
+        notBefore: stored.notBefore,
+        expiresAt: stored.expiresAt,
+        ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
+        bindings,
+      },
+      now: this.now(),
+      request: {
+        tool: MUTATION_TOOL,
+        sessionId: record.sessionId,
+        adapterId: record.adapterId,
+        workspaceRoot: workspace.canonicalRoot,
+        path: record.path,
+        diffBytes: Buffer.byteLength(record.after, 'utf8'),
+      },
+      spend: this.options.store.goalLeaseSpend(stored.leaseId),
+      killSwitch: lease.killSwitch(),
+    });
+    if (!decision.admitted) return decision;
+
+    const admitted = this.options.store.policyAdmitMutation({
+      mutationId,
+      leaseId: stored.leaseId,
+      now: this.now(),
+      admissionTtlMs: this.admissionTtlMs,
+    });
+    if (!admitted) {
+      // Lost the CAS: something else moved the record between the decision and the transition.
+      return { admitted: false, code: 'LEASE_EXPIRED', detail: 'the record was no longer awaiting review' };
+    }
+    await this.executeQueued(mutationId);
+    return { admitted: true };
   }
 
   async approveLocal(mutationId: string): Promise<boolean> {

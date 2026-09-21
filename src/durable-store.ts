@@ -303,6 +303,35 @@ export class SqliteDurableStore {
       );
       CREATE INDEX IF NOT EXISTS idx_mutations_state ON mutations(state, created_at);
     `);
+    // Autonomous Goal Lease v1 (ADR-0028). Two tables rather than columns on `mutations`, for the
+    // reason stated above: there is no migration framework here.
+    //
+    // `mutation_authority` is what makes POLICY_APPROVED and HUMAN_APPROVED distinguishable after
+    // the fact. A row is written at admission and never updated, so the authority under which an
+    // effect happened is a durable fact rather than something inferred from which code path ran.
+    // A mutation with no row was admitted by neither and cannot have executed.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS goal_leases (
+        lease_id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        not_before INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER,
+        bindings TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS mutation_authority (
+        mutation_id TEXT PRIMARY KEY,
+        authority TEXT NOT NULL,
+        lease_id TEXT,
+        admitted_at INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        path TEXT NOT NULL,
+        result_sha256 TEXT NOT NULL,
+        diff_bytes INTEGER NOT NULL,
+        FOREIGN KEY(mutation_id) REFERENCES mutations(mutation_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mutation_authority_lease ON mutation_authority(lease_id);
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS verify_jobs (
         job_id TEXT PRIMARY KEY,
@@ -460,13 +489,161 @@ export class SqliteDurableStore {
     return rows.map((row) => mutationFromRow(row as Record<string, unknown>));
   }
   approveMutation(mutationId: string, now: number, admissionTtlMs: number): MutationRecord | undefined {
-    return this.transition(mutationId, 'PENDING_APPROVAL', 'QUEUED', now, () => {
+    const record = this.getMutation(mutationId);
+    const approved = this.transition(mutationId, 'PENDING_APPROVAL', 'QUEUED', now, () => {
       const result = this.db.prepare(`UPDATE mutations
         SET state = 'QUEUED', reviewed_at = ?, execution_admission_deadline = ?
         WHERE mutation_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline > ?`)
         .run(now, now + admissionTtlMs, mutationId, now);
       return Number(result.changes) === 1;
     });
+    // Recorded here rather than at the call site so the two admission paths are symmetric and
+    // neither can forget. Without this, "no authority row" would mean both "admitted by a human"
+    // and "never admitted", and the audit could not tell POLICY from HUMAN by absence.
+    if (approved && record) {
+      this.recordMutationAuthority({
+        mutationId,
+        authority: 'HUMAN_APPROVED',
+        admittedAt: now,
+        fingerprint: record.fingerprint,
+        path: record.path,
+        resultSha256: record.resultSha256,
+        diffBytes: Buffer.byteLength(record.after, 'utf8'),
+      });
+    }
+    return approved;
+  }
+
+  /**
+   * The policy-admission transition. Deliberately a *separate method* from `approveMutation`.
+   *
+   * It performs the identical CAS — same states, same `review_deadline > now` condition — and
+   * then writes the authority row in the same transaction, so a record can never reach QUEUED
+   * under a lease without a durable statement of which lease admitted it. Sharing the CAS with
+   * `approveMutation` by adding a parameter was the alternative; keeping them apart means the
+   * human path cannot acquire a lease argument by accident, and a reader can see at the call site
+   * which authority is in play.
+   */
+  policyAdmitMutation(input: {
+    mutationId: string;
+    leaseId: string;
+    now: number;
+    admissionTtlMs: number;
+  }): MutationRecord | undefined {
+    const record = this.getMutation(input.mutationId);
+    if (!record) return undefined;
+    const admitted = this.transition(input.mutationId, 'PENDING_APPROVAL', 'QUEUED', input.now, () => {
+      const result = this.db.prepare(`UPDATE mutations
+        SET state = 'QUEUED', reviewed_at = ?, execution_admission_deadline = ?
+        WHERE mutation_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline > ?`)
+        .run(input.now, input.now + input.admissionTtlMs, input.mutationId, input.now);
+      return Number(result.changes) === 1;
+    });
+    if (!admitted) return undefined;
+    this.recordMutationAuthority({
+      mutationId: input.mutationId,
+      authority: 'POLICY_APPROVED',
+      leaseId: input.leaseId,
+      admittedAt: input.now,
+      fingerprint: record.fingerprint,
+      path: record.path,
+      resultSha256: record.resultSha256,
+      diffBytes: Buffer.byteLength(record.after, 'utf8'),
+    });
+    return admitted;
+  }
+
+  /**
+   * Written once, never updated. `INSERT OR IGNORE` so a retry cannot rewrite the authority of a
+   * record that already has one — an admission's provenance is not a mutable field.
+   */
+  recordMutationAuthority(input: {
+    mutationId: string;
+    authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
+    leaseId?: string;
+    admittedAt: number;
+    fingerprint: string;
+    path: string;
+    resultSha256: string;
+    diffBytes: number;
+  }): void {
+    this.db.prepare(`INSERT OR IGNORE INTO mutation_authority
+      (mutation_id, authority, lease_id, admitted_at, fingerprint, path, result_sha256, diff_bytes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(input.mutationId, input.authority, input.leaseId ?? null, input.admittedAt,
+        input.fingerprint, input.path, input.resultSha256, input.diffBytes);
+  }
+
+  getMutationAuthority(mutationId: string): {
+    authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
+    leaseId?: string;
+    admittedAt: number;
+    fingerprint: string;
+    path: string;
+    resultSha256: string;
+    diffBytes: number;
+  } | undefined {
+    const row = this.db.prepare('SELECT * FROM mutation_authority WHERE mutation_id = ?').get(mutationId) as
+      Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      authority: row.authority as 'HUMAN_APPROVED' | 'POLICY_APPROVED',
+      ...(row.lease_id === null ? {} : { leaseId: String(row.lease_id) }),
+      admittedAt: Number(row.admitted_at),
+      fingerprint: String(row.fingerprint),
+      path: String(row.path),
+      resultSha256: String(row.result_sha256),
+      diffBytes: Number(row.diff_bytes),
+    };
+  }
+
+  insertGoalLease(record: {
+    leaseId: string; createdAt: number; notBefore: number; expiresAt: number; bindings: string;
+  }): void {
+    this.db.prepare(`INSERT INTO goal_leases (lease_id, created_at, not_before, expires_at, bindings)
+      VALUES (?, ?, ?, ?, ?)`)
+      .run(record.leaseId, record.createdAt, record.notBefore, record.expiresAt, record.bindings);
+  }
+
+  getGoalLeaseRow(leaseId: string): {
+    leaseId: string; createdAt: number; notBefore: number; expiresAt: number; revokedAt?: number; bindings: string;
+  } | undefined {
+    const row = this.db.prepare('SELECT * FROM goal_leases WHERE lease_id = ?').get(leaseId) as
+      Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      leaseId: String(row.lease_id),
+      createdAt: Number(row.created_at),
+      notBefore: Number(row.not_before),
+      expiresAt: Number(row.expires_at),
+      ...(row.revoked_at === null ? {} : { revokedAt: Number(row.revoked_at) }),
+      bindings: String(row.bindings),
+    };
+  }
+
+  /** Idempotent, and one-way: a revoked lease is never un-revoked. */
+  revokeGoalLease(leaseId: string, now: number): boolean {
+    const result = this.db.prepare('UPDATE goal_leases SET revoked_at = ? WHERE lease_id = ? AND revoked_at IS NULL')
+      .run(now, leaseId);
+    return Number(result.changes) === 1;
+  }
+
+  listGoalLeaseIds(): string[] {
+    return (this.db.prepare('SELECT lease_id FROM goal_leases ORDER BY created_at').all() as Array<{ lease_id: string }>)
+      .map((r) => r.lease_id);
+  }
+
+  /**
+   * What a lease has already spent, counted from durable rows rather than from memory.
+   *
+   * Files are counted by *distinct path*, so editing the same file twice spends one file of the
+   * budget and two lots of bytes — which matches what the binding means. Counting rows would let
+   * a lease exhaust its file budget rewriting one file.
+   */
+  goalLeaseSpend(leaseId: string): { filesChanged: number; bytesWritten: number } {
+    const row = this.db.prepare(`SELECT COUNT(DISTINCT path) AS files, COALESCE(SUM(diff_bytes), 0) AS bytes
+      FROM mutation_authority WHERE lease_id = ?`).get(leaseId) as { files: number; bytes: number };
+    return { filesChanged: Number(row.files), bytesWritten: Number(row.bytes) };
   }
 
   rejectMutation(mutationId: string, now: number): boolean {
