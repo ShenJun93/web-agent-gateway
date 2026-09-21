@@ -4,6 +4,10 @@ import type { CommitRecord, SqliteDurableStore } from './durable-store.js';
 import type { GitCommitBackend, GitCommitChange, GitCommitPlan } from './git-commit-backend.js';
 import { assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
+import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
+
+/** As in the mutation coordinator: a constant, so a proposal cannot nominate its own grant. */
+const COMMIT_TOOL = 'git.commit';
 
 const MAX_MESSAGE_BYTES = 8 * 1024;
 const MAX_PATHS = 64;
@@ -103,6 +107,8 @@ export class DurableCommitCoordinator {
     rateLimit?: ProposalRateLimit;
     now?: () => number;
     reviewTtlMs?: number;
+    /** Absent by default, so autonomous commit admission is off unless deliberately wired. */
+    goalLease?: { leaseId: string; killSwitch: () => boolean };
   }) {
     this.now = options.now ?? Date.now;
     this.reviewTtlMs = Math.min(Math.max(options.reviewTtlMs ?? DEFAULT_REVIEW_TTL_MS, 1_000), MAX_TTL_MS);
@@ -198,6 +204,92 @@ export class DurableCommitCoordinator {
       author: record.author,
       committer: record.committer,
     };
+  }
+
+  /**
+   * Admit a pending commit under an Autonomous Goal Lease (ADR-0028), with no human gesture.
+   *
+   * The mutation path's twin, with two additions a commit needs and a file edit does not: the
+   * lease must grant commit semantics at all, and it binds an exact branch and an exact starting
+   * HEAD. The HEAD binding is a CAS on history — if HEAD has moved since the lease was written,
+   * the lease was written against a repository that no longer exists, and the right answer is to
+   * stop rather than to commit onto whatever is there now.
+   *
+   * Every path in the commit is checked, not just the first. A commit touching ten files under a
+   * lease granting one directory must be refused if any single one of them falls outside it.
+   */
+  async admitByPolicy(commitId: string): Promise<LeaseDecision> {
+    const lease = this.options.goalLease;
+    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
+
+    const record = this.options.store.getCommit(commitId);
+    if (!record) return { admitted: false, code: 'NO_LEASE', detail: 'no such commit' };
+    if (record.state !== 'PENDING_APPROVAL') {
+      return { admitted: false, code: 'NO_LEASE', detail: `commit is ${record.state}, not awaiting review` };
+    }
+    const workspace = this.options.store.getWorkspace(record.workspaceId);
+    if (!workspace) return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
+
+    const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
+    if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
+    let bindings: GoalLeaseBindings;
+    try {
+      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
+    } catch {
+      return { admitted: false, code: 'LEASE_MALFORMED', detail: 'the stored bindings are not JSON' };
+    }
+
+    const leaseRecord = {
+      leaseId: stored.leaseId,
+      createdAt: stored.createdAt,
+      notBefore: stored.notBefore,
+      expiresAt: stored.expiresAt,
+      ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
+      bindings,
+    };
+    const spend = this.options.store.goalLeaseSpend(stored.leaseId);
+    const killSwitch = lease.killSwitch();
+
+    // The HEAD compared here is the one the *proposal* was planned against, which is sound
+    // because it closes a chain rather than standing alone:
+    //
+    //   lease.headSha === record.oldHead      asserted below — the lease was written against the
+    //                                         same base this proposal was planned against
+    //   record.oldHead === HEAD at execution  asserted by the backend, which re-observes and
+    //                                         refuses on any drift, then moves the branch by CAS
+    //   ⟹ lease.headSha === HEAD at execution
+    //
+    // Re-planning here to read HEAD directly would be the obvious alternative; it computes a
+    // whole tree, and it would still not be the value at execution time, because execution
+    // happens after it. The chain gives the stronger property at no cost.
+    const head = record.oldHead;
+
+    // Every path, not just the first: one out-of-scope file must sink the whole commit.
+    for (const path of record.paths) {
+      const decision = evaluateGoalLease({
+        lease: leaseRecord,
+        now: this.now(),
+        request: {
+          tool: COMMIT_TOOL,
+          sessionId: record.sessionId,
+          adapterId: record.adapterId,
+          workspaceRoot: workspace.canonicalRoot,
+          path,
+          diffBytes: 0,
+          wantsCommit: true,
+          ...(record.branch === undefined ? {} : { branch: record.branch }),
+          ...(head === undefined ? {} : { headSha: head }),
+        },
+        spend,
+        killSwitch,
+      });
+      if (!decision.admitted) return decision;
+    }
+
+    const approved = await this.approveLocal(commitId);
+    return approved
+      ? { admitted: true }
+      : { admitted: false, code: 'LEASE_EXPIRED', detail: 'the commit was no longer awaiting review' };
   }
 
   async approveLocal(commitId: string): Promise<boolean> {
