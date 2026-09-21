@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { buildVerifyCommand } from './verify-runner.js';
 
 export interface VerifyProfile {
   argv: readonly string[];
@@ -35,18 +36,11 @@ export function resolveVerifyProfile(profile: VerifyProfile): ResolvedVerifyProf
   const maxOutputTokens = Math.min(Math.max(profile.maxOutputTokens ?? 4_000, 100), 10_000);
   const resumeQueuedAfterRestart = profile.resumeQueuedAfterRestart === true;
   const env = Object.fromEntries(envEntries);
-  const command = buildVerifyCommand(profile.argv, envEntries);
+  const command = buildVerifyCommand(profile.argv, envEntries, timeoutMs);
   const canonical = JSON.stringify({
     argv: [...profile.argv], timeoutMs, maxOutputTokens, env: envEntries, resumeQueuedAfterRestart,
   });
   const planSha256 = createHash('sha256').update(canonical, 'utf8').digest('hex');
 
   return { argv: [...profile.argv], env, timeoutMs, maxOutputTokens, resumeQueuedAfterRestart, command, planSha256 };
-}
-function buildVerifyCommand(argv: readonly string[], envEntries: readonly (readonly [string, string])[]): string {
-  const scrub = process.platform === 'win32' ? 'set "DEVSPACE_OAUTH_OWNER_TOKEN="' : 'unset DEVSPACE_OAUTH_OWNER_TOKEN';
-  const profileEnv = process.platform === 'win32'
-    ? envEntries.map(([key, value]) => 'set "' + key + '=' + value + '"').join(' && ')
-    : envEntries.map(([key, value]) => key + '=' + value).join(' ');
-  return [scrub, profileEnv, argv.join(' ')].filter(Boolean).join(process.platform === 'win32' ? ' && ' : ' ');
 }

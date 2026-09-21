@@ -83,6 +83,108 @@ tunnel-client run --profile web-agent-gateway
 
 Those tunnel/account steps are a post-upgrade acceptance gate, not local pre-upgrade evidence. Do not commit owner tokens, control-plane API keys, tunnel credentials, or machine-specific private config files.
 
+## Repository-engineering profile (DC replacement)
+
+By default `serve-stdio` exposes exactly five tools: `health`, `workspace.open`, `repo.snapshot`, `file.read`, `verify.run`.
+
+A local operator may opt in to the repository-engineering profile that carries WAG's Desktop Commander replacement scope. It is off unless the private config asks for it, and it can never be requested by the model, the provider, the transport, or repository content:
+
+```jsonc
+"repositoryEngineering": {
+  "inspect": true,
+  "mutation": { "statePath": "C:\\path\\to\\control-plane.sqlite", "ownerId": "local.private.stdio" },
+  "gitCommit": { "protectedBranches": ["main", "master"] }
+}
+```
+
+`inspect` adds the read-only set `repo.list`, `repo.search` and `repo.diff`. `mutation` adds `mutation.preview`, `file.create` and `mutation.result`, and starts the loopback operator review server. Neither proposal tool writes anything: a separate, locally authenticated operator must approve the exact record before any file changes, approval is single-use and TTL-bounded, and reject or expiry leaves the repository byte-identical. `file.create` only creates — it refuses a path that already exists, both when proposed and again at execution.
+
+The operator review server's **origin** is announced on stderr; its single-use bootstrap token is not. A stdio gateway's stderr belongs to whichever process spawned it — in the supported deployment that is the remote-facing tunnel client — so the token is written to `<statePath>.operator-url` instead and removed on shutdown. Open that URL locally to review and approve.
+
+With both enabled the surface is exactly:
+
+```text
+health  workspace.open  repo.list  repo.search  repo.snapshot  repo.diff  file.read  verify.run
+mutation.preview  file.create  mutation.result  git.commit  git.commit.result
+```
+
+`gitCommit` adds reviewed committing, and requires `mutation` because it shares the same durable store and operator review server — asking for it alone is a config error, not a quiet half-capability. `git.commit` proposes one commit of an exact path set; the operator sees the repository, the branch, the parent HEAD, the resulting tree, the author, every selected path, the resulting change set and the full message before approving.
+
+WAG commits with git plumbing against a private index — `read-tree`, `hash-object --no-filters`, `update-index --cacheinfo`, `write-tree`, `commit-tree`, `update-ref` — never `git add` and never `git commit`. The commit message is never shell syntax, your real index is never touched, and **proposing writes nothing at all**: a plan builds its objects in a scratch object directory that is discarded unless you approve.
+
+The committed blob is the bytes you reviewed. The one transformation WAG applies is the end-of-line conversion git itself would apply — because on a `core.autocrlf=true` checkout every text file is CRLF on disk and LF in the object, so committing disk bytes verbatim would rewrite the repository — and the paths it converted are named on the review page. A path whose attributes ask for a content *filter* or a `working-tree-encoding` is refused rather than silently transformed.
+
+WAG binds the resulting **tree delta**, not just the paths you named, and refuses anything that is not an addition or a modification — so a directory replaced by a file cannot quietly delete the subtree it shadows. It also binds the repository itself: the worktree root, the git dir and the common dir must all still match at approval, which is what stops a repository-supplied `core.worktree`, a workspace nested inside a larger repository, and an inherited `GIT_DIR` from redirecting the commit somewhere else.
+
+### How WAG runs a verification
+
+`verify.run` executes one locally configured profile by name. The profile names an argv, a bounded environment, a timeout and an output budget; the model chooses the name and nothing else.
+
+The argv reaches the process directly rather than through a shell, and the environment is built upwards from an allowlist (ADR-0025). Nothing the operator's shell exported and nothing the execution backend added reaches the verification unless WAG names it or the profile declares it — `NODE_OPTIONS` is excluded by construction, because it can inject `--require` into every Node-based run. Cancellation and abandonment reap the whole process tree; unrelated processes are untouched.
+
+What WAG does **not** do is isolate a verification from the network. Enforcing that would mean changing machine-wide firewall or security policy, which WAG will not do. The narrower guarantee it does give is that a verification reaches the network with no credential, token or proxy setting WAG passed it: profile environment keys matching `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `PRIVATE_KEY` or `CREDENTIAL` are rejected at config load, and nothing else is inherited. The supported repository-engineering workflow does not need network-capable execution.
+
+### How WAG runs git
+
+Every git subprocess WAG starts goes through one policy (`src/safe-git.ts`, ADR-0024). The repository is untrusted and so is the environment WAG inherited, so the policy: builds the child environment upwards from an allowlist, so no `GIT_*` and no unrelated secret is inherited; pins `core.hooksPath` at an empty directory; enumerates the repository's configured content filters and config-defined hooks and disables each one by name; overrides every configuration key whose value git would execute; passes `--literal-pathspecs`, so a filename means itself; and disables the pager, external diff and textconv.
+
+Both halves of that matter and neither is obvious. Pinning `core.hooksPath` does **nothing** to the `hook.<name>.command` hooks Git 2.53 added, which a repository sets in its own config and which fire on plain plumbing. And `--no-ext-diff --no-textconv` do **nothing** to a clean filter, which `git diff` runs. Both were measured on this machine and both are covered by tests with proven-armed controls; `docs/research/2026-09-20-wag-git-execution-surface.md` has the reproductions.
+
+What WAG cannot control is the execution backend's own git: opening a workspace is the backend's operation and it writes its own review checkpoint. Those invocations are attributed in the tests rather than claimed away. The branch moves only by compare-and-swap against the approved parent, so a branch that moved since the preview makes the commit fail rather than clobber. `main` and `master` are protected by default.
+
+Because the real index is deliberately left alone, after a WAG commit `git status` shows the committed paths as staged reversions against the new HEAD until you refresh the index yourself (`git reset -- <paths>`, which changes no file content). Nothing is lost, and WAG's own next commit is unaffected.
+
+Not available in v1: amend, merge commits, empty commits, signing, force, reset, checkout, branch creation or deletion, push/fetch/pull, committing on a detached HEAD, and committing a deletion or rename.
+
+`repo.list` returns the immediate tracked and untracked-not-ignored entries of one directory. `repo.diff` returns the bounded working-tree diff against `HEAD`, with the bodies of path-policy-sensitive files (`.env`, `.npmrc`, `.git-credentials` and the rest of the denylist) withheld. Every response is capped at 64 KiB and reports whether it was truncated. A caller-supplied path is never interpolated into a shell command: it reaches git as a single literal argv pathspec.
+
+WAG stays deliberately narrower than Desktop Commander on every profile. It exposes no shell, process control, PTY, arbitrary argv, file move or delete, directory tools, Git writes, or runtime configuration mutation, and `allowedRoots` is enforced rather than advisory.
+
+Authority: `docs/adr/0020-make-private-stdio-the-dc-replacement-surface.md`, `docs/adr/0021-complete-the-bounded-repository-inspection-set.md` , `docs/adr/0024-isolate-the-git-execution-surface.md` and `docs/adr/0025-run-verifications-through-an-argv-runner.md`. Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`. Acceptance: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`.
+
+## Browser operator profile (proposal only)
+
+The accepted read-only browser profile is Browser Inspect v2, and Browser Verify Approval v1 added a verification *proposal* under `browser.chatgpt.native.verify.v3`. Both remain exactly as accepted.
+
+A successor adapter, `browser.chatgpt.native.operator.v4` on protocol 4, extends that same proposal class to the three reviewed changes (ADR-0026). Its surface is the accepted seven tools plus five proposal and result operations:
+
+```text
+health  workspace.open  repo.search  repo.snapshot  file.read
+verify.preview  verify.result
+mutation.preview  file.create  mutation.result
+git.commit  git.commit.result
+```
+
+Every consequential tool there is a **proposal**. `git.commit` proposes; it does not commit. The coordinators behind them are the same ones the private stdio surface uses, so there is one review contract rather than a browser-shaped copy of it, and the local operator remains the only authority that can turn a proposal into a change.
+
+The browser is never given the operator origin, its bootstrap token, its session cookie or its CSRF token — the discovery file the native host reads carries only the admission URL and its one-time admission bootstrap. A request id is correlation evidence, not a credential: another browser session that knows one cannot read the record, reuse the workspace, or propose against it.
+
+v1, v2 and v3 sessions never acquire v4 authority. The adapter id and protocol revision are distinct precisely so that cannot happen by talking a newer dialect.
+
+### Running it
+
+```bash
+web-agent-gateway serve-browser-operator --config <absolute-path>
+```
+
+The profile is asked for in the config — `repositoryEngineering.mutation` and `.gitCommit`, as on the stdio surface — not implied by the command. The command binds the loopback admission server and the operator review server, and never speaks stdio.
+
+It publishes `%LOCALAPPDATA%\WebAgentGateway\browser-adapter-v4.json`, which is exactly the path the native host reads by default, so neither side is configured with the other's. That file carries the admission URL and its one-time bootstrap and nothing else. The operator review **origin** is announced on stderr; its single-use bootstrap is not — that goes to `<statePath>.operator-url`, mode 0600, removed on shutdown.
+
+The browser side needs the extension loaded and the native host registered per user. On Windows the registration is one HKCU `NativeMessagingHosts` value under the key for the Chromium-family browser in use. Note, measured on 2026-09-20: **Google Chrome refuses to side-load an unpacked extension at all** — `--load-extension` and `--disable-extensions-except` are ignored in Google-Chrome-branded builds since Chrome 137, and the `--enable-unsafe-extension-debugging` escape hatch was deleted in Chrome 149. Microsoft Edge 153 still accepts `--load-extension`; Chromium and Chrome for Testing builds always have. For an automated harness, the documented successor is the CDP `Extensions.loadUnpacked` command on the browser-level target.
+
+### What the human does, and what the extension does for them
+
+Attachment is automatic. An extension reload orphans the content script in tabs that are already open, so the worker re-injects it into allowed tabs on install and startup, and opening the side panel re-attaches and rescans before it answers — you never have to reload the conversation by hand.
+
+A rescan is idempotent. A proposal is identified by the WAG session, the tab, the provider's own message id, the tool and the exact arguments, so the same assistant message stays one proposal across a DOM rescan, a page reload, a service-worker suspension, an extension reload and a side-panel reopen. Two different messages proposing byte-identical payloads are still two proposals. A turn with no provider message id is refused rather than given an unstable identity.
+
+Two gestures stay human: **Run** in the side panel, and **Approve** on the local operator review server. Neither is automated, and they are deliberately on different channels. The native host connects lazily when a proposal is run; there is no manual reconnect step.
+
+The review window defaults to one minute and can be raised to five (`repositoryEngineering.mutation.reviewTtlMs`). The browser profile usually wants the longer value, because the operator switches windows between those two gestures. The window is not what makes approval safe — approval re-reads the file and refuses on any drift, and a commit revalidates branch, HEAD, tree and identity and moves the ref by compare-and-swap.
+
+Two bounds apply to every proposal, because they bound different things. Each caller may hold **8 live proposals** awaiting review, which is what keeps the operator's list legible; and each caller may make **30 proposal attempts per minute**, charged before any backend work, which is what a record count cannot bound — a proposal that fails while being computed leaves no record but still ran the planner. On v4 the session correlation must be a server-minted `session_<uuid>`; rebinding the same one is the service-worker reconnect path, but a correlation a caller chose is not accepted.
+
 ## Windows native host
 The Windows native host is currently a development/pre-release component. Installation changes one per-user Chromium Native Messaging registration and stores exact-owned files under `%LOCALAPPDATA%`.
 

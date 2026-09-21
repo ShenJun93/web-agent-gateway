@@ -160,6 +160,14 @@ class AcceptanceFsBackend implements FileMutationBackend {
   async readExact(root: string, path: string): Promise<string> {
     return readFile(join(root, path), 'utf8');
   }
+  async readExactIfPresent(root: string, path: string): Promise<string | undefined> {
+    try { return await readFile(join(root, path), 'utf8'); }
+    catch { return undefined; }
+  }
+  async createNew(root: string, path: string, candidate: string): Promise<void> {
+    this.writes += 1;
+    await writeFile(join(root, path), candidate, { flag: 'wx' });
+  }
   async updateExisting(root: string, path: string, original: string, candidate: string): Promise<void> {
     const target = join(root, path);
     if (await readFile(target, 'utf8') !== original) throw new Error('stale target');

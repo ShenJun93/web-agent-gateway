@@ -1,12 +1,21 @@
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
+import { BROWSER_OPERATOR_ADAPTER_ID } from './adapter-admission.js';
+import {
+  startBrowserOperatorRuntime,
+  type BrowserOperatorRuntime,
+} from './browser-operator-runtime.js';
 import { loadPrivateGatewayConfig } from './private-config.js';
 import {
   bootstrapPrivateGateway,
   PrivateRuntimeError,
   type PrivateGatewayRuntime,
 } from './private-runtime.js';
+import {
+  startRepositoryEngineeringRuntime,
+  type RepositoryEngineeringRuntime,
+} from './repository-engineering-runtime.js';
 import {
   startGatewayStdioServer,
   type GatewayStdioServer,
@@ -23,8 +32,12 @@ export interface CliDependencies {
   startStdio: typeof startGatewayStdioServer;
   waitForShutdown: () => Promise<void>;
   telemetry: TelemetrySink;
+  /** Defaults to the real assembly; injected only by tests. */
+  startRepositoryEngineering?: typeof startRepositoryEngineeringRuntime;
+  /** Defaults to the real assembly; injected only by tests. */
+  startBrowserOperator?: typeof startBrowserOperatorRuntime;
 }
-type CliCommand = 'doctor' | 'serve-stdio';
+type CliCommand = 'doctor' | 'serve-stdio' | 'serve-browser-operator';
 interface ParsedCli { command: CliCommand; configPath: string; }
 
 class CliUsageError extends Error {}
@@ -47,6 +60,13 @@ export async function main(
     return 1;
   }
 
+  // The browser operator is its own assembly: it binds a loopback admission server and the
+  // operator review server, and it never speaks stdio. It therefore does not pass through the
+  // stdio bootstrap below, and the shipped stdio profile cannot reach it.
+  if (parsed.command === 'serve-browser-operator') {
+    return serveBrowserOperator(deps, parsed.configPath);
+  }
+
   let config;
   try {
     config = await deps.loadConfig(parsed.configPath);
@@ -54,23 +74,50 @@ export async function main(
     emitError(deps.stderr, 'CONFIG_INVALID', error);
     return 1;
   }
+  let engineering: RepositoryEngineeringRuntime;
+  try {
+    engineering = await (deps.startRepositoryEngineering ?? startRepositoryEngineeringRuntime)(config);
+  } catch (error) {
+    emitError(deps.stderr, 'REPOSITORY_ENGINEERING_START_FAILED', error);
+    return 1;
+  }
+
   let runtime: PrivateGatewayRuntime;
   try {
-    runtime = await deps.bootstrap(config, { env: deps.env, telemetry: deps.telemetry });
+    runtime = await deps.bootstrap(config, {
+      env: deps.env,
+      telemetry: deps.telemetry,
+      openWorkspaceId: engineering.openWorkspaceId,
+    });
   } catch (error) {
+    await closeQuietly(engineering);
     const code = error instanceof PrivateRuntimeError ? error.code : 'CLI_INTERNAL';
     emitError(deps.stderr, code, error);
     return 1;
   }
 
+  // doctor is a read-only preflight: report what the config would expose without binding
+  // the operator review port or opening a review session.
   if (parsed.command === 'doctor') {
     try {
+      emitProfile(deps.stderr, engineering);
       deps.stdout.write(`${JSON.stringify(runtime.health)}\n`);
       return 0;
     } finally {
+      await closeQuietly(engineering);
       await runtime.close();
     }
   }
+
+  try {
+    await engineering.attach(runtime.executor);
+  } catch (error) {
+    await closeQuietly(engineering);
+    await runtime.close().catch(() => undefined);
+    emitError(deps.stderr, 'REPOSITORY_ENGINEERING_START_FAILED', error);
+    return 1;
+  }
+  emitProfile(deps.stderr, engineering);
 
   let stdio: GatewayStdioServer;
   try {
@@ -78,8 +125,12 @@ export async function main(
       gateway: runtime.gateway,
       input: deps.stdin,
       output: deps.stdout,
+      inspect: engineering.profile.inspect,
+      mutationContext: engineering.mutationContext,
+      gitCommitContext: engineering.gitCommitContext,
     });
   } catch (error) {
+    await closeQuietly(engineering);
     await runtime.close();
     emitError(deps.stderr, 'STDIO_START_FAILED', error);
     return 1;
@@ -92,12 +143,85 @@ export async function main(
     emitError(deps.stderr, 'CLI_INTERNAL', error);
     exitCode = 1;
   } finally {
-    try {
-      await stdio.close();
-    } catch (error) {
-      emitError(deps.stderr, 'CLI_INTERNAL', error);
-      exitCode = 1;
+    for (const step of [
+      () => stdio.close(),
+      () => engineering.close(),
+      () => runtime.close(),
+    ]) {
+      try {
+        await step();
+      } catch (error) {
+        emitError(deps.stderr, 'CLI_INTERNAL', error);
+        exitCode = 1;
+      }
     }
+  }
+  return exitCode;
+}
+
+async function closeQuietly(engineering: RepositoryEngineeringRuntime): Promise<void> {
+  await engineering.close().catch(() => undefined);
+}
+
+/**
+ * Serve the proposal-only browser operator adapter (ADR-0026).
+ *
+ * The discovery file is the one the native host reads by default, so the two agree on a path
+ * without either being configured with the other's. It carries the admission URL and its
+ * one-time bootstrap and nothing else; the operator review origin is announced here, on this
+ * process's own stderr, which the browser cannot see.
+ */
+async function serveBrowserOperator(deps: CliDependencies, configPath: string): Promise<number> {
+  const localAppData = deps.env.LOCALAPPDATA;
+  if (!localAppData || !isAbsolute(localAppData)) {
+    emitError(deps.stderr, 'CLI_USAGE', new Error('LOCALAPPDATA is required'));
+    return 1;
+  }
+  const home = join(localAppData, 'WebAgentGateway');
+
+  let runtime: BrowserOperatorRuntime;
+  try {
+    runtime = await (deps.startBrowserOperator ?? startBrowserOperatorRuntime)({
+      configPath,
+      discoveryPath: join(home, 'browser-adapter-v4.json'),
+      statePath: join(home, 'browser-operator-v4.sqlite'),
+      env: deps.env,
+    });
+  } catch (error) {
+    emitError(deps.stderr, 'BROWSER_OPERATOR_START_FAILED', error);
+    return 1;
+  }
+
+  deps.stderr.write(`${JSON.stringify({
+    type: 'gateway.ready',
+    mode: 'browser-operator',
+    adapterId: BROWSER_OPERATOR_ADAPTER_ID,
+    admissionUrl: runtime.admissionUrl,
+  })}\n`);
+  // The origin is announced; the single-use bootstrap is not. Whoever launched this process may
+  // log or forward its stderr, so the token lives in a 0600 file the local operator opens.
+  deps.stderr.write(`${JSON.stringify({
+    type: 'gateway.operator',
+    origin: runtime.operatorOrigin,
+    urlFile: runtime.operatorUrlFile,
+  })}\n`);
+  // Announced loudly when on, and silent when off. An autonomous-admission mode that is only
+  // visible by reading a config file is one an operator can be running without knowing.
+  if (runtime.goalLeaseId !== undefined) {
+    deps.stderr.write(`${JSON.stringify({
+      type: 'gateway.goalLease',
+      leaseId: runtime.goalLeaseId,
+      note: 'autonomous admission is ENABLED for actions inside this lease; npm run lease:stop halts it',
+    })}\n`);
+  }
+
+  let exitCode = 0;
+  try {
+    await deps.waitForShutdown();
+  } catch (error) {
+    emitError(deps.stderr, 'CLI_INTERNAL', error);
+    exitCode = 1;
+  } finally {
     try {
       await runtime.close();
     } catch (error) {
@@ -108,9 +232,33 @@ export async function main(
   return exitCode;
 }
 
+/**
+ * Local-only capability and operator-review diagnostics. Nothing is emitted for the shipped
+ * default profile.
+ *
+ * The operator origin is announced, but the single-use bootstrap token is not: a stdio
+ * gateway's stderr belongs to whichever process spawned it, and in the supported deployment
+ * that is the remote-facing tunnel client. The token is written to `urlFile` instead, and the
+ * operator reads it from there.
+ */
+function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime): void {
+  const { inspect, mutation, gitCommit } = engineering.profile;
+  if (!inspect && !mutation && !gitCommit) return;
+  stderr.write(`${JSON.stringify({ type: 'gateway.profile', inspect, mutation, gitCommit })}\n`);
+  if (engineering.operator) {
+    stderr.write(`${JSON.stringify({
+      type: 'gateway.operator',
+      origin: engineering.operator.origin,
+      urlFile: engineering.operator.urlFile,
+    })}\n`);
+  }
+}
+
 function parseCli(argv: string[]): ParsedCli {
   if (argv.length !== 3 || argv[1] !== '--config') throw new CliUsageError('Invalid CLI arguments');
-  if (argv[0] !== 'doctor' && argv[0] !== 'serve-stdio') throw new CliUsageError('Unknown command');
+  if (argv[0] !== 'doctor' && argv[0] !== 'serve-stdio' && argv[0] !== 'serve-browser-operator') {
+    throw new CliUsageError('Unknown command');
+  }
   if (!isAbsolute(argv[2])) throw new CliUsageError('Config path must be absolute');
   return { command: argv[0], configPath: argv[2] };
 }
@@ -132,6 +280,7 @@ function usageText(): string {
     'Usage:',
     '  web-agent-gateway doctor --config <absolute-path>',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
+    '  web-agent-gateway serve-browser-operator --config <absolute-path>',
     '',
   ].join('\n');
 }

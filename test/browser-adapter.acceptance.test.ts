@@ -7,14 +7,15 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { encodeNativeMessage, NativeMessageDecoder } from '../src/browser-adapter/native-framing.js';
-import { BROWSER_ADAPTER_PROTOCOL_VERSION } from '../src/browser-adapter/protocol.js';
-import { startBrowserAdapterRuntime } from '../scripts/browser-adapter-runtime.js';
+import { BROWSER_OPERATOR_PROTOCOL_VERSION } from '../src/browser-adapter/protocol-v4.js';
+import { startBrowserOperatorRuntime } from '../src/browser-operator-runtime.js';
 import { DEVSPACE_TEST_OWNER_TOKEN, startPinnedDevspace } from './devspace-fixture.js';
 
 const execFileAsync = promisify(execFile);
 const root = process.cwd();
 const extensionOrigin = 'chrome-extension://nnhhhppkpogkedpjnijeagcbfjaoogec/';
-const sessionId = 'session_acceptance_01';
+// The operator adapter requires a server-minted correlation, so these are UUID-shaped.
+const sessionId = 'session_11111111-2222-4333-8444-555555555555';
 
 type Response = { type: string; requestId: string; result?: unknown; error?: unknown };
 
@@ -57,11 +58,16 @@ function result<T>(responses: Response[], requestId: string): T {
   return response.result as T;
 }
 
+/**
+ * The shipped native host and the shipped runtime, which are the operator pair now. The
+ * guarantee is the one this test has always made: a real built executable, a real local WAG, a
+ * session that survives a host restart, and a wire that leaks no credential and no absolute root.
+ */
 test('browser adapter local path survives native-host reconnect', async (t) => {
   if (process.platform !== 'win32') return t.skip('Windows v2 acceptance');
   const temp = await mkdtemp(join(tmpdir(), 'wag-browser-acceptance-'));
   let devspace: Awaited<ReturnType<typeof startPinnedDevspace>> | undefined;
-  let runtime: Awaited<ReturnType<typeof startBrowserAdapterRuntime>> | undefined;
+  let runtime: Awaited<ReturnType<typeof startBrowserOperatorRuntime>> | undefined;
   t.after(async () => {
     await runtime?.close();
     await devspace?.stop();
@@ -82,17 +88,21 @@ test('browser adapter local path survives native-host reconnect', async (t) => {
     allowedRoots: [workspaceRoot],
     devspace: { baseUrl: devspace.baseUrl, resourceUrl: devspace.resourceUrl },
     verifyProfiles: {},
+    repositoryEngineering: {
+      mutation: { statePath: join(temp, 'state', 'engineering.sqlite') },
+      gitCommit: {},
+    },
   }), 'utf8');
   const env = { DEVSPACE_OAUTH_OWNER_TOKEN: DEVSPACE_TEST_OWNER_TOKEN };
-  runtime = await startBrowserAdapterRuntime({ configPath, discoveryPath, statePath, env });
+  runtime = await startBrowserOperatorRuntime({ configPath, discoveryPath, statePath, env });
 
   const discovery = JSON.parse(await readFile(discoveryPath, 'utf8')) as { admissionUrl: string; bootstrapToken: string };
   const executable = await buildNativeHost(join(temp, 'artifact'));
   const firstMessages = [
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'hello', requestId: 'req_accept_hello_1' },
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_accept_bind_1', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_health_1', sessionId, tool: 'health', arguments: {} },
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_open_1', sessionId, tool: 'workspace.open', arguments: { path: workspaceRoot } },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'hello', requestId: 'req_accept_hello_1' },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_accept_bind_1', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_health_1', sessionId, tool: 'health', arguments: {} },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_open_1', sessionId, tool: 'workspace.open', arguments: { path: workspaceRoot } },
   ];
   const first = await runHost(executable, discoveryPath, firstMessages);
   assert.equal(result<{ status?: string }>(first, 'req_accept_health_1').status, 'ok');
@@ -100,20 +110,20 @@ test('browser adapter local path survives native-host reconnect', async (t) => {
   assert.match(workspaceId ?? '', /^ws_/);
 
   const secondMessages = [
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'hello', requestId: 'req_accept_hello_2' },
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_accept_bind_2', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_read_2', sessionId, tool: 'file.read', arguments: { workspace_id: workspaceId, path: 'note.txt' } },
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_ads_2', sessionId, tool: 'file.read', arguments: { workspace_id: workspaceId, path: 'note.txt:stream' } },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'hello', requestId: 'req_accept_hello_2' },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_accept_bind_2', sessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_read_2', sessionId, tool: 'file.read', arguments: { workspace_id: workspaceId, path: 'note.txt' } },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_ads_2', sessionId, tool: 'file.read', arguments: { workspace_id: workspaceId, path: 'note.txt:stream' } },
   ];
   const second = await runHost(executable, discoveryPath, secondMessages);
   assert.equal(result<{ content?: string }>(second, 'req_accept_read_2').content, note.trimEnd());
   assert.equal(second.find((value) => value.requestId === 'req_accept_ads_2')?.type, 'error');
 
-  const otherSessionId = 'session_acceptance_02';
+  const otherSessionId = 'session_99999999-8888-4777-8666-555555555555';
   const thirdMessages = [
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'hello', requestId: 'req_accept_hello_3' },
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_accept_bind_3', sessionId: otherSessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
-    { version: BROWSER_ADAPTER_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_cross_3', sessionId: otherSessionId, tool: 'file.read', arguments: { workspace_id: workspaceId, path: 'note.txt' } },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'hello', requestId: 'req_accept_hello_3' },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'session.bind', requestId: 'req_accept_bind_3', sessionId: otherSessionId, provider: 'chatgpt', origin: 'https://chatgpt.com' },
+    { version: BROWSER_OPERATOR_PROTOCOL_VERSION, type: 'tool.call', requestId: 'req_accept_cross_3', sessionId: otherSessionId, tool: 'file.read', arguments: { workspace_id: workspaceId, path: 'note.txt' } },
   ];
   const third = await runHost(executable, discoveryPath, thirdMessages);
   assert.equal(third.find((value) => value.requestId === 'req_accept_cross_3')?.type, 'error');
@@ -122,7 +132,14 @@ test('browser adapter local path survives native-host reconnect', async (t) => {
   const responsesOnly = JSON.stringify([...first, ...second, ...third]);
   assert.equal(wire.includes(discovery.admissionUrl), false);
   assert.equal(wire.includes(discovery.bootstrapToken), false);
-  assert.equal(/operator|bootstrap|approval/i.test(wire), false);
+  // Name the actual secrets rather than matching on the word "operator": the adapter is called
+  // `browser.chatgpt.native.operator.v4`, so a keyword check now fires on its own identity.
+  for (const secret of [runtime.operatorOrigin, runtime.operatorBootstrapUrl, runtime.operatorUrlFile]) {
+    assert.equal(wire.includes(secret), false, `the wire must not carry ${secret}`);
+  }
+  assert.equal(new URL(runtime.operatorOrigin).port.length > 0, true);
+  assert.equal(wire.includes(new URL(runtime.operatorOrigin).port), false, 'not even the review port');
+  assert.equal(/approval|csrf|wag_operator_session/i.test(wire), false);
   assert.equal((firstMessages[3] as { arguments: { path: string } }).arguments.path, workspaceRoot);
   assert.equal(responsesOnly.includes(JSON.stringify(workspaceRoot).slice(1, -1)), false, 'responses must not echo absolute root');
 

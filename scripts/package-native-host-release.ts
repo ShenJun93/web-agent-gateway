@@ -27,6 +27,18 @@ const STATIC_RELEASE_FILES = [
   'docs/policies/privacy.md',
 ] as const;
 
+// Windows PowerShell 5.1 must derive its own native module path. A PowerShell 7
+// parent exports a process-scoped PSModulePath naming PS7's module directories;
+// inheriting it makes WinPS 5.1 resolve incompatible 7.0.0.0 module copies and
+// lose built-ins the ZIP helper needs, such as Get-FileHash.
+function windowsPowerShellChildEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'psmodulepath') delete env[key];
+  }
+  return env;
+}
+
 export interface NativeHostReleaseEntry {
   archivePath: string;
   sourcePath: string;
@@ -161,6 +173,7 @@ export async function packageNativeHostRelease(
       options.outputZip,
     ], {
       cwd: repoRoot,
+      env: windowsPowerShellChildEnv(),
       windowsHide: true,
       encoding: 'utf8',
       maxBuffer: 64 * 1024,

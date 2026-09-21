@@ -9,6 +9,35 @@ const verifyProfileSchema = z.object({
   maxOutputTokens: z.number().int().min(100).max(10_000).optional(),
 }).strict();
 
+export const DEFAULT_PRIVATE_STDIO_OWNER_ID = 'local.private.stdio';
+
+const repositoryEngineeringSchema = z.object({
+  inspect: z.boolean().default(false),
+  gitCommit: z.object({
+    protectedBranches: z.array(z.string().min(1).max(256)).min(1).max(64).optional(),
+  }).strict().optional(),
+  mutation: z.object({
+    statePath: z.string().min(1),
+    ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).default(DEFAULT_PRIVATE_STDIO_OWNER_ID),
+    /**
+     * How long a proposal stays approvable. The default is one minute; the browser operator
+     * profile needs longer because the operator switches windows between the two human
+     * gestures. Five minutes is the ceiling the commit path already allows.
+     */
+    reviewTtlMs: z.number().int().min(1_000).max(5 * 60_000).optional(),
+    /**
+     * The Autonomous Goal Lease this runtime will honour (ADR-0028).
+     *
+     * Absent means autonomous admission is off and every effect needs a human on the operator's
+     * Approve route, which is the default and the only behaviour before this field existed.
+     * Naming a lease here does not create one or grant anything: the lease's own bindings,
+     * expiry and revocation still decide, and a lease id that is not in the durable store is
+     * refused rather than treated as unrestricted.
+     */
+    goalLeaseId: z.string().min(1).max(128).regex(/^lease_[A-Za-z0-9._:-]+$/).optional(),
+  }).strict().optional(),
+}).strict();
+
 const privateGatewayConfigSchema = z.object({
   allowedRoots: z.array(z.string().min(1)).min(1),
   devspace: z.object({
@@ -16,19 +45,55 @@ const privateGatewayConfigSchema = z.object({
     resourceUrl: z.string().url(),
   }).strict(),
   verifyProfiles: z.record(z.string().min(1), verifyProfileSchema),
+  browserVerifyProfiles: z.array(
+    z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
+  ).max(32).default([]),
+  repositoryEngineering: repositoryEngineeringSchema.optional(),
 }).strict();
 
 export type PrivateVerifyProfile = z.infer<typeof verifyProfileSchema>;
+export interface PrivateRepositoryEngineeringMutation {
+  statePath: string;
+  ownerId: string;
+  reviewTtlMs?: number;
+  goalLeaseId?: string;
+}
+export interface PrivateRepositoryEngineeringGitCommit {
+  protectedBranches?: string[];
+}
+export interface PrivateRepositoryEngineering {
+  inspect: boolean;
+  gitCommit?: PrivateRepositoryEngineeringGitCommit;
+  mutation?: PrivateRepositoryEngineeringMutation;
+}
 export interface PrivateGatewayConfig {
   allowedRoots: string[];
   devspace: { baseUrl: string; resourceUrl: string };
   verifyProfiles: Record<string, PrivateVerifyProfile>;
+  browserVerifyProfiles?: string[];
+  repositoryEngineering?: PrivateRepositoryEngineering;
 }
 export async function loadPrivateGatewayConfig(configPath: string): Promise<PrivateGatewayConfig> {
   if (!isAbsolute(configPath)) throw new Error('Private gateway config path must be absolute');
   const parsed = privateGatewayConfigSchema.parse(JSON.parse(await readFile(configPath, 'utf8')));
   const baseUrl = validateLoopbackBaseUrl(parsed.devspace.baseUrl);
   const resourceUrl = validateResourceUrl(parsed.devspace.resourceUrl, baseUrl);
+  if (new Set(parsed.browserVerifyProfiles).size !== parsed.browserVerifyProfiles.length) {
+    throw new Error('Private gateway browser verify profiles must be unique');
+  }
+  if (parsed.browserVerifyProfiles.some((name) => parsed.verifyProfiles[name] === undefined)) {
+    throw new Error('Private gateway browser verify profile is not configured');
+  }
+
+  const mutation = parsed.repositoryEngineering?.mutation;
+  if (mutation && !isAbsolute(mutation.statePath)) {
+    throw new Error('Private gateway repository engineering mutation statePath must be absolute');
+  }
+  // Commit review reuses the durable store, caller context and operator server that mutation builds.
+  // Accepting it alone would advertise nothing and bind nothing, which reads as a working opt-in.
+  if (parsed.repositoryEngineering?.gitCommit && !mutation) {
+    throw new Error('Private gateway repository engineering gitCommit requires mutation');
+  }
 
   const allowedRoots: string[] = [];
   for (const configuredRoot of parsed.allowedRoots) {
@@ -42,6 +107,27 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
     allowedRoots,
     devspace: { baseUrl, resourceUrl },
     verifyProfiles: parsed.verifyProfiles,
+    browserVerifyProfiles: parsed.browserVerifyProfiles,
+    ...(parsed.repositoryEngineering === undefined ? {} : {
+      repositoryEngineering: {
+        inspect: parsed.repositoryEngineering.inspect,
+        ...(parsed.repositoryEngineering.gitCommit === undefined ? {} : {
+          gitCommit: {
+            ...(parsed.repositoryEngineering.gitCommit.protectedBranches === undefined
+              ? {}
+              : { protectedBranches: parsed.repositoryEngineering.gitCommit.protectedBranches }),
+          },
+        }),
+        ...(mutation === undefined ? {} : {
+          mutation: {
+            statePath: mutation.statePath,
+            ownerId: mutation.ownerId,
+            ...(mutation.reviewTtlMs === undefined ? {} : { reviewTtlMs: mutation.reviewTtlMs }),
+            ...(mutation.goalLeaseId === undefined ? {} : { goalLeaseId: mutation.goalLeaseId }),
+          },
+        }),
+      },
+    }),
   };
 }
 

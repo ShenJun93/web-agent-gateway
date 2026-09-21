@@ -1,0 +1,586 @@
+/**
+ * The harness test-authority lane.
+ *
+ * Iterating on WAG end to end used to cost the operator two real gestures per attempt — Run in the
+ * side panel, then approve on the review server. That is correct for production and unbearable for
+ * debugging, so this provides a lane where the *equivalents* of both can be driven by a script.
+ *
+ * It is not a mode of the production path: there is no test-mode branch in `operator-server.ts` or
+ * in the coordinators, and nothing in production imports this file. It is a second, separate
+ * client of the same coordinator classes.
+ *
+ * ## Why it cannot reach a production record
+ *
+ * Two facts do the work, and they are named here because an earlier version of this comment
+ * advertised guards that turned out to be unreachable while leaving the real reasons unstated.
+ *
+ * 1. **The store filename is a constant this file owns.** `STORE_FILE` is never derived from
+ *    caller input, and it is not the production store's name. There is no argument by which the
+ *    lane's store path becomes a real WAG store.
+ * 2. **A lane is created, never opened.** The root is made with a non-recursive `mkdir`, which
+ *    fails atomically if anything is already there — so an existing directory cannot be adopted,
+ *    and there is no check-then-create window to race.
+ *
+ * Everything below those two is defence in depth, and is described as such. Each would catch a
+ * mistake; none of them is the reason production is out of reach.
+ *
+ *   - the marker is re-read before every operation that writes durable state — `propose`,
+ *     `approve`, `reject` and `pending`, the last because listing runs an overdue sweep that
+ *     transitions records; and, since the lane can host a review server, on every entry the
+ *     server reaches too, synchronously, because that interface cannot await. It is *not*
+ *     checked by the fixture read/write helpers, which touch no durable state. It catches an
+ *     accidental swap, not a deliberate one: an adversary who can rewrite the directory can copy
+ *     the marker across with it.
+ *   - every route that can transition a record confines itself to this lane's one workspace,
+ *     including the ones reached over HTTP. A review found the server's entries forwarding
+ *     straight through while this comment claimed otherwise; the claim is now the behaviour.
+ *   - containment is judged lexically, then again on the realpath, which catches a junction or an
+ *     8.3 short name. A UNC spelling is refused separately and earlier, before anything is created.
+ *   - the fixture is admitted through the production path policy, whose real contribution here is
+ *     refusing sensitive segments and system directories — the allowed-root argument is satisfied
+ *     by construction and buys nothing.
+ *
+ * ## What it still is not
+ *
+ * A file, which can be edited. This is the same same-user exposure ADR-0019 already places outside
+ * the containment claim. See `docs/benchmarks/2026-09-20-harness-test-lane-decision.md`.
+ */
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createGatewayCallerContext } from './caller-context.js';
+import { SqliteDurableStore } from './durable-store.js';
+import { DurableMutationCoordinator } from './durable-mutation.js';
+import { canonicalWorkspace } from './path-policy.js';
+import { startOperatorServer, type OperatorDenialCode } from './operator-server.js';
+import { validateBindings, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
+import type { FileMutationBackend } from './file-mutation-backend.js';
+
+/** The literal a caller must pass. A boolean would be easy to set by accident. */
+export const HARNESS_LANE = 'harness-test-only' as const;
+
+/** Owned by this file, never derived from input. This is containment fact 1. */
+const STORE_FILE = 'harness-lane.sqlite';
+const MARKER_FILE = 'harness-lane.json';
+const FIXTURE_DIR = 'fixture';
+const BACKEND_KIND = 'harness-lane-fs';
+
+/**
+ * A real operator review server bound to *this lane's* store.
+ *
+ * This is what lets the CSRF, Origin, cookie and single-use-transition loops run without a human:
+ * it is the production `startOperatorServer`, with production's checks intact, in front of a
+ * coordinator that can only ever see lane records. Nothing here relaxes a check — the point is to
+ * exercise them, so a regression has somewhere to fail.
+ */
+export interface LaneOperator {
+  readonly origin: string;
+  /** Single-use, exactly as in production. The lane holds it; it is not a production credential. */
+  readonly bootstrapUrl: string;
+  /** Every refusal this server made, in order — the assertion surface for the CSRF/Origin loops. */
+  readonly denials: ReadonlyArray<{ status: number; code: OperatorDenialCode; path: string }>;
+  close(): Promise<void>;
+}
+
+export interface HarnessLane {
+  readonly laneId: string;
+  readonly fixtureRoot: string;
+  /** Persisted in the marker so `reopen` rebinds to it rather than creating a second workspace. */
+  readonly workspaceId: string;
+  /**
+   * The Run equivalent: submits a proposal to WAG, exactly as pressing Run does. It creates a
+   * durable record awaiting review and causes no effect on its own.
+   */
+  propose(input: { path: string; before: string; after: string; baseSha256?: string }): Promise<{ mutationId: string; resultSha256: string }>;
+  /** The operator-approval equivalent: the only thing that causes an effect. */
+  approve(mutationId: string): Promise<boolean>;
+  reject(mutationId: string): Promise<boolean>;
+  /** Async because listing runs the overdue sweep, which writes durable state. */
+  pending(): Promise<Array<{ mutationId: string; path: string }>>;
+  readFixture(path: string): Promise<string>;
+  writeFixture(path: string, content: string): Promise<void>;
+  /**
+   * The lane's clock. TTL behaviour is a function of time, and a test that waited for real
+   * seconds would be slow and flaky; this makes expiry exact and instant instead.
+   */
+  now(): number;
+  advanceClock(ms: number): void;
+  /**
+   * Close the store and open it again from the same file, rebinding to the same workspace.
+   *
+   * This is the restart loop: it is the same thing a gateway restart does to durable state, minus
+   * the process. A record proposed before it must still be there, with the deadline it already
+   * had, afterwards.
+   */
+  reopen(): Promise<void>;
+  /** Start a real operator review server over this lane's store. See {@link LaneOperator}. */
+  serveOperator(): Promise<LaneOperator>;
+  /**
+   * Grant an Autonomous Goal Lease over this lane's fixture (ADR-0028).
+   *
+   * The bindings default to this lane's own workspace, session and adapter, so a test states only
+   * what it is varying. Returns the lease id. Creating one does not enable anything by itself:
+   * `admitUnderLease` is the only thing that consults it.
+   */
+  grantLease(bindings?: Partial<GoalLeaseBindings> & { ttlMs?: number; notBeforeMs?: number }): Promise<string>;
+  revokeLease(leaseId: string): Promise<boolean>;
+  /** The local kill switch, consulted on every admission. */
+  setKillSwitch(engaged: boolean): void;
+  /** Admit a pending record by policy rather than by a human. Returns the full decision. */
+  admitUnderLease(leaseId: string, mutationId: string): Promise<LeaseDecision>;
+  /**
+   * The durable statement of how a record was admitted, or undefined if it never was.
+   *
+   * This is the audit evidence that distinguishes POLICY_APPROVED from HUMAN_APPROVED, exposed
+   * so a test can assert on it — an audit trail nothing reads is not an audit trail.
+   */
+  authorityOf(mutationId: string): {
+    authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
+    leaseId?: string;
+    admittedAt: number;
+    fingerprint: string;
+    path: string;
+    resultSha256: string;
+    diffBytes: number;
+  } | undefined;
+  /** Async because a lane may be hosting operator servers, and a live port is a leak. */
+  close(): Promise<void>;
+  destroy(): Promise<void>;
+}
+
+interface LaneMarker {
+  laneId: string;
+  lane: typeof HARNESS_LANE;
+  storePath: string;
+  fixtureRoot: string;
+  createdAt: number;
+  /**
+   * Written once, when the lane's single workspace is created. `reopen` needs it because
+   * `openWorkspaceRecord` always inserts: without it, every reopen would add another workspace
+   * and orphan the records belonging to the previous one.
+   */
+  workspaceId: string;
+}
+
+function within(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * The repository this module was compiled from, not the process working directory.
+ *
+ * Taking it from a caller — as an earlier version did — let a decoy value place a lane inside the
+ * worktree, where `destroy()` would then recursively remove it.
+ */
+function repositoryRoot(): string {
+  return resolve(fileURLToPath(new URL('..', import.meta.url)));
+}
+
+/**
+ * A filesystem backend confined to one fixture root, canonicalised.
+ *
+ * `readExactIfPresent` rethrows anything that is not a missing file, because the backend contract
+ * requires absence to be distinguishable from every other read failure — a creation that read a
+ * permission error as "absent" would become an overwrite. An earlier version swallowed everything,
+ * including this backend's own containment refusal.
+ */
+function fixtureBackend(fixtureRoot: string): FileMutationBackend {
+  const target = (root: string, path: string): string => {
+    if (resolve(root) !== fixtureRoot) throw new Error('Harness lane backend: workspace root is not this lane fixture');
+    const full = resolve(join(root, path));
+    if (!within(fixtureRoot, full)) throw new Error('Harness lane backend: path escapes the fixture');
+    return full;
+  };
+  const missing = (error: unknown): boolean =>
+    typeof error === 'object' && error !== null && (error as { code?: string }).code === 'ENOENT';
+  return {
+    kind: BACKEND_KIND,
+    async readExact(root, path) { return readFile(target(root, path), 'utf8'); },
+    async readExactIfPresent(root, path) {
+      const full = target(root, path);
+      try { return await readFile(full, 'utf8'); }
+      catch (error) {
+        if (missing(error)) return undefined;
+        throw error;
+      }
+    },
+    async createNew(root, path, candidate) {
+      await writeFile(target(root, path), candidate, { flag: 'wx' });
+    },
+    async updateExisting(root, path, original, candidate) {
+      const full = target(root, path);
+      if (await readFile(full, 'utf8') !== original) throw new Error('Harness lane backend: stale target');
+      await writeFile(full, candidate);
+    },
+  };
+}
+
+export async function createHarnessLane(options: {
+  lane: typeof HARNESS_LANE;
+  root: string;
+  env?: NodeJS.ProcessEnv;
+  /** The review window for this lane's records. Bounded by the coordinator, as in production. */
+  reviewTtlMs?: number;
+  /** Where the lane's clock starts. Defaults to the wall clock. */
+  startMs?: number;
+}): Promise<HarnessLane> {
+  const env = options.env ?? process.env;
+  if (env.WAG_HARNESS_LANE !== '1') {
+    throw new Error('Harness lane is disabled; set WAG_HARNESS_LANE=1 to enable it for a test run');
+  }
+  if (options.lane !== HARNESS_LANE) throw new Error('Harness lane requires the exact test-only lane literal');
+  if (!isAbsolute(options.root)) throw new Error('Harness lane root must be absolute');
+
+  // Fail closed, like the CLI does with the same variable. An absent LOCALAPPDATA previously made
+  // the production-state check vanish rather than refuse.
+  const localAppData = env.LOCALAPPDATA;
+  if (!localAppData || !isAbsolute(localAppData)) {
+    throw new Error('Harness lane requires LOCALAPPDATA to locate the production state directory it must avoid');
+  }
+  const stateDir = resolve(join(localAppData, 'WebAgentGateway'));
+
+  const root = resolve(options.root);
+  const repository = repositoryRoot();
+
+  /** Judged twice: once on the path as written, and again on what it turns out to be. */
+  const assertOutside = (candidate: string): void => {
+    if (within(stateDir, candidate)) {
+      throw new Error('Harness lane root must be outside the production state directory');
+    }
+    if (within(repository, candidate)) {
+      throw new Error('Harness lane root must be outside the repository, so it cannot mutate canonical sources');
+    }
+  };
+
+  // A UNC or device-namespace root is refused here, before anything is created. The realpath
+  // check cannot do it: `path.win32.relative` compares a UNC path against a drive-letter path as
+  // unrelated roots, so `\\localhost\C$\…\WebAgentGateway\lane` reads as "outside" a directory it
+  // is physically inside. The path policy refuses it too, but only after `mkdir` has run.
+  if (/^[\\/]{2}/.test(options.root)) {
+    throw new Error('Harness lane root must not be a UNC or device-namespace path');
+  }
+  // Then lexically, so an obviously wrong root is refused before anything is created.
+  assertOutside(root);
+
+  // Non-recursive: this both creates the root and asserts nothing was there, in one atomic step.
+  // A `stat` followed by a create leaves a window, and the directory could appear inside it.
+  try {
+    await mkdir(root);
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'EEXIST') throw new Error('Harness lane root already exists; a lane is created fresh and never adopted');
+    throw error;
+  }
+
+  let cleanupRoot = root;
+  let built: HarnessLane | undefined;
+  try {
+    // Then again on the canonical path: a junction or an 8.3 short name names the same directory
+    // as a path that would otherwise look "outside".
+    const canonicalRoot = await realpath(root);
+    cleanupRoot = canonicalRoot;
+    assertOutside(canonicalRoot);
+
+    const fixtureRoot = resolve(join(canonicalRoot, FIXTURE_DIR));
+    await mkdir(fixtureRoot, { recursive: true });
+    // The same admission the production surface uses, so the lane cannot admit a workspace
+    // production would refuse — a drive root, a system directory, a sensitive segment, a UNC path.
+    const admitted = await canonicalWorkspace(fixtureRoot, [canonicalRoot]);
+
+    const marker: LaneMarker = {
+      laneId: `lane_${randomUUID()}`,
+      lane: HARNESS_LANE,
+      storePath: resolve(join(canonicalRoot, STORE_FILE)),
+      fixtureRoot: admitted,
+      createdAt: Date.now(),
+      // Filled in by `build`, which is where the store is opened and the workspace created.
+      workspaceId: '',
+    };
+    built = build(canonicalRoot, marker, stateDir, {
+      reviewTtlMs: options.reviewTtlMs,
+      startMs: options.startMs,
+    });
+    // Written after the build rather than before it: the workspace id does not exist until the
+    // store is open. Nothing has read this file yet — `assertLaneIntact` consults it lazily, at
+    // operation time, and the first operation cannot run before this function returns.
+    await writeFile(join(canonicalRoot, MARKER_FILE), JSON.stringify(marker, null, 2), { encoding: 'utf8', mode: 0o600 });
+    return built;
+  } catch (error) {
+    // Close before removing: `build` opens the store, and anything throwing after that would
+    // otherwise leave an open handle, a directory Windows refuses to delete, and a root
+    // permanently blocked by EEXIST — the opposite of "leaves nothing behind".
+    try { await built?.close(); } catch { /* nothing to close */ }
+    // The canonical root when it is known: removing the path as written would follow a retargeted
+    // parent link to a directory this lane never created.
+    await rm(cleanupRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+function build(root: string, marker: LaneMarker, stateDir: string, config: {
+  reviewTtlMs?: number;
+  startMs?: number;
+}): HarnessLane {
+  if (within(stateDir, resolve(marker.storePath))) {
+    throw new Error('Harness lane refuses a store inside the production state directory');
+  }
+
+  // The lane's clock. Injected into the coordinator so `reviewTtlMs` and the overdue sweep are
+  // driven by it rather than by the wall clock, which is what makes the TTL loop exact.
+  let clockMs = config.startMs ?? Date.now();
+  const now = (): number => clockMs;
+
+  const caller = createGatewayCallerContext({
+    ownerId: `owner_${marker.laneId}`, sessionId: `session_${marker.laneId}`, adapterId: 'harness.lane.test-only',
+  });
+
+  // Rebound by `reopen`, so every closure below must read them rather than capture a snapshot.
+  let store!: SqliteDurableStore;
+  let coordinator!: DurableMutationCoordinator;
+
+  // The lease the next `admitUnderLease` will be judged against, and the local stop. Both are
+  // per-lane state: one lane's kill switch says nothing about another's.
+  let activeLeaseId: string | undefined;
+  let killSwitch = false;
+
+  const openStore = (): void => {
+    store = new SqliteDurableStore(marker.storePath);
+    coordinator = new DurableMutationCoordinator({
+      store,
+      backends: [fixtureBackend(marker.fixtureRoot)],
+      now,
+      ...(config.reviewTtlMs === undefined ? {} : { reviewTtlMs: config.reviewTtlMs }),
+      // Reads the closure, so a lease granted after the coordinator was built is still seen and
+      // a reopen does not silently drop the lease binding.
+      goalLease: {
+        get leaseId() { return activeLeaseId ?? ''; },
+        killSwitch: () => killSwitch,
+      } as { leaseId: string; killSwitch: () => boolean },
+    });
+    // Reuse the lane's one workspace when reopening. `openWorkspaceRecord` always inserts, so
+    // calling it again would strand every record proposed before the reopen.
+    const existing = marker.workspaceId ? store.getWorkspace(marker.workspaceId) : undefined;
+    if (existing) return;
+    marker.workspaceId = store.openWorkspaceRecord({
+      ...caller, canonicalRoot: marker.fixtureRoot, backendKind: BACKEND_KIND, createdAt: now(),
+    }).workspaceId;
+  };
+  openStore();
+
+  /**
+   * Re-read the marker and confirm it still describes this lane.
+   *
+   * Defence in depth, and honestly labelled: the containment does not rest on this. It exists so
+   * that a lane whose directory has been swapped underneath it stops rather than continues, and so
+   * the marker is something the code consults rather than decoration.
+   */
+  const checkMarker = (raw: string): void => {
+    const seen = JSON.parse(raw) as LaneMarker;
+    if (seen.laneId !== marker.laneId || seen.lane !== HARNESS_LANE
+      || resolve(seen.storePath) !== resolve(marker.storePath)
+      || resolve(seen.fixtureRoot) !== resolve(marker.fixtureRoot)
+      // The workspace id is compared too. It used to be written and never read — the third time
+      // on this branch that a marker field was persisted and then trusted by nothing — which
+      // left the one field a future `openHarnessLane()` would most want to trust unvalidated.
+      || seen.workspaceId !== marker.workspaceId) {
+      throw new Error('Harness lane marker no longer describes this lane');
+    }
+  };
+
+  const assertLaneIntact = async (): Promise<void> => {
+    checkMarker(await readFile(join(root, MARKER_FILE), 'utf8'));
+  };
+
+  /**
+   * The same check, synchronously.
+   *
+   * The operator server's coordinator interface is partly synchronous — `listPendingLocal` and
+   * `rejectLocal` return values, not promises — so the HTTP path cannot await. Without this the
+   * lane's own header would be false: an approve POST would transition a record and write audit
+   * rows with no marker re-read at all.
+   */
+  const assertLaneIntactSync = (): void => {
+    checkMarker(readFileSync(join(root, MARKER_FILE), 'utf8'));
+  };
+
+  /** Defence in depth: a record must belong to this store's one workspace and resolve to it. */
+  const assertOwnRecord = (mutationId: string): void => {
+    const record = store.getMutation(mutationId);
+    if (!record) throw new Error('Harness lane: no such record in this lane');
+    if (record.workspaceId !== marker.workspaceId) {
+      throw new Error('Harness lane: record belongs to another workspace');
+    }
+    const ws = store.getWorkspace(record.workspaceId);
+    if (!ws || resolve(ws.canonicalRoot) !== resolve(marker.fixtureRoot)) {
+      throw new Error('Harness lane: record does not resolve to this lane fixture');
+    }
+  };
+
+  const fixturePath = (path: string): string => {
+    const full = resolve(join(marker.fixtureRoot, path));
+    if (!within(marker.fixtureRoot, full)) throw new Error('Harness lane: path escapes the fixture');
+    return full;
+  };
+
+  // Servers this lane started, closed with the lane so a test that forgets one cannot leave a
+  // listening socket behind. `destroy()` claims to leave nothing behind, and a live port is
+  // something behind.
+  const operators = new Set<LaneOperator>();
+
+  return {
+    laneId: marker.laneId,
+    fixtureRoot: marker.fixtureRoot,
+    get workspaceId() { return marker.workspaceId; },
+    now,
+    advanceClock(ms) {
+      if (!Number.isFinite(ms) || ms < 0) throw new Error('Harness lane clock only moves forward');
+      clockMs += ms;
+    },
+    async reopen() {
+      await assertLaneIntact();
+      store.close();
+      openStore();
+    },
+    async serveOperator() {
+      await assertLaneIntact();
+      const denials: Array<{ status: number; code: OperatorDenialCode; path: string }> = [];
+      // `coordinator` is read through the closure rather than passed by value, so an operator
+      // started before a `reopen` keeps working against the store that replaced it.
+      const server = await startOperatorServer({
+        coordinator: {
+          // Every entry re-checks the marker and confines itself to this lane's workspace. The
+          // first version of this forwarded straight through, which meant the HTTP path — the
+          // one that actually causes effects — was the only path with neither guard on it, while
+          // the file's header claimed both ran before every durable write. `listPendingLocal`
+          // matters as much as the rest: it runs the overdue sweep, and unfiltered it would
+          // render a record from another workspace with a working Approve button that
+          // `lane.approve()` would have refused.
+          listPendingLocal: (limit) => {
+            assertLaneIntactSync();
+            return coordinator.listPendingLocal(limit)
+              .filter((r) => store.getMutation(r.mutationId)?.workspaceId === marker.workspaceId);
+          },
+          reviewLocal: (id) => {
+            assertLaneIntactSync();
+            return store.getMutation(id)?.workspaceId === marker.workspaceId
+              ? coordinator.reviewLocal(id)
+              : undefined;
+          },
+          approveLocal: async (id) => {
+            assertLaneIntactSync();
+            assertOwnRecord(id);
+            return coordinator.approveLocal(id);
+          },
+          rejectLocal: (id) => {
+            assertLaneIntactSync();
+            assertOwnRecord(id);
+            return coordinator.rejectLocal(id);
+          },
+        },
+        onDeny: (event) => { denials.push(event); },
+      });
+      const lane: LaneOperator = {
+        origin: server.origin,
+        bootstrapUrl: server.bootstrapUrl,
+        denials,
+        async close() { operators.delete(lane); await server.close(); },
+      };
+      operators.add(lane);
+      return lane;
+    },
+    async propose(input) {
+      await assertLaneIntact();
+      // The caller may supply the base hash, so a proposal can be made to refer to bytes other
+      // than the ones on disk right now — which is what production does, and what makes the
+      // drift refusal reachable here at all.
+      const baseSha256 = input.baseSha256
+        ?? createHash('sha256').update(await readFile(fixturePath(input.path), 'utf8'), 'utf8').digest('hex');
+      const preview = await coordinator.preview(caller, marker.workspaceId, {
+        path: input.path, baseSha256, before: input.before, after: input.after,
+      });
+      if (preview.status !== 'approval_required' || !preview.mutationId) {
+        throw new Error(`Harness lane: proposal was not accepted (${preview.status})`);
+      }
+      return { mutationId: preview.mutationId, resultSha256: preview.resultSha256 ?? '' };
+    },
+    async approve(mutationId) {
+      await assertLaneIntact();
+      assertOwnRecord(mutationId);
+      return coordinator.approveLocal(mutationId);
+    },
+    async reject(mutationId) {
+      await assertLaneIntact();
+      assertOwnRecord(mutationId);
+      return coordinator.rejectLocal(mutationId);
+    },
+    // Async and lane-checked, because this is not the read it looks like: listing runs the overdue
+    // sweep, which transitions records to EXPIRED and writes audit rows. It is also filtered to
+    // this lane's workspace, so it cannot offer a record `approve` would then refuse.
+    async pending() {
+      await assertLaneIntact();
+      return coordinator.listPendingLocal(50)
+        .filter((r) => store.getMutation(r.mutationId)?.workspaceId === marker.workspaceId)
+        .map((r) => ({ mutationId: r.mutationId, path: r.path }));
+    },
+    async grantLease(overrides = {}) {
+      await assertLaneIntact();
+      const { ttlMs, notBeforeMs, ...bindingOverrides } = overrides;
+      const bindings: GoalLeaseBindings = {
+        workspaceRoots: [marker.fixtureRoot],
+        allowedTools: ['mutation.preview'],
+        pathPatterns: ['**'],
+        maxFiles: 10,
+        maxBytes: 1_000_000,
+        maxDiffBytes: 100_000,
+        admittedSessions: [caller.sessionId],
+        admittedAdapters: [caller.adapterId],
+        commitSemantics: 'none',
+        ...bindingOverrides,
+      };
+      // Refused at creation as well as at use. A lease is a row, and a row can change between
+      // those two moments, so both ends check rather than trusting the other one did.
+      const malformed = validateBindings(bindings);
+      if (malformed) throw new Error(`Harness lane: refusing to grant a malformed lease — ${malformed}`);
+      const leaseId = `lease_${randomUUID()}`;
+      const createdAt = now();
+      store.insertGoalLease({
+        leaseId,
+        createdAt,
+        notBefore: createdAt + (notBeforeMs ?? 0),
+        expiresAt: createdAt + (ttlMs ?? 60_000),
+        bindings: JSON.stringify(bindings),
+      });
+      activeLeaseId = leaseId;
+      return leaseId;
+    },
+    async revokeLease(leaseId) {
+      await assertLaneIntact();
+      return store.revokeGoalLease(leaseId, now());
+    },
+    setKillSwitch(engaged) { killSwitch = engaged; },
+    authorityOf(mutationId) { return store.getMutationAuthority(mutationId); },
+    async admitUnderLease(leaseId, mutationId) {
+      await assertLaneIntact();
+      assertOwnRecord(mutationId);
+      activeLeaseId = leaseId;
+      return coordinator.admitByPolicy(mutationId);
+    },
+    async readFixture(path) { return readFile(fixturePath(path), 'utf8'); },
+    async writeFixture(path, content) {
+      await mkdir(resolve(join(fixturePath(path), '..')), { recursive: true });
+      await writeFile(fixturePath(path), content, 'utf8');
+    },
+    async close() {
+      for (const operator of [...operators]) await operator.close();
+      store.close();
+    },
+    async destroy() {
+      for (const operator of [...operators]) await operator.close();
+      store.close();
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}

@@ -86,7 +86,11 @@ test('extension manifest is narrowly scoped and has stable identity', async () =
   const manifest = JSON.parse(raw) as Record<string, unknown>;
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.minimum_chrome_version, '114');
-  assert.deepEqual(manifest.permissions, ['nativeMessaging', 'sidePanel', 'storage']);
+  // `scripting` is what re-attaches the bridge to conversations that are already open after an
+  // extension reload, so the user does not have to reload the page. It grants no new reach:
+  // injection is bounded by the same single host permission below, which the content script
+  // already runs on. Nothing else may be added without changing this list deliberately.
+  assert.deepEqual(manifest.permissions, ['nativeMessaging', 'scripting', 'sidePanel', 'storage']);
   assert.deepEqual(manifest.host_permissions, ['https://chatgpt.com/*']);
   assert.equal('externally_connectable' in manifest, false);
   assert.equal((manifest.background as { service_worker?: string })?.service_worker, 'service-worker.js');
