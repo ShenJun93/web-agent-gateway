@@ -71,19 +71,22 @@ const PATCH_PAYLOAD_SHA256 = 'bedf154361e8bd23dae8173cc8ce6594fa9c38cea097c17ec1
  * What *is* drift is a third value: a guard that is neither. That means someone edited it outside
  * the patch, and the digests in the patch document are stale.
  */
-const GUARD = '.claude/hooks/wag-human-gate-guard.mjs';
-const GUARD_BEFORE = 'f13670516976e7c8cfc43fdd0d263e6c860993175d10c32478fce8d83569d241';
-const GUARD_AFTER = '3f0787de4e0d8cf2a5df58e7f4a07a76738a82ec22097af071cd1d61a1273a61';
+export const GUARD_PATH_RELATIVE = '.claude/hooks/wag-human-gate-guard.mjs';
 
-/** The pending patch's own artifacts, so a silent edit to either is visible. */
-const PENDING_DOC = 'docs/pending/authority-issuance-guard.md';
-const PENDING_DOC_PAYLOAD_SHA256 =
-  'c4d148d3a205b71d505688494fed79cd6bf982087000e5e3cb872c66f4a58200';
-const PENDING_APPLIER = 'docs/pending/apply-authority-issuance-guard.mjs';
-const PENDING_APPLIER_RAW_SHA256 =
-  'bf78665843df8dc5783f0e3f92d65acd29d2727c8e7d86cd233a7e71a8665133';
-/** The lines the payload digest removes, because a digest cannot cover itself. */
-const PENDING_DOC_DIGEST_LINE = /^ {2}(?:raw file|payload) {2,3}[0-9a-f]{64}\n/gm;
+/**
+ * The guard as a human installed it on 2026-09-21, out of band.
+ *
+ * Exported so `test/authority-issuance-guard.test.ts` reads it from one place rather than keeping
+ * a second copy of the number. The patch that produced it, and its applier, were retired once
+ * applied — a pending patch that stays in the tree after it lands is a second thing to drift, which
+ * is the lesson that retired the previous applier too.
+ *
+ * The before-digest is kept because a guard that has been *reverted* is the failure worth naming
+ * precisely, rather than reporting as an anonymous mismatch.
+ */
+export const ISSUANCE_GUARD_SHA256 =
+  '3f0787de4e0d8cf2a5df58e7f4a07a76738a82ec22097af071cd1d61a1273a61';
+const GUARD_BEFORE_PATCH = 'f13670516976e7c8cfc43fdd0d263e6c860993175d10c32478fce8d83569d241';
 
 const out = (line = ''): void => { process.stdout.write(`${line}\n`); };
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
@@ -137,48 +140,23 @@ function main(): number {
   out('');
   out('issuance guard');
   let guardDigest: string | undefined;
-  try { guardDigest = sha256(readFileSync(join(repoRoot, GUARD))); }
-  catch { out(`  MISSING  ${GUARD}`); drift += 1; }
+  try { guardDigest = sha256(readFileSync(join(repoRoot, GUARD_PATH_RELATIVE))); }
+  catch { out(`  MISSING  ${GUARD_PATH_RELATIVE}`); drift += 1; }
 
-  if (guardDigest === GUARD_AFTER) {
-    out(`  ok       ${GUARD}`);
-    out('           the authority-issuance patch is APPLIED: issuing or renewing a grant, and');
-    out('           naming one in a JSON config, are refused by the hook.');
-  } else if (guardDigest === GUARD_BEFORE) {
-    out(`  pending  ${GUARD}`);
-    out('           the authority-issuance patch is NOT APPLIED. Issuance has a rule and no');
-    out(`           pattern. To apply it:  node ${PENDING_APPLIER} --apply`);
+  if (guardDigest === ISSUANCE_GUARD_SHA256) {
+    out(`  ok       ${GUARD_PATH_RELATIVE}`);
+    out('           issuing or renewing a grant, and naming one in a JSON config, are refused.');
+  } else if (guardDigest === GUARD_BEFORE_PATCH) {
+    drift += 1;
+    out(`  REVERTED ${GUARD_PATH_RELATIVE}`);
+    out('           this is the pre-patch guard. Issuance has a rule and no pattern again, and');
+    out('           the patch that gave it one was retired after a human applied it.');
   } else if (guardDigest !== undefined) {
     drift += 1;
-    out(`  DRIFTED  ${GUARD}`);
+    out(`  DRIFTED  ${GUARD_PATH_RELATIVE}`);
     out(`             now   ${guardDigest}`);
-    out(`             known ${GUARD_BEFORE} (committed)`);
-    out(`             known ${GUARD_AFTER} (patched)`);
-    out('             it is neither, so the patch digests are stale. Read the diff.');
-  }
-
-  out('');
-  out('pending patch');
-  for (const [path, expected, digestOf] of [
-    [PENDING_APPLIER, PENDING_APPLIER_RAW_SHA256, (bytes: Buffer) => sha256(bytes)],
-    [PENDING_DOC, PENDING_DOC_PAYLOAD_SHA256, (bytes: Buffer) => createHash('sha256')
-      .update(bytes.toString('utf8').replace(PENDING_DOC_DIGEST_LINE, ''), 'utf8').digest('hex')],
-  ] as const) {
-    let bytes: Buffer;
-    try { bytes = readFileSync(join(repoRoot, path)); }
-    catch {
-      // Absent is the expected end state: the patch and its applier are deleted once applied.
-      out(`  absent   ${path}${guardDigest === GUARD_AFTER ? '  (applied and retired)' : '  MISSING'}`);
-      if (guardDigest !== GUARD_AFTER) drift += 1;
-      continue;
-    }
-    const digest = digestOf(bytes);
-    out(`  ${digest === expected ? 'ok      ' : 'DRIFTED '} ${path}`);
-    if (digest !== expected) {
-      out(`             now   ${digest}`);
-      out(`             want  ${expected}`);
-      drift += 1;
-    }
+    out(`             want  ${ISSUANCE_GUARD_SHA256}`);
+    out('             someone edited it outside the authorised patch. Read the diff.');
   }
 
   out('');
@@ -188,9 +166,14 @@ function main(): number {
   return drift === 0 ? 0 : 1;
 }
 
-try {
-  process.exitCode = main();
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
+// Guarded, because this module now exports a digest that a test imports, and importing a module
+// must not run a report. `tsx scripts/verify-delegation-rule-patch.ts` still behaves exactly as
+// before.
+if (process.argv[1]?.split('\\').join('/').endsWith('verify-delegation-rule-patch.ts')) {
+  try {
+    process.exitCode = main();
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
 }

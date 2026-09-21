@@ -929,40 +929,5 @@
     "suite": "test/goal-lease-delegation-composition.test.ts",
     "from": "  catch { return undefined; }",
     "to": "  catch { bindings = { goalId: 'anything', sessionId: input.sessionId, adapterId: input.adapterId } as UiDelegationBindings; }"
-  },
-  {
-    "name": "the pending guard patch stops refusing the issuing CLI",
-    "file": "docs/pending/apply-authority-issuance-guard.mjs",
-    "suite": "test/authority-issuance-guard.test.ts",
-    "from": "    return 'issues or renews a Goal UI Delegation';",
-    "to": "    return undefined;"
-  },
-  {
-    "name": "the pending guard patch stops refusing a direct issuance call",
-    "file": "docs/pending/apply-authority-issuance-guard.mjs",
-    "suite": "test/authority-issuance-guard.test.ts",
-    "from": "  if (GRANT_CALL.test(text)) return 'calls delegation or lease issuance directly';",
-    "to": "  if (false) return 'unreachable';"
-  },
-  {
-    "name": "the pending guard patch stops refusing a config that names a grant",
-    "file": "docs/pending/apply-authority-issuance-guard.mjs",
-    "suite": "test/authority-issuance-guard.test.ts",
-    "from": "  return GRANT_CONFIG_FIELD.test(serialize(input))",
-    "to": "  return false"
-  },
-  {
-    "name": "the pending guard patch refuses revocation too",
-    "file": "docs/pending/apply-authority-issuance-guard.mjs",
-    "suite": "test/authority-issuance-guard.test.ts",
-    "from": "const GRANT_CLI_FLAG = /--(?:issue|renew)\\\\b/;",
-    "to": "const GRANT_CLI_FLAG = /--(?:issue|renew|revoke)\\\\b/;"
-  },
-  {
-    "name": "the pending guard patch no longer requires a runner, so reading is refused",
-    "file": "docs/pending/apply-authority-issuance-guard.mjs",
-    "suite": "test/authority-issuance-guard.test.ts",
-    "from": "  if (!SCRIPT_RUNNER.test(text)) return undefined;",
-    "to": "  // mutated: a mention is treated as an invocation"
   }
 ]
