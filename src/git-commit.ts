@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { CommitRecord, SqliteDurableStore } from './durable-store.js';
 import type { GitCommitBackend, GitCommitChange, GitCommitPlan } from './git-commit-backend.js';
@@ -8,6 +10,9 @@ import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from '.
 
 /** As in the mutation coordinator: a constant, so a proposal cannot nominate its own grant. */
 const COMMIT_TOOL = 'git.commit';
+
+/** As in the mutation coordinator: this gateway's own checkout, which a lease may never act on. */
+const GATEWAY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 const MAX_MESSAGE_BYTES = 8 * 1024;
 const MAX_PATHS = 64;
@@ -282,10 +287,25 @@ export class DurableCommitCoordinator {
         },
         spend,
         killSwitch,
+        gatewayRoot: GATEWAY_ROOT,
       });
       if (!decision.admitted) return decision;
     }
 
+    // Recorded before execution and attributed to the lease, so that a commit admitted with no
+    // human gesture is distinguishable afterwards from one the operator approved. Without this
+    // row the two were byte-identical in the durable record.
+    this.options.store.recordCommitAuthority({
+      commitId,
+      authority: 'POLICY_APPROVED',
+      leaseId: stored.leaseId,
+      admittedAt: this.now(),
+      fingerprint: record.fingerprint,
+      workspaceId: record.workspaceId,
+      branch: record.branch,
+      oldHead: record.oldHead,
+      pathCount: record.paths.length,
+    });
     const approved = await this.approveLocal(commitId);
     return approved
       ? { admitted: true }
@@ -294,6 +314,8 @@ export class DurableCommitCoordinator {
 
   async approveLocal(commitId: string): Promise<boolean> {
     const now = this.now();
+    // Captured before the claim, because claiming changes the state this describes.
+    const proposed = this.options.store.getCommit(commitId);
     const claimed = this.options.store.claimCommit(commitId, now);
     if (!claimed) {
       const current = this.options.store.getCommit(commitId);
@@ -301,6 +323,21 @@ export class DurableCommitCoordinator {
         this.options.store.expireCommit(commitId, now);
       }
       return false;
+    }
+    // `INSERT OR IGNORE`, so the policy path's row — written just before it called this — wins
+    // and is not overwritten with HUMAN_APPROVED. A commit reaching here by any other route was
+    // approved by the operator, and says so.
+    if (proposed) {
+      this.options.store.recordCommitAuthority({
+        commitId,
+        authority: 'HUMAN_APPROVED',
+        admittedAt: now,
+        fingerprint: proposed.fingerprint,
+        workspaceId: proposed.workspaceId,
+        branch: proposed.branch,
+        oldHead: proposed.oldHead,
+        pathCount: proposed.paths.length,
+      });
     }
 
     const workspace = this.options.store.getWorkspace(claimed.workspaceId);

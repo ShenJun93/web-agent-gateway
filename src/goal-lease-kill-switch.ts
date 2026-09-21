@@ -20,7 +20,7 @@
  * It does not revoke anything. A lease survives the switch being engaged and resumes when it is
  * cleared, which is the intended difference: revocation is a decision, this is a pause.
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 export const KILL_SWITCH_FILE = 'LEASE_AUTONOMY_STOPPED';
@@ -37,12 +37,25 @@ export function stateDirectory(env: NodeJS.ProcessEnv = process.env): string {
 /**
  * Whether autonomous admission is currently stopped.
  *
- * Wrapped so that *any* failure reads as engaged. The alternative — letting an unreadable switch
- * mean "not stopped" — turns a permissions problem into a silent resumption of autonomy.
+ * `statSync` with `throwIfNoEntry: false`, *not* `existsSync`. This distinction is the whole
+ * behaviour: `existsSync` swallows every error and returns `false`, so a switch file that exists
+ * but cannot be stat'd — a restrictive ACL, a transient lock, an invalid path — read as "not
+ * stopped" and autonomy continued. A review measured it: a file that exists and is
+ * access-denied returned `false`, and the `catch` arm this function used to carry was
+ * unreachable code sitting under a comment claiming it was the safety property.
+ *
+ * With `throwIfNoEntry: false`, absence returns `undefined` and every *other* failure throws, so
+ * the three cases are finally distinct:
+ *
+ *   present   -> engaged
+ *   absent    -> not engaged
+ *   unknowable-> engaged
+ *
+ * An emergency stop that fails open is not an emergency stop.
  */
 export function isKillSwitchEngaged(directory: string): boolean {
   try {
-    return existsSync(join(directory, KILL_SWITCH_FILE));
+    return statSync(join(directory, KILL_SWITCH_FILE), { throwIfNoEntry: false }) !== undefined;
   } catch {
     return true;
   }

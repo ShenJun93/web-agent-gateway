@@ -191,6 +191,21 @@ export interface BrowserVerifyApprovalResult {
   job: VerifyJobRecord;
 }
 
+/**
+ * What a proposal costs a lease's byte budget: the larger of what it removes and what it writes.
+ *
+ * Defined here rather than in `durable-mutation.ts` because the store is the lower layer — the
+ * other direction would make the two modules import each other, which happens to work under ESM
+ * while the call is deferred and is a trap waiting for someone to hoist it.
+ *
+ * Counting only the insertion, which is what this did first, let a proposal replacing 32 KiB of
+ * content with one byte charge one byte. A budget is meant to bound impact, and deleting is
+ * impact.
+ */
+export function affectedBytes(record: { before: string; after: string }): number {
+  return Math.max(Buffer.byteLength(record.before, 'utf8'), Buffer.byteLength(record.after, 'utf8'));
+}
+
 export class SqliteDurableStore {
   private readonly db: DatabaseSync;
 
@@ -325,12 +340,26 @@ export class SqliteDurableStore {
         lease_id TEXT,
         admitted_at INTEGER NOT NULL,
         fingerprint TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
         path TEXT NOT NULL,
         result_sha256 TEXT NOT NULL,
         diff_bytes INTEGER NOT NULL,
         FOREIGN KEY(mutation_id) REFERENCES mutations(mutation_id)
       );
       CREATE INDEX IF NOT EXISTS idx_mutation_authority_lease ON mutation_authority(lease_id);
+      CREATE TABLE IF NOT EXISTS commit_authority (
+        commit_id TEXT PRIMARY KEY,
+        authority TEXT NOT NULL,
+        lease_id TEXT,
+        admitted_at INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        old_head TEXT NOT NULL,
+        path_count INTEGER NOT NULL,
+        FOREIGN KEY(commit_id) REFERENCES commits(commit_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_commit_authority_lease ON commit_authority(lease_id);
     `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS verify_jobs (
@@ -490,28 +519,36 @@ export class SqliteDurableStore {
   }
   approveMutation(mutationId: string, now: number, admissionTtlMs: number): MutationRecord | undefined {
     const record = this.getMutation(mutationId);
-    const approved = this.transition(mutationId, 'PENDING_APPROVAL', 'QUEUED', now, () => {
+    return this.transition(mutationId, 'PENDING_APPROVAL', 'QUEUED', now, () => {
       const result = this.db.prepare(`UPDATE mutations
         SET state = 'QUEUED', reviewed_at = ?, execution_admission_deadline = ?
         WHERE mutation_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline > ?`)
         .run(now, now + admissionTtlMs, mutationId, now);
-      return Number(result.changes) === 1;
+      if (Number(result.changes) !== 1) return false;
+      // Inside `apply`, which runs inside the transition's BEGIN IMMEDIATE — not after it.
+      // Written after the commit, as this was first, a crash in between left a QUEUED record
+      // with no authority row that `reconcile()` would then execute, and a throwing INSERT made
+      // the operator's approval report failure on a transition that had durably succeeded. Both
+      // are gone: the insert is now inside the same transaction and a failure rolls the whole
+      // admission back.
+      //
+      // Recorded here rather than at the call site so the two admission paths are symmetric and
+      // neither can forget. Without it, "no authority row" would mean both "admitted by a human"
+      // and "never admitted", and the audit could not tell POLICY from HUMAN by absence.
+      if (record) {
+        this.recordMutationAuthority({
+          mutationId,
+          authority: 'HUMAN_APPROVED',
+          admittedAt: now,
+          fingerprint: record.fingerprint,
+          workspaceId: record.workspaceId,
+          path: record.path,
+          resultSha256: record.resultSha256,
+          diffBytes: affectedBytes(record),
+        });
+      }
+      return true;
     });
-    // Recorded here rather than at the call site so the two admission paths are symmetric and
-    // neither can forget. Without this, "no authority row" would mean both "admitted by a human"
-    // and "never admitted", and the audit could not tell POLICY from HUMAN by absence.
-    if (approved && record) {
-      this.recordMutationAuthority({
-        mutationId,
-        authority: 'HUMAN_APPROVED',
-        admittedAt: now,
-        fingerprint: record.fingerprint,
-        path: record.path,
-        resultSha256: record.resultSha256,
-        diffBytes: Buffer.byteLength(record.after, 'utf8'),
-      });
-    }
-    return approved;
   }
 
   /**
@@ -532,25 +569,28 @@ export class SqliteDurableStore {
   }): MutationRecord | undefined {
     const record = this.getMutation(input.mutationId);
     if (!record) return undefined;
-    const admitted = this.transition(input.mutationId, 'PENDING_APPROVAL', 'QUEUED', input.now, () => {
+    return this.transition(input.mutationId, 'PENDING_APPROVAL', 'QUEUED', input.now, () => {
       const result = this.db.prepare(`UPDATE mutations
         SET state = 'QUEUED', reviewed_at = ?, execution_admission_deadline = ?
         WHERE mutation_id = ? AND state = 'PENDING_APPROVAL' AND review_deadline > ?`)
         .run(input.now, input.now + input.admissionTtlMs, input.mutationId, input.now);
-      return Number(result.changes) === 1;
+      if (Number(result.changes) !== 1) return false;
+      // In the transaction, for the reason given on the human path above. Here the crash window
+      // additionally refunded the file and its bytes to the lease budget, because spend is
+      // counted from these rows.
+      this.recordMutationAuthority({
+        mutationId: input.mutationId,
+        authority: 'POLICY_APPROVED',
+        leaseId: input.leaseId,
+        admittedAt: input.now,
+        fingerprint: record.fingerprint,
+        workspaceId: record.workspaceId,
+        path: record.path,
+        resultSha256: record.resultSha256,
+        diffBytes: affectedBytes(record),
+      });
+      return true;
     });
-    if (!admitted) return undefined;
-    this.recordMutationAuthority({
-      mutationId: input.mutationId,
-      authority: 'POLICY_APPROVED',
-      leaseId: input.leaseId,
-      admittedAt: input.now,
-      fingerprint: record.fingerprint,
-      path: record.path,
-      resultSha256: record.resultSha256,
-      diffBytes: Buffer.byteLength(record.after, 'utf8'),
-    });
-    return admitted;
   }
 
   /**
@@ -563,15 +603,16 @@ export class SqliteDurableStore {
     leaseId?: string;
     admittedAt: number;
     fingerprint: string;
+    workspaceId: string;
     path: string;
     resultSha256: string;
     diffBytes: number;
   }): void {
     this.db.prepare(`INSERT OR IGNORE INTO mutation_authority
-      (mutation_id, authority, lease_id, admitted_at, fingerprint, path, result_sha256, diff_bytes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      (mutation_id, authority, lease_id, admitted_at, fingerprint, workspace_id, path, result_sha256, diff_bytes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(input.mutationId, input.authority, input.leaseId ?? null, input.admittedAt,
-        input.fingerprint, input.path, input.resultSha256, input.diffBytes);
+        input.fingerprint, input.workspaceId, input.path, input.resultSha256, input.diffBytes);
   }
 
   getMutationAuthority(mutationId: string): {
@@ -594,6 +635,51 @@ export class SqliteDurableStore {
       path: String(row.path),
       resultSha256: String(row.result_sha256),
       diffBytes: Number(row.diff_bytes),
+    };
+  }
+
+  /**
+   * The commit twin of `recordMutationAuthority`.
+   *
+   * Commits live in their own table, so `mutation_authority`'s foreign key could not carry them
+   * and a policy-admitted commit was, in the durable record, byte-identical to one the operator
+   * approved. A review found that: the audit claim held for mutations and silently did not hold
+   * for the more consequential record kind.
+   */
+  recordCommitAuthority(input: {
+    commitId: string;
+    authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
+    leaseId?: string;
+    admittedAt: number;
+    fingerprint: string;
+    workspaceId: string;
+    branch: string;
+    oldHead: string;
+    pathCount: number;
+  }): void {
+    this.db.prepare(`INSERT OR IGNORE INTO commit_authority
+      (commit_id, authority, lease_id, admitted_at, fingerprint, workspace_id, branch, old_head, path_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(input.commitId, input.authority, input.leaseId ?? null, input.admittedAt,
+        input.fingerprint, input.workspaceId, input.branch, input.oldHead, input.pathCount);
+  }
+
+  getCommitAuthority(commitId: string): {
+    authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
+    leaseId?: string;
+    admittedAt: number;
+    branch: string;
+    pathCount: number;
+  } | undefined {
+    const row = this.db.prepare('SELECT * FROM commit_authority WHERE commit_id = ?').get(commitId) as
+      Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      authority: row.authority as 'HUMAN_APPROVED' | 'POLICY_APPROVED',
+      ...(row.lease_id === null ? {} : { leaseId: String(row.lease_id) }),
+      admittedAt: Number(row.admitted_at),
+      branch: String(row.branch),
+      pathCount: Number(row.path_count),
     };
   }
 
@@ -641,7 +727,11 @@ export class SqliteDurableStore {
    * a lease exhaust its file budget rewriting one file.
    */
   goalLeaseSpend(leaseId: string): { filesChanged: number; bytesWritten: number } {
-    const row = this.db.prepare(`SELECT COUNT(DISTINCT path) AS files, COALESCE(SUM(diff_bytes), 0) AS bytes
+    // Distinct (workspace, path), not distinct path. `workspaceRoots` is a list, so a lease
+    // binding two repositories counted `src/index.ts` in both as one file — `maxFiles: 5` over
+    // two roots would have permitted ten actual files. A review found it.
+    const row = this.db.prepare(`SELECT COUNT(DISTINCT workspace_id || char(10) || path) AS files,
+      COALESCE(SUM(diff_bytes), 0) AS bytes
       FROM mutation_authority WHERE lease_id = ?`).get(leaseId) as { files: number; bytes: number };
     return { filesChanged: Number(row.files), bytesWritten: Number(row.bytes) };
   }

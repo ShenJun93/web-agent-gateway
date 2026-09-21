@@ -47,7 +47,8 @@ export type LeaseDenialCode =
   | 'BRANCH_NOT_GRANTED'
   | 'HEAD_MOVED'
   | 'COMMIT_NOT_GRANTED'
-  | 'AUTHORITY_FILE_PROTECTED';
+  | 'AUTHORITY_FILE_PROTECTED'
+  | 'SELF_MODIFICATION_REFUSED';
 
 export type LeaseDecision =
   | { readonly admitted: true }
@@ -124,6 +125,20 @@ const deny = (code: LeaseDenialCode, detail: string): LeaseDecision => ({ admitt
 const PROTECTED_PREFIXES = ['.claude/', '.git/', 'docs/adr/'] as const;
 const PROTECTED_EXACT = ['agents.md', 'claude.md', 'tsconfig.build.json', 'package.json'] as const;
 
+/**
+ * Containment on already-normalised, absolute, comparable paths.
+ *
+ * Separators are unified and the comparison is case-insensitive, because this runs on Windows
+ * where `E:\Repo` and `e:/repo` name the same directory. It is not a substitute for a realpath
+ * check — the caller passes canonical roots — but it must not be defeated by spelling.
+ */
+function isWithin(root: string, candidate: string): boolean {
+  const norm = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const r = norm(root);
+  const c = norm(candidate);
+  return c === r || c.startsWith(`${r}/`);
+}
+
 function isProtectedAuthorityPath(relative: string): boolean {
   const lower = relative.toLowerCase();
   if (PROTECTED_EXACT.includes(lower as (typeof PROTECTED_EXACT)[number])) return true;
@@ -197,6 +212,13 @@ function matchSegment(pattern: string, value: string): boolean {
  * lease is a file, and the file can change between those two moments.
  */
 export function validateBindings(bindings: GoalLeaseBindings): string | undefined {
+  // The value arrives from `JSON.parse` on a durable row, so it can be anything JSON can be —
+  // `null`, a string, a number. Dereferencing it first made a malformed lease *throw* rather
+  // than deny, which is fail-closed in effect but not what this module claims: every malformed
+  // input is supposed to land in the deny arm, and a thrown TypeError is not that arm.
+  if (typeof bindings !== 'object' || bindings === null || Array.isArray(bindings)) {
+    return 'bindings must be an object';
+  }
   if (!Array.isArray(bindings.workspaceRoots) || bindings.workspaceRoots.length === 0) {
     return 'workspaceRoots must list at least one root';
   }
@@ -249,6 +271,21 @@ export function evaluateGoalLease(input: {
   readonly request: LeaseRequest;
   readonly spend: LeaseSpend;
   readonly killSwitch: boolean;
+  /**
+   * The repository the running gateway was loaded from, if the caller can determine it.
+   *
+   * A lease grants writes inside a workspace. If that workspace happens to *be* the checkout this
+   * gateway is executing from, the lease can rewrite the policy enforcing it — `goal-lease.ts`
+   * itself, the kill switch, the path policy, the extension's manifest. Listing those by name was
+   * the first attempt and a review showed why it fails: the list protected the *configuration* of
+   * authority (`.claude/`, ADRs, AGENTS.md) while leaving every file that *implements* it
+   * grantable under a `src/**` pattern.
+   *
+   * Refusing by location instead is precise. It costs a lease nothing when it targets an
+   * unrelated repository — where writing `src/foo.ts` is ordinary work — and refuses exactly the
+   * case where a bound can dissolve itself.
+   */
+  readonly gatewayRoot?: string;
 }): LeaseDecision {
   const { lease, now, request, spend } = input;
 
@@ -260,6 +297,17 @@ export function evaluateGoalLease(input: {
 
   if (typeof lease.revokedAt === 'number') return deny('LEASE_REVOKED', `revoked at ${lease.revokedAt}`);
   if (!Number.isFinite(now)) return deny('LEASE_MALFORMED', 'the clock is not a finite number');
+  // The lease's *own* time fields, not just the clock. SQLite columns are dynamically typed, so a
+  // row holding text yields NaN here — and with `expiresAt` NaN both `now >= expiresAt` and
+  // `now < notBefore` are false, so a lease that can never expire falls straight through to the
+  // bindings. A review found this: the clock was checked and the deadline it was compared against
+  // was not.
+  if (!Number.isFinite(lease.notBefore) || !Number.isFinite(lease.expiresAt)) {
+    return deny('LEASE_MALFORMED', 'the lease validity window is not two finite numbers');
+  }
+  if (lease.expiresAt <= lease.notBefore) {
+    return deny('LEASE_MALFORMED', 'the lease expires before it begins');
+  }
   if (now < lease.notBefore) return deny('LEASE_NOT_YET_VALID', `not valid until ${lease.notBefore}`);
   if (now >= lease.expiresAt) return deny('LEASE_EXPIRED', `expired at ${lease.expiresAt}`);
 
@@ -276,6 +324,13 @@ export function evaluateGoalLease(input: {
   }
   if (!b.workspaceRoots.includes(request.workspaceRoot)) {
     return deny('WORKSPACE_NOT_GRANTED', 'the workspace root is not one the lease names');
+  }
+  // Refused whatever the patterns say, and refused before them: a lease over the gateway's own
+  // checkout could edit the approver, the kill switch or the extension manifest, and a bound that
+  // can rewrite itself is not a bound.
+  if (input.gatewayRoot !== undefined && isWithin(input.gatewayRoot, request.workspaceRoot)) {
+    return deny('SELF_MODIFICATION_REFUSED',
+      'the workspace is inside the running gateway checkout, so a lease cannot act on it');
   }
 
   // The path arrives relative and is required to stay that way. This is belt and braces over the

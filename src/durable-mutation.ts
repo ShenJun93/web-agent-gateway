@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
+import { affectedBytes } from './durable-store.js';
 import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
 
 /**
@@ -13,6 +16,17 @@ import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
  * must not be able to nominate which grant it is checked against.
  */
 const MUTATION_TOOL = 'mutation.preview';
+
+/**
+ * The checkout this gateway was loaded from.
+ *
+ * Derived from this module's own location, never from a caller: a lease must not be able to
+ * nominate which repository counts as "not mine to edit". A lease whose workspace resolves
+ * inside this is refused outright, because it could otherwise rewrite the approver, the kill
+ * switch or the extension manifest, and a bound that can rewrite itself is not a bound.
+ */
+const GATEWAY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
+
 
 /** Outstanding proposals one caller may have awaiting review, as for commits. */
 const MAX_PENDING_PER_CALLER = 8;
@@ -256,10 +270,11 @@ export class DurableMutationCoordinator {
         adapterId: record.adapterId,
         workspaceRoot: workspace.canonicalRoot,
         path: record.path,
-        diffBytes: Buffer.byteLength(record.after, 'utf8'),
+        diffBytes: affectedBytes(record),
       },
       spend: this.options.store.goalLeaseSpend(stored.leaseId),
       killSwitch: lease.killSwitch(),
+      gatewayRoot: GATEWAY_ROOT,
     });
     if (!decision.admitted) return decision;
 
@@ -275,6 +290,31 @@ export class DurableMutationCoordinator {
     }
     await this.executeQueued(mutationId);
     return { admitted: true };
+  }
+
+  /**
+   * Offer every record currently awaiting review to the lease policy.
+   *
+   * This is what makes a lease do anything in production. `admitByPolicy` decides one record;
+   * without a caller, configuring a lease changed nothing at all while the CLI announced that
+   * autonomous admission was enabled — a review caught exactly that gap.
+   *
+   * Bounded and driven rather than continuous: the runtime calls it, it walks at most one page
+   * of pending records, and each one goes through the identical policy. A record the lease does
+   * not cover is simply left pending for a human, which is the correct outcome and not an error.
+   *
+   * Returns the ids it admitted, so a caller can log what autonomy actually did.
+   */
+  async admitPendingUnderLease(limit = 20): Promise<string[]> {
+    if (!this.options.goalLease) return [];
+    const admitted: string[] = [];
+    // Snapshot first: admitting mutates the pending set underneath an iterator.
+    const pending = this.options.store.listPendingMutations(Math.min(Math.max(limit, 1), PENDING_SCAN_LIMIT));
+    for (const record of pending) {
+      const decision = await this.admitByPolicy(record.mutationId);
+      if (decision.admitted) admitted.push(record.mutationId);
+    }
+    return admitted;
   }
 
   async approveLocal(mutationId: string): Promise<boolean> {

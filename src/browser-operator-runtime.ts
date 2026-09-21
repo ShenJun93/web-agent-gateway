@@ -24,6 +24,9 @@ import { createBrowserOperatorAdmittedMcpServer } from './server.js';
 import { DevspaceRepositoryInspectionBackend } from './repository-inspection.js';
 import { BROWSER_OPERATOR_PROTOCOL_VERSION } from './browser-adapter/protocol-v4.js';
 
+/** How often a configured lease is offered the pending queue. Idle when nothing is pending. */
+const LEASE_ADMISSION_INTERVAL_MS = 2_000;
+
 /**
  * The browser operator runtime (ADR-0026).
  *
@@ -81,6 +84,7 @@ export async function startBrowserOperatorRuntime(options: {
   let privateRuntime: Awaited<ReturnType<typeof bootstrapPrivateGateway>> | undefined;
   let http: Awaited<ReturnType<typeof startBrowserAdmissionHttpServer>> | undefined;
   let operator: Awaited<ReturnType<typeof startOperatorServer>> | undefined;
+  let leaseTimer: ReturnType<typeof setInterval> | undefined;
 
   try {
     await mkdir(dirname(options.statePath), { recursive: true });
@@ -156,6 +160,24 @@ export async function startBrowserOperatorRuntime(options: {
     });
     await commit.reconcile();
 
+    /**
+     * The admission pass, which is the thing that makes a configured lease do anything.
+     *
+     * Driven by a modest interval rather than fired from the proposal path, so that a proposal's
+     * contract is unchanged and so that records left pending across a restart are picked up too.
+     * It exists only when a lease is configured — with none, no timer is created and nothing on
+     * this path runs at all.
+     *
+     * `unref` so it never holds the process open, and errors are swallowed per tick: a failing
+     * admission must not take down a runtime whose human review path is working fine.
+     */
+    if (goalLease) {
+      leaseTimer = setInterval(() => {
+        void mutation.admitPendingUnderLease().catch(() => undefined);
+      }, LEASE_ADMISSION_INTERVAL_MS);
+      leaseTimer.unref?.();
+    }
+
     // One review server for all three record kinds; the browser never learns its origin.
     operator = await startOperatorServer({
       coordinator: mutation,
@@ -203,6 +225,7 @@ export async function startBrowserOperatorRuntime(options: {
       async close() {
         if (closed) return;
         closed = true;
+        if (leaseTimer) clearInterval(leaseTimer);
         await rm(options.discoveryPath, { force: true });
         await rm(operatorUrlFile, { force: true }).catch(() => undefined);
         await http?.close();
