@@ -225,6 +225,7 @@ async function harness(t: test.TestContext, options: {
 } = {}): Promise<{
   script: string; store: string; config: string; dir: string;
   sessionId?: string; workspaceId?: string; configBefore: string;
+  extraSessionIds: string[];
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'wag-activation-'));
   t.after(async () => { await rm(dir, { recursive: true, force: true }).catch(() => undefined); });
@@ -236,6 +237,7 @@ async function harness(t: test.TestContext, options: {
 
   let sessionId: string | undefined;
   let workspaceId: string | undefined;
+  const extraSessionIds: string[] = [];
   if (options.withSession || options.withWorkspace) {
     const { SqliteDurableStore } = await import('../src/durable-store.js');
     const { BROWSER_DELEGATION_ADAPTER_ID } = await import('../src/adapter-admission.js');
@@ -250,12 +252,12 @@ async function harness(t: test.TestContext, options: {
         }).sessionId;
       }
       for (const [index, age] of (options.extraSessionAgesMinutes ?? []).entries()) {
-        store.getOrCreateAdapterSession({
+        extraSessionIds.push(store.getOrCreateAdapterSession({
           ownerId: store.getOrCreateLocalPrincipal(Date.now()).ownerId,
           adapterId: BROWSER_DELEGATION_ADAPTER_ID,
           correlationSha256: String(index).padStart(64, 'b'),
           createdAt: Date.now() - age * 60_000,
-        });
+        }).sessionId);
       }
       if (options.withWorkspace) {
         for (const argv of [
@@ -309,7 +311,7 @@ async function harness(t: test.TestContext, options: {
     .replace('if (!process.stdin.isTTY) {', 'if (false) {');
   await writeFile(script, patched, 'utf8');
   return {
-    script, store: storePath, config: configPath, dir, configBefore,
+    script, store: storePath, config: configPath, dir, configBefore, extraSessionIds,
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(workspaceId === undefined ? {} : { workspaceId }),
   };
@@ -503,7 +505,7 @@ test('it refuses a --session that is not the one live session', async (t) => {
     ISSUE, '--session', wrong, '--workspace', h.workspaceId!, '--confirm',
   ]);
   assert.equal(result.code, 2, result.stdout + result.stderr);
-  assert.match(result.stderr, /is not the one fresh session/);
+  assert.match(result.stderr, /is not the newest fresh v5 session/);
   assert.equal(await readFile(h.config, 'utf8'), h.configBefore);
   const counts = await grantCounts(h.store);
   assert.equal(counts.delegations, 0);
@@ -521,19 +523,38 @@ test('a stale session from an earlier browser does not block activation', async 
     ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
   ]);
   assert.equal(result.code, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /exactly one fresh v5 session/);
+  assert.match(result.stdout, /is the newest of 1 fresh v5 session/);
 });
 
-test('two fresh sessions are ambiguous and refuse, because either could be the live browser', async (t) => {
+test('with several fresh sessions, the newest is accepted', async (t) => {
+  // Requiring exactly one fresh session was unsatisfiable in practice: a reconnect, a reload and a
+  // second tab each mint one, and a session's age never resets, so three existed within two minutes
+  // of one extension reload. The newest is the one most recently admitted.
   const h = await harness(t, {
-    withSession: true, withWorkspace: true, extraSessionAgesMinutes: [1],
+    withSession: true, withWorkspace: true, extraSessionAgesMinutes: [1, 5, 30],
   });
   const result = await runScript(h.script, [
     ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
   ]);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /is the newest of 4 fresh v5 session\(s\)/);
+});
+
+test('a fresh session that is not the newest is still refused', async (t) => {
+  // The property the old rule protected is kept: a grant may not be bound to a context the browser
+  // is not using. Only the unsatisfiable precondition is gone.
+  const h = await harness(t, {
+    withSession: true, withWorkspace: true, extraSessionAgesMinutes: [1],
+  });
+  const older = h.extraSessionIds[0]!;
+  assert.notEqual(older, h.sessionId);
+  const result = await runScript(h.script, [
+    ISSUE, '--session', older, '--workspace', h.workspaceId!, '--confirm',
+  ]);
   assert.equal(result.code, 2, result.stdout + result.stderr);
-  assert.match(result.stderr, /2 v5 sessions are fresh/);
+  assert.match(result.stderr, /is not the newest fresh v5 session/);
   assert.equal(await readFile(h.config, 'utf8'), h.configBefore);
+  assert.deepEqual(await grantCounts(h.store), { delegations: 0, leases: 0 });
 });
 
 test('only stale sessions refuses, and says so rather than blaming the reference', async (t) => {

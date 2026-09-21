@@ -194,20 +194,42 @@ async function main() {
       fail(`no v5 session is younger than ${SESSION_MAX_AGE_MINUTES} minutes. A stale session `
         + 'belongs to a browser that is probably gone. Reconnect, observe one candidate, re-run.');
     }
-    if (fresh.length !== 1) {
-      process.stderr.write('\nfresh v5 sessions:\n');
+    // "Exactly one fresh session" was the second version of this rule, and the live run of
+    // 2026-09-22 proved it unworkable too. Sessions are minted per browser *context*, and a
+    // reconnect, a reload or a second tab each mint one — so three fresh sessions existed within
+    // two minutes of a single extension reload. A session's age never resets either, because
+    // re-admitting with the same correlation returns the same row. So the rule could not be
+    // satisfied by waiting, by reconnecting, or by anything the operator could reasonably do.
+    //
+    // What the rule was actually protecting against is binding a grant to a context the browser is
+    // not using. The newest fresh session is, by construction, the one most recently admitted —
+    // so requiring `--session` to be *that* one enforces the same property without an unsatisfiable
+    // precondition. Sessions are still refused when stale, and a `--session` that is not the newest
+    // is still refused outright.
+    //
+    // `listAdapterSessions` orders by `created_at DESC`, so `fresh[0]` is the newest.
+    const session = fresh[0];
+    const newest = fresh.filter((record) => record.createdAt === session.createdAt);
+    if (newest.length !== 1) {
+      // A genuine tie: two contexts admitted in the same millisecond. Nothing here can tell them
+      // apart, so this refuses rather than picking one.
+      process.stderr.write('\nfresh v5 sessions tied for newest:\n');
+      for (const record of newest) {
+        process.stderr.write(`  ${record.sessionId}  createdAt ${record.createdAt}\n`);
+      }
+      fail(`${newest.length} v5 sessions share the newest timestamp, so which one the browser is `
+        + 'using is genuinely ambiguous. Reconnect once and re-run.');
+    }
+    if (session.sessionId !== sessionId) {
+      process.stderr.write('\nfresh v5 sessions, newest first:\n');
       for (const record of fresh) {
         process.stderr.write(`  ${record.sessionId}  ${Math.round(ageOf(record))} min old\n`);
       }
-      fail(`${fresh.length} v5 sessions are fresh, so which one the browser is using is ambiguous. `
-        + 'Close the other browser contexts, wait for them to age out, and re-run.');
-    }
-    const session = fresh[0];
-    if (session.sessionId !== sessionId) {
-      fail(`--session ${sessionId} is not the one fresh session (${session.sessionId}). `
+      fail(`--session ${sessionId} is not the newest fresh v5 session (${session.sessionId}). `
         + 'Refusing to bind a grant to a session the browser is not using.');
     }
-    out(`  ok   exactly one fresh v5 session, ${Math.round(ageOf(session))} min old, matches --session`);
+    out(`  ok   --session is the newest of ${fresh.length} fresh v5 session(s), `
+      + `${Math.round(ageOf(session))} min old`);
 
     // The caller tuple every later check is measured against. All three fields come from the
     // durable session row, never from a flag: `--session` selects which row, and the row says who
