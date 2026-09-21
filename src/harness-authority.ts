@@ -56,6 +56,15 @@ import { DurableMutationCoordinator } from './durable-mutation.js';
 import { canonicalWorkspace } from './path-policy.js';
 import { startOperatorServer, type OperatorDenialCode } from './operator-server.js';
 import { validateBindings, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
+import { BROWSER_DELEGATION_ADAPTER_ID } from './adapter-admission.js';
+import { DelegatedDispatchRouter } from './delegated-dispatch-router.js';
+import {
+  createControllerPlaneKey, UiDelegationControlPlane,
+} from './goal-ui-delegation-control.js';
+import {
+  createDelegationDispatchPort, UiDelegationDispatchPlane,
+} from './goal-ui-delegation-dispatch.js';
+import type { ConnectionIdentity, UiDelegationBindings } from './goal-ui-delegation.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
 
 /** The literal a caller must pass. A boolean would be easy to set by accident. */
@@ -82,6 +91,44 @@ export interface LaneOperator {
   /** Every refusal this server made, in order — the assertion surface for the CSRF/Origin loops. */
   readonly denials: ReadonlyArray<{ status: number; code: OperatorDenialCode; path: string }>;
   close(): Promise<void>;
+}
+
+/**
+ * The delegated-dispatch equivalent, for this lane's fixture store (ADR-0027, ADR-0029).
+ *
+ * Two of the things here are human acts in production, and are driven by a script only because
+ * this is the fixture lane:
+ *
+ *  - **issuing** a delegation, which the control plane does out of band;
+ *  - **naming** it in configuration, which is a human edit to a local config file.
+ *
+ * Neither production path changes. `configuredDelegationId` here is a variable in this closure
+ * over a store this lane created; the production runtime reads `goalUiDelegationId` from a private
+ * config file, and nothing in this file touches that. A test exercising this proves the transport
+ * and the policy; it proves nothing about whether a human authorised anything, and is not evidence
+ * for the production activation gate.
+ */
+export interface HarnessDelegationLane {
+  /** The identity WAG would establish at admission for a v5 session on this lane. */
+  readonly connection: ConnectionIdentity;
+  /**
+   * Issue a fixture delegation *and* name it in the fixture config — the two human acts, together,
+   * because a test that had to do them separately would only be testing the lane.
+   */
+  issue(overrides?: Partial<UiDelegationBindings> & { ttlMs?: number; notBeforeMs?: number }): string;
+  /** Issue without naming it, to prove a row alone grants nothing. */
+  issueUnnamed(overrides?: Partial<UiDelegationBindings> & { ttlMs?: number }): string;
+  revoke(delegationId: string): boolean;
+  /** Point the fixture config at a different delegation, or at none. */
+  configure(delegationId: string | undefined): void;
+  /**
+   * A fresh router over the lane's current store, as a reconnect produces: unbound, holding no
+   * memory of the previous one. `reopen()` invalidates any router made before it, exactly as a
+   * gateway restart invalidates a native port.
+   */
+  connect(): DelegatedDispatchRouter;
+  /** The lane's current store, for asserting durable state directly. */
+  durable(): SqliteDurableStore;
 }
 
 export interface HarnessLane {
@@ -130,6 +177,8 @@ export interface HarnessLane {
   setKillSwitch(engaged: boolean): void;
   /** Admit a pending record by policy rather than by a human. Returns the full decision. */
   admitUnderLease(leaseId: string, mutationId: string): Promise<LeaseDecision>;
+  /** The delegated-dispatch equivalent. See {@link HarnessDelegationLane}. */
+  delegation(): HarnessDelegationLane;
   /**
    * The durable statement of how a record was admitted, or undefined if it never was.
    *
@@ -336,6 +385,16 @@ function build(root: string, marker: LaneMarker, stateDir: string, config: {
   const caller = createGatewayCallerContext({
     ownerId: `owner_${marker.laneId}`, sessionId: `session_${marker.laneId}`, adapterId: 'harness.lane.test-only',
   });
+
+  /**
+   * The fixture stand-in for `goalUiDelegationId` in a private config file.
+   *
+   * In production a human edits that file; here it is a variable, because the lane exists to drive
+   * the equivalents of human acts. Nothing in this file reads or writes the production config.
+   */
+  let configuredDelegationId: string | undefined;
+  const CONTROLLER_ID = 'harness.lane.controller.test-only';
+  const FIXTURE_GOAL_ID = 'goal_lane_fixture';
 
   // Rebound by `reopen`, so every closure below must read them rather than capture a snapshot.
   let store!: SqliteDurableStore;
@@ -567,6 +626,70 @@ function build(root: string, marker: LaneMarker, stateDir: string, config: {
       assertOwnRecord(mutationId);
       activeLeaseId = leaseId;
       return coordinator.admitByPolicy(mutationId);
+    },
+    delegation() {
+      const connection: ConnectionIdentity = {
+        ownerId: caller.ownerId,
+        sessionId: caller.sessionId,
+        // The v5 identity, not the lane's own: a delegation binds `adapterId`, and the router's
+        // connection has to be the thing that binding names.
+        adapterId: BROWSER_DELEGATION_ADAPTER_ID,
+      };
+      const control = () => new UiDelegationControlPlane({
+        store, key: createControllerPlaneKey(CONTROLLER_ID), now,
+      });
+      const bindingsFor = (
+        overrides: Partial<UiDelegationBindings> & { ttlMs?: number; notBeforeMs?: number } = {},
+      ) => {
+        const { ttlMs: _ttl, notBeforeMs: _nb, ...rest } = overrides;
+        const bindings: UiDelegationBindings = {
+          goalId: FIXTURE_GOAL_ID,
+          controllerId: CONTROLLER_ID,
+          allowedOrigins: ['https://chatgpt.com'],
+          allowedTools: ['repo.search', 'file.read'],
+          workspaceId: marker.workspaceId,
+          sessionId: connection.sessionId,
+          adapterId: connection.adapterId,
+          maxActions: 5,
+          ...rest,
+        };
+        return bindings;
+      };
+      return {
+        connection,
+        issue(overrides = {}) {
+          const bindings = bindingsFor(overrides);
+          const issued = control().issue({
+            goalId: bindings.goalId,
+            bindings,
+            ttlMs: overrides.ttlMs ?? 60_000,
+            ...(overrides.notBeforeMs === undefined ? {} : { notBeforeMs: overrides.notBeforeMs }),
+          });
+          configuredDelegationId = issued.delegationId;
+          return issued.delegationId;
+        },
+        issueUnnamed(overrides = {}) {
+          const bindings = bindingsFor({ goalId: 'goal_lane_unnamed', ...overrides });
+          return control().issue({
+            goalId: bindings.goalId, bindings, ttlMs: overrides.ttlMs ?? 60_000,
+          }).delegationId;
+        },
+        revoke(delegationId) { return control().revoke(delegationId); },
+        configure(delegationId) { configuredDelegationId = delegationId; },
+        connect() {
+          // Built from the *current* store and the *current* configured id, so a `reopen` or a
+          // reconfigure is visible to the next connection and invisible to an older router.
+          const plane = new UiDelegationDispatchPlane({
+            port: createDelegationDispatchPort(store),
+            killSwitch: () => killSwitch,
+            now,
+            ...(configuredDelegationId === undefined
+              ? {} : { configuredDelegationId }),
+          });
+          return new DelegatedDispatchRouter({ plane, connection });
+        },
+        durable() { return store; },
+      };
     },
     async readFixture(path) { return readFile(fixturePath(path), 'utf8'); },
     async writeFixture(path, content) {

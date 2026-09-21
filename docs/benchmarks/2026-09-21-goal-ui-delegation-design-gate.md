@@ -17,7 +17,7 @@ npm run typecheck                exit 0
 npm run build                    exit 0
 delegation suites                102/102 pass  (5 files)
 npm run test:delegation-mutations  64 applied, 59 caught, 5 redundant-by-design, 0 survived
-npm test (full canonical suite)  see "Full canonical suite" below
+npm test (full canonical suite)  711 tests, 0 fail, exit 0 — see below
 ```
 
 Suites: `goal-ui-delegation` (19), `goal-ui-delegation-planes` (42), `durable-delegation-state`
@@ -375,12 +375,216 @@ REDUNDANT the superseded read is dropped from the renewal
 ## Full canonical suite
 
 ```text
-npm test    685 tests · 679 pass · 0 fail · 6 todo · exit 0 · 923.6s
+npm test                     711 tests · 705 pass · 0 fail · 6 todo · exit 0
+npm run test:delegation-e2e   15 tests ·  15 pass · 0 fail · exit 0
 ```
 
 The six `todo` entries are the pre-existing open findings in `test/claude-harness-guard.test.ts`,
 marked `todo` so they stay visible without failing the run. They predate this milestone, belong to
 the outstanding guard patch, and are untouched by it — that file is not in this change set.
+
+## The transport gate, and the fixture-lane zero-manual-Run proof
+
+Built after the design gate was locally accepted, and deliberately stopping short of production
+activation. Nothing here changes production policy: `.claude/` is untouched, no
+`goalUiDelegationId` is named anywhere, and no module in `src/` constructs the dispatch plane or
+the router. Every delegation row in production is inert, and Run stays human.
+
+### A new protocol revision, because v4 is frozen
+
+Delegated dispatch speaks **v5** — `browser.chatgpt.native.delegation.v5` — as a parallel file,
+the convention this repository already follows for v3 → v4. Adding these verbs to v4 would have
+given every existing v4 session a capability it was never admitted for, which is precisely what the
+freeze exists to prevent.
+
+The identity does real work rather than being bookkeeping. A delegation binds `adapterId`, so a
+delegation issued for v5 cannot be used by a v4 session, and a v4 session cannot speak v5 verbs.
+
+**v5 is narrower than v4.** It has no `tool.call`:
+
+```text
+hello · session.bind · session.unbind · ping · verbs.list · run.stage · run.dispatch · run.result
+```
+
+On v4 the browser names a tool and its arguments and the gateway runs it. Here it stages a
+candidate — inert — and later asks for it by reference, so the tool that runs is the one in the
+stored row. The dispatch envelope has no tool, no arguments, and no way to change what was staged.
+A reduction in browser authority, which is why this needs no stronger-isolation decision under
+ADR-0019.
+
+### The router's one job
+
+Every envelope carries a `sessionId`, because the framing needs one to route. The router **never
+uses it as identity**: it compares it against the connection the gateway admitted and refuses a
+mismatch. Without that comparison the field would be worse than useless — routable, plausible, and
+attacker-chosen. With it, it is a routing hint that has to agree with a fact.
+
+The router adds no policy. Every refusal it returns is either a parse failure or the plane's own
+code, verbatim; there is no branch in it that can admit what the plane refused.
+
+### The extension holds nothing
+
+`browser/extension/delegated-dispatch-core-v5.js` builds two envelopes and reads the answers. No
+delegation state, no expiry, no budget counter, no authority label. It holds a delegation *id*,
+which is a reference and not a credential. If it were replaced wholesale by a hostile file, the
+worst it could do is ask; the answers would not change.
+
+Two behaviours are tested because their absence would be quietly expensive: it does not retry a
+refused dispatch (asking again is how a budget gets drained by a loop that thinks it knows better
+than the refusal), and it does not dispatch what it staged on the human path.
+
+### The zero-manual-Run proof, and exactly what it proves
+
+`test/delegated-dispatch-e2e.acceptance.ts`, 15 tests, in the ADR-0027 fixture-only lane against a
+store and a "config" the lane created for itself.
+
+```text
+delegated Run end to end, no human gesture   STAGED -> CLAIMED -> DISPATCHED -> RESULTED
+one delegation, many Runs                    stops exactly at maxActions
+replay                                       PROPOSAL_NOT_STAGED, one slot total
+wrong session                                SESSION_MISMATCH, at the transport, nothing spent
+wrong workspace / origin / tool              refused at staging, never queued
+expired / revoked delegation                 read at the moment of use
+delegation not named in config               DELEGATION_NOT_CONFIGURED, even with another named
+every extra field on the wire                ENVELOPE_MALFORMED, refused not ignored
+v5 verb surface                              no issuance verb, no tool.call
+reconnect                                    a fresh port is unbound and spends nothing
+restart after CLAIMED                        no double-run, no resurrection, slot stays spent
+restart after DISPATCHED                     no re-run
+attachResult identity                        another context is refused; owner attaches once
+refusal audit                                DELEGATED_RUN_REFUSED, reason code, slot flag, no content
+kill switch                                  stops dispatch over the wire, pauses without revoking
+```
+
+**What it proves:** the transport and the policy work together, end to end, with nothing clicking
+anything and no UI involved at all.
+
+**What it does not prove, and is not evidence for:** that anyone authorised this in production.
+Issuing a delegation and naming it are human acts; in the lane they are function calls, because
+that is what ADR-0027's lane is for. This suite is the evidence that the thing behind the
+activation gate works — not evidence for opening it.
+
+The lane's new `delegation()` surface is imported by the lane only. The isolation suite now asserts
+that exemption is *earned* rather than declared: the lane is excluded from `tsconfig.build.json`,
+and `harness-authority.test.ts` separately proves no production module imports the lane.
+
+### Gates
+
+```text
+delegation + transport suites      128/128 pass  (6 files, in `npm test`)
+npm run test:delegation-e2e         15/15 pass    (fixture-lane E2E; `.acceptance.ts`, so it has
+                                   its own target, as the lease and business acceptances do)
+npm run test:delegation-mutations  82 applied, 76 caught, 6 redundant-by-design, 0 survived
+npm run typecheck / build          exit 0
+npm test (full canonical suite)    see below
+```
+
+Two mutations found real gaps while writing this, both fixed rather than filed: nothing in the
+transport suite refused a *stage* through the router, so dropping that refusal branch fell through
+to a success envelope carrying undefined ids; and the sixth redundant-by-design entry is now
+documented with its reason — substituting the envelope's session for the connection's is
+unobservable because `handle` compares the two and refuses a mismatch before that call is reached,
+and the comparison itself has its own mutation, which is caught.
+
+### Third review, of the transport — nine findings, all closed
+
+The transport was reviewed independently once built. The core property held: the router is a thin
+seam, refusals pass through verbatim, the envelope's session is compared rather than believed, an
+unbound port does nothing, and there is no `tool.call` and no issuance verb. Nine findings came
+with that, and three of them were claims I had made that the code did not support.
+
+#### 1 — "v5 is narrower than v4" was half true, and I reasoned from the favourable half
+
+**The most serious finding, and it invalidated an argument rather than a sentence.** v5 dropped
+`tool.call`, and with it every per-tool argument schema v4 had. In their place: "any finite JSON up
+to 256 KB". Measured, before the fix:
+
+```text
+v4 refuses  { query: 5000 bytes, max_results: 99999, extra: true }   (caps: 256 bytes, 50, strict)
+v5 ACCEPTS  the same arguments
+```
+
+So v5 was narrower in verbs and **wider in arguments** — and the protocol header used "narrower"
+to conclude that no stronger-isolation decision was needed under ADR-0019. That conclusion rested
+on the half of the comparison that happened to be favourable.
+
+Worse, the reviewer found a field-name trap underneath it. Every WAG tool resolves its workspace
+from `arguments.workspace_id`; the delegation binds the staged `workspaceId`. Different fields. A
+proposal bound to one workspace could carry arguments naming another — and did, end to end, with
+the foreign id preserved verbatim into the audit row. My own E2E fixture baked the divergence in,
+which would have normalised it for whoever wrote the executor.
+
+**Closed** by `validateStageableArguments`: a staged candidate must be an envelope **v4 itself
+would have accepted**, checked by building a v4 `tool.call` and parsing it rather than restating
+eleven schemas that could drift. A tool the frozen surface does not define cannot be staged at all,
+and `arguments.workspace_id` must equal the staged `workspaceId`. The comparison in the header now
+states all three directions — narrower in verbs, identical in arguments, and new in the Run
+transition, which is the point of the revision and is bounded by the delegation rather than by the
+verb count. Three mutations, all caught.
+
+#### 2 — "activation is two human steps and no code change" was false
+
+And the same paragraph said so two sentences earlier. Applying the patch and naming an id today
+changes nothing observable. **Closed** by listing what is actually missing, measured: nothing in
+`src/` constructs the plane or the router; `goalUiDelegationId` is read by no module; the native
+host speaks v4 only; the shipped extension does not load the v5 core; `abandonExpiredClaims` has no
+caller; and v5 routes no human-Run verb, so it is delegated-only today. The ADR, this receipt and
+the pending patch all say so now.
+
+#### 3 — the new adapter identity had no correlation shape
+
+v4 requires a server-minted correlation because whoever chooses the string can join an existing
+session. A delegation binds `sessionId`, and `sessionId` derives from the correlation — so the
+adapter that can cause a Run would have had the *weakest* correlation shape of any of them, by
+default rather than by decision. **Closed**: the registry defaults the delegation adapter to the
+strict shape, so it cannot be lost by forgetting an argument. Test and mutation.
+
+#### 4 — "a v4 session cannot speak these verbs — structural" was unenforced
+
+Nothing compared the connection's adapter to v5's, and the reviewer drove a full `DELEGATED_RUN`
+through a router built over a v4-identity connection, with `browser.chatgpt.native.operator.v4` in
+the audit row. The only adapter check was `connection.adapterId === bindings.adapterId`, which is
+self-referential. **Closed**: the router refuses any connection that is not the v5 identity, at
+construction. Test and mutation.
+
+#### 5 — the extension's correlation guard was defeated by the input it did not validate
+
+`stageAndDispatch` took two request ids and never checked they differed. With both equal, a
+transport that answered only the stage call had its answer accepted as the dispatch answer, and the
+core reported a dispatch that never happened — a state lie, and exactly what its own header said
+could not happen. **Closed**: refused before anything is sent. Test and mutation.
+
+#### 6 — no test pinned that the kill switch is read live
+
+Every kill-switch test reconnected first, so an implementation that snapshotted the switch at
+construction would have passed all of them — including the ones in the settled layer. `npm run
+lease:stop` promises to work "in every WAG process, without any of them cooperating", which means
+an open port too. **Closed**: a test toggles the switch against one already-bound router. The same
+shape is now covered for expiry.
+
+#### 7, 8, 9 — smaller, all closed
+
+- **7.** `protocol-v5.ts` had no mutations at all, so "0 survived" said nothing about the schema.
+  Two added: `.strict()` on the dispatch envelope, and the size ceiling. Both caught.
+- **8.** The router kept its own copy of the verb list, and the only test comparing the two lived in
+  an `.acceptance.ts` file that `npm test` does not glob. It now imports the one list.
+- **9.** Attaching a result to a proposal that never ran reported `RESULT_ALREADY_ATTACHED` —
+  telling an operator the opposite of the truth. Now `PROPOSAL_NOT_DISPATCHED`.
+
+#### Observations taken
+
+- `ACTION_LIMIT_REACHED` is unreachable through the transport: staging caps at `maxActions` rows
+  first, so the budget is enforced by `STAGING_LIMIT_REACHED`. Same number, different mechanism;
+  the E2E test name said "stops exactly at maxActions", which describes the queue cap. Both are
+  real bounds and both are tested — the wording is now accurate about which one fires.
+- Human-path staging accepts any exact `https` origin and any workspace, because there are no
+  bindings on that path to compare against. Inert today (no v5 verb Runs it) and bounded at 512
+  rows per context. The ADR's "every value is compared against the bindings" now says which values
+  and on which path.
+- One mutation ("staging input validation is dropped") turned out to be subsumed by the new v4
+  argument check for every case the suite tested. Rather than mark it redundant, I found the case
+  where the two do not overlap — `health` takes no `workspace_id`, so nothing cross-checks the
+  staged `workspaceId` — and tested that. It is caught again.
 
 ## Boundaries
 
@@ -394,6 +598,14 @@ plane, and the browser-reachable port has no issuance method at runtime.
 
 ## Not done here
 
-Native-host protocol, the extension request path, the end-to-end zero-manual-Run proof, and the
-restart/reconnect proof against a live browser. Those follow this gate, and only after a human
-applies the rule patch.
+The production activation, deliberately — and the runtime wiring, which a review corrected me on:
+the two human steps are the gate but are **not sufficient**. Nothing in `src/` constructs the plane
+or the router, `goalUiDelegationId` is read by no module, the native host speaks v4 only, the
+shipped extension does not load the v5 core, `abandonExpiredClaims` has no caller, and v5 routes no
+human-Run verb. ADR-0029 now lists all six. The authority model and its transport are complete and
+proved; the wiring is not built, and should not be built speculatively ahead of the rule.
+
+Also not done: a live-browser proof through the real native host and the shipped extension. The
+transport is proved against the real router, the real plane and a real store; the last mile — a
+Chrome/Edge extension speaking v5 over the native port — needs the activation gate opened first,
+because it would perform a real `DELEGATED_RUN`.

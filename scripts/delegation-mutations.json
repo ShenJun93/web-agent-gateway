@@ -395,8 +395,8 @@
     "name": "attachResult drops its ownership check",
     "file": "src/goal-ui-delegation-dispatch.ts",
     "suite": "test/goal-ui-delegation-planes.test.ts",
-    "from": "    if (proposal.sessionId !== input.connection.sessionId\n      || proposal.adapterId !== input.connection.adapterId) {\n      return { ok: false, code: 'PROPOSAL_NOT_OWNED', detail: 'staged by a different browser context' };\n    }\n    const attached = this.port.attachRunResult",
-    "to": "    if (false) {\n      return { ok: false, code: 'PROPOSAL_NOT_OWNED', detail: 'unreachable' };\n    }\n    const attached = this.port.attachRunResult"
+    "from": "    if (proposal.sessionId !== input.connection.sessionId\n      || proposal.adapterId !== input.connection.adapterId) {\n      return { ok: false, code: 'PROPOSAL_NOT_OWNED', detail: 'staged by a different browser context' };\n    }\n    // Distinguish the two reasons",
+    "to": "    if (false) {\n      return { ok: false, code: 'PROPOSAL_NOT_OWNED', detail: 'unreachable' };\n    }\n    // Distinguish the two reasons"
   },
   {
     "name": "the dispatch rate limit is dropped",
@@ -446,5 +446,131 @@
     "suite": "test/proposal-fingerprint.test.ts",
     "from": "      if (!(index in value)) throw new NonCanonicalValueError('an array has holes');",
     "to": "      if (false) throw new NonCanonicalValueError('unreachable');"
+  },
+  {
+    "name": "the router believes the session in the envelope",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    if (envelope.sessionId !== this.options.connection.sessionId) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the router lets an unbound port act",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    if (!this.bound) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "REDUNDANT the router passes the envelope session to the plane",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "      const outcome = this.options.plane.authorizeDelegatedRun({\n        connection: this.options.connection,",
+    "to": "      const outcome = this.options.plane.authorizeDelegatedRun({\n        connection: { ...this.options.connection, sessionId: envelope.sessionId },"
+  },
+  {
+    "name": "the router admits what the plane refused",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "      if (!outcome.decision.admitted) {\n        return errorEnvelope(envelope.requestId, outcome.decision.code, outcome.decision.detail);\n      }",
+    "to": "      if (false) {\n        return errorEnvelope(envelope.requestId, 'REFUSED', 'unreachable');\n      }"
+  },
+  {
+    "name": "the router drops the stage refusal",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "      if (!outcome.staged) return errorEnvelope(envelope.requestId, outcome.code, outcome.detail);",
+    "to": "      if (false) return errorEnvelope(envelope.requestId, 'REFUSED', 'unreachable');"
+  },
+  {
+    "name": "the extension retries a refused dispatch",
+    "file": "browser/extension/delegated-dispatch-core-v5.js",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "  if (!dispatched.ok) return { phase: 'dispatch', proposalId, ...dispatched };",
+    "to": "  if (!dispatched.ok) { await send(dispatchEnvelope); return { phase: 'dispatch', proposalId, ...dispatched }; }"
+  },
+  {
+    "name": "the extension dispatches what it staged on the human path",
+    "file": "browser/extension/delegated-dispatch-core-v5.js",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "  if (input.delegationId === undefined) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "the extension accepts a response to another request",
+    "file": "browser/extension/delegated-dispatch-core-v5.js",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "  if (response.requestId !== requestId) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "the extension spells an absent delegation as undefined",
+    "file": "browser/extension/delegated-dispatch-core-v5.js",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "  if (input.delegationId !== undefined) envelope.delegationId = input.delegationId;",
+    "to": "  envelope.delegationId = input.delegationId;"
+  },
+  {
+    "name": "staged arguments are no longer bounded by the v4 schema",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    if (argumentsInvalid) return refuseStage('STAGING_INPUT_INVALID', argumentsInvalid);",
+    "to": "    if (false) return refuseStage('STAGING_INPUT_INVALID', argumentsInvalid ?? '');"
+  },
+  {
+    "name": "arguments.workspace_id need not match the staged workspace",
+    "file": "src/browser-adapter/protocol-v5.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    if (args.workspace_id !== input.workspaceId) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "a staged tool need not exist on the frozen surface",
+    "file": "src/browser-adapter/protocol-v5.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    parseBrowserOperatorRequest(envelope);",
+    "to": "    if (false) parseBrowserOperatorRequest(envelope);"
+  },
+  {
+    "name": "the router accepts a non-v5 connection",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    if (options.connection.adapterId !== BROWSER_DELEGATION_ADAPTER_ID) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the extension reuses one request id for both calls",
+    "file": "browser/extension/delegated-dispatch-core-v5.js",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "  if (input.requestId === input.dispatchRequestId) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "a never-dispatched proposal reports the wrong result code",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    if (this.port.getStagedProposalRow(input.proposalId)?.state === 'STAGED') {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the delegation adapter loses its strict correlation shape",
+    "file": "src/adapter-admission.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    if (adapterId === BROWSER_DELEGATION_ADAPTER_ID && correlationPattern === undefined) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the v5 dispatch schema stops being strict",
+    "file": "src/browser-adapter/protocol-v5.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "  delegationId: opaqueRef,\n  proposalId: opaqueRef,\n}).strict();",
+    "to": "  delegationId: opaqueRef,\n  proposalId: opaqueRef,\n});"
+  },
+  {
+    "name": "the v5 envelope size ceiling is dropped",
+    "file": "src/browser-adapter/protocol-v5.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "  if (serializedDispatchBytes(value) > DELEGATED_DISPATCH_MAX_BYTES) {",
+    "to": "  if (false) {"
   }
 ]

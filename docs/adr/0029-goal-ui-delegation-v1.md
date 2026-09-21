@@ -106,6 +106,38 @@ deliberately does not re-dispatch: WAG cannot know whether a dispatch in flight 
 so the only honest reading of a crash there is "spent and over". Resurrecting it would be the
 silent double-run the state machine exists to prevent.
 
+### The transport: a new revision, narrower than the one it sits beside
+
+Delegated dispatch speaks **protocol v5**, `browser.chatgpt.native.delegation.v5`, as a parallel
+file to v4 rather than an edit of it. v4 is frozen, and the freeze exists for this case: adding
+these verbs to v4 would give every existing v4 session a capability it was never admitted for.
+
+The identity earns its keep twice. A delegation binds `adapterId`, so a delegation issued for v5
+cannot be used by a v4 session, and a v4 session cannot speak these verbs at all. The isolation is
+structural rather than a check someone has to remember.
+
+**v5 is narrower than v4, not wider.** There is no `tool.call` on it. On v4 the browser names a
+tool and its arguments and the gateway runs it; here the browser stages a candidate, which is
+inert, and later asks for it by reference — so the tool that runs is the one in the stored row, and
+the dispatch message has no tool, no arguments, and no way to change what was staged. That is a
+reduction in browser authority, which is why this revision needs no stronger-isolation decision
+under ADR-0019.
+
+```text
+hello · session.bind · session.unbind · ping · verbs.list · run.stage · run.dispatch · run.result
+```
+
+`run.dispatch` carries two opaque references. `run.stage` carries the candidate, which is bounded
+data: every value in it is compared against the bindings and can only narrow what is allowed.
+Authority is resolved server-side from the staged row — the browser chooses what to *ask for*,
+never which authority applies.
+
+The router is the seam, and its one job is that the message contributes nothing but references.
+Every envelope carries a `sessionId` because the framing needs one to route; the router **never
+uses it as identity**, comparing it against the admitted connection and refusing a mismatch. A
+field that is routable, plausible and attacker-chosen is worse than useless without that
+comparison, and with it is a routing hint that has to agree with a fact.
+
 ### The capability boundary is an object, not an import graph
 
 The dispatch plane is constructed with a narrow **port**: a frozen plain object carrying twelve
@@ -201,7 +233,36 @@ browser holds none.
 individually observable. They are kept as backstops against a change to the isolation level, which
 is pinned by its own test. Recorded because calling them three independent defences would be false.
 
+## What is still unwired, and what activation therefore actually takes
+
+An earlier draft of this section said activation was "two human steps and no code change: apply the
+rule patch, then name a `goalUiDelegationId`". That is false, and the same paragraph said so two
+sentences earlier — a review caught the contradiction. Doing those two things today changes
+nothing observable, and an operator who did them would go looking for what they got wrong.
+
+**The two human steps are necessary and are the gate.** They are not sufficient. What is still
+missing, measured rather than estimated:
+
+```text
+nothing in src/ constructs the dispatch plane or the router   only the fixture lane does
+goalUiDelegationId is parsed and read by no module            src/private-config.ts:50
+the native host speaks v4 only                                no v5 frame route exists
+the shipped extension loads only the v4 cores                 the v5 core is not imported
+abandonExpiredClaims has no caller                            a crash leaves a CLAIMED row unreaped
+v5 has no verb that records a human Run                       recordHumanRun is routed by nothing
+```
+
+The last two matter most for an operator. Without a reaper, a crash between CLAIM and DISPATCH
+strands a slot permanently. Without a human-Run verb, a v5 session can stage on the human path and
+then have no way to Run it — so v5 today is delegated-only, and a session that wants the human path
+must still use v4.
+
+So the honest statement is: **the authority model and its transport are complete and proved; the
+runtime wiring is not built.** The gate is the right place to stop regardless, because the wiring
+is exactly the work that should not be done speculatively ahead of the rule that permits it.
+
 ## Evidence
 
 See `docs/benchmarks/2026-09-21-goal-ui-delegation-design-gate.md` for the measured gate, the
-adversarial review findings and their disposition, and the mutation battery.
+adversarial review findings and their disposition, the transport, the fixture-lane end-to-end
+proof, and the mutation battery.

@@ -181,6 +181,47 @@ true and is unchanged by this patch. Append to that bullet:
   Claude cannot write, widen or reach around.
 ```
 
+## 5. A second file needs one line: `.claude/rules/wag-primary-operator.md`
+
+A review pointed out that this patch touched only `human-presence-boundary.md`, while
+`wag-primary-operator.md` carries the list of frozen adapter identities — and that list is what
+Claude reads at the moment of decision. Without this, the rule file is stale on the one thing it
+exists to state.
+
+Find:
+
+```markdown
+Adapter identities are frozen: `browser.chatgpt.native.verify.v3` / protocol 3, and
+`browser.chatgpt.native.operator.v4` / protocol 4. A v1, v2 or v3 session never gains v4 authority.
+```
+
+Replace with:
+
+```markdown
+Adapter identities are frozen: `browser.chatgpt.native.verify.v3` / protocol 3,
+`browser.chatgpt.native.operator.v4` / protocol 4, and `browser.chatgpt.native.delegation.v5` /
+protocol 5. A session never gains a successor's authority by talking a newer dialect.
+
+v5 (ADR-0029) carries delegated dispatch and **nothing else**: it has no `tool.call`, its staged
+arguments are validated against v4's own per-tool schemas, and the only thing it adds over v4 is
+the Run transition — bounded by a delegation a human issued and named, never by the verb list. It
+requires a server-minted correlation, as v4 does and for a stronger reason: a delegation binds the
+session id that the correlation derives.
+```
+
+## 6. What this patch does *not* do
+
+It does not activate anything. After applying it, delegated Run is still off, because:
+
+- no `goalUiDelegationId` is named in any configuration, and naming one is a separate human act;
+- nothing in `src/` constructs the dispatch plane or the router;
+- the native host speaks v4 only, and the shipped extension does not load the v5 core;
+- `abandonExpiredClaims` has no caller, so a crash between CLAIM and DISPATCH strands a slot;
+- v5 routes no human-Run verb, so it is delegated-only today.
+
+The first two are the gate. The last four are unbuilt wiring, listed so that applying this patch
+does not read as "and now it works".
+
 ## Verification after applying
 
 ```bash
@@ -192,5 +233,5 @@ This artifact's own digest. It is `sha256` over this file with the single `sha25
 line below removed (including its newline), because a digest cannot cover itself:
 
 ```text
-sha256(this file, digest line removed) = b814427ad29318535e0b25b63153dc14e149ad271c5cb862545f95101024b49d
+sha256(this file, digest line removed) = bedf154361e8bd23dae8173cc8ce6594fa9c38cea097c17ec18422e6e2fd67de
 ```

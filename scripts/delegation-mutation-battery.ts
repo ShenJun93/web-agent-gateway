@@ -10,13 +10,19 @@
  * mutation still passes is a guard no test reaches, which is the defect class every prior
  * security review of this project found.
  *
- * A name prefixed `REDUNDANT ` is *expected* to survive. Those are early state reads that the
- * single-assignment `UPDATE` in the same transaction also covers, kept as backstops against a
- * change to the isolation level. The redundancy is not asserted, it is measured: a second
- * connection's `BEGIN IMMEDIATE` is refused in about a millisecond while one is open, and
- * `BEGIN DEFERRED` is granted — so the lock carries the property and these are the layers that
- * survive it being weakened. A mutation changing the isolation level itself is in the list and
- * must be CAUGHT.
+ * A name prefixed `REDUNDANT ` is *expected* to survive, and each one has a stated reason:
+ *
+ *  - the five store mutations are early state reads that the single-assignment `UPDATE` in the
+ *    same transaction also covers, kept as backstops against a change to the isolation level;
+ *  - the router mutation substituting the envelope's session for the connection's is unobservable
+ *    because `handle` compares the two and refuses a mismatch *before* reaching that call, so at
+ *    that point they are provably equal. The comparison itself has its own mutation, and it is
+ *    caught.
+ *
+ * For the store five, the redundancy is measured rather than asserted: a second connection's
+ * `BEGIN IMMEDIATE` is refused in about a millisecond while one is open, and `BEGIN DEFERRED` is
+ * granted — so the lock carries the property and these are the layers that survive it being
+ * weakened. A mutation changing the isolation level itself is in the list and must be CAUGHT.
  *
  * Sources are restored in a `finally`, because two earlier runs of an equivalent script were
  * interrupted and left the tree mutated.

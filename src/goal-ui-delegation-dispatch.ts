@@ -48,6 +48,7 @@ import {
   type UiDelegationBindings,
   type UiDelegationRecord,
 } from './goal-ui-delegation.js';
+import { validateStageableArguments } from './browser-adapter/protocol-v5.js';
 import { canonicalProposalFingerprint, NonCanonicalValueError } from './proposal-fingerprint.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 import type { CanonicalValue } from './proposal-fingerprint.js';
@@ -310,6 +311,16 @@ export class UiDelegationDispatchPlane {
     if (origin !== input.origin) {
       return refuseStage('STAGING_INPUT_INVALID', 'origin must be an exact origin');
     }
+
+    // A staged candidate must be something the frozen v4 surface would have accepted, and its
+    // arguments must name the workspace it is staged for. Without this, v5's argument surface was
+    // strictly *wider* than v4's — measured: a 5 KB query and a `max_results` of 99999 where v4
+    // caps them at 256 bytes and 50 — and `arguments.workspace_id`, which is what every tool
+    // actually resolves its workspace from, could name a workspace the delegation never bound.
+    const argumentsInvalid = validateStageableArguments({
+      tool: input.tool, workspaceId: input.workspaceId, arguments: input.arguments,
+    });
+    if (argumentsInvalid) return refuseStage('STAGING_INPUT_INVALID', argumentsInvalid);
 
     try { this.rateLimit.charge({ ...input.connection }, this.now()); }
     catch (error) {
@@ -582,6 +593,16 @@ export class UiDelegationDispatchPlane {
     if (proposal.sessionId !== input.connection.sessionId
       || proposal.adapterId !== input.connection.adapterId) {
       return { ok: false, code: 'PROPOSAL_NOT_OWNED', detail: 'staged by a different browser context' };
+    }
+    // Distinguish the two reasons the store can refuse. It returns false both when a result is
+    // already attached and when there is no audit row at all — and reporting the first for the
+    // second told an operator the opposite of the truth: nothing was attached, and no Run ever
+    // happened.
+    if (this.port.getStagedProposalRow(input.proposalId)?.state === 'STAGED') {
+      return {
+        ok: false, code: 'PROPOSAL_NOT_DISPATCHED',
+        detail: 'that proposal has not been dispatched, so there is no result to attach',
+      };
     }
     const attached = this.port.attachRunResult(input.proposalId, input.resultId, this.now());
     if (!attached) {

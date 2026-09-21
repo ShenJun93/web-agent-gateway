@@ -8,6 +8,17 @@ export const BROWSER_INSPECT_ADAPTER_ID = 'browser.chatgpt.native.inspect.v2' as
 export const BROWSER_VERIFY_ADAPTER_ID = 'browser.chatgpt.native.verify.v3' as const;
 /** The operator successor (ADR-0026). Distinct so no v1/v2/v3 session gains proposal authority. */
 export const BROWSER_OPERATOR_ADAPTER_ID = 'browser.chatgpt.native.operator.v4' as const;
+/**
+ * The delegated-dispatch successor (ADR-0029). Distinct so no v4 session gains dispatch authority,
+ * and so a delegation — which binds `adapterId` — cannot be used by a session of any other kind.
+ *
+ * Narrower than v4 in verbs — it has no `tool.call`; the browser stages a candidate and later asks
+ * for it by reference, so the tool that runs is the one in the stored row. Its arguments are bounded
+ * by v4's own per-tool schemas, so it is not wider there either. What it *does* add is the Run
+ * transition itself, which is the point of the revision and is bounded by the delegation, not by
+ * the verb count.
+ */
+export const BROWSER_DELEGATION_ADAPTER_ID = 'browser.chatgpt.native.delegation.v5' as const;
 
 /**
  * The correlation shape the operator adapter requires.
@@ -22,6 +33,19 @@ export const BROWSER_OPERATOR_ADAPTER_ID = 'browser.chatgpt.native.operator.v4' 
  * only, and changing them would alter a frozen contract.
  */
 export const OPERATOR_CORRELATION_PATTERN = /^session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The same shape, required of the delegation adapter — and required *by default*, not by whoever
+ * remembers to pass it.
+ *
+ * The reasoning above applies here with more force, and a review found it unapplied. A delegation
+ * binds `sessionId`, and `sessionId` is derived from the correlation; so a caller who can choose
+ * the correlation can join the exact session a delegation is bound to. The constructor's pattern
+ * argument is optional, and an omitted one means the permissive v1/v2/v3 shape — so the adapter
+ * that can cause a Run would have had the weakest correlation shape of any of them, because of a
+ * default rather than a decision.
+ */
+export const DELEGATION_CORRELATION_PATTERN = OPERATOR_CORRELATION_PATTERN;
 
 const correlationId = z.string().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 
@@ -39,7 +63,13 @@ export class BrowserAdmissionRegistry {
     private readonly store: SqliteDurableStore,
     private readonly now: () => number = Date.now,
     private readonly correlationPattern?: RegExp,
-  ) {}
+  ) {
+    // Defaulted rather than demanded, so the strict shape cannot be lost by forgetting an
+    // argument. An explicit pattern still wins, for a caller that means something narrower.
+    if (adapterId === BROWSER_DELEGATION_ADAPTER_ID && correlationPattern === undefined) {
+      this.correlationPattern = DELEGATION_CORRELATION_PATTERN;
+    }
+  }
 
   admit(rawCorrelation: string): AdmitBrowserSessionResult {
     const validatedCorrelation = correlationId.parse(rawCorrelation);

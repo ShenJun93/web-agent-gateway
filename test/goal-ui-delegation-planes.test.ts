@@ -394,8 +394,8 @@ test('every out-of-scope dispatch fails closed and spends nothing', async (t) =>
   const delegationId = h.issue();
 
   for (const [label, over] of [
-    ['TOOL_NOT_DELEGATED', { tool: 'git.commit' }],
-    ['WORKSPACE_MISMATCH', { workspaceId: 'ws_2' }],
+    ['TOOL_NOT_DELEGATED', { tool: 'repo.snapshot', arguments: { workspace_id: 'ws_1' } }],
+    ['WORKSPACE_MISMATCH', { workspaceId: 'ws_2', arguments: { workspace_id: 'ws_2', query: 'needle' } }],
     ['ORIGIN_NOT_ALLOWED', { origin: 'https://evil.example' }],
   ] as Array<[string, Record<string, unknown>]>) {
     const outcome = h.stage(delegationId, over);
@@ -664,6 +664,29 @@ test('staging validates its inputs rather than trusting a parameter type', async
   }
 });
 
+test('the staged field bounds catch what the v4 argument schema cannot see', async (t) => {
+  // These two checks overlap almost everywhere, which a mutation exposed: with the field bounds
+  // removed, every case the suite tested still refused, because v4's argument schema or the origin
+  // parse caught it under the same code. This is where they do not overlap — `health` takes no
+  // `workspace_id`, so there is nothing for the argument schema to cross-check the staged
+  // `workspaceId` against, and only the field bound sees that it is 300 characters long.
+  //
+  // Reachable only on a direct plane call: through the router the envelope schema bounds the field
+  // first, so this is about the plane's own contract rather than the transport's.
+  const h = await harness(t);
+  const refused = h.dispatch().stageProposal({
+    connection: CONNECTION,
+    tool: 'health',
+    workspaceId: 'x'.repeat(300),
+    origin: 'https://chatgpt.com',
+    arguments: {},
+  });
+  assert.equal(refused.staged, false);
+  assert.equal((refused as unknown as { code: string }).code, 'STAGING_INPUT_INVALID');
+  assert.match((refused as unknown as { detail: string }).detail, /workspaceId must be a string of 1\.\.256/);
+  assert.equal(h.store.countAllStagedProposals(CONNECTION.sessionId, ADAPTER), 0);
+});
+
 test('an undelegated stage/run loop cannot grow the store without limit', async (t) => {
   // The queue bound alone was not a bound: it counts open rows, and running one frees a slot, so
   // a stage/run loop grew the tables without limit. Measured by a review.
@@ -758,7 +781,7 @@ test('a delegated proposal cannot be laundered through the human path', async (t
 test('every refusal is recorded as DELEGATED_RUN_REFUSED with its reason', async (t) => {
   const h = await harness(t);
   const delegationId = h.issue();
-  const proposalId = stagedId(h.stage(delegationId, { tool: 'file.read' }));
+  const proposalId = stagedId(h.stage(delegationId));
   const plane = h.dispatch();
 
   plane.authorizeDelegatedRun({ connection: CONNECTION, request: { delegationId, proposalId, goalId: 'x' } });
