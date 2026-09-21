@@ -1,5 +1,9 @@
 # A real DELEGATED_RUN happened — and then hit a structural dead end
 
+> **Superseded.** This receipt records a failed attempt and is kept as evidence of it.
+> The mission was later accepted: see `2026-09-22-wag-replacement-current-state.md`.
+> Nothing below has been edited.
+
 2026-09-22. Branch `feat/goal-ui-delegation-v1`. **`WAG_DC_REPLACEMENT` is not PASS.**
 
 The production browser proof reached further than ever before and then stopped on a gap that no

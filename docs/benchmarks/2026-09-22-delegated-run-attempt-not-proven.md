@@ -1,5 +1,9 @@
 # The delegated Run was not proven. What was, and what stopped it
 
+> **Superseded.** This receipt records a failed attempt and is kept as evidence of it.
+> The mission was later accepted: see `2026-09-22-wag-replacement-current-state.md`.
+> Nothing below has been edited.
+
 2026-09-22. Branch `feat/goal-ui-delegation-v1`. **`WAG_DC_REPLACEMENT` is not PASS.**
 
 The activation succeeded and both grants exist and compose correctly. The browser-level
