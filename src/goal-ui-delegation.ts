@@ -88,6 +88,14 @@ export type DelegationDenialCode =
   | 'PROPOSAL_INCONSISTENT'
   | 'PROPOSAL_NOT_STAGED'
   | 'PROPOSAL_NOT_FOR_THIS_DELEGATION'
+  /**
+   * The same logical action was already claimed under this delegation.
+   *
+   * Raised by the CLAIM transaction, over durable rows, so it holds when the extension's own
+   * suppression memory is gone — an extension reload, a cleared `chrome.storage.session`, an
+   * eviction, or a storage read that failed and read as empty. See `durable-store.ts`.
+   */
+  | 'PROPOSAL_REPLAY'
   | 'PROPOSAL_NOT_OWNED'
   | 'SESSION_MISMATCH'
   | 'ADAPTER_MISMATCH'

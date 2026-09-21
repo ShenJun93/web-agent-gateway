@@ -131,12 +131,20 @@ const bind = async (f: Fixture): Promise<void> => {
   assert.equal(bound.type, 'result');
 };
 
-const stage = async (f: Fixture): Promise<string> => {
+/**
+ * Stage one candidate.
+ *
+ * `query` defaults to a fresh value per call, because a delegation budgets *distinct* actions: two
+ * stagings with identical arguments are one action re-observed, and the store refuses the second
+ * as `PROPOSAL_REPLAY`. Tests that mean "another action" get one; a test that means "the same
+ * action again" passes the same query deliberately.
+ */
+const stage = async (f: Fixture, query = `needle_${randomUUID()}`): Promise<string> => {
   const staged = await f.coordinator.handle({
     version: 5, type: 'run.stage', requestId: `req_${randomUUID()}`,
     sessionId: CONNECTION.sessionId, delegationId: f.delegationId,
     tool: TOOL, workspaceId: WORKSPACE, origin: ORIGIN,
-    arguments: { workspace_id: WORKSPACE, query: 'needle' },
+    arguments: { workspace_id: WORKSPACE, query },
   });
   assert.equal(staged.type, 'result', JSON.stringify(staged));
   return (staged.result as { proposalId: string }).proposalId;
@@ -334,7 +342,8 @@ test('a restart does not reset the budget', async (t) => {
     version: 5, type: 'run.stage', requestId: `req_${randomUUID()}`,
     sessionId: CONNECTION.sessionId, delegationId: restarted.delegationId,
     tool: TOOL, workspaceId: WORKSPACE, origin: ORIGIN,
-    arguments: { workspace_id: WORKSPACE, query: 'needle' },
+    // A genuinely new action, so what refuses it is the budget and not the replay check.
+    arguments: { workspace_id: WORKSPACE, query: `needle_${randomUUID()}` },
   });
   assert.equal(staged.type, 'error');
   assert.equal((staged.error as { code: string }).code, 'STAGING_LIMIT_REACHED');

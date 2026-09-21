@@ -483,6 +483,8 @@ export class SqliteDurableStore {
     `);
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_staged_proposals_delegation ON staged_proposals(delegation_id);
+      CREATE INDEX IF NOT EXISTS idx_delegation_claims_fingerprint
+        ON delegation_claims(delegation_id, fingerprint);
       CREATE INDEX IF NOT EXISTS idx_staged_proposals_state ON staged_proposals(state, claimed_at);
       CREATE INDEX IF NOT EXISTS idx_run_authority_delegation ON run_authority(delegation_id);
       CREATE INDEX IF NOT EXISTS idx_refusals_delegation
@@ -1103,6 +1105,21 @@ export class SqliteDurableStore {
   }
 
   /** Slots this parent delegation has spent. A claim spends one; a dispatch spends none. */
+  /**
+   * Whether this delegation has already claimed a slot for this exact action.
+   *
+   * Read-only, and a convenience rather than the guarantee: it lets the plane refuse a re-observed
+   * candidate before a row is written, but two racing claims are separated by the transaction in
+   * `claimDelegatedDispatch`, not by this. Answering from outside the write lock can only be stale
+   * in the direction of *allowing* an attempt that the claim then refuses.
+   */
+  hasDelegationClaimForFingerprint(delegationId: string, fingerprint: string): boolean {
+    const row = this.db.prepare(
+      'SELECT 1 AS hit FROM delegation_claims WHERE delegation_id = ? AND fingerprint = ? LIMIT 1',
+    ).get(delegationId, fingerprint) as { hit?: unknown } | undefined;
+    return row !== undefined;
+  }
+
   countDelegationClaims(delegationId: string): number {
     const row = this.db.prepare('SELECT COUNT(*) AS n FROM delegation_claims WHERE delegation_id = ?')
       .get(delegationId) as { n: number };
@@ -1180,6 +1197,37 @@ export class SqliteDurableStore {
       }
       if (String(proposal.fingerprint) !== input.expectedFingerprint) {
         return refuse('PROPOSAL_INCONSISTENT', 'the staged identity changed since it was judged');
+      }
+
+      // The replay refusal, and the only one that survives the extension losing its memory.
+      //
+      // The extension suppresses a re-observed message from `chrome.storage.session`, which is
+      // ephemeral by design: it is cleared by an extension reload, evicted past 256 entries, and
+      // read as empty when the read itself fails. Every one of those re-offers the same provider
+      // message, which stages a *new* proposal id carrying the *same* WAG-computed fingerprint —
+      // and before this check that claimed a second slot and ran a second effect, with `maxActions`
+      // holding arithmetically throughout, which is exactly why it did not look wrong.
+      //
+      // So the bound lives here instead, in the transaction that spends the slot, over a row the
+      // browser cannot write. The fingerprint covers tool, workspace, origin, session, adapter and
+      // arguments, so two claims sharing one means the same logical action under the same
+      // delegation. The consequence is deliberate and worth stating plainly: `maxActions` bounds
+      // *distinct* actions, not dispatches. A genuine repeat of an identical call needs a new
+      // delegation, which is a human act.
+      // No `AND proposal_id != ?` here. An earlier draft had one, defensively, and a mutation
+      // proved it dead: this proposal cannot already hold a claim, because the state check above
+      // refuses anything that is not `STAGED` and a claim always leaves the row `CLAIMED`. A dead
+      // clause in the transaction the whole design rests on is worse than no clause.
+      const replayed = this.db.prepare(
+        `SELECT proposal_id FROM delegation_claims
+         WHERE delegation_id = ? AND fingerprint = ? LIMIT 1`,
+      ).get(input.delegationId, input.expectedFingerprint) as
+        { proposal_id?: unknown } | undefined;
+      if (replayed) {
+        return refuse(
+          'PROPOSAL_REPLAY',
+          `this delegation already claimed ${String(replayed.proposal_id)} for the same action`,
+        );
       }
 
       const used = this.db.prepare('SELECT COUNT(*) AS n FROM delegation_claims WHERE delegation_id = ?')

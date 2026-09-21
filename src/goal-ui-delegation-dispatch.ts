@@ -68,6 +68,7 @@ export interface DelegationDispatchPort {
   countOpenStagedProposals: SqliteDurableStore['countOpenStagedProposals'];
   countAllStagedProposals: SqliteDurableStore['countAllStagedProposals'];
   countDelegationClaims: SqliteDurableStore['countDelegationClaims'];
+  hasDelegationClaimForFingerprint: SqliteDurableStore['hasDelegationClaimForFingerprint'];
   claimDelegatedDispatch: SqliteDurableStore['claimDelegatedDispatch'];
   markDelegatedDispatched: SqliteDurableStore['markDelegatedDispatched'];
   recordHumanRun: SqliteDurableStore['recordHumanRun'];
@@ -79,7 +80,8 @@ export interface DelegationDispatchPort {
 export const DELEGATION_DISPATCH_PORT_METHODS = [
   'getUiDelegationRow', 'getStagedProposalRow', 'insertStagedProposal',
   'countStagedProposals', 'countOpenStagedProposals', 'countAllStagedProposals',
-  'countDelegationClaims', 'claimDelegatedDispatch', 'markDelegatedDispatched',
+  'countDelegationClaims', 'hasDelegationClaimForFingerprint',
+  'claimDelegatedDispatch', 'markDelegatedDispatched',
   'recordHumanRun', 'recordDelegatedRunRefusal', 'attachRunResult',
 ] as const;
 
@@ -406,6 +408,13 @@ export class UiDelegationDispatchPlane {
       }
       if (!bindings.allowedOrigins.includes(origin)) {
         return refuseStage('ORIGIN_NOT_ALLOWED', `${input.origin} is not a delegated origin`);
+      }
+      // Refuse a re-observed action before a row exists. This is a cost saving, not the bound:
+      // the guarantee is the CLAIM transaction, which repeats the check inside the write lock.
+      // Without it a rescan of a long conversation writes one staged row per proposal per rescan,
+      // all of them destined to be refused at dispatch.
+      if (this.port.hasDelegationClaimForFingerprint(input.delegationId, fingerprint)) {
+        return refuseStage('PROPOSAL_REPLAY', 'this delegation already claimed that exact action');
       }
       if (this.port.countStagedProposals(input.delegationId) >= bindings.maxActions) {
         return refuseStage(

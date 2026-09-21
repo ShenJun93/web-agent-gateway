@@ -560,7 +560,12 @@ test('one delegation authorises many in-scope Runs without a fresh grant', async
   const h = await harness(t);
   const delegationId = h.issue();
   const plane = h.dispatch();
-  const proposals = [0, 1, 2].map(() => stagedId(h.stage(delegationId)));
+  // Three *distinct* actions, because that is what a delegation budgets. Three copies of one
+  // action is one action re-observed, and `PROPOSAL_REPLAY` refuses the repeats — see
+  // `delegated-run-replay-durability.test.ts` for why that bound has to live in the store.
+  const proposals = [0, 1, 2].map(
+    (i) => stagedId(h.stage(delegationId, { arguments: { workspace_id: 'ws_1', query: `q${i}` } })),
+  );
 
   for (const [index, proposalId] of proposals.entries()) {
     const outcome = plane.authorizeDelegatedRun({
@@ -577,9 +582,12 @@ test('one delegation authorises many in-scope Runs without a fresh grant', async
 test('the action budget is a ceiling on the parent, and staging cannot outrun it', async (t) => {
   const h = await harness(t);
   const delegationId = h.issue({ maxActions: 2 });
-  const first = stagedId(h.stage(delegationId));
-  const second = stagedId(h.stage(delegationId));
-  assert.equal((h.stage(delegationId) as { code: string }).code, 'STAGING_LIMIT_REACHED');
+  const distinct = (query: string) => h.stage(delegationId, {
+    arguments: { workspace_id: 'ws_1', query },
+  });
+  const first = stagedId(distinct('one'));
+  const second = stagedId(distinct('two'));
+  assert.equal((distinct('three') as { code: string }).code, 'STAGING_LIMIT_REACHED');
 
   const plane = h.dispatch();
   for (const proposalId of [first, second]) {
@@ -588,6 +596,34 @@ test('the action budget is a ceiling on the parent, and staging cannot outrun it
         .decision.admitted, true,
     );
   }
+  assert.equal(h.store.countDelegationClaims(delegationId), 2);
+});
+
+test('maxActions bounds distinct actions, not dispatches, and a repeat is not a second action', async (t) => {
+  const h = await harness(t);
+  const delegationId = h.issue({ maxActions: 4 });
+  const plane = h.dispatch();
+
+  // The same tool, workspace, origin, session, adapter and arguments: one action, staged twice.
+  // Before the durable replay refusal this spent two of the four slots and ran twice.
+  const first = stagedId(h.stage(delegationId));
+  const firstRun = plane.authorizeDelegatedRun({
+    connection: CONNECTION, request: { delegationId, proposalId: first },
+  });
+  assert.equal(firstRun.decision.admitted, true);
+
+  const repeat = h.stage(delegationId);
+  assert.equal(repeat.staged, false, 'a re-observed action does not even stage');
+  assert.equal((repeat as { code: string }).code, 'PROPOSAL_REPLAY');
+  assert.equal(h.store.countDelegationClaims(delegationId), 1, 'and the budget is untouched');
+
+  // A genuinely different action still costs a slot, which is the half that must not regress.
+  const other = stagedId(h.stage(delegationId, { arguments: { workspace_id: 'ws_1', query: 'other' } }));
+  assert.equal(
+    plane.authorizeDelegatedRun({ connection: CONNECTION, request: { delegationId, proposalId: other } })
+      .decision.admitted,
+    true,
+  );
   assert.equal(h.store.countDelegationClaims(delegationId), 2);
 });
 
