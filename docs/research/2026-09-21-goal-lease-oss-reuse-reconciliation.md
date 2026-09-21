@@ -131,6 +131,25 @@ Browser Run is the transition from untrusted page content into a proposal. A lea
 
 The private stdio surface is the correct gesture-free surface because the structured caller proposes directly.
 
+## P1 transport staging after plan check
+
+The current operator plan is ChatGPT Plus. As of 2026-09-21, OpenAI's official ChatGPT developer-mode documentation lists apps/full MCP/developer mode for Business and Enterprise/Edu, and separately notes a Pro read/fetch exception. Plus is not listed as an eligible custom-MCP/developer-mode plan.
+
+Therefore P1 is staged instead of assuming an immediate Business upgrade:
+
+```text
+P1A = PLUS_BROWSER_VALUE_PROOF
+P1B = BUSINESS_SECURE_MCP_DIRECT_CUTOVER
+BUSINESS_UPGRADE = CONDITIONAL_ON_P1A_VALUE
+```
+
+P1A uses the already-accepted browser/native WAG path to measure whether WAG is useful enough to replace Desktop Commander for supported work. P1B preserves Secure MCP Tunnel + direct stdio as the preferred structured-provider path if the operator later upgrades to Business.
+
+This does not change the P0 Goal Lease design. P1A intentionally measures the remaining browser gestures; P1B is where the already-proven stdio Goal Lease path can eventually remove those transport-specific gestures.
+
+Current primary source:
+- https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt
+
 ## Reconciliation result
 
 ```text
@@ -139,6 +158,8 @@ GENERIC_POLICY_ENGINE = DO_NOT_EXPAND
 ACS = BENCHMARK/WRAP_LATER
 OPENSHELL_MXC = RUNTIME_BENCHMARK_LATER
 OAUTH_AGENT_AUTH = ALIGN_SEMANTICS_LATER
-P1_S1 = NO_GOAL_LEASE
+P1A_PLUS = BROWSER_NATIVE_VALUE_PROOF
+P1B_BUSINESS = SECURE_MCP_STDIO_DIRECT
+BUSINESS_UPGRADE = CONDITIONAL_ON_MEASURED_VALUE
 P0_REOPEN_REQUIRED = FALSE
 ```
