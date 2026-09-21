@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHarnessLane, HARNESS_LANE, type HarnessLane } from '../src/harness-authority.js';
 import { isKillSwitchEngaged } from '../src/goal-lease-kill-switch.js';
 import { affectedBytes } from '../src/durable-store.js';
-import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDenialCode } from '../src/goal-lease.js';
+import { evaluateGoalLease, MAX_LEASE_WINDOW_MS, type GoalLeaseBindings, type LeaseDenialCode } from '../src/goal-lease.js';
 
 /**
  * The guards an independent review found were reached by no test.
@@ -86,6 +86,18 @@ test('a lease whose validity window is not two finite numbers is refused', () =>
   assert.equal((ask(9_000, 8_000) as { code: string }).code, 'LEASE_MALFORMED');
   // And a sane window still works, so the new checks did not simply deny everything.
   assert.deepEqual(ask(0, 10_000), { admitted: true });
+});
+
+test('a lease may not be valid for longer than the ceiling', () => {
+  // O8. The review window is capped at five minutes while the lease window was unbounded, so a
+  // ten-year lease was exactly as valid as a ten-minute one.
+  const ask = (windowMs: number) => evaluateGoalLease({
+    lease: { leaseId: 'l', createdAt: 0, notBefore: 0, expiresAt: windowMs, bindings: BINDINGS },
+    now: 1, request: REQUEST, spend: { filesChanged: 0, bytesWritten: 0 }, killSwitch: false,
+  });
+  assert.deepEqual(ask(MAX_LEASE_WINDOW_MS), { admitted: true }, 'exactly the ceiling is allowed');
+  assert.equal(codeOf(ask(MAX_LEASE_WINDOW_MS + 1)), 'LEASE_MALFORMED');
+  assert.equal(codeOf(ask(365 * 24 * 60 * 60 * 1000)), 'LEASE_MALFORMED', 'a year is refused');
 });
 
 test('a lease cannot act on the gateway checkout it is running from', () => {

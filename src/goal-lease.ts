@@ -114,6 +114,15 @@ export interface LeaseSpend {
   readonly bytesWritten: number;
 }
 
+/**
+ * The longest a lease may be valid for: twelve hours.
+ *
+ * Chosen to cover a working day of continuous execution and not a weekend. It is an upper bound
+ * on how long an unattended grant can outlive the operator's attention, which is the property
+ * that matters; a shorter one is always available by setting `expiresAt`.
+ */
+export const MAX_LEASE_WINDOW_MS = 12 * 60 * 60 * 1000;
+
 const deny = (code: LeaseDenialCode, detail: string): LeaseDecision => ({ admitted: false, code, detail });
 
 /**
@@ -307,6 +316,13 @@ export function evaluateGoalLease(input: {
   }
   if (lease.expiresAt <= lease.notBefore) {
     return deny('LEASE_MALFORMED', 'the lease expires before it begins');
+  }
+  // A ceiling, because the review window is capped at five minutes while this was unbounded, and
+  // a lease valid for a decade is not a bounded grant in any sense the word is doing work. The
+  // operator can always issue another; they cannot easily notice one that never ends.
+  if (lease.expiresAt - lease.notBefore > MAX_LEASE_WINDOW_MS) {
+    return deny('LEASE_MALFORMED',
+      `a lease may not be valid for longer than ${MAX_LEASE_WINDOW_MS}ms`);
   }
   if (now < lease.notBefore) return deny('LEASE_NOT_YET_VALID', `not valid until ${lease.notBefore}`);
   if (now >= lease.expiresAt) return deny('LEASE_EXPIRED', `expired at ${lease.expiresAt}`);

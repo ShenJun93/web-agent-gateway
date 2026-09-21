@@ -4,6 +4,7 @@ Date: 2026-09-21
 Status: Accepted
 Depends on: ADR-0019, ADR-0023, ADR-0026, ADR-0027
 Evidence: `docs/benchmarks/2026-09-21-autonomous-goal-lease-v1-acceptance.md`
+Amends: ADR-0026 and ADR-0027 — see *Consequence for the invariant* below
 
 ## Context
 
@@ -88,10 +89,58 @@ credential or secret reads · filesystem access outside admitted roots · arbitr
 access to unrelated browser profiles or sessions
 ```
 
-Additionally, and checked above the path patterns rather than left to them: a lease cannot grant
-edits to its own authority. `.claude/`, `.git/`, `docs/adr/`, `AGENTS.md`, `CLAUDE.md`,
-`package.json` and `tsconfig.build.json` are refused even under a `**` pattern
-(`AUTHORITY_FILE_PROTECTED`). A lease that could rewrite the policy that bounds it is not a bound.
+Additionally, and checked above the path patterns rather than left to them, a lease cannot grant
+edits to its own authority. This has two halves, and the first alone was not enough:
+
+- **by name**: `.claude/`, `.git/`, `docs/adr/`, `AGENTS.md`, `CLAUDE.md`, `package.json` and
+  `tsconfig.build.json` are refused even under a `**` pattern (`AUTHORITY_FILE_PROTECTED`);
+- **by location**: a workspace resolving inside the checkout the running gateway was loaded from
+  is refused outright (`SELF_MODIFICATION_REFUSED`).
+
+The second exists because a review showed the first protected the *configuration* of authority
+while leaving every file that *implements* it — `goal-lease.ts` itself, the kill switch, the path
+policy, the extension manifest — grantable under an ordinary `src/**` pattern. Adding more names
+would have been an arms race against a list; refusing by location is exact, and costs a lease
+nothing when it targets an unrelated repository, where `src/foo.ts` is just a file.
+
+A lease is also bounded in time by a ceiling of twelve hours, not only by its own `expiresAt`.
+
+## Consequence for the invariant
+
+ADR-0027 restated the human-presence invariant as:
+
+```text
+LOCAL_OPERATOR_APPROVAL = REQUIRED_FOR_EVERY_EFFECT_ON_A_PRODUCTION_RECORD
+RUN_AND_APPROVAL = HUMAN_ON_THE_PRODUCTION_PATH
+```
+
+This decision authorises policy admission **on a production record, on the production path**, so
+both of those are now wrong as written. A review pointed out that leaving them unamended is the
+same defect ADR-0027 itself exists to correct — it was written because recording a carve-out only
+at the benchmark layer leaves the ADR-layer invariant reading as absolute to anyone following
+AGENTS.md's reading order. Repeating that one ADR later would be worse, not better.
+
+The invariant now reads:
+
+```text
+LOCAL_OPERATOR_APPROVAL = REQUIRED_FOR_EVERY_EFFECT_NOT_ADMITTED_BY_AN_ACTIVE_GOAL_LEASE
+RUN_AND_APPROVAL = HUMAN_UNLESS_A_LEASE_ADMITS_THE_ACTION
+GOAL_LEASE_ADMISSION = DETERMINISTIC_LOCAL_POLICY_OVER_DURABLE_RECORDS
+NO_LEASE_CONFIGURED = ADR_0026_UNCHANGED_IN_FULL
+```
+
+The last line is the important one. With no lease configured — which is every existing
+installation, because the config field did not exist until now — ADR-0026 holds exactly as
+written, and that is asserted by a test rather than by this paragraph.
+
+`.claude/rules/human-presence-boundary.md` still tells every agent that reads it that "no
+proposal becomes an effect without the operator's authenticated approval". That sentence is
+currently accurate only by accident, and becomes false the moment an operator configures a lease.
+It cannot be corrected here: that directory is denied to the agent by the harness's own rules, and
+a lease cannot grant it either, by design. The corrected text is prepared in the pending `.claude`
+patch and needs a human to apply it. **Until it is applied, do not enable a lease in production**
+— not because the mechanism is unsafe, but because the rule a future agent reads would be wrong,
+and that is exactly the failure this project keeps finding.
 
 ## How each security requirement is met
 
@@ -105,7 +154,7 @@ edits to its own authority. `.claude/`, `.git/`, `docs/adr/`, `AGENTS.md`, `CLAU
 | 6 | browser content untrusted | the decision reads durable rows, never proposal text |
 | 7 | cross-session isolation | unchanged; a lease adds constraints and relaxes none |
 | 8 | no self-widening | a lease is immutable once inserted; only revocation mutates it |
-| 9 | cannot grant its own policy | `AUTHORITY_FILE_PROTECTED`, above the patterns |
+| 9 | cannot grant its own policy | `AUTHORITY_FILE_PROTECTED` for configuration, **plus** `SELF_MODIFICATION_REFUSED` for any workspace inside the running gateway's checkout |
 | 10 | durable audit | `mutation_authority` + the existing `audit_events` and result hashes |
 | 11 | kill switch | consulted on every admission, first, before the lease is even loaded |
 | 12 | restart semantics | the lease and its spend are durable; a restart cannot refill a budget |
@@ -118,10 +167,15 @@ edits to its own authority. `.claude/`, `.git/`, `docs/adr/`, `AGENTS.md`, `CLAU
 - **It does not make the policy engine the only thing that matters.** Path policy, identity
   checks, rate limits and the execution CAS all still run; the lease is an *additional* gate, and
   removing any of the others would not be compensated for here.
-- **Git commit semantics are defined but not yet exercised in production.** The bindings and the
-  policy support `commit-to-bound-branch` with a HEAD CAS, and the policy is tested; the commit
-  coordinator is not yet wired to `admitByPolicy`. Until it is, a lease granting commits grants
-  something no code path consumes. That is stated rather than implied.
+- **A commit-granting lease admits at most one commit.** The HEAD binding is a CAS on history, so
+  the first commit moves HEAD and every later proposal's `oldHead` then differs from the bound
+  `headSha` and is refused. This fails closed, which is the right direction, but it does not
+  match the motivating story of a goal running to completion: a multi-commit goal needs a new
+  lease per commit. A review pointed this out and it is a real limitation of v1, not a bug.
+- **The commit cycle's tests use a stub backend.** The gate is what is new and what they test.
+  The commit machinery itself — drift refusal, the ref CAS, hook containment — is covered
+  against a real repository in `git-commit.test.ts`. So the second link of the HEAD chain, the
+  backend's own re-observation, is asserted there and not here.
 
 ## Decision markers
 
@@ -133,5 +187,7 @@ MODEL_IS_NEVER_THE_APPROVER = TRUE
 DEFAULT = DISABLED
 MANUAL_HUMAN_MODE = UNCHANGED_AND_STILL_REQUIRED_WHEN_NO_LEASE
 AUDIT = POLICY_APPROVED_VS_HUMAN_APPROVED_DURABLY_DISTINGUISHED
-GIT_COMMIT_UNDER_LEASE = POLICY_DEFINED_NOT_YET_WIRED
+GIT_COMMIT_UNDER_LEASE = WIRED, AT_MOST_ONE_COMMIT_PER_LEASE
+MAX_LEASE_WINDOW = 12_HOURS
+SELF_MODIFICATION = REFUSED_BY_LOCATION
 ```
