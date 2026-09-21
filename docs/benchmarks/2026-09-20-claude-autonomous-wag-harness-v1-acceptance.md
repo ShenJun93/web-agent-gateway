@@ -1,13 +1,14 @@
 # Claude Autonomous WAG Harness v1 — Acceptance
 
-Date: 2026-09-20
+Date: 2026-09-20, extended 2026-09-21
 Status: **PARTIAL** — everything except the final production approval is complete and green.
 The approval gesture was not performed, and nothing about it is inferred.
 Base: `b2a3d0a`
-Candidate: `939c9af`
+Candidate: `3cede8f`
 Supersedes nothing. Predecessor: `docs/benchmarks/2026-09-20-wag-local-operator-primary-cutover.md`
-Related decisions: ADR-0027, `2026-09-20-operator-origin-repair-decision.md`,
-`2026-09-20-harness-test-lane-decision.md`, `2026-09-20-claude-autonomous-wag-harness-v1-source-acceptance.md`
+Related decisions: ADR-0027, ADR-0028, `2026-09-20-operator-origin-repair-decision.md`,
+`2026-09-20-harness-test-lane-decision.md`, `2026-09-20-claude-autonomous-wag-harness-v1-source-acceptance.md`,
+`2026-09-21-autonomous-goal-lease-v1-acceptance.md`
 
 ```text
 WAG_LOCAL_OPERATOR = PRIMARY
@@ -42,22 +43,26 @@ docs/adr/0027-…                               the lane's decision, at the ADR 
 No `CLAUDE.md`: with the default `instructionFiles`, adding one stops `AGENTS.md` being loaded as
 project instructions. A test pins the absence.
 
-## Gates at `939c9af`
+## Gates at `3cede8f`
 
 Authoritative — no source was edited while this run was in flight. An earlier run was discarded
 for exactly that reason, which `.claude/skills/wag-acceptance-gates` warns about and which
 produced a spurious `typecheck EXIT=2`.
 
 ```text
-npm test                     496 tests, 490 pass, 0 fail, 6 todo   exit 0
+npm test                     575 tests, 569 pass, 0 fail, 6 todo   exit 0
 npm run typecheck                                                  exit 0
 npm run build                                                      exit 0
 npm run test:business        1 pass / 0 fail                       exit 0
 npm run test:dc-replacement  1 pass / 0 fail                       exit 0
 git diff --check                                                   exit 0
-gitleaks 8.30.1  b2a3d0a..939c9af   19 commits, 230.46 KB, NO LEAKS
-npm run test:operator-browser   9 checks, all pass (needs an owned browser worker)
+gitleaks 8.30.1  b2a3d0a..3cede8f   31 commits, 439.88 KB, NO LEAKS
+npm run test:operator-browser   NOT RUN this cycle: it refuses to coexist with a
+                                live runtime, and one is up for the final proof
 ```
+
+Exit codes here are the real ones. An earlier gate table reported `EXIT=$?` after a pipeline,
+which measures `tail`, not `npm` — the numbers were right by luck and the method was wrong.
 
 The 6 `todo` are open findings in the PreToolUse guard, described under *Residual limitations*.
 They are visible and executable rather than forgotten, and they do not fail a gate.
@@ -186,7 +191,44 @@ task-owned and still running by design    WAG runtime, pinned DevSpace, wag-op-3
 the operator chose that over adopting another session's worker. The mandatory inventory probe was
 run before every allocation and before reuse.
 
-## What is NOT done
+## What 2026-09-21 added
+
+The lane stopped being a propose-and-approve toy and became able to iterate the things the
+mission actually names. It gained a clock, so TTL is exact rather than slept-through; `reopen()`,
+so restart is a loop rather than a story; and `serveOperator()`, which stands the **unmodified
+production review server** in front of the lane's own store. That last one is why the CSRF and
+Origin loops mean anything: the previous browser-backed check used a stub coordinator and by
+construction never reached the checks it claimed to cover.
+
+`npm run operator:open` removes the PowerShell the operator was running after every restart. It
+does **not** open a browser, and that is the whole design: a review observed that automating the
+last step lets an authenticated operator session exist with nobody present, which combined with
+two residuals already recorded here — a reference-based click is invisible to the hook, a shell
+is a same-user escape hatch — makes "open the page, then approve by reference" a chain with no
+human in it. It prints a link a person opens.
+
+Autonomous Goal Lease v1 (ADR-0028) is the larger addition and has its own receipt. In one line:
+a bounded durable grant, with a pure I/O-free function as the approver, recording admissions as
+`POLICY_APPROVED` distinctly from `HUMAN_APPROVED`. It is **not enabled anywhere**, deliberately
+— see that receipt for why the rule text has to be corrected by a human first.
+
+## The recurring defect, now with a count
+
+Five independent security reviews. The finding that appears in every single one is a guard that
+is written, described confidently, and reached by no test. This round it produced the two worst
+findings of the whole mission, and both were things this work asserted rather than measured:
+
+- a kill switch whose "fails engaged" comment sat directly above unreachable code, because
+  `fs.existsSync` never throws. It failed **open**. The test named "fails engaged" tested
+  presence, absence and idempotence, and the file imported `chmodSync` without using it — the
+  residue of the test that would have caught it;
+- a production feature that the CLI announced as ENABLED and that nothing ever called.
+
+The countermeasure that works is mutation, not review and not passing tests. Twenty mutations
+across the two rounds, each verified to apply before its run, each caught. Two things learned
+from running them: an automated scanner sampled a source file mid-mutation and reported the
+deliberate mutations as CRITICAL vulnerabilities, and an interrupted battery once left a disabled
+guard on disk. The battery now restores under a `trap`.
 
 ```text
 FINAL_PRODUCTION_APPROVAL = NOT PERFORMED
@@ -221,8 +263,14 @@ and never authorized. The six are `todo` tests, so they run and are visible.
 ```text
 RULE_STATES_THE_INVARIANT_ABSOLUTELY
 ```
-`.claude/rules/human-presence-boundary.md` needs a qualifier pointing at ADR-0027. The deny rule
-the harness installed blocks writing it, and it was not worked around.
+`.claude/rules/human-presence-boundary.md` needs a qualifier pointing at ADR-0027 and now also at
+ADR-0028, and two of its statements about the guard are imprecise — it matches command *text*,
+not what a command does, so `npm run operator:open` reads the credential and is not refused. The
+deny rule the harness installed blocks writing any of it, and a Goal Lease cannot grant it either,
+by design. It was not worked around. The corrected text is prepared and unapplied.
+
+This is now the reason **not to enable a Goal Lease in production**: not the mechanism, but that
+the always-loaded rule a future agent reads would be false.
 
 ```text
 REFERENCE_BASED_CLICK_NOT_DETECTABLE
