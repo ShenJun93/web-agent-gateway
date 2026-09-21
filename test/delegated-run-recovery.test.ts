@@ -403,3 +403,117 @@ test('a result id is derived, so the same run always names the same result', () 
   cyclic.self = cyclic;
   assert.match(delegatedRunResultId({ ...base, result: cyclic }), /^res_[0-9a-f]{32}$/);
 });
+
+// -------------------------------------------------------------------------------------------
+// The executor's defence-in-depth guards
+//
+// These are unreachable through the router: it only answers `result` after the durable transition,
+// so the row is always DISPATCHED and its arguments were always validated at staging. A mutation
+// that removes either guard therefore survives every ordinary test — which is exactly the shape of
+// "a guard written confidently and reached by no test".
+//
+// They are reached here by handing the *executor* a port that returns a row the store never would,
+// while the router keeps the real one so the decision and the transition stay genuine. That is not
+// contrived: the row lives in a SQLite file, and a same-user edit to that file is the scenario
+// ADR-0019 places outside the containment claim but which these guards still cost nothing to keep.
+// What is tested is that the guard exists and fires — not that the store would produce such a row.
+// -------------------------------------------------------------------------------------------
+
+type Port = ReturnType<typeof createDelegationDispatchPort>;
+type Row = ReturnType<Port['getStagedProposalRow']>;
+
+async function tamperedCoordinator(
+  f: Fixture,
+  tamper: (row: Row) => Row,
+): Promise<{ coordinator: DelegatedRunCoordinator; executed: string[] }> {
+  const real = createDelegationDispatchPort(f.store);
+  const executed: string[] = [];
+  const plane = new UiDelegationDispatchPlane({
+    port: real, killSwitch: () => false, configuredDelegationId: f.delegationId, now: () => f.now.value,
+  });
+  const router = new DelegatedDispatchRouter({ plane, connection: CONNECTION });
+  const coordinator = new DelegatedRunCoordinator({
+    router,
+    port: Object.freeze({
+      ...real,
+      getStagedProposalRow: (proposalId: string) => tamper(real.getStagedProposalRow(proposalId)),
+    }) as Port,
+    sessionId: CONNECTION.sessionId,
+    executor: {
+      async callTool(input) { executed.push(input.tool); return { ok: true, structuredContent: {} }; },
+    },
+  });
+  await coordinator.handle({
+    version: 5, type: 'session.bind', requestId: `req_${randomUUID()}`,
+    sessionId: CONNECTION.sessionId, provider: 'chatgpt', origin: ORIGIN,
+  });
+  return { coordinator, executed };
+}
+
+const dispatchVia = (coordinator: DelegatedRunCoordinator, f: Fixture, proposalId: string) =>
+  coordinator.handle({
+    version: 5, type: 'run.dispatch', requestId: `req_${randomUUID()}`,
+    sessionId: CONNECTION.sessionId, delegationId: f.delegationId, proposalId,
+  });
+
+test('the executor refuses a row that is not DISPATCHED, and runs nothing', async (t) => {
+  const f = await fixture(t);
+  await bind(f);
+  const proposalId = await stage(f);
+
+  const { coordinator, executed } = await tamperedCoordinator(
+    f, (row) => (row === undefined ? row : { ...row, state: 'STAGED' }),
+  );
+  const answered = await dispatchVia(coordinator, f, proposalId);
+  assert.equal(answered.type, 'error', JSON.stringify(answered));
+  assert.equal((answered.error as { code: string }).code, 'EXECUTION_STATE_UNEXPECTED');
+  assert.deepEqual(executed, [], 'the tool never ran');
+});
+
+test('the executor re-validates the stored arguments before running them', async (t) => {
+  const f = await fixture(t);
+  await bind(f);
+  const proposalId = await stage(f);
+
+  // A row whose arguments now name a different workspace than the one it is bound to — the exact
+  // mismatch `validateStageableArguments` exists to refuse, arriving after staging rather than at it.
+  const { coordinator, executed } = await tamperedCoordinator(f, (row) => (row === undefined ? row : {
+    ...row,
+    argumentsJson: JSON.stringify({ workspace_id: 'ws_somewhere_else', query: 'needle' }),
+  }));
+  const answered = await dispatchVia(coordinator, f, proposalId);
+  assert.equal(answered.type, 'error', JSON.stringify(answered));
+  assert.equal((answered.error as { code: string }).code, 'EXECUTION_ARGUMENTS_INVALID');
+  assert.deepEqual(executed, [], 'and nothing ran against the foreign workspace');
+});
+
+test('the executor refuses a row that vanished between the transition and the read', async (t) => {
+  const f = await fixture(t);
+  await bind(f);
+  const proposalId = await stage(f);
+  const { coordinator, executed } = await tamperedCoordinator(f, () => undefined);
+  const answered = await dispatchVia(coordinator, f, proposalId);
+  assert.equal(answered.type, 'error');
+  assert.equal((answered.error as { code: string }).code, 'EXECUTION_ROW_MISSING');
+  assert.deepEqual(executed, []);
+});
+
+test('the sweeper leaves a DISPATCHED row alone even when its claim is ancient', async (t) => {
+  // The earlier sweeper test used a row that reached RESULTED, so a mutation widening the sweep to
+  // `state IN ('CLAIMED','DISPATCHED')` survived it. This one leaves the row at DISPATCHED — the
+  // state a tool failure produces — which is precisely what such a mutation would wrongly retire.
+  const f = await fixture(t);
+  await bind(f);
+  const proposalId = await stage(f);
+  f.toolBehaviour.mode = 'throw';
+  assert.equal((await dispatch(f, proposalId)).type, 'error');
+  assert.equal(f.store.getStagedProposalRow(proposalId)?.state, 'DISPATCHED');
+
+  f.now.value += CLAIM_TTL_MS * 100;
+  const sweeper = new DelegationClaimSweeper({
+    port: { abandonExpiredClaims: (now, ttl) => f.store.abandonExpiredClaims(now, ttl) },
+    now: () => f.now.value,
+  });
+  assert.equal(sweeper.sweep(), 0, 'a dispatched row reached a tool; its story is not the sweeper to end');
+  assert.equal(f.store.getStagedProposalRow(proposalId)?.state, 'DISPATCHED');
+});

@@ -521,7 +521,7 @@
     "name": "arguments.workspace_id need not match the staged workspace",
     "file": "src/browser-adapter/protocol-v5.ts",
     "suite": "test/delegated-dispatch-transport.test.ts",
-    "from": "    if (args.workspace_id !== input.workspaceId) {",
+    "from": "    if ((args as { workspace_id: unknown }).workspace_id !== input.workspaceId) {",
     "to": "    if (false) {"
   },
   {
@@ -572,5 +572,145 @@
     "suite": "test/delegated-dispatch-transport.test.ts",
     "from": "  if (serializedDispatchBytes(value) > DELEGATED_DISPATCH_MAX_BYTES) {",
     "to": "  if (false) {"
+  },
+  {
+    "name": "the executor reads the tool from the message instead of the stored row",
+    "file": "src/delegated-run-executor.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "    const row = this.options.port.getStagedProposalRow(proposalId);\n    if (!row) return this.failed(dispatchResponse, 'EXECUTION_ROW_MISSING', 'the dispatched row vanished');",
+    "to": "    const row = this.options.port.getStagedProposalRow(proposalId);\n    if (!row) return this.failed(dispatchResponse, 'EXECUTION_ROW_MISSING', 'the dispatched row vanished');\n    // mutated: identity from elsewhere\n    if (row) { (row as { tool: string }).tool = 'health'; }"
+  },
+  {
+    "name": "the executor runs a row that never reached DISPATCHED",
+    "file": "src/delegated-run-executor.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "    if (row.state !== 'DISPATCHED') {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the executor runs whatever the router answered, refusal included",
+    "file": "src/delegated-run-executor.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "    if (!isRun || response.type !== 'result') return response;",
+    "to": "    if (!isRun) return response;"
+  },
+  {
+    "name": "the executor does not re-validate the stored arguments",
+    "file": "src/delegated-run-executor.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "    if (invalid !== undefined) {\n      return this.failed(dispatchResponse, 'EXECUTION_ARGUMENTS_INVALID', invalid);\n    }",
+    "to": "    // mutated: stored arguments trusted"
+  },
+  {
+    "name": "a failed tool is reported as a successful run",
+    "file": "src/delegated-run-executor.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "    if (!outcome.ok) return this.failed(dispatchResponse, 'EXECUTION_FAILED', 'the staged tool reported an error');",
+    "to": "    // mutated: failure ignored"
+  },
+  {
+    "name": "the result id ignores the content it names",
+    "file": "src/delegated-run-executor.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "  for (const field of [input.proposalId, input.fingerprint, encoded]) {",
+    "to": "  for (const field of [input.proposalId, input.fingerprint]) {"
+  },
+  {
+    "name": "the result id is not length-prefixed",
+    "file": "src/delegated-run-executor.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "    hash.update(`${Buffer.byteLength(field, 'utf8')}:`, 'utf8').update(field, 'utf8').update('\\0');",
+    "to": "    hash.update(field, 'utf8');"
+  },
+  {
+    "name": "the sweeper abandons dispatched rows too",
+    "file": "src/durable-store.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "      `UPDATE staged_proposals SET state = 'ABANDONED', abandoned_at = ?\n       WHERE state = 'CLAIMED' AND claimed_at <= ?`,",
+    "to": "      `UPDATE staged_proposals SET state = 'ABANDONED', abandoned_at = ?\n       WHERE state IN ('CLAIMED', 'DISPATCHED') AND claimed_at <= ?`,"
+  },
+  {
+    "name": "the sweeper retires claims that are still in flight",
+    "file": "src/durable-store.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "    ).run(now, now - claimTtlMs);",
+    "to": "    ).run(now, now + claimTtlMs);"
+  },
+  {
+    "name": "the sweeper does not run on start",
+    "file": "src/delegation-claim-sweeper.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "    this.sweep();\n    this.timer = setInterval(",
+    "to": "    this.timer = setInterval("
+  },
+  {
+    "name": "bind answers without the authoritative session id",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "        sessionId: this.options.connection.sessionId,",
+    "to": "        // mutated: no authoritative id"
+  },
+  {
+    "name": "the envelope session is believed instead of compared",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-transport.test.ts",
+    "from": "    if (envelope.sessionId !== this.options.connection.sessionId) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the human-Run verb consults no ownership at all",
+    "file": "src/delegated-dispatch-router.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "      if (!outcome.ok) return errorEnvelope(envelope.requestId, outcome.code, outcome.detail);\n      return resultEnvelope(envelope.requestId, {\n        proposalId: envelope.proposalId,\n        authority: 'HUMAN_RUN',\n      });",
+    "to": "      return resultEnvelope(envelope.requestId, {\n        proposalId: envelope.proposalId,\n        authority: 'HUMAN_RUN',\n      });"
+  },
+  {
+    "name": "a tool that resolves no workspace may be delegated",
+    "file": "src/browser-adapter/protocol-v5.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "  } else if (input.requireWorkspaceBinding === true) {",
+    "to": "  } else if (false) {"
+  },
+  {
+    "name": "the workspace binding is never required, on any path",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/delegated-run-recovery.test.ts",
+    "from": "      requireWorkspaceBinding: input.delegationId !== undefined,",
+    "to": "      requireWorkspaceBinding: false,"
+  },
+  {
+    "name": "the host assumes the correlation is the session id",
+    "file": "src/browser-adapter/native-host-v5.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "      boundSession = bound;\n      return response;",
+    "to": "      boundSession = request.sessionId;\n      return response;"
+  },
+  {
+    "name": "the host forwards frames for a session it never bound",
+    "file": "src/browser-adapter/native-host-v5.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "    if (boundSession !== request.sessionId || link === undefined) {",
+    "to": "    if (link === undefined) {"
+  },
+  {
+    "name": "the host answers a transport failure as a policy refusal",
+    "file": "src/browser-adapter/native-host-v5.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "      return hostError(request.requestId, 'LOCAL_WAG_UNREACHABLE', 'Local WAG delegated dispatch failed');",
+    "to": "      return hostResult(request.requestId, { ok: true });"
+  },
+  {
+    "name": "a dispatch route accepts any bearer the registry knows",
+    "file": "src/delegation-dispatch-http.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "    if (!caller || !coordinator) {",
+    "to": "    if (!caller) {"
+  },
+  {
+    "name": "the dispatch server answers requests carrying a browser Origin",
+    "file": "src/delegation-dispatch-http.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "      if (req.headers.host !== `${host}:${listenerPort}` || req.headers.origin !== undefined) {",
+    "to": "      if (false) {"
   }
 ]

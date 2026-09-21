@@ -4,12 +4,18 @@ Status: proposed
 Date: 2026-09-21
 Supersedes nothing. Constrained by ADR-0019, ADR-0022/0023, ADR-0026, ADR-0027, ADR-0028.
 
-> **Gate.** This ADR removes a human gesture, so it does not take effect until a human applies
-> `docs/pending/human-presence-boundary-goal-ui-delegation.md` to the rule file. Until then, **do
-> not name a `goalUiDelegationId` in any runtime configuration**. With none named every delegation
-> row is inert, ADR-0026 holds in full, and Run stays human. This is the gate ADR-0028 set for the
-> Goal Lease, for the same reason: the code that honours an authority must not precede the rule
-> that says who may grant it.
+> **Gate — passed.** This ADR removes a human gesture, so it could not take effect until a human
+> applied `docs/pending/human-presence-boundary-goal-ui-delegation.md` to the rule file. **A human
+> did, out of band, on 2026-09-21.** Claude's own edit was refused by the settings deny list and
+> Claude did not route around it; the receipt
+> `docs/benchmarks/2026-09-21-goal-ui-delegation-boundary-patch-applied.md` records the provenance
+> and the after-the-fact verification. This is the gate ADR-0028 set for the Goal Lease, for the
+> same reason: the code that honours an authority must not precede the rule that says who may grant
+> it.
+>
+> **It is still off by default.** With no `goalUiDelegationId` named, every delegation row is inert,
+> the entire v5 surface is absent — no server, no discovery file, no sweeper — and ADR-0026 holds in
+> full. Naming an id is the second human act, and it grants nothing on its own.
 
 ## Context
 
@@ -209,8 +215,9 @@ It does not edit the PreToolUse guard, the computer-use read tier or the setting
 **not** "this never touches the UI so the guard is irrelevant". The guard exists to stop Claude
 *causing* a Run; clicking was merely the only mechanism it could see. This builds a mechanism it
 cannot see. That is legitimate only because the authority comes from a human out of band and is
-inert unless a human names it — which is why the rule patch is a gate on this ADR rather than a
-footnote to it.
+inert unless a human names it — which is why the rule patch was a gate on this ADR rather than a
+footnote to it, and why applying it was left to a human whose own tooling refused to let Claude do
+it.
 
 ## Residual risk, stated rather than hidden
 
@@ -233,36 +240,138 @@ browser holds none.
 individually observable. They are kept as backstops against a change to the isolation level, which
 is pinned by its own test. Recorded because calling them three independent defences would be false.
 
-## What is still unwired, and what activation therefore actually takes
+## What activation takes, and what is now wired
 
 An earlier draft of this section said activation was "two human steps and no code change: apply the
-rule patch, then name a `goalUiDelegationId`". That is false, and the same paragraph said so two
-sentences earlier — a review caught the contradiction. Doing those two things today changes
-nothing observable, and an operator who did them would go looking for what they got wrong.
+rule patch, then name a `goalUiDelegationId`". That was false, and the same paragraph said so two
+sentences earlier — a review caught the contradiction. At the time, doing those two things changed
+nothing observable, because the runtime wiring did not exist.
 
-**The two human steps are necessary and are the gate.** They are not sufficient. What is still
-missing, measured rather than estimated:
+**The two human steps are still necessary and are still the gate.** They are now also sufficient,
+because the six missing pieces are built. Each is named here with what it does, because "wired" is
+the kind of claim that was wrong once already:
 
 ```text
-nothing in src/ constructs the dispatch plane or the router   only the fixture lane does
-goalUiDelegationId is parsed and read by no module            src/private-config.ts:50
-the native host speaks v4 only                                no v5 frame route exists
-the shipped extension loads only the v4 cores                 the v5 core is not imported
-abandonExpiredClaims has no caller                            a crash leaves a CLAIMED row unreaped
-v5 has no verb that records a human Run                       recordHumanRun is routed by nothing
+src/browser-operator-runtime.ts     constructs the plane, the router and the coordinator, once per
+                                    admitted connection, and only when a delegation is configured
+src/delegation-dispatch-http.ts     a parallel loopback server with its own v5 registry, so a v5
+                                    bearer cannot reach /mcp and a v4 bearer cannot reach dispatch
+src/browser-adapter/native-host-v5  a second native host binary — not a mode flag on the v4 one,
+  + local-link-v5                   because the two admit into different adapter identities
+browser/extension/                  the shipped worker loads the v5 core, tries the delegated path
+  native-session-core-v5.js         first, and falls through to the human queue on any refusal
+src/delegation-claim-sweeper.ts     retires CLAIMED rows a crash stranded; never refunds the slot
+protocol-v5 `run.human`             v5 is no longer delegated-only; parity with v4, not a widening
 ```
 
-The last two matter most for an operator. Without a reaper, a crash between CLAIM and DISPATCH
-strands a slot permanently. Without a human-Run verb, a v5 session can stage on the human path and
-then have no way to Run it — so v5 today is delegated-only, and a session that wants the human path
-must still use v4.
+Two more that were not on the original list and turned out to be needed:
 
-So the honest statement is: **the authority model and its transport are complete and proved; the
-runtime wiring is not built.** The gate is the right place to stop regardless, because the wiring
-is exactly the work that should not be done speculatively ahead of the rule that permits it.
+```text
+src/delegated-run-executor.ts       runs the staged candidate AFTER the durable transition, from
+                                    the stored row, server-side — the browser never gets a second
+                                    call that could diverge from what it staged
+src/delegated-tool-execution.ts     runs it through the same MCP server a clicked Run reaches, so
+                                    the two paths cannot drift: it is the same function
+scripts/delegation-control.ts       the out-of-band issuance path, for a human to run
+```
+
+### The bootstrap order, which is not obvious
+
+A delegation binds a `sessionId`, and WAG mints that when the extension connects. So the session
+exists before the delegation can be issued, and the delegation must be named in configuration
+before it does anything:
+
+1. name a placeholder id and start WAG. The v5 surface is up and authorises nothing — a placeholder
+   names no row, so every delegated dispatch is refused `DELEGATION_NOT_FOUND`;
+2. connect the extension. WAG mints the v5 session;
+3. `delegation-control --sessions` to find it, `--issue` to bind a delegation to it;
+4. name the printed id in `goalUiDelegationId` and restart WAG.
+
+The reconnect in step 4 returns the **same** session id, because a session is keyed by the
+correlation the extension holds in `chrome.storage.session`, which survives a WAG restart. That is
+asserted rather than assumed — it is the one step a design document cannot establish, and if it
+were false a delegation would stop matching the moment it was configured.
+
+An extension *reload* does not survive: it re-mints the correlation, so the delegation stops
+matching and must be reissued. That is the binding working, not a defect.
+
+## Two defects the production wiring exposed
+
+Both were in this design, both survived three adversarial reviews, and both were found by building
+the thing rather than by reading it again.
+
+### The session id was never the value the browser sends
+
+The extension mints a **correlation** and sends it as `sessionId`. WAG hashes the correlation,
+resolves a durable `adapter_sessions` row, and that row's id is a *different* `session_<uuid>`.
+Same shape, never the same value — and the router compared them.
+
+Every test used one value for both, so the comparison held trivially. In production `session.bind`
+itself would have been refused and delegated Run would never have worked once. A fully green suite
+would have shipped a surface that could not bind.
+
+`session.bind` is now the one verb whose `sessionId` is not compared — identity there comes from the
+bearer the gateway admitted, not from the envelope, and by the time the router runs, admission has
+already happened. The bind answer carries the authoritative id, every later verb is compared against
+it, and the native host records it from WAG's answer rather than assuming the correlation is it.
+`test/delegated-dispatch-production-transport.test.ts` asserts the two are different strings, so a
+regression that conflates them fails rather than passing vacuously.
+
+### A delegation's workspace binding constrained nothing for some tools
+
+A delegation binds one `workspaceId`, and that binding only means something because the tool
+resolves its workspace from `arguments.workspace_id` and the two must agree. A tool with no such
+argument has nothing to compare — `health`, and far more seriously `workspace.open`, which takes a
+`path`.
+
+So a delegation naming `workspace.open` in `allowedTools` let the browser open **any** path the
+config's `allowedRoots` permitted, while the audit row recorded it as acting in the bound workspace.
+The delegation read narrow and behaved wide.
+
+On the delegated path, a tool that resolves no workspace can no longer be staged. The human path
+keeps the old behaviour, because there are no bindings there to satisfy and a person opening a
+workspace is the gesture the whole design defers to.
+
+## What a crash costs, stated plainly
+
+`CLAIM` spends the slot, before anything runs. Nothing refunds it — ever — because a refund would
+make a crash a way to exceed `maxActions`.
+
+```text
+crash between CLAIM and DISPATCH    row stranded CLAIMED; the sweeper retires it to ABANDONED
+                                    slot spent, no Run recorded, proposal never runs
+crash between DISPATCH and result   row stays DISPATCHED with no result; audit says DELEGATED_RUN
+                                    because it may have happened. Never re-run: single-assignment
+                                    state means DISPATCHED can never return to STAGED
+tool throws or errors               identical to the above. The slot was spent at CLAIM
+```
+
+The sweeper never touches a `DISPATCHED` row. That row reached a tool; abandoning it would claim
+knowledge nobody has.
+
+## Residual limits
+
+- **Issuance is a rule, not a mechanism.** `scripts/delegation-control.ts` is a script, and code
+  cannot tell whose hands are on the keyboard. What *is* enforced is narrower: nothing on the
+  browser path can reach the control plane or the store methods behind it, because the dispatch
+  plane is handed a port object that lacks them at runtime. ADR-0019 already places a same-user
+  adversary outside the containment claim.
+- **`npm run lease:stop` halts delegated Run as well as lease admission**, because ADR-0029 reuses
+  the same kill-switch file rather than adding a second one nobody would remember in an emergency.
+  Verified: both read `LOCALAPPDATA\WebAgentGateway`.
+- **The human gate still lives in the browser.** The gateway cannot distinguish a clicked Run from
+  an unclicked one on v4 or on v5. `run.human` is how the panel reports a click; it is not what
+  makes a Run human. That was true before this revision and is unchanged by it.
+- **A tool whose arguments name no workspace cannot be delegated at all**, including `health`. That
+  is deliberate and it is a real narrowing: such tools stay on the human path.
 
 ## Evidence
 
-See `docs/benchmarks/2026-09-21-goal-ui-delegation-design-gate.md` for the measured gate, the
-adversarial review findings and their disposition, the transport, the fixture-lane end-to-end
-proof, and the mutation battery.
+- `docs/benchmarks/2026-09-21-goal-ui-delegation-design-gate.md` — the design gate, three
+  adversarial reviews and their disposition, the transport, the fixture-lane proof.
+- `docs/benchmarks/2026-09-21-goal-ui-delegation-boundary-patch-applied.md` — the human-applied
+  authority change, verified after the fact, and the two digests over the patch document.
+- `test/delegated-run-production-runtime.test.ts` — a live `DELEGATED_RUN` through the shipped
+  runtime, real MCP tool surface, real native host, zero manual Run clicks.
+- `test/delegated-run-recovery.test.ts` — the sweeper, execution failure, restart after CLAIMED and
+  after DISPATCHED, and the guards that no ordinary path reaches.

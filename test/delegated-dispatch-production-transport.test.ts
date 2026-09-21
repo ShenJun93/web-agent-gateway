@@ -66,6 +66,12 @@ interface Harness {
   toolOk: () => boolean;
   send(envelope: unknown): Promise<Record<string, unknown>>;
   cleanup(): Promise<void>;
+  /** The loopback server, so its own route checks can be driven directly. */
+  admissionUrl: string;
+  dispatchUrl: string;
+  /** The shared registry, for the case where a bearer is minted outside the HTTP route. */
+  admission: BrowserAdmissionRegistry;
+  closeServer(): Promise<void>;
 }
 
 /**
@@ -192,6 +198,10 @@ async function harness(t: test.TestContext, options: { maxActions?: number; tool
     toolOk: () => toolOk,
     send,
     cleanup: async () => { toolOk = false; },
+    admissionUrl: server.admissionUrl,
+    dispatchUrl: server.dispatchUrl,
+    admission,
+    closeServer: () => server.close(),
   };
 }
 
@@ -360,4 +370,63 @@ test('a malformed frame is answered and the session survives it', async (t) => {
   // workspace, which is the lesson the v4 host learned and this one inherited.
   const staged = await stage(h, sessionId);
   assert.equal(staged.type, 'result', JSON.stringify(staged));
+});
+
+// -------------------------------------------------------------------------------------------
+// The loopback route itself
+// -------------------------------------------------------------------------------------------
+
+test('a bearer the registry knows but this server never admitted is refused', async (t) => {
+  // The registry and the coordinator map are two different things, and only the second records
+  // that *this* server built a connection for that bearer. Checking the registry alone would let a
+  // token minted anywhere else — another server sharing the registry, a direct `admit` — drive the
+  // dispatch route with no coordinator behind it.
+  const h = await harness(t);
+  const smuggled = h.admission.admit(`session_${randomUUID()}`);
+
+  const response = await fetch(h.dispatchUrl, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${smuggled.mcpToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ version: 5, type: 'ping', requestId: `req_${randomUUID()}`, sessionId: h.sessionId }),
+  });
+  assert.equal(response.status, 401);
+});
+
+test('the dispatch route refuses anything carrying a browser Origin', async (t) => {
+  // A page's `fetch` always carries one. The route is loopback-only and is meant to be reachable
+  // by the native host and nothing else, so the presence of the header is disqualifying on its own.
+  const h = await harness(t);
+  const admitted = await fetch(h.admissionUrl, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${'x'.repeat(48)}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ correlation_id: h.correlationId }),
+  });
+  assert.equal(admitted.status, 200);
+  const { bearer_token: bearer } = await admitted.json() as { bearer_token: string };
+
+  for (const origin of [PAGE_ORIGIN, 'null', EXTENSION_ORIGIN]) {
+    const response = await fetch(h.dispatchUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', origin },
+      body: JSON.stringify({ version: 5, type: 'ping', requestId: `req_${randomUUID()}`, sessionId: h.sessionId }),
+    });
+    assert.equal(response.status, 403, origin);
+  }
+});
+
+test('a transport failure is reported as unreachable, never as a decision', async (t) => {
+  // The host must not invent a refusal. An extension told "REFUSED" would believe WAG decided
+  // something, when WAG was never reached — and the honest answer changes what an operator does.
+  const h = await harness(t);
+  await bind(h);
+  await h.closeServer();
+
+  const answered = await h.send({
+    version: 5, type: 'ping', requestId: `req_${randomUUID()}`, sessionId: h.sessionId,
+  });
+  assert.equal(answered.type, 'error');
+  assert.equal((answered.error as { code: string }).code, 'LOCAL_WAG_UNREACHABLE');
 });
