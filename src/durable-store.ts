@@ -361,6 +361,36 @@ export class SqliteDurableStore {
       );
       CREATE INDEX IF NOT EXISTS idx_commit_authority_lease ON commit_authority(lease_id);
     `);
+    // Goal UI Delegation v1 (ADR-0029). New tables, for the reason above: no migration framework.
+    //
+    // `delegated_runs` is both the action ledger and the replay defence. The nonce is part of the
+    // primary key, so a replayed dispatch cannot insert twice — the uniqueness is enforced by the
+    // database rather than by a check the caller might skip.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ui_delegations (
+        delegation_id TEXT PRIMARY KEY,
+        goal_id TEXT NOT NULL,
+        controller_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        not_before INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER,
+        bindings TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS delegated_runs (
+        delegation_id TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        dispatched_at INTEGER NOT NULL,
+        tool TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        proposal_fingerprint TEXT NOT NULL,
+        PRIMARY KEY (delegation_id, nonce),
+        FOREIGN KEY(delegation_id) REFERENCES ui_delegations(delegation_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_delegated_runs_delegation ON delegated_runs(delegation_id);
+    `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS verify_jobs (
         job_id TEXT PRIMARY KEY,
@@ -681,6 +711,85 @@ export class SqliteDurableStore {
       branch: String(row.branch),
       pathCount: Number(row.path_count),
     };
+  }
+
+  insertUiDelegation(record: {
+    delegationId: string; goalId: string; controllerId: string;
+    createdAt: number; notBefore: number; expiresAt: number; bindings: string;
+  }): void {
+    this.db.prepare(`INSERT INTO ui_delegations
+      (delegation_id, goal_id, controller_id, created_at, not_before, expires_at, bindings)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(record.delegationId, record.goalId, record.controllerId,
+        record.createdAt, record.notBefore, record.expiresAt, record.bindings);
+  }
+
+  getUiDelegationRow(delegationId: string): {
+    delegationId: string; goalId: string; controllerId: string;
+    createdAt: number; notBefore: number; expiresAt: number; revokedAt?: number; bindings: string;
+  } | undefined {
+    const row = this.db.prepare('SELECT * FROM ui_delegations WHERE delegation_id = ?').get(delegationId) as
+      Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      delegationId: String(row.delegation_id),
+      goalId: String(row.goal_id),
+      controllerId: String(row.controller_id),
+      createdAt: Number(row.created_at),
+      notBefore: Number(row.not_before),
+      expiresAt: Number(row.expires_at),
+      ...(row.revoked_at === null ? {} : { revokedAt: Number(row.revoked_at) }),
+      bindings: String(row.bindings),
+    };
+  }
+
+  /** One-way, and idempotent. A revoked delegation is never un-revoked. */
+  revokeUiDelegation(delegationId: string, now: number): boolean {
+    const result = this.db.prepare(
+      'UPDATE ui_delegations SET revoked_at = ? WHERE delegation_id = ? AND revoked_at IS NULL',
+    ).run(now, delegationId);
+    return Number(result.changes) === 1;
+  }
+
+  /** What a delegation has already spent, and whether this exact nonce was already used. */
+  uiDelegationSpend(delegationId: string, nonce: string): { actionsUsed: number; nonceAlreadyUsed: boolean } {
+    const used = this.db.prepare('SELECT COUNT(*) AS n FROM delegated_runs WHERE delegation_id = ?')
+      .get(delegationId) as { n: number };
+    const replay = this.db.prepare('SELECT 1 FROM delegated_runs WHERE delegation_id = ? AND nonce = ?')
+      .get(delegationId, nonce);
+    return { actionsUsed: Number(used.n), nonceAlreadyUsed: replay !== undefined };
+  }
+
+  /**
+   * Consume one dispatch, atomically.
+   *
+   * The `(delegation_id, nonce)` primary key is what makes replay impossible rather than merely
+   * checked: a second insert of the same nonce violates the constraint and returns false, even if
+   * two callers raced past the same `uiDelegationSpend` read. A check without this would be a
+   * time-of-check/time-of-use gap on the one guard that most needs not to have one.
+   */
+  recordDelegatedRun(input: {
+    delegationId: string; nonce: string; dispatchedAt: number; tool: string;
+    workspaceId: string; sessionId: string; origin: string; proposalFingerprint: string;
+  }): boolean {
+    try {
+      const result = this.db.prepare(`INSERT INTO delegated_runs
+        (delegation_id, nonce, dispatched_at, tool, workspace_id, session_id, origin, proposal_fingerprint)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(input.delegationId, input.nonce, input.dispatchedAt, input.tool,
+          input.workspaceId, input.sessionId, input.origin, input.proposalFingerprint);
+      return Number(result.changes) === 1;
+    } catch {
+      // A constraint violation is the replay case and is a refusal, not an error to propagate.
+      return false;
+    }
+  }
+
+  listDelegatedRuns(delegationId: string): Array<{ nonce: string; tool: string; dispatchedAt: number }> {
+    return (this.db.prepare(
+      'SELECT nonce, tool, dispatched_at FROM delegated_runs WHERE delegation_id = ? ORDER BY dispatched_at',
+    ).all(delegationId) as Array<{ nonce: string; tool: string; dispatched_at: number }>)
+      .map((r) => ({ nonce: r.nonce, tool: r.tool, dispatchedAt: Number(r.dispatched_at) }));
   }
 
   insertGoalLease(record: {
