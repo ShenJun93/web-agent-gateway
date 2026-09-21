@@ -28,7 +28,30 @@ import { createBootstrapRedirect, operatorOrigin, readBootstrapUrl } from '../sr
 
 const DEFAULT_STORE = 'browser-operator-v4.sqlite';
 /** Long enough to walk to the browser, short enough that a forgotten handoff is not left armed. */
-const HANDOFF_TTL_MS = 5 * 60_000;
+const DEFAULT_HANDOFF_MINUTES = 5;
+/**
+ * The ceiling on `--wait`.
+ *
+ * Five minutes matches walking to the browser, and turned out not to match the real workflow: an
+ * operator who steps away for an hour comes back to an expired handoff, and the default was
+ * observed failing that way. So it is adjustable — but bounded, because an armed handoff is a
+ * live loopback route to a credential, and one left waiting overnight is a worse trade than
+ * running this again.
+ */
+const MAX_HANDOFF_MINUTES = 120;
+
+function handoffMinutes(args: readonly string[]): number {
+  const index = args.indexOf('--wait');
+  if (index === -1) return DEFAULT_HANDOFF_MINUTES;
+  const value = Number(args[index + 1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error('--wait takes a positive number of minutes');
+  }
+  if (value > MAX_HANDOFF_MINUTES) {
+    throw new Error(`--wait is capped at ${MAX_HANDOFF_MINUTES} minutes; an armed handoff is a live route to a credential`);
+  }
+  return value;
+}
 
 function stateFile(env: NodeJS.ProcessEnv, store: string): string {
   if (isAbsolute(store)) return `${store}.operator-url`;
@@ -40,11 +63,13 @@ function stateFile(env: NodeJS.ProcessEnv, store: string): string {
 }
 
 async function main(): Promise<number> {
-  const store = process.argv[2] ?? DEFAULT_STORE;
+  const args = process.argv.slice(2);
+  const minutes = handoffMinutes(args);
+  const store = args.find((a) => !a.startsWith('--') && Number.isNaN(Number(a))) ?? DEFAULT_STORE;
   const file = stateFile(process.env, store);
   const bootstrapUrl = await readBootstrapUrl(file);
 
-  const redirect = await createBootstrapRedirect({ bootstrapUrl, ttlMs: HANDOFF_TTL_MS });
+  const redirect = await createBootstrapRedirect({ bootstrapUrl, ttlMs: minutes * 60_000 });
   // Reduced to the origin *before* any output, so that no logging statement in this file so much
   // as names the bootstrap URL. A test pins that, which makes the rule mechanical rather than a
   // thing a later edit has to remember.
@@ -55,7 +80,7 @@ async function main(): Promise<number> {
   console.log('');
   console.log('That link is single-use and carries no secret. Opening it in your browser');
   console.log('collects the bootstrap and signs you in to the review page.');
-  console.log(`Waiting up to ${HANDOFF_TTL_MS / 60_000} minutes...`);
+  console.log(`Waiting up to ${minutes} minutes...  (npm run operator:open -- --wait 60)`);
 
   const outcome = await redirect.settled;
   await redirect.close();

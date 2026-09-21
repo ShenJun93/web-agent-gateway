@@ -215,6 +215,21 @@ test('the CLI starts no process at all, so no command line can carry the token',
     'the handoff link is what a human is given');
 });
 
+test('the handoff window is adjustable but bounded', async () => {
+  // Five minutes matched walking to the browser and did not match the real workflow — an expired,
+  // uncollected handoff was observed. An armed handoff is a live loopback route to a credential,
+  // so it is adjustable rather than unbounded, and the cap is asserted here rather than trusted
+  // to the comment above it.
+  const source = await readFile(new URL('../scripts/open-operator.ts', import.meta.url), 'utf8');
+  assert.match(source, /MAX_HANDOFF_MINUTES = (\d+)/);
+  const cap = Number(/MAX_HANDOFF_MINUTES = (\d+)/.exec(source)?.[1]);
+  assert.ok(cap > 5 && cap <= 240, `the cap must be usable and still bounded, saw ${cap}`);
+  assert.match(source, /--wait is capped at/, 'exceeding it must be refused with a reason');
+  assert.match(source, /--wait takes a positive number of minutes/, 'and a nonsense value refused');
+  // The default stays short: a longer window is something you ask for, not something you get.
+  assert.match(source, /DEFAULT_HANDOFF_MINUTES = 5/);
+});
+
 test('the CLI cannot approve: it has no HTTP client and names no approval route', async () => {
   const source = await readFile(new URL('../scripts/open-operator.ts', import.meta.url), 'utf8');
   for (const token of ['fetch(', 'node:http', 'request(', '/approve', '/reject']) {
