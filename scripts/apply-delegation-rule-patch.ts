@@ -178,17 +178,35 @@ function main(): void {
   }
 
   // 1. The patch document must be the one that was authorised.
+  //
+  // Two different digests cover this file and they are not interchangeable. `sha256sum` and
+  // PowerShell's `Get-FileHash` cover the *raw bytes*; the authorised value covers the *payload*,
+  // which is the file with its own `sha256(...)` line removed — because a digest cannot cover
+  // itself. Both are printed, each named, so that neither can be mistaken for the other.
   const patch = read(PATCH);
+  const digestLines = patch.match(/^sha256\([^\n]*\n/gm) ?? [];
+  if (digestLines.length !== 1) {
+    process.stdout.write(`patch ${PATCH}\n`);
+    process.stdout.write(`  REFUSED: ${digestLines.length} self-digest lines; the payload is ambiguous.\n`);
+    process.exitCode = 1;
+    return;
+  }
   const patchBody = patch.replace(/^sha256\([^\n]*\n/m, '');
   const patchDigest = sha256(patchBody);
-  process.stdout.write(`patch ${PATCH}\n  sha256 ${patchDigest}\n`);
+  process.stdout.write(`patch ${PATCH}\n`);
+  // Hashed from the bytes on disk, not from the decoded string: a BOM or invalid UTF-8 would make
+  // those two differ, and this line claims to be what `sha256sum` reports.
+  const rawDigest = createHash('sha256').update(readFileSync(join(repoRoot, PATCH))).digest('hex');
+  process.stdout.write(`  sha256 of the raw file      ${rawDigest}\n`);
+  process.stdout.write(`  sha256 of the patch payload ${patchDigest}  <- the authorised value\n`);
+  process.stdout.write('  (payload = the file with its single sha256(...) line removed)\n');
   if (patchDigest !== AUTHORISED_PATCH_SHA256) {
-    process.stdout.write(`  REFUSED: expected ${AUTHORISED_PATCH_SHA256}\n`);
+    process.stdout.write(`  REFUSED: expected payload ${AUTHORISED_PATCH_SHA256}\n`);
     process.stdout.write('  The patch document is not the one presented at the gate.\n');
     process.exitCode = 1;
     return;
   }
-  process.stdout.write('  matches the authorised digest\n\n');
+  process.stdout.write('  payload matches the authorised digest\n\n');
 
   // 2. Already applied?
   if (read(BOUNDARY).includes(APPLIED_MARKER)) {
