@@ -186,11 +186,29 @@ export async function startBrowserOperatorRuntime(options: {
       killSwitch: () => isKillSwitchEngaged(killSwitchDir),
     };
 
+    /**
+     * The configured delegation, read here as well as below, and for a different reason.
+     *
+     * Below it decides whether the v5 dispatch surface exists at all. Here it is handed to the two
+     * coordinators that can admit an effect **without a human**, so that the lease policy can ask
+     * which goal is currently allowed to Run without a click — and refuse a delegated adapter whose
+     * goal the lease does not name (ADR-0029 §composition, `delegated-run-provenance.ts`).
+     *
+     * Not passing it would not make the composition safe; it would make it invisible. With no
+     * delegation configured the resolution returns `undefined`, which on a delegated adapter the
+     * policy denies — so the fail-closed direction is the same either way.
+     */
+    const configuredDelegationId = engineering.mutation.goalUiDelegationId;
+    const uiDelegation = configuredDelegationId === undefined
+      ? undefined
+      : { configuredDelegationId };
+
     const mutation = new DurableMutationCoordinator({
       store,
       backends: [new DevspaceFileMutationBackend(privateRuntime.executor)],
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
       ...(goalLease === undefined ? {} : { goalLease }),
+      ...(uiDelegation === undefined ? {} : { uiDelegation }),
     });
     await mutation.reconcile();
 
@@ -202,6 +220,7 @@ export async function startBrowserOperatorRuntime(options: {
         : { protectedBranches: engineering.gitCommit.protectedBranches }),
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
       ...(goalLease === undefined ? {} : { goalLease }),
+      ...(uiDelegation === undefined ? {} : { uiDelegation }),
     });
     await commit.reconcile();
 
@@ -262,7 +281,7 @@ export async function startBrowserOperatorRuntime(options: {
      * An id naming no row is refused rather than read as unrestricted, and it is `evaluateDelegatedRun`
      * that decides — not this file, which only assembles.
      */
-    const delegationId = engineering.mutation.goalUiDelegationId;
+    const delegationId = configuredDelegationId;
     if (delegationId !== undefined) {
       const delegationDiscoveryPath = options.delegationDiscoveryPath
         ?? `${options.statePath}.delegation-discovery.json`;

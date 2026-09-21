@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
+import { resolveDelegatedGoal } from './delegated-run-provenance.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
 import { affectedBytes } from './durable-store.js';
@@ -106,6 +107,20 @@ export class DurableMutationCoordinator {
       /** Consulted on every admission, so engaging it takes effect immediately. */
       killSwitch: () => boolean;
     };
+    /**
+     * The Goal UI Delegation named in local configuration, if any (ADR-0029).
+     *
+     * Carried here *only* so that the lease policy can be told which goal is currently allowed to
+     * Run without a click on the browser context that produced a record. It grants nothing: this
+     * coordinator cannot issue, renew or widen a delegation, and the id is a reference the plane
+     * re-reads every binding behind.
+     *
+     * Absent means delegated Run is off, in which case nothing reaches the effect path from a
+     * delegated adapter and the resolution never matters. Present but stale, revoked, superseded or
+     * bound elsewhere resolves to `undefined`, which the policy denies on a delegated adapter —
+     * see `delegated-run-provenance.ts`.
+     */
+    uiDelegation?: { configuredDelegationId: string };
   }) {
     this.backends = new Map(options.backends.map((backend) => [backend.kind, backend]));
     if (this.backends.size !== options.backends.length) throw new Error('Duplicate file mutation backend kind');
@@ -254,6 +269,14 @@ export class DurableMutationCoordinator {
       return { admitted: false, code: 'LEASE_MALFORMED', detail: 'the stored bindings are not JSON' };
     }
 
+    const delegatedGoalId = resolveDelegatedGoal({
+      port: this.options.store,
+      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      now: this.now(),
+    });
+
     const decision = evaluateGoalLease({
       lease: {
         leaseId: stored.leaseId,
@@ -271,6 +294,10 @@ export class DurableMutationCoordinator {
         workspaceRoot: workspace.canonicalRoot,
         path: record.path,
         diffBytes: affectedBytes(record),
+        // Resolved from durable rows here, at the moment of the consequence, and never taken from
+        // the record or from anything the browser said. On a delegated adapter an unresolved goal
+        // is a denial, not a pass — the lease policy makes that call, not this line.
+        ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
       },
       spend: this.options.store.goalLeaseSpend(stored.leaseId),
       killSwitch: lease.killSwitch(),

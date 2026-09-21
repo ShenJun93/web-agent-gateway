@@ -48,7 +48,18 @@ export type LeaseDenialCode =
   | 'HEAD_MOVED'
   | 'COMMIT_NOT_GRANTED'
   | 'AUTHORITY_FILE_PROTECTED'
-  | 'SELF_MODIFICATION_REFUSED';
+  | 'SELF_MODIFICATION_REFUSED'
+  /**
+   * The action reached here from an adapter whose Run can be delegated, and this lease does not
+   * name the goal that delegation serves. See `delegatedGoalIds`.
+   */
+  | 'DELEGATED_GOAL_NOT_ADMITTED'
+  /**
+   * The adapter can have its Run delegated, and the caller could not say which goal is in force.
+   * Denied rather than treated as undelegated: an unknown provenance on the one path that needs no
+   * human gesture is the case that must fail closed.
+   */
+  | 'DELEGATED_GOAL_UNKNOWN';
 
 export type LeaseDecision =
   | { readonly admitted: true }
@@ -74,6 +85,28 @@ export interface GoalLeaseBindings {
   readonly maxDiffBytes: number;
   readonly admittedSessions: readonly string[];
   readonly admittedAdapters: readonly string[];
+  /**
+   * Goals whose **delegated** Run this lease will accept work from. Absent means none.
+   *
+   * ## Why a lease has to say this at all
+   *
+   * A Goal Lease lifts Approve; a Goal UI Delegation lifts Run (ADR-0029). Each is bounded, each
+   * is issued by a human out of band, and neither mentions the other. Composed, they are the only
+   * path from an untrusted page's text to an effect with **no human gesture at any step** — and
+   * before this field, they composed on nothing but coincidence: the lease checked the session and
+   * the adapter, the delegation checked the session and the adapter, and a lease issued for one
+   * purpose would silently admit work a delegation issued for an entirely different purpose had
+   * proposed. Two humans, two grants, one authority neither of them described.
+   *
+   * Naming the goal makes the composition an **intersection of two deliberate statements**. The
+   * delegation says which goal may Run; the lease says which goal's delegated work it will Approve.
+   * Both must name the same goal or the effect falls back to the operator's authenticated approval,
+   * which is the ordinary path and not a failure.
+   *
+   * It is not a widening. A lease that omits it is exactly as strong as it was before — its
+   * delegated-adapter actions simply need a person, as every action did before ADR-0029.
+   */
+  readonly delegatedGoalIds?: readonly string[];
   readonly commitSemantics: LeaseCommitSemantics;
   /** Required when `commitSemantics` is not `none`. */
   readonly branch?: string;
@@ -101,6 +134,14 @@ export interface LeaseRequest {
   readonly path: string;
   /** Bytes this one proposal would write. */
   readonly diffBytes: number;
+  /**
+   * The goal of the live, configured Goal UI Delegation bound to this session and adapter.
+   *
+   * Resolved by the caller from durable rows immediately before asking — never from a message, a
+   * proposal payload or a tool argument. `undefined` means no such delegation was found, which on
+   * a delegated adapter is a denial rather than a pass: see `DELEGATED_GOAL_UNKNOWN`.
+   */
+  readonly delegatedGoalId?: string;
   /** A commit is being requested as part of this action. */
   readonly wantsCommit?: boolean;
   readonly branch?: string;
@@ -124,6 +165,22 @@ export interface LeaseSpend {
 export const MAX_LEASE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 const deny = (code: LeaseDenialCode, detail: string): LeaseDecision => ({ admitted: false, code, detail });
+
+/**
+ * Adapters whose **Run** can be performed by a Goal UI Delegation rather than by a person.
+ *
+ * Restated here rather than imported, because this module is pure by design — no store, no crypto,
+ * no zod — and importing `adapter-admission.js` would drag all three into the one function that has
+ * to stay trivially reviewable.
+ *
+ * A restated list is a list that can drift, so the drift has to be caught by something that fires.
+ * `goal-lease-delegation-composition.test.ts` enumerates **every** `*_ADAPTER_ID` this codebase
+ * exports and asserts each one is classified here as delegated or explicitly not. Adding a fifth
+ * adapter identity therefore fails that test until someone says which it is — which is the point,
+ * because the failure mode being guarded against is a new delegated adapter silently skipping the
+ * composition gate below.
+ */
+export const DELEGATED_RUN_ADAPTERS: readonly string[] = ['browser.chatgpt.native.delegation.v5'];
 
 /**
  * Paths a lease may never grant, whatever its patterns say.
@@ -250,6 +307,13 @@ export function validateBindings(bindings: GoalLeaseBindings): string | undefine
   if (!Array.isArray(bindings.admittedAdapters) || bindings.admittedAdapters.length === 0) {
     return 'admittedAdapters must list at least one adapter';
   }
+  // Optional, but not unvalidated: present-and-malformed must deny, never read as absent.
+  if (bindings.delegatedGoalIds !== undefined) {
+    if (!Array.isArray(bindings.delegatedGoalIds)) return 'delegatedGoalIds must be an array';
+    if (bindings.delegatedGoalIds.some((g) => typeof g !== 'string' || g.length === 0)) {
+      return 'delegatedGoalIds must all be non-empty strings';
+    }
+  }
   if (bindings.commitSemantics !== 'none' && bindings.commitSemantics !== 'commit-to-bound-branch') {
     return 'commitSemantics must be none or commit-to-bound-branch';
   }
@@ -334,6 +398,32 @@ export function evaluateGoalLease(input: {
   }
   if (!b.admittedAdapters.includes(request.adapterId)) {
     return deny('ADAPTER_NOT_ADMITTED', `adapter ${request.adapterId} is not bound to the lease`);
+  }
+  // The composition gate. Placed after session and adapter because it only has meaning once we
+  // know which adapter this is, and before tools, workspace and budgets because a lease that will
+  // not accept this goal's delegated work should say so rather than refuse on an incidental bound.
+  if (DELEGATED_RUN_ADAPTERS.includes(request.adapterId)) {
+    const admittedGoals = b.delegatedGoalIds;
+    if (!Array.isArray(admittedGoals) || admittedGoals.length === 0) {
+      return deny(
+        'DELEGATED_GOAL_NOT_ADMITTED',
+        `this lease admits no delegated goal, so work reaching it from ${request.adapterId} `
+        + 'still needs the operator\'s approval',
+      );
+    }
+    if (request.delegatedGoalId === undefined) {
+      return deny(
+        'DELEGATED_GOAL_UNKNOWN',
+        'no live configured delegation was resolved for this session, so which goal proposed this '
+        + 'is unknown, and an unknown provenance is not admitted without a person',
+      );
+    }
+    if (!admittedGoals.includes(request.delegatedGoalId)) {
+      return deny(
+        'DELEGATED_GOAL_NOT_ADMITTED',
+        `goal ${request.delegatedGoalId} is not one this lease accepts delegated work from`,
+      );
+    }
   }
   if (!b.allowedTools.includes(request.tool)) {
     return deny('TOOL_NOT_GRANTED', `tool ${request.tool} is not granted`);
