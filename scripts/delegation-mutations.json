@@ -94,8 +94,8 @@
     "name": "expiry left unreachable",
     "file": "src/goal-ui-delegation.ts",
     "suite": "test/goal-ui-delegation.test.ts",
-    "from": "  if (now >= delegation.expiresAt) return deny('DELEGATION_EXPIRED', `expired at ${delegation.expiresAt}`);",
-    "to": "  if (false) return deny('DELEGATION_EXPIRED', 'unreachable');"
+    "from": "  if (now >= delegation.expiresAt) {",
+    "to": "  if (false) {"
   },
   {
     "name": "action count no longer re-read inside the claim",
@@ -876,24 +876,24 @@
   },
   {
     "name": "a revoked delegation still puts its goal in force",
-    "file": "src/delegated-run-provenance.ts",
+    "file": "src/goal-ui-delegation.ts",
     "suite": "test/goal-lease-delegation-composition.test.ts",
-    "from": "  if (row.revokedAt !== undefined) return undefined;",
-    "to": "  // mutated: revocation ignored"
+    "from": "    return no('DELEGATION_REVOKED', `revoked at ${delegation.revokedAt}`);",
+    "to": "    return undefined;"
   },
   {
     "name": "a superseded delegation still puts its goal in force",
-    "file": "src/delegated-run-provenance.ts",
+    "file": "src/goal-ui-delegation.ts",
     "suite": "test/goal-lease-delegation-composition.test.ts",
-    "from": "  if (row.supersededBy !== undefined) return undefined;",
-    "to": "  // mutated: supersession ignored"
+    "from": "    return no('DELEGATION_SUPERSEDED', `superseded by ${delegation.supersededBy}`);",
+    "to": "    return undefined;"
   },
   {
     "name": "an expired delegation still puts its goal in force",
-    "file": "src/delegated-run-provenance.ts",
+    "file": "src/goal-ui-delegation.ts",
     "suite": "test/goal-lease-delegation-composition.test.ts",
-    "from": "  if (!(input.now < row.expiresAt)) return undefined;",
-    "to": "  // mutated: expiry ignored"
+    "from": "    return no('DELEGATION_EXPIRED', `expired at ${delegation.expiresAt}`);",
+    "to": "    return undefined;"
   },
   {
     "name": "a delegation bound to another session is honoured here",
@@ -918,16 +918,44 @@
   },
   {
     "name": "a window past the delegation ceiling is accepted on the effect path",
-    "file": "src/delegated-run-provenance.ts",
+    "file": "src/goal-ui-delegation.ts",
     "suite": "test/goal-lease-delegation-composition.test.ts",
-    "from": "  if (row.expiresAt - row.notBefore > MAX_DELEGATION_WINDOW_MS) return undefined;",
-    "to": "  // mutated: ceiling ignored"
+    "from": "    return no('DELEGATION_MALFORMED', `a delegation may not exceed ${MAX_DELEGATION_WINDOW_MS}ms`);",
+    "to": "    return undefined;"
   },
   {
     "name": "unparseable bindings resolve to a goal instead of nothing",
     "file": "src/delegated-run-provenance.ts",
     "suite": "test/goal-lease-delegation-composition.test.ts",
     "from": "  catch { return undefined; }",
-    "to": "  catch { bindings = { goalId: 'anything', sessionId: input.sessionId, adapterId: input.adapterId } as UiDelegationBindings; }"
+    "to": "  catch { bindings = { goalId: 'anything', controllerId: 'local.operator.cli', allowedOrigins: ['https://chatgpt.com'], allowedTools: ['mutation.propose'], workspaceId: 'ws_1', sessionId: input.sessionId, adapterId: input.adapterId, maxActions: 4 } as UiDelegationBindings; }"
+  },
+  {
+    "name": "the provenance resolver stops consulting liveness at all",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (notLive) return undefined;",
+    "to": "  // mutated: liveness ignored"
+  },
+  {
+    "name": "the shared liveness predicate always says live",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  const malformed = validateDelegationBindings(delegation.bindings);\n  if (malformed) return no('DELEGATION_MALFORMED', malformed);",
+    "to": "  const malformed = validateDelegationBindings(delegation.bindings);\n  if (malformed) return undefined;"
+  },
+  {
+    "name": "the policy stops composing the liveness predicate",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  const notLive = delegationLivenessDenial(delegation, now);\n  if (notLive) return deny(notLive.code, notLive.detail);",
+    "to": "  const notLive = delegationLivenessDenial(delegation, now);\n  void notLive;"
+  },
+  {
+    "name": "the claim ledger index stops being unique",
+    "file": "src/durable-store.ts",
+    "suite": "test/delegated-run-replay-durability.test.ts",
+    "from": "      CREATE UNIQUE INDEX IF NOT EXISTS idx_delegation_claims_fingerprint",
+    "to": "      CREATE INDEX IF NOT EXISTS idx_delegation_claims_fingerprint"
   }
 ]

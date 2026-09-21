@@ -29,7 +29,7 @@
  * policy treats `undefined` as `DELEGATED_GOAL_UNKNOWN` and denies. Fail-closed lives there, so
  * that this function can stay a total lookup with no way to raise on the effect path.
  */
-import { MAX_DELEGATION_WINDOW_MS, type UiDelegationBindings } from './goal-ui-delegation.js';
+import { delegationLivenessDenial, type UiDelegationBindings } from './goal-ui-delegation.js';
 import type { SqliteDurableStore } from './durable-store.js';
 
 /** The narrowest read the resolution needs. Deliberately not the whole store. */
@@ -56,20 +56,27 @@ export function resolveDelegatedGoal(input: {
 
   const row = input.port.getUiDelegationRow(input.configuredDelegationId);
   if (!row) return undefined;
-  if (row.revokedAt !== undefined) return undefined;
-  if (row.supersededBy !== undefined) return undefined;
-  if (!Number.isFinite(row.notBefore) || !Number.isFinite(row.expiresAt)) return undefined;
-  if (row.expiresAt <= row.notBefore) return undefined;
-  // The ceiling is re-applied because a row inserted by anything other than the control plane never
-  // passed the control plane's check, and this is a consequence path.
-  if (row.expiresAt - row.notBefore > MAX_DELEGATION_WINDOW_MS) return undefined;
-  if (!(input.now >= row.notBefore)) return undefined;
-  if (!(input.now < row.expiresAt)) return undefined;
 
   let bindings: UiDelegationBindings;
   try { bindings = JSON.parse(row.bindings) as UiDelegationBindings; }
   catch { return undefined; }
   if (typeof bindings !== 'object' || bindings === null || Array.isArray(bindings)) return undefined;
+
+  // Composed, not restated. A reuse audit found this function had become a fourth hand-written copy
+  // of "is this delegation live", and copies of a liveness predicate are how a revocation ends up
+  // honoured in three places and missed in the fourth. Composing also makes this *stricter* than the
+  // copy it replaces, which validated the bindings' shape but not their contents and never checked
+  // that the clock itself was finite.
+  const notLive = delegationLivenessDenial({
+    delegationId: row.delegationId,
+    createdAt: row.createdAt,
+    notBefore: row.notBefore,
+    expiresAt: row.expiresAt,
+    ...(row.revokedAt === undefined ? {} : { revokedAt: row.revokedAt }),
+    ...(row.supersededBy === undefined ? {} : { supersededBy: row.supersededBy }),
+    bindings,
+  }, input.now);
+  if (notLive) return undefined;
 
   // The binding must be to *this* context. A delegation held by another session or another adapter
   // says nothing about work that reached the effect path from here.

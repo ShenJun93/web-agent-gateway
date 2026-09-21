@@ -555,6 +555,64 @@ test('an abandoned claim does not release the action for a re-observation to tak
 });
 
 // -------------------------------------------------------------------------------------------
+// The invariant underneath the refusal
+// -------------------------------------------------------------------------------------------
+
+test('the database refuses a duplicate claim even with the application check bypassed', async (t) => {
+  const h = await harness(t);
+  const { sessionId } = await bind(h, h.correlationId) as { sessionId: string };
+
+  const staged = await stage(h, sessionId);
+  const proposalId = (staged.result as { proposalId: string }).proposalId;
+  const fingerprint = (staged.result as { fingerprint: string }).fingerprint;
+  assert.equal(
+    h.store.claimDelegatedDispatch({
+      delegationId: h.delegationId, proposalId, now: Date.now(),
+      expectedFingerprint: fingerprint, maxWindowMs: 4 * 60 * 60_000,
+    }).ok,
+    true,
+  );
+
+  // A second real staged row, so the foreign key is satisfied and the only thing that can refuse
+  // the insert below is the uniqueness of (delegation, fingerprint).
+  //
+  // The first version of this test inserted a proposal id that did not exist, and passed — on a
+  // FOREIGN KEY error, matched by a regex loose enough to accept the word "constraint". It proved
+  // the table had a foreign key. Exactly the defect this suite exists to catch, found by mutating
+  // UNIQUE away and watching the test still pass.
+  const other = await h.send({
+    version: 5, type: 'run.stage', requestId: `req_${randomUUID()}`,
+    sessionId, delegationId: h.delegationId, tool: TOOL, workspaceId: WORKSPACE,
+    origin: PAGE_ORIGIN, arguments: { workspace_id: WORKSPACE, query: 'a genuinely other action' },
+  });
+  assert.equal(other.type, 'result', JSON.stringify(other));
+  const otherId = (other.result as { proposalId: string }).proposalId;
+  const otherFingerprint = (other.result as { fingerprint: string }).fingerprint;
+  assert.notEqual(otherFingerprint, fingerprint, 'the control: these are two different actions');
+
+  const raw = (h.store as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): unknown } } }).db;
+  const insert = (proposal: string, print: string) => raw.prepare(
+    'INSERT INTO delegation_claims (delegation_id, proposal_id, claimed_at, fingerprint) '
+    + 'VALUES (?, ?, ?, ?)',
+  ).run(h.delegationId, proposal, Date.now(), print);
+
+  // Reach past `claimDelegatedDispatch` entirely, which is what a second insert path added later
+  // would look like. The difference between an invariant and a check: the check produces
+  // PROPOSAL_REPLAY for an operator to read, the index holds whatever code does the write.
+  assert.throws(
+    () => insert(otherId, fingerprint),
+    /UNIQUE/i,
+    'the database must refuse a second claim for the same (delegation, action)',
+  );
+  assert.equal(h.claims(), 1, 'and the ledger still holds exactly one slot');
+
+  // The control: the same insert with that row's own fingerprint is a different action and is
+  // accepted, so what refused above was the uniqueness and not the insert itself.
+  insert(otherId, otherFingerprint);
+  assert.equal(h.claims(), 2);
+});
+
+// -------------------------------------------------------------------------------------------
 // What this does *not* claim
 // -------------------------------------------------------------------------------------------
 

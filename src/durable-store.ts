@@ -483,7 +483,21 @@ export class SqliteDurableStore {
     `);
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_staged_proposals_delegation ON staged_proposals(delegation_id);
-      CREATE INDEX IF NOT EXISTS idx_delegation_claims_fingerprint
+      -- UNIQUE, not merely indexed. The replay refusal in claimDelegatedDispatch is the check
+      -- that produces a legible code, and this is the invariant underneath it: one claim per
+      -- (delegation, action), enforced by the database whatever code path does the insert.
+      --
+      -- A reuse audit asked why an application check was carrying an invariant SQLite can hold,
+      -- and the honest answer was that nothing had asked. Keeping both is deliberate: the SELECT
+      -- gives the operator PROPOSAL_REPLAY instead of a constraint error, and the index means a
+      -- second insert path added later cannot quietly reintroduce double-spending.
+      --
+      -- Migration consequence, stated because this repository has no migration framework: a store
+      -- that already contains two claims for one (delegation, fingerprint) will fail to open. That
+      -- is correct — such a store has a double-counted budget — and it cannot arise here, because
+      -- the delegated path has never run outside tests. Measured: no WAG store exists on this
+      -- machine, and delegation_claims has never been written outside a temporary directory.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_delegation_claims_fingerprint
         ON delegation_claims(delegation_id, fingerprint);
       CREATE INDEX IF NOT EXISTS idx_staged_proposals_state ON staged_proposals(state, claimed_at);
       CREATE INDEX IF NOT EXISTS idx_run_authority_delegation ON run_authority(delegation_id);

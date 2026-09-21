@@ -328,6 +328,59 @@ function validateStagedProposal(proposal: StagedProposalRecord): string | undefi
  * policy then judges the records, so nothing the browser said reaches this function except by
  * having been written into a row WAG itself wrote.
  */
+/**
+ * Is this delegation live? One definition, because there turned out to be four.
+ *
+ * The same set of questions — malformed bindings, revoked, superseded, a finite clock, a finite
+ * window, a window that begins before it ends, the ceiling, not-yet-valid, expired — was being
+ * asked by `evaluateDelegatedRun` (the policy), by `stageProposal` (a documented fail-fast), by
+ * `claimDelegatedDispatch` (inside the write transaction, because a row inserted by anything other
+ * than the control plane never passed the control plane's checks), and then by
+ * `resolveDelegatedGoal` on the effect path. The first three have reasons to re-ask at their own
+ * layer. The fourth was simply a fourth copy, and a reuse audit found it.
+ *
+ * Copies of a liveness predicate are how a revocation ends up honoured in three places and missed
+ * in the fourth. So the wording lives here and the callers compose it.
+ *
+ * Returns the denial, or `undefined` when the delegation is live. Callers that need a decision wrap
+ * it; callers that only need a yes/no — the provenance resolver — treat any denial as "no".
+ */
+export function delegationLivenessDenial(
+  delegation: UiDelegationRecord,
+  now: number,
+): { readonly code: DelegationDenialCode; readonly detail: string } | undefined {
+  const no = (code: DelegationDenialCode, detail: string) => ({ code, detail });
+
+  const malformed = validateDelegationBindings(delegation.bindings);
+  if (malformed) return no('DELEGATION_MALFORMED', malformed);
+
+  if (typeof delegation.revokedAt === 'number') {
+    return no('DELEGATION_REVOKED', `revoked at ${delegation.revokedAt}`);
+  }
+  if (typeof delegation.supersededBy === 'string' && delegation.supersededBy.length > 0) {
+    // A renewed delegation is finished even if its revocation did not land. Two live delegations
+    // for one goal would be two budgets, which is the opposite of what a ceiling is for.
+    return no('DELEGATION_SUPERSEDED', `superseded by ${delegation.supersededBy}`);
+  }
+  if (!Number.isFinite(now)) return no('DELEGATION_MALFORMED', 'the clock is not finite');
+  if (!Number.isFinite(delegation.notBefore) || !Number.isFinite(delegation.expiresAt)) {
+    return no('DELEGATION_MALFORMED', 'the validity window is not two finite numbers');
+  }
+  if (delegation.expiresAt <= delegation.notBefore) {
+    return no('DELEGATION_MALFORMED', 'the delegation expires before it begins');
+  }
+  if (delegation.expiresAt - delegation.notBefore > MAX_DELEGATION_WINDOW_MS) {
+    return no('DELEGATION_MALFORMED', `a delegation may not exceed ${MAX_DELEGATION_WINDOW_MS}ms`);
+  }
+  if (now < delegation.notBefore) {
+    return no('DELEGATION_NOT_YET_VALID', `valid from ${delegation.notBefore}`);
+  }
+  if (now >= delegation.expiresAt) {
+    return no('DELEGATION_EXPIRED', `expired at ${delegation.expiresAt}`);
+  }
+  return undefined;
+}
+
 export function evaluateDelegatedRun(input: {
   readonly killSwitch: boolean;
   /** The delegation named in local configuration. Absent means delegation is off entirely. */
@@ -354,31 +407,8 @@ export function evaluateDelegatedRun(input: {
       : 'that delegation is not the configured one');
   }
 
-  const malformed = validateDelegationBindings(delegation.bindings);
-  if (malformed) return deny('DELEGATION_MALFORMED', malformed);
-
-  if (typeof delegation.revokedAt === 'number') {
-    return deny('DELEGATION_REVOKED', `revoked at ${delegation.revokedAt}`);
-  }
-  if (typeof delegation.supersededBy === 'string' && delegation.supersededBy.length > 0) {
-    // A renewed delegation is finished even if its revocation did not land. Two live delegations
-    // for one goal would be two budgets, which is the opposite of what a ceiling is for.
-    return deny('DELEGATION_SUPERSEDED', `superseded by ${delegation.supersededBy}`);
-  }
-  if (!Number.isFinite(now)) return deny('DELEGATION_MALFORMED', 'the clock is not finite');
-  if (!Number.isFinite(delegation.notBefore) || !Number.isFinite(delegation.expiresAt)) {
-    return deny('DELEGATION_MALFORMED', 'the validity window is not two finite numbers');
-  }
-  if (delegation.expiresAt <= delegation.notBefore) {
-    return deny('DELEGATION_MALFORMED', 'the delegation expires before it begins');
-  }
-  if (delegation.expiresAt - delegation.notBefore > MAX_DELEGATION_WINDOW_MS) {
-    return deny('DELEGATION_MALFORMED', `a delegation may not exceed ${MAX_DELEGATION_WINDOW_MS}ms`);
-  }
-  if (now < delegation.notBefore) {
-    return deny('DELEGATION_NOT_YET_VALID', `valid from ${delegation.notBefore}`);
-  }
-  if (now >= delegation.expiresAt) return deny('DELEGATION_EXPIRED', `expired at ${delegation.expiresAt}`);
+  const notLive = delegationLivenessDenial(delegation, now);
+  if (notLive) return deny(notLive.code, notLive.detail);
 
   if (!proposal) return deny('NO_PROPOSAL', 'there is no staged proposal with that id');
   const proposalMalformed = validateStagedProposal(proposal);
