@@ -250,6 +250,25 @@ export function validateStageableArguments(input: {
   tool: string;
   workspaceId: string;
   arguments: unknown;
+  /**
+   * Set when the candidate is being staged **under a delegation**, which makes the workspace
+   * binding mandatory rather than merely checked-if-present.
+   *
+   * The difference is not cosmetic. A delegation binds one `workspaceId`, and the only thing that
+   * makes that binding mean anything is that the tool resolves its workspace from
+   * `arguments.workspace_id` and the two must agree. A tool with **no** `workspace_id` argument —
+   * `health`, and far more consequentially `workspace.open`, which takes a `path` — has nothing to
+   * compare, so the binding constrains nothing at all.
+   *
+   * Left permissive that would mean: a delegation naming `workspace.open` in `allowedTools` lets
+   * the browser open *any* path the config's `allowedRoots` permits, while the audit row records it
+   * as acting in the bound workspace. The delegation would look narrow and be wide.
+   *
+   * So on the delegated path a tool that cannot be bound to a workspace cannot be staged. The human
+   * path keeps the old behaviour, because there are no bindings there to satisfy — a person opening
+   * a workspace is the gesture the whole design defers to.
+   */
+  requireWorkspaceBinding?: boolean;
 }): string | undefined {
   // A tool the frozen surface does not define cannot be staged at all. Fail closed: the executor
   // that would eventually run it is the v4 surface, and it knows only these names.
@@ -274,10 +293,14 @@ export function validateStageableArguments(input: {
 
   // The workspace the tool will resolve must be the workspace the delegation bound.
   const args = input.arguments as { workspace_id?: unknown } | null;
-  if (args !== null && typeof args === 'object' && 'workspace_id' in args) {
-    if (args.workspace_id !== input.workspaceId) {
+  const hasWorkspaceArgument = args !== null && typeof args === 'object' && 'workspace_id' in args;
+  if (hasWorkspaceArgument) {
+    if ((args as { workspace_id: unknown }).workspace_id !== input.workspaceId) {
       return 'arguments.workspace_id must be the workspace the proposal is staged for';
     }
+  } else if (input.requireWorkspaceBinding === true) {
+    return `${input.tool} resolves no workspace from its arguments, so a delegation's workspace `
+      + 'binding cannot constrain it; it may only be run on the human path';
   }
   return undefined;
 }

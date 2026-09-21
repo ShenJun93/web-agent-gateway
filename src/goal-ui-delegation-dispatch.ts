@@ -332,8 +332,16 @@ export class UiDelegationDispatchPlane {
     // strictly *wider* than v4's — measured: a 5 KB query and a `max_results` of 99999 where v4
     // caps them at 256 bytes and 50 — and `arguments.workspace_id`, which is what every tool
     // actually resolves its workspace from, could name a workspace the delegation never bound.
+    //
+    // `requireWorkspaceBinding` is set exactly when a delegation is named, because that is when the
+    // workspace binding has to mean something. A tool with no `workspace_id` argument cannot be
+    // constrained by it — `workspace.open` takes a `path` — so allowing one would produce a
+    // delegation that reads as narrow and behaves as wide.
     const argumentsInvalid = validateStageableArguments({
-      tool: input.tool, workspaceId: input.workspaceId, arguments: input.arguments,
+      tool: input.tool,
+      workspaceId: input.workspaceId,
+      arguments: input.arguments,
+      requireWorkspaceBinding: input.delegationId !== undefined,
     });
     if (argumentsInvalid) return refuseStage('STAGING_INPUT_INVALID', argumentsInvalid);
 
