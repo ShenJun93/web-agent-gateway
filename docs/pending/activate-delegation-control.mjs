@@ -128,27 +128,48 @@ async function main() {
     }
     out('  ok   config names no lease yet');
 
-    const sessions = store.listAdapterSessions(ADAPTER);
-    if (sessions.length === 0) fail('no v5 session exists. Connect the extension and observe a candidate first.');
-    if (sessions.length !== 1) {
-      process.stderr.write('\nv5 sessions found:\n');
-      for (const s of sessions) {
-        process.stderr.write(`  ${s.sessionId}  admitted ${new Date(s.createdAt).toISOString()}\n`);
-      }
-      fail(`${sessions.length} v5 sessions exist, so which one the browser is using is ambiguous. `
-        + 'Restart WAG to clear them, reconnect once, and re-run.');
+    // Sessions accumulate: `adapter_sessions` rows are durable and nothing prunes them, so every
+    // browser that has ever connected leaves one behind. An earlier version of this check required
+    // exactly one row in the table and told the operator to "restart WAG to clear them" — which
+    // cannot work, because a restart does not touch durable rows. It would have made activation
+    // impossible on any machine that had connected twice.
+    //
+    // What actually matters is not how many sessions have ever existed but how many are *fresh*:
+    // a session older than the window belongs to a browser that is very likely gone, and binding a
+    // grant to it either wastes the grant or binds it somewhere nobody is watching.
+    const all = store.listAdapterSessions(ADAPTER);
+    if (all.length === 0) {
+      fail('no v5 session exists. Connect the extension and let it observe one candidate first.');
     }
-    const session = sessions[0];
+    const ageOf = (record) => (now - record.createdAt) / 60_000;
+    const fresh = all.filter((record) => {
+      const age = ageOf(record);
+      return age >= 0 && age <= SESSION_MAX_AGE_MINUTES;
+    });
+    if (fresh.length === 0) {
+      process.stderr.write('\nv5 sessions, newest first:\n');
+      for (const record of all) {
+        process.stderr.write(
+          `  ${record.sessionId}  ${Math.round(ageOf(record))} min old\n`,
+        );
+      }
+      fail(`no v5 session is younger than ${SESSION_MAX_AGE_MINUTES} minutes. A stale session `
+        + 'belongs to a browser that is probably gone. Reconnect, observe one candidate, re-run.');
+    }
+    if (fresh.length !== 1) {
+      process.stderr.write('\nfresh v5 sessions:\n');
+      for (const record of fresh) {
+        process.stderr.write(`  ${record.sessionId}  ${Math.round(ageOf(record))} min old\n`);
+      }
+      fail(`${fresh.length} v5 sessions are fresh, so which one the browser is using is ambiguous. `
+        + 'Close the other browser contexts, wait for them to age out, and re-run.');
+    }
+    const session = fresh[0];
     if (session.sessionId !== sessionId) {
-      fail(`--session ${sessionId} is not the one live session (${session.sessionId}). `
+      fail(`--session ${sessionId} is not the one fresh session (${session.sessionId}). `
         + 'Refusing to bind a grant to a session the browser is not using.');
     }
-    const ageMinutes = (now - session.createdAt) / 60_000;
-    if (!(ageMinutes >= 0) || ageMinutes > SESSION_MAX_AGE_MINUTES) {
-      fail(`the session is ${Math.round(ageMinutes)} minutes old (limit ${SESSION_MAX_AGE_MINUTES}). `
-        + 'A stale session may belong to a browser that is gone. Reconnect and re-run.');
-    }
-    out(`  ok   exactly one v5 session, ${Math.round(ageMinutes)} min old, matches --session`);
+    out(`  ok   exactly one fresh v5 session, ${Math.round(ageOf(session))} min old, matches --session`);
 
     const config = JSON.parse(configText);
     const allowedRoots = config.allowedRoots ?? [];

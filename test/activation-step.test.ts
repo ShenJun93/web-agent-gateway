@@ -218,6 +218,8 @@ async function harness(t: test.TestContext, options: {
   names?: 'placeholder' | 'delegation-only' | 'lease-already-named';
   /** Create a v5 session row and return its id. */
   withSession?: boolean;
+  /** Extra sessions, with ages in minutes, to model a machine that has connected before. */
+  extraSessionAgesMinutes?: readonly number[];
   /** Create a workspace row over a real git repository inside the temp tree. */
   withWorkspace?: boolean;
 } = {}): Promise<{
@@ -246,6 +248,14 @@ async function harness(t: test.TestContext, options: {
           correlationSha256: 'a'.repeat(64),
           createdAt: Date.now(),
         }).sessionId;
+      }
+      for (const [index, age] of (options.extraSessionAgesMinutes ?? []).entries()) {
+        store.getOrCreateAdapterSession({
+          ownerId: store.getOrCreateLocalPrincipal(Date.now()).ownerId,
+          adapterId: BROWSER_DELEGATION_ADAPTER_ID,
+          correlationSha256: String(index).padStart(64, 'b'),
+          createdAt: Date.now() - age * 60_000,
+        });
       }
       if (options.withWorkspace) {
         for (const argv of [
@@ -481,9 +491,44 @@ test('it refuses a --session that is not the one live session', async (t) => {
     ISSUE, '--session', wrong, '--workspace', h.workspaceId!, '--confirm',
   ]);
   assert.equal(result.code, 2, result.stdout + result.stderr);
-  assert.match(result.stderr, /is not the one live session/);
+  assert.match(result.stderr, /is not the one fresh session/);
   assert.equal(await readFile(h.config, 'utf8'), h.configBefore);
   const counts = await grantCounts(h.store);
   assert.equal(counts.delegations, 0);
   assert.equal(counts.leases, 0);
+});
+
+test('a stale session from an earlier browser does not block activation', async (t) => {
+  // Sessions are durable rows and nothing prunes them, so any machine that has connected before
+  // has old ones. Requiring the table to hold exactly one row made activation impossible there —
+  // and the advice it printed, to restart WAG, could not have cleared them.
+  const h = await harness(t, {
+    withSession: true, withWorkspace: true, extraSessionAgesMinutes: [600, 1500],
+  });
+  const result = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /exactly one fresh v5 session/);
+});
+
+test('two fresh sessions are ambiguous and refuse, because either could be the live browser', async (t) => {
+  const h = await harness(t, {
+    withSession: true, withWorkspace: true, extraSessionAgesMinutes: [1],
+  });
+  const result = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /2 v5 sessions are fresh/);
+  assert.equal(await readFile(h.config, 'utf8'), h.configBefore);
+});
+
+test('only stale sessions refuses, and says so rather than blaming the reference', async (t) => {
+  const h = await harness(t, { withWorkspace: true, extraSessionAgesMinutes: [600] });
+  const result = await runScript(h.script, [
+    ISSUE, '--session', 'session_whatever', '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /no v5 session is younger than/);
 });

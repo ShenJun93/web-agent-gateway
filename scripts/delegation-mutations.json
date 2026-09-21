@@ -1076,5 +1076,12 @@
     "suite": "test/activation-step.test.ts",
     "from": "    if (session.sessionId !== sessionId) {",
     "to": "    if (false) {"
+  },
+  {
+    "name": "activation accepts a stale session instead of requiring a fresh one",
+    "file": "docs/pending/activate-delegation-control.mjs",
+    "suite": "test/activation-step.test.ts",
+    "from": "      return age >= 0 && age <= SESSION_MAX_AGE_MINUTES;",
+    "to": "      return age >= 0;"
   }
 ]
