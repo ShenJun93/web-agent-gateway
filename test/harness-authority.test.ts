@@ -332,8 +332,13 @@ test('production carries no auto-approve bypass and does not know this lane exis
     // store so the CSRF, Origin and single-use loops run against production's checks rather than a
     // stub. The direction is what matters and is asserted above: the lane may reach into
     // production, production may never reach into the lane.
-    ['./caller-context.js', './durable-mutation.js', './durable-store.js', './file-mutation-backend.js', './operator-server.js', './path-policy.js'],
-    'the lane reaches only the coordinator, the store, the caller context, the path policy and the review server',
+    // `goal-lease.js` joins the list deliberately: the lane grants and revokes Goal Leases so the
+    // autonomous cycles can be exercised without a human (ADR-0028), which needs the bindings
+    // type and `validateBindings`. As with `operator-server.js`, the direction is what the
+    // containment rests on and is asserted above — the lane may reach into production, production
+    // may never reach into the lane.
+    ['./caller-context.js', './durable-mutation.js', './durable-store.js', './file-mutation-backend.js', './goal-lease.js', './operator-server.js', './path-policy.js'],
+    'the lane reaches only the coordinator, the store, the caller context, the path policy, the review server and the lease policy',
   );
   // A static import list is blind to a dynamic one, and this file used to contain one. Matching
   // only the awaited form would still miss `import(x).then(...)`, `void import(x)` and
