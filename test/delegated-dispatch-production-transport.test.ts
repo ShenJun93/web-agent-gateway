@@ -72,6 +72,8 @@ interface Harness {
   /** The shared registry, for the case where a bearer is minted outside the HTTP route. */
   admission: BrowserAdmissionRegistry;
   closeServer(): Promise<void>;
+  /** How many coordinators have been disposed — the executor leak is invisible without this. */
+  disposed(): number;
 }
 
 /**
@@ -116,6 +118,7 @@ async function harness(t: test.TestContext, options: { maxActions?: number; tool
 
   const executed: { tool: string; arguments: unknown }[] = [];
   let toolOk = true;
+  let disposed = 0;
   const port = createDelegationDispatchPort(store);
 
   const server = await startDelegationDispatchHttpServer({
@@ -136,6 +139,7 @@ async function harness(t: test.TestContext, options: { maxActions?: number; tool
           router,
           port,
           sessionId: caller.sessionId,
+          dispose: async () => { disposed += 1; },
           executor: {
             async callTool(input) {
               executed.push(input);
@@ -202,6 +206,7 @@ async function harness(t: test.TestContext, options: { maxActions?: number; tool
     dispatchUrl: server.dispatchUrl,
     admission,
     closeServer: () => server.close(),
+    disposed: () => disposed,
   };
 }
 
@@ -429,4 +434,90 @@ test('a transport failure is reported as unreachable, never as a decision', asyn
   });
   assert.equal(answered.type, 'error');
   assert.equal((answered.error as { code: string }).code, 'LOCAL_WAG_UNREACHABLE');
+});
+
+// -------------------------------------------------------------------------------------------
+// Connection lifecycle
+//
+// Keying coordinators by bearer is right — a reconnect must start unbound, and only a new bearer
+// guarantees that. It also creates a lifecycle the first draft did not handle, and a review
+// measured all of it: `admit()` invalidates the session's previous token as a side effect, so the
+// old bearer 401s while its coordinator stays in the map forever. Every reconnect that did not
+// cleanly unbind — an MV3 worker killed without warning, a browser crash, a best-effort release
+// that did not land — leaked one entry, and 64 of them bricked the surface until WAG restarted.
+//
+// Worse, the capacity check ran *after* `admit()`, so hitting the cap took a working session's
+// bearer away and gave it nothing back: a reconnect at the cap killed the session it was
+// restoring.
+// -------------------------------------------------------------------------------------------
+
+test('re-admitting a session drops the coordinator its previous bearer held', async (t) => {
+  const h = await harness(t);
+  const admit = async () => {
+    const response = await fetch(h.admissionUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${'x'.repeat(48)}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ correlation_id: h.correlationId }),
+    });
+    assert.equal(response.status, 200);
+    return (await response.json() as { bearer_token: string }).bearer_token;
+  };
+  const ping = (bearer: string) => fetch(h.dispatchUrl, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ version: 5, type: 'ping', requestId: `req_${randomUUID()}`, sessionId: h.sessionId }),
+  });
+
+  const first = await admit();
+  assert.equal((await ping(first)).status, 200);
+
+  // The reconnect. Same correlation, so the same durable session — and a fresh bearer.
+  const second = await admit();
+  assert.notEqual(second, first);
+  assert.equal((await ping(second)).status, 200, 'the new bearer works');
+  assert.equal(
+    (await ping(first)).status, 401,
+    'and the old one is gone from both the registry and the coordinator map',
+  );
+
+  // Sixty-four reconnects must not exhaust anything, because each drops its predecessor.
+  for (let i = 0; i < 70; i += 1) {
+    const bearer = await admit();
+    assert.equal((await ping(bearer)).status, 200, `reconnect ${i}`);
+  }
+});
+
+test('releasing a connection closes what its coordinator held', async (t) => {
+  // The executor keeps a connected MCP client, server and transport pair for the life of the
+  // connection. Nothing downstream notices them leaking; the machine does.
+  const h = await harness(t);
+  const admitted = await fetch(h.admissionUrl, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${'x'.repeat(48)}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ correlation_id: h.correlationId }),
+  });
+  const bearer = (await admitted.json() as { bearer_token: string }).bearer_token;
+  assert.equal(h.disposed(), 0);
+
+  const released = await fetch(new URL('/adapter/release', h.dispatchUrl), {
+    method: 'POST', headers: { authorization: `Bearer ${bearer}` },
+  });
+  assert.equal(released.status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(h.disposed(), 1, 'the coordinator was disposed, not merely forgotten');
+
+  const afterRelease = await fetch(h.dispatchUrl, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ version: 5, type: 'ping', requestId: `req_${randomUUID()}`, sessionId: h.sessionId }),
+  });
+  assert.equal(afterRelease.status, 401);
+});
+
+test('closing the server disposes every live coordinator', async (t) => {
+  const h = await harness(t);
+  await bind(h);
+  assert.equal(h.disposed(), 0);
+  await h.closeServer();
+  assert.equal(h.disposed(), 1);
 });

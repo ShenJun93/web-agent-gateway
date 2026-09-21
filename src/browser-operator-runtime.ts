@@ -318,6 +318,14 @@ export async function startBrowserOperatorRuntime(options: {
             delegationExecutors.add(executorPort);
             return new DelegatedRunCoordinator({
               router, port: dispatchPort, executor: executorPort, sessionId: caller.sessionId,
+              // Each executor holds a connected MCP client, server and transport pair for the life
+              // of the connection. Without this the set only grew: the transport dropped a
+              // coordinator on release and nothing closed what it held, so every reconnect — one
+              // per tab switch — leaked a pair for the lifetime of the process.
+              dispose: async () => {
+                delegationExecutors.delete(executorPort);
+                await executorPort.close();
+              },
             });
           },
         },

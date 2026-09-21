@@ -1364,10 +1364,17 @@ export class SqliteDurableStore {
   /**
    * Retire claims that never reached a dispatch — `CLAIMED -> ABANDONED`, terminal.
    *
-   * **Not yet wired.** Nothing in `src/` calls this: no module constructs the dispatch plane, so
-   * there is no runtime to call it from. A review caught the previous comment asserting "called at
-   * startup and periodically", which was a description of the intended wiring written as fact. It
-   * belongs in the runtime that wires the plane, which is the next milestone.
+   * Called by `DelegationClaimSweeper` — once when the runtime starts, then on an interval — and
+   * only when a delegation is configured. Starting with a sweep is the point: the rows that most
+   * need retiring are the ones a crash already left on disk.
+   *
+   * This comment has been wrong twice, in opposite directions, which is worth recording. It once
+   * asserted "called at startup and periodically" when nothing called it at all; a review caught
+   * that. The correction then said "**not yet wired**", and stayed there after the wiring landed —
+   * so the comment documenting a false-prose finding became false prose itself. The lesson is not
+   * about this method: a comment that describes *callers* rots whenever the callers change, and the
+   * only defence is that something fails when it does. `test/delegated-run-recovery.test.ts` and
+   * three mutations now cover the sweep.
    *
    * It deliberately does **not** release the slot and
    * deliberately does **not** re-dispatch: WAG cannot know whether the dispatch that followed the

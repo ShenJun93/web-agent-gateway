@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "build:native-host": "tsx scripts/build-native-host.ts",
+    "build:delegation-native-host": "tsx scripts/build-delegation-native-host.ts",
     "verify:native-host-licenses": "tsx scripts/verify-native-host-license-compliance.ts",
     "record:native-host-candidate": "tsx scripts/record-native-host-unsigned-candidate.ts",
     "verify:native-host-candidate": "tsx scripts/verify-signed-native-host-candidate.ts",

@@ -65,6 +65,16 @@ export interface DelegatedRunCoordinatorOptions {
   executor: DelegatedToolExecutionPort;
   /** The admitted session, used only to answer `run.result` on the coordinator's own behalf. */
   sessionId: string;
+  /**
+   * Release whatever this coordinator holds when its connection goes away.
+   *
+   * The executor keeps a connected MCP client, a server and a linked transport pair for the life of
+   * the connection, so something has to close them. A review measured what happens without it: the
+   * transport dropped coordinators on release but nothing touched their executors, and every
+   * admit/release cycle — one per tab switch, because the controller holds a single bound session —
+   * leaked a whole MCP pair for the lifetime of the process.
+   */
+  dispose?(): Promise<void>;
 }
 
 /**
@@ -107,6 +117,11 @@ export function delegatedRunResultId(input: {
  */
 export class DelegatedRunCoordinator {
   constructor(private readonly options: DelegatedRunCoordinatorOptions) {}
+
+  /** Idempotent, and never throws: a connection going away must not fail the request that ended it. */
+  async close(): Promise<void> {
+    await this.options.dispose?.().catch(() => undefined);
+  }
 
   async handle(raw: unknown): Promise<DelegatedDispatchResponseEnvelope> {
     const response = this.options.router.handle(raw);

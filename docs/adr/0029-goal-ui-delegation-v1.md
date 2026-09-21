@@ -122,15 +122,31 @@ The identity earns its keep twice. A delegation binds `adapterId`, so a delegati
 cannot be used by a v4 session, and a v4 session cannot speak these verbs at all. The isolation is
 structural rather than a check someone has to remember.
 
-**v5 is narrower than v4, not wider.** There is no `tool.call` on it. On v4 the browser names a
-tool and its arguments and the gateway runs it; here the browser stages a candidate, which is
-inert, and later asks for it by reference — so the tool that runs is the one in the stored row, and
-the dispatch message has no tool, no arguments, and no way to change what was staged. That is a
-reduction in browser authority, which is why this revision needs no stronger-isolation decision
-under ADR-0019.
+**v5's reachable tool surface is identical to v4's — not narrower.** The verb list is shorter; that
+is not the same thing, and an earlier draft of this paragraph reasoned from the first to the second.
+
+What is genuinely narrower is the *delegated* path. There is no `tool.call`: the browser stages a
+candidate, which is inert, and later asks for it by reference — so the tool that runs is the one in
+the stored row, and `run.dispatch` has no tool, no arguments and no way to change what was staged.
+
+`run.human` is the other half, and it restores v4's shape: the browser names a tool and its
+arguments in `run.stage`, then asks for them to run, with no delegation consulted, no budget spent
+and — deliberately, per `human-presence-boundary.md` — no kill switch applied. That is exactly what
+a v4 `tool.call` is, split across two frames. A review caught this ADR still claiming "narrower"
+after that verb was added, in a paragraph that then concluded no stronger-isolation decision was
+needed under ADR-0019. The premise was false; the conclusion needs a different argument.
+
+**The argument that does hold** is that v5 adds no *consequential* authority. Every tool reachable
+from either path is the proposal-only profile — `mutation.preview`, `file.create` and `git.commit`
+create records a human must approve, and nothing on this surface approves anything. So v5 is
+v4-equivalent in what it can cause, under a distinct identity, plus one new transition: Run, bounded
+by a delegation a human issued and named. ADR-0019's bar is consequential browser authority, and
+that is unchanged. The separate identity is not a reduction in authority — it is what stops a v4
+session using a v5 delegation, and the reverse.
 
 ```text
-hello · session.bind · session.unbind · ping · verbs.list · run.stage · run.dispatch · run.result
+hello · session.bind · session.unbind · ping · verbs.list
+run.stage · run.dispatch · run.human · run.result
 ```
 
 `run.dispatch` carries two opaque references. `run.stage` carries the candidate, which is bounded
@@ -261,7 +277,8 @@ src/browser-adapter/native-host-v5  a second native host binary — not a mode f
 browser/extension/                  the shipped worker loads the v5 core, tries the delegated path
   native-session-core-v5.js         first, and falls through to the human queue on any refusal
 src/delegation-claim-sweeper.ts     retires CLAIMED rows a crash stranded; never refunds the slot
-protocol-v5 `run.human`             v5 is no longer delegated-only; parity with v4, not a widening
+protocol-v5 `run.human`             v5 *can* record a human Run. Parity with v4, not a widening —
+                                    but the shipped panel does not use it yet; see the residuals
 ```
 
 Two more that were not on the original list and turned out to be needed:
@@ -360,8 +377,15 @@ knowledge nobody has.
   the same kill-switch file rather than adding a second one nobody would remember in an emergency.
   Verified: both read `LOCALAPPDATA\WebAgentGateway`.
 - **The human gate still lives in the browser.** The gateway cannot distinguish a clicked Run from
-  an unclicked one on v4 or on v5. `run.human` is how the panel reports a click; it is not what
-  makes a Run human. That was true before this revision and is unchanged by it.
+  an unclicked one on v4 or on v5. `run.human` is *a* way for a panel to report a click; it is not
+  what makes a Run human. That was true before this revision and is unchanged by it.
+- **`run.human` is not on the shipped human path.** A review found `runAsHuman` has no caller in
+  `browser/extension/`: when the delegated path declines a candidate, the worker falls through to a
+  v4 `tool.call` and the panel executes it over the v4 port, exactly as before. No `HUMAN_RUN` row
+  is written in production today. The verb, the store transition and the `PROPOSAL_IS_DELEGATED`
+  refusal are real and tested — what is missing is the panel using them. Left that way deliberately:
+  rewiring the accepted human path buys no authority and risks the route everything else falls back
+  to. Until it is done, "v5 is no longer delegated-only" is true of the protocol and not the product.
 - **A tool whose arguments name no workspace cannot be delegated at all**, including `health`. That
   is deliberate and it is a real narrowing: such tools stay on the human path.
 

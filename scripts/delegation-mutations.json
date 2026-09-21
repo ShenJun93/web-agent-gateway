@@ -712,5 +712,82 @@
     "suite": "test/delegated-dispatch-production-transport.test.ts",
     "from": "      if (req.headers.host !== `${host}:${listenerPort}` || req.headers.origin !== undefined) {",
     "to": "      if (false) {"
+  },
+  {
+    "name": "a re-observed candidate is dispatched again",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-observation-idempotence.test.ts",
+    "from": "    if (memory.has(identity)) return { alreadyDecided: true };",
+    "to": "    // mutated: no idempotence"
+  },
+  {
+    "name": "a decided candidate is never remembered",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-observation-idempotence.test.ts",
+    "from": "    memory.remember(identity);\n    return outcome;",
+    "to": "    return outcome;"
+  },
+  {
+    "name": "a candidate that never reached WAG is remembered anyway",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-observation-idempotence.test.ts",
+    "from": "    if (outcome.code === 'STAGE_TRANSPORT_FAILED') return outcome;",
+    "to": "    // mutated: an unreached candidate is treated as decided"
+  },
+  {
+    "name": "the memory is unbounded",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-observation-idempotence.test.ts",
+    "from": "      if (seen.size > MAX_REMEMBERED_DELEGATED) seen.delete(seen.values().next().value);",
+    "to": "      // mutated: unbounded"
+  },
+  {
+    "name": "the memory does not survive a worker restart",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-observation-idempotence.test.ts",
+    "from": "        for (const key of list) if (typeof key === 'string' && key.length <= 4096) seen.add(key);",
+    "to": "        void list;"
+  },
+  {
+    "name": "a tool with no workspace argument is asked about anyway",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-observation-idempotence.test.ts",
+    "from": "    if (typeof workspaceId !== 'string' || workspaceId.length === 0) return undefined;",
+    "to": "    // mutated: unbindable tools are asked about"
+  },
+  {
+    "name": "a lost dispatch answer is reported as an ordinary refusal",
+    "file": "browser/extension/delegated-dispatch-core-v5.js",
+    "suite": "test/delegated-observation-idempotence.test.ts",
+    "from": "      phase: 'dispatch', ok: false, indeterminate: true, proposalId,\n      code: 'DISPATCH_INDETERMINATE',",
+    "to": "      phase: 'dispatch', ok: false, proposalId,\n      code: 'DISPATCH_REFUSED',"
+  },
+  {
+    "name": "a transport failure before staging is treated as decided",
+    "file": "browser/extension/delegated-dispatch-core-v5.js",
+    "suite": "test/delegated-observation-idempotence.test.ts",
+    "from": "      phase: 'stage', ok: false, code: 'STAGE_TRANSPORT_FAILED',",
+    "to": "      phase: 'stage', ok: false, code: 'STAGE_REFUSED',"
+  },
+  {
+    "name": "a re-admitted session leaves its predecessor coordinator in the map",
+    "file": "src/delegation-dispatch-http.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "    dropCoordinator(liveBearerBySession.get(admitted.callerContext.sessionId));",
+    "to": "    // mutated: the predecessor is leaked"
+  },
+  {
+    "name": "releasing a connection forgets its coordinator without closing it",
+    "file": "src/delegation-dispatch-http.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "    void coordinator?.close().catch(() => undefined);",
+    "to": "    void coordinator;"
+  },
+  {
+    "name": "closing the server abandons live coordinators without disposing them",
+    "file": "src/delegation-dispatch-http.ts",
+    "suite": "test/delegated-dispatch-production-transport.test.ts",
+    "from": "      await Promise.all(open.map((coordinator) => coordinator.close().catch(() => undefined)));",
+    "to": "      void open;"
   }
 ]

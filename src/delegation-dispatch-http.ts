@@ -64,6 +64,17 @@ export async function startDelegationDispatchHttpServer(options: {
   // Keyed by the raw bearer. The native host is the only holder, it is loopback-only, and the
   // token dies with the admission — see the header for why session would be the wrong key.
   const coordinators = new Map<string, DelegatedRunCoordinator>();
+  /**
+   * The bearer currently live for each session, so the previous one can be evicted.
+   *
+   * Keying by bearer is right and it creates a lifecycle problem the first draft did not handle:
+   * `admission.admit()` invalidates the *previous* token for that session, so the old bearer starts
+   * 401ing — but nothing removed its coordinator. Every reconnect that did not cleanly unbind (an
+   * MV3 worker killed without warning, a browser crash, a host killed, a best-effort release that
+   * did not land) leaked one entry, and after `MAX_LIVE_COORDINATORS` of them the surface refused
+   * every new session until WAG restarted.
+   */
+  const liveBearerBySession = new Map<string, string>();
   let listenerPort = 0;
 
   const server = createServer({ requireHostHeader: false }, async (req, res) => {
@@ -110,6 +121,14 @@ export async function startDelegationDispatchHttpServer(options: {
     const body = admissionBodySchema.safeParse(parsed);
     if (!body.success) { json(res, 400, { error: 'invalid_request' }); return; }
 
+    // Checked **before** admitting, not after. `admit()` invalidates the session's previous token
+    // as a side effect, so refusing afterwards took a working session's bearer away and gave it
+    // nothing back — a reconnect at the cap killed the very session it was trying to restore.
+    if (coordinators.size >= MAX_LIVE_COORDINATORS) {
+      json(res, 503, { error: 'too_many_sessions' });
+      return;
+    }
+
     // The registry refuses a correlation that is not a server-minted UUID, because the delegation
     // adapter defaults to the strict shape. A caller who could choose it could join the exact
     // session a delegation is bound to.
@@ -117,10 +136,10 @@ export async function startDelegationDispatchHttpServer(options: {
     try { admitted = context.admission.admit(body.data.correlation_id); }
     catch { json(res, 400, { error: 'invalid_request' }); return; }
 
-    if (coordinators.size >= MAX_LIVE_COORDINATORS) {
-      json(res, 503, { error: 'too_many_sessions' });
-      return;
-    }
+    // The previous bearer for this session is dead the moment `admit` returns, so its coordinator
+    // goes with it. This is what keeps a reconnect loop from filling the map with corpses.
+    dropCoordinator(liveBearerBySession.get(admitted.callerContext.sessionId));
+    liveBearerBySession.set(admitted.callerContext.sessionId, admitted.mcpToken);
     coordinators.set(admitted.mcpToken, context.coordinatorFor(admitted.callerContext));
     json(res, 200, {
       dispatch_url: `http://${host}:${listenerPort}/adapter/dispatch`,
@@ -128,15 +147,28 @@ export async function startDelegationDispatchHttpServer(options: {
     });
   }
 
+  /** Forget one bearer's coordinator and release what it holds. Safe on an unknown bearer. */
+  function dropCoordinator(token: string | undefined): void {
+    if (token === undefined) return;
+    const coordinator = coordinators.get(token);
+    coordinators.delete(token);
+    // Fire-and-forget: closing an MCP pair is best effort, and nothing downstream waits on it.
+    void coordinator?.close().catch(() => undefined);
+  }
+
   function handleRelease(req: IncomingMessage, res: ServerResponse): void {
     if (req.method !== 'POST') { json(res, 405, { error: 'method_not_allowed' }); return; }
     const token = bearerToken(req);
+    const caller = token ? context.admission.resolveMcpToken(token) : undefined;
     if (!token || !context.admission.releaseMcpToken(token)) {
       res.setHeader('www-authenticate', 'Bearer');
       json(res, 401, { error: 'unauthorized' });
       return;
     }
-    coordinators.delete(token);
+    if (caller && liveBearerBySession.get(caller.sessionId) === token) {
+      liveBearerBySession.delete(caller.sessionId);
+    }
+    dropCoordinator(token);
     json(res, 200, { released: true });
   }
 
@@ -175,7 +207,10 @@ export async function startDelegationDispatchHttpServer(options: {
     admissionUrl: `http://${host}:${listenerPort}/adapter/admit`,
     dispatchUrl: `http://${host}:${listenerPort}/adapter/dispatch`,
     close: async () => {
+      const open = [...coordinators.values()];
       coordinators.clear();
+      liveBearerBySession.clear();
+      await Promise.all(open.map((coordinator) => coordinator.close().catch(() => undefined)));
       await closeServer(server);
     },
   };

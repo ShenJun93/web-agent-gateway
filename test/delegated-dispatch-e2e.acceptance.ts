@@ -15,9 +15,13 @@ import { createHarnessLane, HARNESS_LANE, type HarnessLane } from '../src/harnes
  *
  * Everything here runs against a store and a "config" the lane created for itself. **It proves the
  * transport and the policy. It proves nothing about production**, where issuing a delegation and
- * naming it are human acts, the rule patch is unapplied, and `goalUiDelegationId` is unset — so
- * every delegation row out there is inert and Run stays human. This suite is not evidence for the
- * activation gate; it is the evidence that the thing behind the gate works.
+ * naming it are human acts and `goalUiDelegationId` is unset unless someone sets it — so every
+ * delegation row out there is inert and Run stays human.
+ *
+ * The header used to add "the rule patch is unapplied". A human applied it on 2026-09-21, so that
+ * clause was stale within a day of being written; the rest of the sentence is unaffected, because
+ * the patch changed what is *permitted* and this lane never depended on that. Production evidence
+ * now lives in `test/delegated-run-production-runtime.test.ts`, which runs the shipped runtime.
  *
  * What a "manual Run" would have been: a person clicking Run in the side panel. Nothing in this
  * file clicks anything, and there is no UI in it at all. The extension asks; WAG decides.

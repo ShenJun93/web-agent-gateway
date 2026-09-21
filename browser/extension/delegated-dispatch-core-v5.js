@@ -157,7 +157,19 @@ export async function stageAndDispatch(send, input) {
     };
   }
   const stageEnvelope = buildStageEnvelope(input);
-  const staged = readResponse(stageEnvelope.requestId, await send(stageEnvelope));
+  let stageAnswer;
+  try {
+    stageAnswer = await send(stageEnvelope);
+  } catch {
+    // The transport died before anything was staged, or while staging. Staging is inert either
+    // way — no budget, no authority, no effect — so the caller is free to offer this candidate to
+    // a person instead. The worst case is one orphaned inert row, which is bounded and terminal.
+    return {
+      phase: 'stage', ok: false, code: 'STAGE_TRANSPORT_FAILED',
+      message: 'the native port failed before the candidate was staged',
+    };
+  }
+  const staged = readResponse(stageEnvelope.requestId, stageAnswer);
   if (!staged.ok) return { phase: 'stage', ...staged };
 
   const proposalId = staged.result && staged.result.proposalId;
@@ -176,7 +188,26 @@ export async function stageAndDispatch(send, input) {
     delegationId: input.delegationId,
     proposalId,
   });
-  const dispatched = readResponse(dispatchEnvelope.requestId, await send(dispatchEnvelope));
+  let dispatchAnswer;
+  try {
+    dispatchAnswer = await send(dispatchEnvelope);
+  } catch {
+    // The dispatch was **sent** and the answer was lost. This is the one outcome the caller must
+    // not treat as "nothing happened": WAG may have claimed a slot, transitioned the row, and run
+    // the tool before the port died. Offering the same candidate to a person afterwards would run
+    // the work a second time — measured as a real path, because `handleDisconnect` rejects every
+    // pending promise and an MV3 worker is terminated without warning.
+    //
+    // Reported as its own code rather than folded into a refusal, because the honest answer is
+    // "unknown", and the two call for opposite responses: a refusal means ask a person, an
+    // indeterminate dispatch means do not.
+    return {
+      phase: 'dispatch', ok: false, indeterminate: true, proposalId,
+      code: 'DISPATCH_INDETERMINATE',
+      message: 'the dispatch was sent and the answer was lost; it may have run',
+    };
+  }
+  const dispatched = readResponse(dispatchEnvelope.requestId, dispatchAnswer);
   if (!dispatched.ok) return { phase: 'dispatch', proposalId, ...dispatched };
   return { phase: 'dispatch', ok: true, proposalId, dispatched: true, result: dispatched.result };
 }
