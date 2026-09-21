@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { SqliteDurableStore } from './durable-store.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
 import { DurableCommitCoordinator } from './git-commit.js';
+import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
@@ -51,6 +53,9 @@ export interface RepositoryEngineeringRuntimeOptions {
  * mutation backend needs the executor that only exists after the gateway bootstraps.
  * `attach` is therefore a second phase rather than constructor work.
  */
+/** How often a configured lease is offered the pending queue. Idle when nothing is pending. */
+const LEASE_ADMISSION_INTERVAL_MS = 1_000;
+
 export async function startRepositoryEngineeringRuntime(
   config: PrivateGatewayConfig,
   options: RepositoryEngineeringRuntimeOptions = {},
@@ -76,7 +81,25 @@ export async function startRepositoryEngineeringRuntime(
   const store = new SqliteDurableStore(mutationSettings.statePath);
   const urlFile = `${mutationSettings.statePath}.operator-url`;
 
+  /**
+   * The Autonomous Goal Lease this surface honours, if the config names one (ADR-0028).
+   *
+   * This is the surface where a lease actually removes *both* gestures. There is no Run here —
+   * Run is a browser-adapter concept, the act of turning an untrusted page's text into a
+   * proposal — so a caller on this stdio surface proposes directly, and a lease admits. On the
+   * browser operator runtime a lease removes only Approve, because a human pressing Run is what
+   * creates the proposal in the first place.
+   *
+   * Absent unless configured, which is every existing deployment.
+   */
+  const goalLease = mutationSettings.goalLeaseId === undefined ? undefined : {
+    leaseId: mutationSettings.goalLeaseId,
+    killSwitch: () => isKillSwitchEngaged(dirname(mutationSettings.statePath)),
+  };
+
   let operator: OperatorServer | undefined;
+  let mutationCoordinator: DurableMutationCoordinator | undefined;
+  let leaseTimer: ReturnType<typeof setInterval> | undefined;
   let attached = false;
   let closed = false;
   const runtime: RepositoryEngineeringRuntime = {
@@ -96,8 +119,23 @@ export async function startRepositoryEngineeringRuntime(
         const coordinator = new DurableMutationCoordinator({
           store,
           backends: [new DevspaceFileMutationBackend(executor)],
+          ...(goalLease === undefined ? {} : { goalLease }),
         });
         await coordinator.reconcile();
+        mutationCoordinator = coordinator;
+
+        // The admission pass. Without a caller, configuring a lease attaches an option nothing
+        // consults — which is exactly the gap a review found on the browser runtime, so it is
+        // not repeated here. Interval-driven rather than fired from the proposal path, so the
+        // tool's contract is unchanged and records left pending across a restart are picked up.
+        // `unref` so it never holds the process open; errors swallowed per tick so a failing
+        // admission cannot take down a gateway whose human review path is working.
+        if (goalLease) {
+          leaseTimer = setInterval(() => {
+            void coordinator.admitPendingUnderLease().catch(() => undefined);
+          }, LEASE_ADMISSION_INTERVAL_MS);
+          leaseTimer.unref?.();
+        }
 
         let commitCoordinator: DurableCommitCoordinator | undefined;
         if (gitCommitSettings) {
@@ -107,6 +145,7 @@ export async function startRepositoryEngineeringRuntime(
             ...(gitCommitSettings.protectedBranches === undefined
               ? {}
               : { protectedBranches: gitCommitSettings.protectedBranches }),
+            ...(goalLease === undefined ? {} : { goalLease }),
           });
           await commitCoordinator.reconcile();
         }
@@ -138,6 +177,9 @@ export async function startRepositoryEngineeringRuntime(
     async close() {
       if (closed) return;
       closed = true;
+      // Before the store closes: an admission tick firing against a closed handle would throw
+      // inside a timer, where nothing is waiting to catch it.
+      if (leaseTimer) clearInterval(leaseTimer);
       try {
         await rm(urlFile, { force: true }).catch(() => undefined);
         await operator?.close();
