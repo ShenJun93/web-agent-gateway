@@ -1,0 +1,450 @@
+[
+  {
+    "name": "kill switch no longer checked first",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (input.killSwitch) return deny('KILL_SWITCH_ENGAGED', 'the local kill switch is engaged');",
+    "to": "  // mutated: kill switch ignored"
+  },
+  {
+    "name": "an unconfigured or non-configured delegation is honoured",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (input.configuredDelegationId !== delegation.delegationId) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "a superseded delegation still authorises",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (typeof delegation.supersededBy === 'string' && delegation.supersededBy.length > 0) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "a proposal in any state may be claimed",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (proposal.state !== 'STAGED') {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "proposal ownership unchecked",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (proposal.sessionId !== connection.sessionId || proposal.adapterId !== connection.adapterId) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "stored fingerprint trusted instead of re-derived",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (fingerprint !== proposal.fingerprint) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "action limit off by one",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (spend.actionsUsed + 1 > b.maxActions) {",
+    "to": "  if (spend.actionsUsed > b.maxActions) {"
+  },
+  {
+    "name": "session binding unchecked",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (connection.sessionId !== b.sessionId) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "workspace binding unchecked",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (proposal.workspaceId !== b.workspaceId) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "origin allowlist becomes a prefix match",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (origin !== proposal.origin || !b.allowedOrigins.includes(origin)) {",
+    "to": "  if (!b.allowedOrigins.some((allowed) => origin.startsWith(allowed))) {"
+  },
+  {
+    "name": "tool allowlist becomes a prefix match",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (!b.allowedTools.includes(proposal.tool)) {",
+    "to": "  if (!b.allowedTools.some((allowed) => proposal.tool.startsWith(allowed))) {"
+  },
+  {
+    "name": "extra request fields ignored rather than refused",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (keys.length !== 2 || keys[0] !== 'delegationId' || keys[1] !== 'proposalId') {",
+    "to": "  if (!keys.includes('delegationId') || !keys.includes('proposalId')) {"
+  },
+  {
+    "name": "delegation ceiling not enforced at use",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (delegation.expiresAt - delegation.notBefore > MAX_DELEGATION_WINDOW_MS) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "expiry left unreachable",
+    "file": "src/goal-ui-delegation.ts",
+    "suite": "test/goal-ui-delegation.test.ts",
+    "from": "  if (now >= delegation.expiresAt) return deny('DELEGATION_EXPIRED', `expired at ${delegation.expiresAt}`);",
+    "to": "  if (false) return deny('DELEGATION_EXPIRED', 'unreachable');"
+  },
+  {
+    "name": "action count no longer re-read inside the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (Number(used.n) + 1 > (maxActions as number)) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "revocation no longer re-checked inside the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (delegation.revoked_at !== null) {\n        return refuse('DELEGATION_REVOKED', 'the delegation was revoked before this claim');",
+    "to": "      if (false) {\n        return refuse('DELEGATION_REVOKED', 'unreachable');"
+  },
+  {
+    "name": "expiry no longer re-checked inside the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (!(input.now < expiresAt)) return refuse('DELEGATION_EXPIRED', 'expired before this claim');",
+    "to": "      if (false) return refuse('DELEGATION_EXPIRED', 'unreachable');"
+  },
+  {
+    "name": "the ceiling is not re-checked inside the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (expiresAt - notBefore > input.maxWindowMs) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "fingerprint no longer re-checked inside the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (String(proposal.fingerprint) !== input.expectedFingerprint) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "the proposal/delegation binding is dropped inside the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (proposal.delegation_id === null || String(proposal.delegation_id) !== input.delegationId) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "maxActions validation dropped inside the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (!Number.isInteger(maxActions) || (maxActions as number) <= 0) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "REDUNDANT the STAGED read is dropped from the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (String(proposal.state) !== 'STAGED') {\n        return refuse('PROPOSAL_NOT_STAGED', `the proposal is ${String(proposal.state)}`);",
+    "to": "      if (false) {\n        return refuse('PROPOSAL_NOT_STAGED', 'unreachable');"
+  },
+  {
+    "name": "REDUNDANT single-assignment dropped from the claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (Number(claimed.changes) !== 1) {\n        return refuse('PROPOSAL_NOT_STAGED', 'another claim took this proposal first');",
+    "to": "      if (false) {\n        return refuse('PROPOSAL_NOT_STAGED', 'unreachable');"
+  },
+  {
+    "name": "REDUNDANT the CLAIMED read is dropped from the dispatch",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (String(proposal.state) !== 'CLAIMED') {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "a delegated proposal may be run as a human Run",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (proposal.delegation_id !== null) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "REDUNDANT the STAGED read is dropped from the human run",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (String(proposal.state) !== 'STAGED') {\n        return refuse('PROPOSAL_NOT_STAGED', `the proposal is ${String(proposal.state)}, not STAGED`);",
+    "to": "      if (false) {\n        return refuse('PROPOSAL_NOT_STAGED', 'unreachable');"
+  },
+  {
+    "name": "abandonment releases the budget",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      `UPDATE staged_proposals SET state = 'ABANDONED', abandoned_at = ?\n       WHERE state = 'CLAIMED' AND claimed_at <= ?`,",
+    "to": "      `UPDATE staged_proposals SET state = 'STAGED', abandoned_at = ?\n       WHERE state = 'CLAIMED' AND claimed_at <= ?`,"
+  },
+  {
+    "name": "abandonment ignores the TTL and reaps live claims",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "       WHERE state = 'CLAIMED' AND claimed_at <= ?`,\n    ).run(now, now - claimTtlMs);",
+    "to": "       WHERE state = 'CLAIMED' AND claimed_at <= ?`,\n    ).run(now, now + claimTtlMs);"
+  },
+  {
+    "name": "a result id may be re-pointed",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "        'UPDATE run_authority SET result_id = ? WHERE proposal_id = ? AND result_id IS NULL',",
+    "to": "        'UPDATE run_authority SET result_id = ? WHERE proposal_id = ?',"
+  },
+  {
+    "name": "the audit CHECK constraint is dropped",
+    "file": "src/durable-store.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "        CHECK (\n          (authority = 'DELEGATED_RUN'\n            AND delegation_id IS NOT NULL AND goal_id IS NOT NULL AND controller_id IS NOT NULL)\n          OR\n          (authority = 'HUMAN_RUN'\n            AND delegation_id IS NULL AND goal_id IS NULL AND controller_id IS NULL)\n        )",
+    "to": "        CHECK (1 = 1)"
+  },
+  {
+    "name": "the refusal log is unbounded",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      this.db.prepare(\n        `DELETE FROM delegated_run_refusals WHERE refusal_id IN (",
+    "to": "      if (false) this.db.prepare(\n        `DELETE FROM delegated_run_refusals WHERE refusal_id IN ("
+  },
+  {
+    "name": "a pre-acceptance schema is accepted",
+    "file": "src/durable-store.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "      if (missingColumns.length > 0) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "a revoked delegation may be renewed",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (existing.revoked_at !== null) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "REDUNDANT the superseded read is dropped from the renewal",
+    "file": "src/durable-store.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "      if (existing.superseded_by !== null) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "renewal accepts another controller",
+    "file": "src/durable-store.ts",
+    "suite": "test/durable-delegation-state.test.ts",
+    "from": "      if (String(existing.controller_id) !== input.successor.controllerId) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "a forged control-plane key is accepted",
+    "file": "src/goal-ui-delegation-control.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (typeof options.key !== 'object' || options.key === null || !mintedKeys.has(options.key)) {",
+    "to": "    if (typeof options.key !== 'object' || options.key === null) {"
+  },
+  {
+    "name": "a delegation may be issued past the ceiling",
+    "file": "src/goal-ui-delegation-control.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (input.ttlMs > MAX_DELEGATION_WINDOW_MS) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "a delegation may be issued for another controller",
+    "file": "src/goal-ui-delegation-control.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (input.bindings.controllerId !== this.controllerId) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the port hands over the whole store",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "export function createDelegationDispatchPort(store: SqliteDurableStore): DelegationDispatchPort {\n  const port: Record<string, unknown> = {};",
+    "to": "export function createDelegationDispatchPort(store: SqliteDurableStore): DelegationDispatchPort {\n  return store as unknown as DelegationDispatchPort;\n  // eslint-disable-next-line\n  const port: Record<string, unknown> = {};"
+  },
+  {
+    "name": "the kill switch becomes optional again",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (typeof options.killSwitch !== 'function') {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the kill switch blocks the human route too",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (input.delegationId !== undefined && this.killSwitch()) {",
+    "to": "    if (this.killSwitch()) {"
+  },
+  {
+    "name": "staging no longer bounded by the delegation budget",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "      if (this.port.countStagedProposals(input.delegationId) >= bindings.maxActions) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "the open-queue bound is dropped",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (open >= MAX_OPEN_STAGED_PER_SESSION) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the total-staged bound is dropped, so a stage/run loop is unbounded",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (total >= MAX_TOTAL_STAGED_PER_SESSION) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "staging input validation is dropped",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "      if (typeof value !== 'string' || value.length === 0 || value.length > max) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "the undelegated branch stops validating the origin",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (origin !== input.origin) {\n      return refuseStage('STAGING_INPUT_INVALID', 'origin must be an exact origin');\n    }",
+    "to": "    // mutated: origin shape unchecked"
+  },
+  {
+    "name": "the staging rate limit is dropped",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    try { this.rateLimit.charge({ ...input.connection }, this.now()); }",
+    "to": "    try { if (false) this.rateLimit.charge({ ...input.connection }, this.now()); }"
+  },
+  {
+    "name": "an unconfigured delegation may be staged under",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "      if (this.configuredDelegationId === undefined\n        || this.configuredDelegationId !== input.delegationId) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "a refusal is not recorded",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "      this.recordRefusal({ connection: input.connection, code, delegationId, proposalId, slotClaimed });",
+    "to": "      if (false) this.recordRefusal({ connection: input.connection, code, delegationId, proposalId, slotClaimed });"
+  },
+  {
+    "name": "strings encoded bare, so a key and a value can merge",
+    "file": "src/proposal-fingerprint.ts",
+    "suite": "test/proposal-fingerprint.test.ts",
+    "from": "  return `s:${byteLength(value)}:${value}`;",
+    "to": "  return value;"
+  },
+  {
+    "name": "object keys no longer sorted",
+    "file": "src/proposal-fingerprint.ts",
+    "suite": "test/proposal-fingerprint.test.ts",
+    "from": "    const keys = Object.keys(value as Record<string, unknown>).sort();",
+    "to": "    const keys = Object.keys(value as Record<string, unknown>);"
+  },
+  {
+    "name": "values with no JSON form silently dropped",
+    "file": "src/proposal-fingerprint.ts",
+    "suite": "test/proposal-fingerprint.test.ts",
+    "from": "  throw new NonCanonicalValueError(`a ${typeof value} has no canonical form`);",
+    "to": "  return 'n:';"
+  },
+  {
+    "name": "unpaired surrogates are hashed again",
+    "file": "src/proposal-fingerprint.ts",
+    "suite": "test/proposal-fingerprint.test.ts",
+    "from": "  if (/\\p{Surrogate}/u.test(value)) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "the domain separator is dropped from the preimage",
+    "file": "src/proposal-fingerprint.ts",
+    "suite": "test/proposal-fingerprint.test.ts",
+    "from": "  return encodeString(PROPOSAL_FINGERPRINT_DOMAIN) + encode({",
+    "to": "  return encode({"
+  },
+  {
+    "name": "the session leaves the identity tuple",
+    "file": "src/proposal-fingerprint.ts",
+    "suite": "test/proposal-fingerprint.test.ts",
+    "from": "    sessionId: proposal.sessionId,\n    adapterId: proposal.adapterId,\n    arguments: proposal.arguments,",
+    "to": "    arguments: proposal.arguments,"
+  },
+  {
+    "name": "a claim drops to a deferred transaction",
+    "file": "src/durable-store.ts",
+    "suite": "test/goal-ui-delegation-isolation.test.ts",
+    "from": "    maxWindowMs: number;\n  }): { ok: true; goalId: string; controllerId: string } | { ok: false; code: string; detail: string } {\n    const refuse = (code: string, detail: string) => {\n      this.db.exec('ROLLBACK');\n      return { ok: false as const, code, detail };\n    };\n    this.db.exec('BEGIN IMMEDIATE');",
+    "to": "    maxWindowMs: number;\n  }): { ok: true; goalId: string; controllerId: string } | { ok: false; code: string; detail: string } {\n    const refuse = (code: string, detail: string) => {\n      this.db.exec('ROLLBACK');\n      return { ok: false as const, code, detail };\n    };\n    this.db.exec('BEGIN DEFERRED');"
+  },
+  {
+    "name": "attachResult drops its ownership check",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (proposal.sessionId !== input.connection.sessionId\n      || proposal.adapterId !== input.connection.adapterId) {\n      return { ok: false, code: 'PROPOSAL_NOT_OWNED', detail: 'staged by a different browser context' };\n    }\n    const attached = this.port.attachRunResult",
+    "to": "    if (false) {\n      return { ok: false, code: 'PROPOSAL_NOT_OWNED', detail: 'unreachable' };\n    }\n    const attached = this.port.attachRunResult"
+  },
+  {
+    "name": "the dispatch rate limit is dropped",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    try { this.dispatchRateLimit.charge({ ...input.connection }, this.now()); }",
+    "to": "    try { if (false) this.dispatchRateLimit.charge({ ...input.connection }, this.now()); }"
+  },
+  {
+    "name": "a second live delegation may be issued for a goal",
+    "file": "src/goal-ui-delegation-control.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (this.options.store.countLiveDelegationsForGoal(input.goalId, prepared.createdAt) > 0) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the start offset is unbounded again",
+    "file": "src/goal-ui-delegation-control.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "    if (notBeforeMs > MAX_DELEGATION_WINDOW_MS) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "the schema constraint check is dropped",
+    "file": "src/durable-store.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "      if (missingConstraints.length > 0) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "a post-claim throw goes unrecorded",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/goal-ui-delegation-planes.test.ts",
+    "from": "        this.recordRefusal({\n          connection: input.connection, code: 'DISPATCH_FAILED_AFTER_CLAIM',",
+    "to": "        if (false) this.recordRefusal({\n          connection: input.connection, code: 'DISPATCH_FAILED_AFTER_CLAIM',"
+  },
+  {
+    "name": "non-plain objects encode as empty again",
+    "file": "src/proposal-fingerprint.ts",
+    "suite": "test/proposal-fingerprint.test.ts",
+    "from": "    if (prototype !== Object.prototype && prototype !== null) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "sparse arrays encode with a wrong count",
+    "file": "src/proposal-fingerprint.ts",
+    "suite": "test/proposal-fingerprint.test.ts",
+    "from": "      if (!(index in value)) throw new NonCanonicalValueError('an array has holes');",
+    "to": "      if (false) throw new NonCanonicalValueError('unreachable');"
+  }
+]

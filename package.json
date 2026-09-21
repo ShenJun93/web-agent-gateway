@@ -22,7 +22,8 @@
     "lease:stop": "tsx scripts/lease-stop.ts",
     "test:goal-lease": "npm run build && tsx --test --test-concurrency=1 test/goal-lease-e2e.acceptance.ts",
     "p1a:tools": "tsx scripts/p1a-tool-inventory.ts",
-    "p1a:snapshot": "tsx scripts/p1a-state-snapshot.ts"
+    "p1a:snapshot": "tsx scripts/p1a-state-snapshot.ts",
+    "test:delegation-mutations": "tsx scripts/delegation-mutation-battery.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",

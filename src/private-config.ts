@@ -35,6 +35,19 @@ const repositoryEngineeringSchema = z.object({
      * refused rather than treated as unrestricted.
      */
     goalLeaseId: z.string().min(1).max(128).regex(/^lease_[A-Za-z0-9._:-]+$/).optional(),
+    /**
+     * The Goal UI Delegation this runtime will honour (ADR-0029).
+     *
+     * Same shape as `goalLeaseId` above, and for the same reason. Absent means delegated Run is
+     * off and every proposal stays on the human path, which is the default and the only behaviour
+     * before this field existed. Naming a delegation here does not create one or grant anything:
+     * its own bindings, window, supersession and revocation still decide, and an id that is not in
+     * the durable store is refused rather than treated as unrestricted.
+     *
+     * What naming *does* do is make the row live. A delegation that exists but is not named here
+     * is inert — which is how issuance stays a human act even though a row is just a row.
+     */
+    goalUiDelegationId: z.string().min(1).max(128).regex(/^uidel_[A-Za-z0-9._:-]+$/).optional(),
   }).strict().optional(),
 }).strict();
 
@@ -57,6 +70,7 @@ export interface PrivateRepositoryEngineeringMutation {
   ownerId: string;
   reviewTtlMs?: number;
   goalLeaseId?: string;
+  goalUiDelegationId?: string;
 }
 export interface PrivateRepositoryEngineeringGitCommit {
   protectedBranches?: string[];
@@ -124,6 +138,8 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
             ownerId: mutation.ownerId,
             ...(mutation.reviewTtlMs === undefined ? {} : { reviewTtlMs: mutation.reviewTtlMs }),
             ...(mutation.goalLeaseId === undefined ? {} : { goalLeaseId: mutation.goalLeaseId }),
+            ...(mutation.goalUiDelegationId === undefined
+              ? {} : { goalUiDelegationId: mutation.goalUiDelegationId }),
           },
         }),
       },

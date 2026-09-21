@@ -211,8 +211,24 @@ export class SqliteDurableStore {
 
   constructor(path: string) {
     this.db = new DatabaseSync(path);
+    try {
+      this.open();
+    } catch (error) {
+      // Schema setup can refuse — a pre-acceptance delegation table does exactly that. Leaving the
+      // handle open on the way out holds the file on Windows and leaks a connection everywhere
+      // else, so the failed store closes itself rather than relying on a caller that never got one.
+      try { this.db.close(); } catch { /* the throw above is the interesting one */ }
+      throw error;
+    }
+  }
+
+  private open(): void {
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
+    // Before any `CREATE TABLE`, including the ones that have nothing to do with delegation. A
+    // check whose stated job is "refuse at open" should leave the file as it found it, and an
+    // earlier placement handed a pre-acceptance store the tables it was missing on the way out.
+    this.assertDelegationSchemaShape();
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS gateway_identity (
         singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
@@ -363,9 +379,29 @@ export class SqliteDurableStore {
     `);
     // Goal UI Delegation v1 (ADR-0029). New tables, for the reason above: no migration framework.
     //
-    // `delegated_runs` is both the action ledger and the replay defence. The nonce is part of the
-    // primary key, so a replayed dispatch cannot insert twice — the uniqueness is enforced by the
-    // database rather than by a check the caller might skip.
+    // The lifecycle is explicit in the schema rather than implied by a nullable timestamp:
+    //
+    //   STAGED --claim--> CLAIMED --dispatch--> DISPATCHED --result--> RESULTED
+    //      |                 |
+    //      |                 +--abandon (claim TTL elapsed)--> ABANDONED   [terminal]
+    //      +--human run--> DISPATCHED --result--> RESULTED
+    //
+    // Every transition is a single-assignment `UPDATE ... WHERE state = '<previous>'` whose row
+    // count must be exactly one, so two callers cannot both advance the same proposal.
+    //
+    //   ui_delegations          the parent grant. Immutable once inserted; only revocation and the
+    //                           supersession link mutate it, and both are one-way.
+    //   staged_proposals        the queued candidate, inert, carrying its own state.
+    //   delegation_claims       the budget ledger. One row per *claim*, which is the documented
+    //                           point at which a slot is spent. `(delegation, proposal)` is the
+    //                           primary key, so duplicate delivery cannot claim twice.
+    //   run_authority           one row per Run that happened. The CHECK makes it structurally
+    //                           impossible for a HUMAN_RUN row to carry a delegation or a
+    //                           DELEGATED_RUN row to omit one.
+    //   delegated_run_refusals  one row per refused delegated attempt, with its reason code and
+    //                           whether a slot had already been claimed. Bounded per delegation,
+    //                           because an audit the browser can drive is a write the browser can
+    //                           drive.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS ui_delegations (
         delegation_id TEXT PRIMARY KEY,
@@ -375,21 +411,84 @@ export class SqliteDurableStore {
         not_before INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
         revoked_at INTEGER,
+        supersedes TEXT,
+        superseded_by TEXT,
         bindings TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS delegated_runs (
+      CREATE TABLE IF NOT EXISTS staged_proposals (
+        proposal_id TEXT PRIMARY KEY,
+        delegation_id TEXT,
+        tool TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        arguments TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        staged_at INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        state TEXT NOT NULL,
+        claimed_at INTEGER,
+        dispatched_at INTEGER,
+        resulted_at INTEGER,
+        abandoned_at INTEGER,
+        FOREIGN KEY(delegation_id) REFERENCES ui_delegations(delegation_id),
+        CHECK (state IN ('STAGED', 'CLAIMED', 'DISPATCHED', 'RESULTED', 'ABANDONED'))
+      );
+      CREATE TABLE IF NOT EXISTS delegation_claims (
         delegation_id TEXT NOT NULL,
-        nonce TEXT NOT NULL,
+        proposal_id TEXT NOT NULL,
+        claimed_at INTEGER NOT NULL,
+        fingerprint TEXT NOT NULL,
+        PRIMARY KEY (delegation_id, proposal_id),
+        FOREIGN KEY(delegation_id) REFERENCES ui_delegations(delegation_id),
+        FOREIGN KEY(proposal_id) REFERENCES staged_proposals(proposal_id)
+      );
+      CREATE TABLE IF NOT EXISTS run_authority (
+        proposal_id TEXT PRIMARY KEY,
+        authority TEXT NOT NULL,
+        goal_id TEXT,
+        delegation_id TEXT,
+        controller_id TEXT,
         dispatched_at INTEGER NOT NULL,
+        proposal_fingerprint TEXT NOT NULL,
         tool TEXT NOT NULL,
         workspace_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
         origin TEXT NOT NULL,
-        proposal_fingerprint TEXT NOT NULL,
-        PRIMARY KEY (delegation_id, nonce),
-        FOREIGN KEY(delegation_id) REFERENCES ui_delegations(delegation_id)
+        result_id TEXT,
+        FOREIGN KEY(proposal_id) REFERENCES staged_proposals(proposal_id),
+        CHECK (
+          (authority = 'DELEGATED_RUN'
+            AND delegation_id IS NOT NULL AND goal_id IS NOT NULL AND controller_id IS NOT NULL)
+          OR
+          (authority = 'HUMAN_RUN'
+            AND delegation_id IS NULL AND goal_id IS NULL AND controller_id IS NULL)
+        )
       );
-      CREATE INDEX IF NOT EXISTS idx_delegated_runs_delegation ON delegated_runs(delegation_id);
+      CREATE TABLE IF NOT EXISTS delegated_run_refusals (
+        refusal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        authority TEXT NOT NULL,
+        requested_delegation_id TEXT,
+        requested_proposal_id TEXT,
+        goal_id TEXT,
+        session_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        refused_at INTEGER NOT NULL,
+        reason_code TEXT NOT NULL,
+        slot_claimed INTEGER NOT NULL,
+        CHECK (authority = 'DELEGATED_RUN_REFUSED'),
+        CHECK (slot_claimed IN (0, 1))
+      );
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_staged_proposals_delegation ON staged_proposals(delegation_id);
+      CREATE INDEX IF NOT EXISTS idx_staged_proposals_state ON staged_proposals(state, claimed_at);
+      CREATE INDEX IF NOT EXISTS idx_run_authority_delegation ON run_authority(delegation_id);
+      CREATE INDEX IF NOT EXISTS idx_refusals_delegation
+        ON delegated_run_refusals(requested_delegation_id, refused_at);
+      CREATE INDEX IF NOT EXISTS idx_refusals_session
+        ON delegated_run_refusals(session_id, adapter_id, refused_at);
     `);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS verify_jobs (
@@ -713,20 +812,88 @@ export class SqliteDurableStore {
     };
   }
 
+  /**
+   * Refuse to run against a store whose delegation tables predate this schema.
+   *
+   * `CREATE TABLE IF NOT EXISTS` is silent about a table that exists with the wrong shape, and
+   * this branch changed these tables twice before acceptance. A store created at either earlier
+   * revision would keep its old columns and then fail deep inside an insert, or — worse — read as
+   * working while a column nothing populates silently governs a decision. Checked at open, where
+   * the answer is unambiguous and the fix is to discard a pre-acceptance store.
+   */
+  private assertDelegationSchemaShape(): void {
+    const required: Record<string, { columns: readonly string[]; constraints: readonly string[] }> = {
+      ui_delegations: { columns: ['supersedes', 'superseded_by'], constraints: ['PRIMARY KEY'] },
+      staged_proposals: {
+        columns: ['state', 'claimed_at', 'dispatched_at', 'resulted_at', 'abandoned_at'],
+        constraints: ["CHECK (state IN ('STAGED', 'CLAIMED', 'DISPATCHED', 'RESULTED', 'ABANDONED'))"],
+      },
+      delegation_claims: {
+        columns: ['claimed_at', 'fingerprint'],
+        constraints: ['PRIMARY KEY (delegation_id, proposal_id)'],
+      },
+      run_authority: {
+        columns: ['authority', 'result_id'],
+        constraints: ["authority = 'DELEGATED_RUN'", "authority = 'HUMAN_RUN'", 'CHECK'],
+      },
+      delegated_run_refusals: {
+        columns: ['reason_code', 'slot_claimed'],
+        constraints: ["CHECK (authority = 'DELEGATED_RUN_REFUSED')"],
+      },
+    };
+
+    for (const [table, expected] of Object.entries(required)) {
+      // A table this process has not created yet is not a wrong table. Checked before the CREATEs
+      // so that refusing an old store does not first hand it four new tables — a review pointed
+      // out that a check whose job is "refuse at open" was leaving the file changed.
+      const ddl = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ).get(table) as { sql?: string } | undefined;
+      if (!ddl?.sql) continue;
+
+      const present = new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+        .map((row) => String(row.name)));
+      const missingColumns = expected.columns.filter((column) => !present.has(column));
+      if (missingColumns.length > 0) {
+        throw new Error(
+          `Durable store has a pre-acceptance ${table} table (missing ${missingColumns.join(', ')}). `
+          + 'Delegation tables changed before acceptance and there is no migration framework: '
+          + 'discard the pre-acceptance store rather than running against it.',
+        );
+      }
+
+      // Column names alone were not enough. A review built a store with every required column and
+      // no CHECK, no PRIMARY KEY and no FOREIGN KEY, opened it without complaint, and then wrote a
+      // HUMAN_RUN row carrying a delegation id — the very thing ADR-0029 calls structurally
+      // impossible. SQLite keeps the original DDL text, so the constraints can be checked too.
+      const missingConstraints = expected.constraints.filter((needle) => !ddl.sql?.includes(needle));
+      if (missingConstraints.length > 0) {
+        throw new Error(
+          `Durable store has a ${table} table without the constraints this schema relies on `
+          + `(missing ${missingConstraints.join('; ')}). The constraints are what make the audit `
+          + 'distinction and the claim ledger hold, so a table lacking them is refused rather than '
+          + 'trusted. Discard the store rather than running against it.',
+        );
+      }
+    }
+  }
+
   insertUiDelegation(record: {
     delegationId: string; goalId: string; controllerId: string;
-    createdAt: number; notBefore: number; expiresAt: number; bindings: string;
+    createdAt: number; notBefore: number; expiresAt: number; bindings: string; supersedes?: string;
   }): void {
     this.db.prepare(`INSERT INTO ui_delegations
-      (delegation_id, goal_id, controller_id, created_at, not_before, expires_at, bindings)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      (delegation_id, goal_id, controller_id, created_at, not_before, expires_at, bindings, supersedes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(record.delegationId, record.goalId, record.controllerId,
-        record.createdAt, record.notBefore, record.expiresAt, record.bindings);
+        record.createdAt, record.notBefore, record.expiresAt, record.bindings,
+        record.supersedes ?? null);
   }
 
   getUiDelegationRow(delegationId: string): {
     delegationId: string; goalId: string; controllerId: string;
-    createdAt: number; notBefore: number; expiresAt: number; revokedAt?: number; bindings: string;
+    createdAt: number; notBefore: number; expiresAt: number; revokedAt?: number;
+    supersedes?: string; supersededBy?: string; bindings: string;
   } | undefined {
     const row = this.db.prepare('SELECT * FROM ui_delegations WHERE delegation_id = ?').get(delegationId) as
       Record<string, unknown> | undefined;
@@ -739,8 +906,26 @@ export class SqliteDurableStore {
       notBefore: Number(row.not_before),
       expiresAt: Number(row.expires_at),
       ...(row.revoked_at === null ? {} : { revokedAt: Number(row.revoked_at) }),
+      ...(row.supersedes === null ? {} : { supersedes: String(row.supersedes) }),
+      ...(row.superseded_by === null ? {} : { supersededBy: String(row.superseded_by) }),
       bindings: String(row.bindings),
     };
+  }
+
+  /**
+   * Delegations for a goal that are still capable of authorising anything.
+   *
+   * Live means un-revoked, un-superseded and inside its window. Expiry counts as dead: a window
+   * that has closed authorises nothing, so refusing to issue alongside one would be refusing to
+   * replace a corpse.
+   */
+  countLiveDelegationsForGoal(goalId: string, now: number): number {
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM ui_delegations
+       WHERE goal_id = ? AND revoked_at IS NULL AND superseded_by IS NULL
+         AND not_before <= ? AND expires_at > ?`,
+    ).get(goalId, now, now) as { n: number };
+    return Number(row.n);
   }
 
   /** One-way, and idempotent. A revoked delegation is never un-revoked. */
@@ -751,45 +936,494 @@ export class SqliteDurableStore {
     return Number(result.changes) === 1;
   }
 
-  /** What a delegation has already spent, and whether this exact nonce was already used. */
-  uiDelegationSpend(delegationId: string, nonce: string): { actionsUsed: number; nonceAlreadyUsed: boolean } {
-    const used = this.db.prepare('SELECT COUNT(*) AS n FROM delegated_runs WHERE delegation_id = ?')
-      .get(delegationId) as { n: number };
-    const replay = this.db.prepare('SELECT 1 FROM delegated_runs WHERE delegation_id = ? AND nonce = ?')
-      .get(delegationId, nonce);
-    return { actionsUsed: Number(used.n), nonceAlreadyUsed: replay !== undefined };
-  }
-
   /**
-   * Consume one dispatch, atomically.
+   * Replace a delegation with a successor, atomically.
    *
-   * The `(delegation_id, nonce)` primary key is what makes replay impossible rather than merely
-   * checked: a second insert of the same nonce violates the constraint and returns false, even if
-   * two callers raced past the same `uiDelegationSpend` read. A check without this would be a
-   * time-of-check/time-of-use gap on the one guard that most needs not to have one.
+   * Three separate statements were wrong here, and an adversarial review found why: a crash
+   * between linking the successor and revoking the predecessor left **two live delegations for
+   * one goal, each with a full budget**. The comment at the time called that "losing authority is
+   * the safe direction", which described the other branch. Authority was being doubled.
+   *
+   * In one transaction there is no such branch. Either the goal has exactly one live delegation
+   * or it has the old one, and never both.
    */
-  recordDelegatedRun(input: {
-    delegationId: string; nonce: string; dispatchedAt: number; tool: string;
-    workspaceId: string; sessionId: string; origin: string; proposalFingerprint: string;
-  }): boolean {
+  renewUiDelegation(input: {
+    predecessorId: string;
+    successor: {
+      delegationId: string; goalId: string; controllerId: string;
+      createdAt: number; notBefore: number; expiresAt: number; bindings: string;
+    };
+    now: number;
+  }): { ok: true } | { ok: false; code: string; detail: string } {
+    const refuse = (code: string, detail: string) => {
+      this.db.exec('ROLLBACK');
+      return { ok: false as const, code, detail };
+    };
+    this.db.exec('BEGIN IMMEDIATE');
     try {
-      const result = this.db.prepare(`INSERT INTO delegated_runs
-        (delegation_id, nonce, dispatched_at, tool, workspace_id, session_id, origin, proposal_fingerprint)
+      const existing = this.db.prepare(
+        'SELECT controller_id, goal_id, revoked_at, superseded_by FROM ui_delegations WHERE delegation_id = ?',
+      ).get(input.predecessorId) as Record<string, unknown> | undefined;
+      if (!existing) return refuse('NO_DELEGATION', 'there is no such delegation to renew');
+      if (existing.revoked_at !== null) {
+        // A revoked delegation is finished. Renewing one would turn a deliberate stop into a
+        // fresh full budget, which is the opposite of what revocation is for.
+        return refuse('DELEGATION_REVOKED', 'a revoked delegation cannot be renewed');
+      }
+      if (existing.superseded_by !== null) {
+        return refuse('DELEGATION_SUPERSEDED', 'this delegation was already superseded');
+      }
+      if (String(existing.controller_id) !== input.successor.controllerId) {
+        return refuse('CONTROLLER_MISMATCH', 'another controller may not renew this delegation');
+      }
+      if (String(existing.goal_id) !== input.successor.goalId) {
+        return refuse('GOAL_MISMATCH', 'a renewal must stay within the goal it renews');
+      }
+
+      this.db.prepare(`INSERT INTO ui_delegations
+        (delegation_id, goal_id, controller_id, created_at, not_before, expires_at, bindings, supersedes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(input.delegationId, input.nonce, input.dispatchedAt, input.tool,
-          input.workspaceId, input.sessionId, input.origin, input.proposalFingerprint);
-      return Number(result.changes) === 1;
-    } catch {
-      // A constraint violation is the replay case and is a refusal, not an error to propagate.
-      return false;
+        .run(input.successor.delegationId, input.successor.goalId, input.successor.controllerId,
+          input.successor.createdAt, input.successor.notBefore, input.successor.expiresAt,
+          input.successor.bindings, input.predecessorId);
+      const linked = this.db.prepare(
+        'UPDATE ui_delegations SET superseded_by = ? WHERE delegation_id = ? AND superseded_by IS NULL',
+      ).run(input.successor.delegationId, input.predecessorId);
+      if (Number(linked.changes) !== 1) {
+        return refuse('DELEGATION_SUPERSEDED', 'the predecessor was superseded concurrently');
+      }
+      this.db.prepare(
+        'UPDATE ui_delegations SET revoked_at = ? WHERE delegation_id = ? AND revoked_at IS NULL',
+      ).run(input.now, input.predecessorId);
+
+      this.db.exec('COMMIT');
+      return { ok: true };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
     }
   }
 
-  listDelegatedRuns(delegationId: string): Array<{ nonce: string; tool: string; dispatchedAt: number }> {
+  insertStagedProposal(record: {
+    proposalId: string; delegationId?: string; tool: string; workspaceId: string; origin: string;
+    argumentsJson: string; sessionId: string; adapterId: string; stagedAt: number; fingerprint: string;
+  }): void {
+    this.db.prepare(`INSERT INTO staged_proposals
+      (proposal_id, delegation_id, tool, workspace_id, origin, arguments,
+       session_id, adapter_id, staged_at, fingerprint, state)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STAGED')`)
+      .run(record.proposalId, record.delegationId ?? null, record.tool, record.workspaceId,
+        record.origin, record.argumentsJson, record.sessionId, record.adapterId,
+        record.stagedAt, record.fingerprint);
+  }
+
+  getStagedProposalRow(proposalId: string): {
+    proposalId: string; delegationId?: string; tool: string; workspaceId: string; origin: string;
+    argumentsJson: string; sessionId: string; adapterId: string; stagedAt: number;
+    fingerprint: string; state: string;
+    claimedAt?: number; dispatchedAt?: number; resultedAt?: number; abandonedAt?: number;
+  } | undefined {
+    const row = this.db.prepare('SELECT * FROM staged_proposals WHERE proposal_id = ?').get(proposalId) as
+      Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      proposalId: String(row.proposal_id),
+      ...(row.delegation_id === null ? {} : { delegationId: String(row.delegation_id) }),
+      tool: String(row.tool),
+      workspaceId: String(row.workspace_id),
+      origin: String(row.origin),
+      argumentsJson: String(row.arguments),
+      sessionId: String(row.session_id),
+      adapterId: String(row.adapter_id),
+      stagedAt: Number(row.staged_at),
+      fingerprint: String(row.fingerprint),
+      state: String(row.state),
+      ...(row.claimed_at === null ? {} : { claimedAt: Number(row.claimed_at) }),
+      ...(row.dispatched_at === null ? {} : { dispatchedAt: Number(row.dispatched_at) }),
+      ...(row.resulted_at === null ? {} : { resultedAt: Number(row.resulted_at) }),
+      ...(row.abandoned_at === null ? {} : { abandonedAt: Number(row.abandoned_at) }),
+    };
+  }
+
+  /** Proposals staged under a delegation, in any state. Bounds how much it can queue. */
+  countStagedProposals(delegationId: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS n FROM staged_proposals WHERE delegation_id = ?')
+      .get(delegationId) as { n: number };
+    return Number(row.n);
+  }
+
+  /** Proposals this browser context is holding that have not yet left `STAGED`. */
+  countOpenStagedProposals(sessionId: string, adapterId: string): number {
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM staged_proposals
+       WHERE session_id = ? AND adapter_id = ? AND state = 'STAGED'`,
+    ).get(sessionId, adapterId) as { n: number };
+    return Number(row.n);
+  }
+
+  /** Every row this browser context has ever staged, whatever became of it. */
+  countAllStagedProposals(sessionId: string, adapterId: string): number {
+    const row = this.db.prepare(
+      'SELECT COUNT(*) AS n FROM staged_proposals WHERE session_id = ? AND adapter_id = ?',
+    ).get(sessionId, adapterId) as { n: number };
+    return Number(row.n);
+  }
+
+  /** Slots this parent delegation has spent. A claim spends one; a dispatch spends none. */
+  countDelegationClaims(delegationId: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS n FROM delegation_claims WHERE delegation_id = ?')
+      .get(delegationId) as { n: number };
+    return Number(row.n);
+  }
+
+  /**
+   * Claim one action slot: `STAGED -> CLAIMED`, atomically, or change nothing at all.
+   *
+   * This is the transaction the whole design rests on, so it re-reads every time-varying fact
+   * *inside* the write lock rather than trusting what the policy saw a moment ago. The policy
+   * still runs first — it produces the informative refusal — but this layer is what remains true
+   * when two processes race, when delivery is duplicated, and when the process died between the
+   * decision and the effect.
+   *
+   * What it re-reads: revocation, supersession, the validity window **and its ceiling**, the
+   * proposal's state, the proposal's delegation, its fingerprint, and the slot count. What it does
+   * **not** re-read: session, adapter, tool, origin and workspace, which the policy checks and
+   * this does not. Anything that calls this without the policy in front of it gets none of those,
+   * which is why nothing does.
+   *
+   * `goalId` and `controllerId` are read from the delegation row, never passed in. A caller cannot
+   * label a claim with a goal that did not authorise it.
+   */
+  claimDelegatedDispatch(input: {
+    delegationId: string; proposalId: string; now: number; expectedFingerprint: string;
+    maxWindowMs: number;
+  }): { ok: true; goalId: string; controllerId: string } | { ok: false; code: string; detail: string } {
+    const refuse = (code: string, detail: string) => {
+      this.db.exec('ROLLBACK');
+      return { ok: false as const, code, detail };
+    };
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const delegation = this.db.prepare(
+        `SELECT goal_id, controller_id, not_before, expires_at, revoked_at, superseded_by, bindings
+         FROM ui_delegations WHERE delegation_id = ?`,
+      ).get(input.delegationId) as Record<string, unknown> | undefined;
+      if (!delegation) return refuse('NO_DELEGATION', 'the delegation no longer exists');
+      if (delegation.revoked_at !== null) {
+        return refuse('DELEGATION_REVOKED', 'the delegation was revoked before this claim');
+      }
+      if (delegation.superseded_by !== null) {
+        return refuse('DELEGATION_SUPERSEDED', 'the delegation was superseded before this claim');
+      }
+      const notBefore = Number(delegation.not_before);
+      const expiresAt = Number(delegation.expires_at);
+      if (!Number.isFinite(notBefore) || !Number.isFinite(expiresAt) || expiresAt <= notBefore) {
+        return refuse('DELEGATION_MALFORMED', 'the stored validity window is not a window');
+      }
+      if (expiresAt - notBefore > input.maxWindowMs) {
+        // Re-checked here as well as at the policy, because a row inserted by anything other than
+        // the control plane never passed the control plane's ceiling check.
+        return refuse('DELEGATION_MALFORMED', 'the stored window exceeds the ceiling');
+      }
+      if (!(input.now >= notBefore)) return refuse('DELEGATION_NOT_YET_VALID', 'not yet valid');
+      if (!(input.now < expiresAt)) return refuse('DELEGATION_EXPIRED', 'expired before this claim');
+
+      let maxActions: unknown;
+      try { maxActions = (JSON.parse(String(delegation.bindings)) as { maxActions?: unknown }).maxActions; }
+      catch { return refuse('DELEGATION_MALFORMED', 'the stored bindings are not JSON'); }
+      if (!Number.isInteger(maxActions) || (maxActions as number) <= 0) {
+        return refuse('DELEGATION_MALFORMED', 'maxActions is not a positive integer');
+      }
+
+      const proposal = this.db.prepare(
+        `SELECT delegation_id, state, fingerprint FROM staged_proposals WHERE proposal_id = ?`,
+      ).get(input.proposalId) as Record<string, unknown> | undefined;
+      if (!proposal) return refuse('NO_PROPOSAL', 'there is no staged proposal with that id');
+      if (proposal.delegation_id === null || String(proposal.delegation_id) !== input.delegationId) {
+        return refuse('PROPOSAL_NOT_FOR_THIS_DELEGATION', 'staged under another delegation');
+      }
+      if (String(proposal.state) !== 'STAGED') {
+        return refuse('PROPOSAL_NOT_STAGED', `the proposal is ${String(proposal.state)}`);
+      }
+      if (String(proposal.fingerprint) !== input.expectedFingerprint) {
+        return refuse('PROPOSAL_INCONSISTENT', 'the staged identity changed since it was judged');
+      }
+
+      const used = this.db.prepare('SELECT COUNT(*) AS n FROM delegation_claims WHERE delegation_id = ?')
+        .get(input.delegationId) as { n: number };
+      if (Number(used.n) + 1 > (maxActions as number)) {
+        return refuse('ACTION_LIMIT_REACHED', `the delegation has already claimed ${Number(used.n)} actions`);
+      }
+
+      const claimed = this.db.prepare(
+        `UPDATE staged_proposals SET state = 'CLAIMED', claimed_at = ?
+         WHERE proposal_id = ? AND state = 'STAGED'`,
+      ).run(input.now, input.proposalId);
+      if (Number(claimed.changes) !== 1) {
+        return refuse('PROPOSAL_NOT_STAGED', 'another claim took this proposal first');
+      }
+      this.db.prepare(`INSERT INTO delegation_claims
+        (delegation_id, proposal_id, claimed_at, fingerprint) VALUES (?, ?, ?, ?)`)
+        .run(input.delegationId, input.proposalId, input.now, input.expectedFingerprint);
+
+      this.db.exec('COMMIT');
+      return { ok: true, goalId: String(delegation.goal_id), controllerId: String(delegation.controller_id) };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /**
+   * `CLAIMED -> DISPATCHED`, and write the audit row that says a delegated Run happened.
+   *
+   * Separate from the claim on purpose. The claim spends the budget; this records the handoff.
+   * A crash between them leaves a CLAIMED row that `abandonExpiredClaims` retires — the slot stays
+   * spent and the proposal is never run — which is the only honest resolution, because WAG cannot
+   * know whether a dispatch that was in flight reached anything.
+   */
+  markDelegatedDispatched(input: { proposalId: string; now: number }):
+  { ok: true } | { ok: false; code: string; detail: string } {
+    const refuse = (code: string, detail: string) => {
+      this.db.exec('ROLLBACK');
+      return { ok: false as const, code, detail };
+    };
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const proposal = this.db.prepare(
+        `SELECT delegation_id, state, tool, workspace_id, origin, session_id, adapter_id, fingerprint
+         FROM staged_proposals WHERE proposal_id = ?`,
+      ).get(input.proposalId) as Record<string, unknown> | undefined;
+      if (!proposal) return refuse('NO_PROPOSAL', 'there is no staged proposal with that id');
+      if (String(proposal.state) !== 'CLAIMED') {
+        return refuse('PROPOSAL_NOT_CLAIMED', `the proposal is ${String(proposal.state)}, not CLAIMED`);
+      }
+      const delegationId = proposal.delegation_id === null ? undefined : String(proposal.delegation_id);
+      if (delegationId === undefined) {
+        return refuse('PROPOSAL_NOT_FOR_THIS_DELEGATION', 'a claimed proposal must name its delegation');
+      }
+      const delegation = this.db.prepare(
+        'SELECT goal_id, controller_id FROM ui_delegations WHERE delegation_id = ?',
+      ).get(delegationId) as Record<string, unknown> | undefined;
+      if (!delegation) return refuse('NO_DELEGATION', 'the delegation vanished between claim and dispatch');
+
+      const advanced = this.db.prepare(
+        `UPDATE staged_proposals SET state = 'DISPATCHED', dispatched_at = ?
+         WHERE proposal_id = ? AND state = 'CLAIMED'`,
+      ).run(input.now, input.proposalId);
+      if (Number(advanced.changes) !== 1) {
+        return refuse('PROPOSAL_NOT_CLAIMED', 'the proposal left CLAIMED concurrently');
+      }
+      this.db.prepare(`INSERT INTO run_authority
+        (proposal_id, authority, goal_id, delegation_id, controller_id, dispatched_at,
+         proposal_fingerprint, tool, workspace_id, session_id, adapter_id, origin)
+        VALUES (?, 'DELEGATED_RUN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(input.proposalId, String(delegation.goal_id), delegationId,
+          String(delegation.controller_id), input.now, String(proposal.fingerprint),
+          String(proposal.tool), String(proposal.workspace_id), String(proposal.session_id),
+          String(proposal.adapter_id), String(proposal.origin));
+
+      this.db.exec('COMMIT');
+      return { ok: true };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /**
+   * Record a Run that no delegation authorised — `STAGED -> DISPATCHED` on the human path.
+   *
+   * `HUMAN_RUN` is an honest name for what WAG can establish: not "a person was present" — the
+   * gateway cannot see the click — but "nothing delegated this". The CHECK constraint keeps the
+   * two apart in the schema, so this row can never acquire a delegation id later.
+   *
+   * A proposal staged **under** a delegation is refused here. An adversarial review found that
+   * allowing it let the browser-reachable plane run delegated work while spending no slot and
+   * writing an audit row saying no delegation authorised it — true of the row, false of the work.
+   */
+  recordHumanRun(input: { proposalId: string; now: number }):
+  { ok: true } | { ok: false; code: string; detail: string } {
+    const refuse = (code: string, detail: string) => {
+      this.db.exec('ROLLBACK');
+      return { ok: false as const, code, detail };
+    };
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const proposal = this.db.prepare(
+        `SELECT delegation_id, state, tool, workspace_id, origin, session_id, adapter_id, fingerprint
+         FROM staged_proposals WHERE proposal_id = ?`,
+      ).get(input.proposalId) as Record<string, unknown> | undefined;
+      if (!proposal) return refuse('NO_PROPOSAL', 'there is no staged proposal with that id');
+      if (proposal.delegation_id !== null) {
+        return refuse(
+          'PROPOSAL_IS_DELEGATED',
+          'a proposal staged under a delegation is run through the delegated path or not at all',
+        );
+      }
+      if (String(proposal.state) !== 'STAGED') {
+        return refuse('PROPOSAL_NOT_STAGED', `the proposal is ${String(proposal.state)}, not STAGED`);
+      }
+      const advanced = this.db.prepare(
+        `UPDATE staged_proposals SET state = 'DISPATCHED', dispatched_at = ?
+         WHERE proposal_id = ? AND state = 'STAGED'`,
+      ).run(input.now, input.proposalId);
+      if (Number(advanced.changes) !== 1) {
+        return refuse('PROPOSAL_NOT_STAGED', 'another dispatch claimed this proposal first');
+      }
+      this.db.prepare(`INSERT INTO run_authority
+        (proposal_id, authority, dispatched_at, proposal_fingerprint, tool, workspace_id,
+         session_id, adapter_id, origin)
+        VALUES (?, 'HUMAN_RUN', ?, ?, ?, ?, ?, ?, ?)`)
+        .run(input.proposalId, input.now, String(proposal.fingerprint), String(proposal.tool),
+          String(proposal.workspace_id), String(proposal.session_id), String(proposal.adapter_id),
+          String(proposal.origin));
+      this.db.exec('COMMIT');
+      return { ok: true };
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /**
+   * Record a refused delegated attempt, durably and distinguishably.
+   *
+   * Bounded per delegation and per browser context, because this is an audit the browser can
+   * drive: without a bound, "record every refusal" would itself be the unbounded write the rest
+   * of this design refuses to grant. Oldest rows are pruned in the same transaction, so the cap
+   * holds without a sweeper.
+   *
+   * `slotClaimed` is the fact that matters when reading this back: a refusal before the claim
+   * consumed nothing, and one after it consumed a slot that will not be returned.
+   */
+  recordDelegatedRunRefusal(input: {
+    requestedDelegationId?: string; requestedProposalId?: string; goalId?: string;
+    sessionId: string; adapterId: string; refusedAt: number; reasonCode: string;
+    slotClaimed: boolean; maxRowsPerScope: number;
+  }): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare(`INSERT INTO delegated_run_refusals
+        (authority, requested_delegation_id, requested_proposal_id, goal_id,
+         session_id, adapter_id, refused_at, reason_code, slot_claimed)
+        VALUES ('DELEGATED_RUN_REFUSED', ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(input.requestedDelegationId ?? null, input.requestedProposalId ?? null,
+          input.goalId ?? null, input.sessionId, input.adapterId, input.refusedAt,
+          input.reasonCode, input.slotClaimed ? 1 : 0);
+      // Prune by browser context, which is the scope the browser actually controls. A delegation
+      // id can be anything the caller asked for, so bounding on it alone would not bound anything.
+      this.db.prepare(
+        `DELETE FROM delegated_run_refusals WHERE refusal_id IN (
+           SELECT refusal_id FROM delegated_run_refusals
+           WHERE session_id = ? AND adapter_id = ?
+           ORDER BY refused_at DESC, refusal_id DESC
+           LIMIT -1 OFFSET ?
+         )`,
+      ).run(input.sessionId, input.adapterId, input.maxRowsPerScope);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  /**
+   * Retire claims that never reached a dispatch — `CLAIMED -> ABANDONED`, terminal.
+   *
+   * **Not yet wired.** Nothing in `src/` calls this: no module constructs the dispatch plane, so
+   * there is no runtime to call it from. A review caught the previous comment asserting "called at
+   * startup and periodically", which was a description of the intended wiring written as fact. It
+   * belongs in the runtime that wires the plane, which is the next milestone.
+   *
+   * It deliberately does **not** release the slot and
+   * deliberately does **not** re-dispatch: WAG cannot know whether the dispatch that followed the
+   * claim reached anything, so the only safe reading of a crash is "this one is spent and over".
+   * Resurrecting it would be the silent double-run this state machine exists to prevent.
+   */
+  abandonExpiredClaims(now: number, claimTtlMs: number): number {
+    const result = this.db.prepare(
+      `UPDATE staged_proposals SET state = 'ABANDONED', abandoned_at = ?
+       WHERE state = 'CLAIMED' AND claimed_at <= ?`,
+    ).run(now, now - claimTtlMs);
+    return Number(result.changes);
+  }
+
+  /** `DISPATCHED -> RESULTED`. Attaches the canonical result id once, and only once. */
+  attachRunResult(proposalId: string, resultId: string, now: number): boolean {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const updated = this.db.prepare(
+        'UPDATE run_authority SET result_id = ? WHERE proposal_id = ? AND result_id IS NULL',
+      ).run(resultId, proposalId);
+      if (Number(updated.changes) !== 1) {
+        this.db.exec('ROLLBACK');
+        return false;
+      }
+      this.db.prepare(
+        `UPDATE staged_proposals SET state = 'RESULTED', resulted_at = ?
+         WHERE proposal_id = ? AND state = 'DISPATCHED'`,
+      ).run(now, proposalId);
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  getRunAuthority(proposalId: string): {
+    authority: 'HUMAN_RUN' | 'DELEGATED_RUN';
+    goalId?: string; delegationId?: string; controllerId?: string;
+    dispatchedAt: number; proposalFingerprint: string; tool: string; workspaceId: string;
+    sessionId: string; adapterId: string; origin: string; resultId?: string;
+  } | undefined {
+    const row = this.db.prepare('SELECT * FROM run_authority WHERE proposal_id = ?').get(proposalId) as
+      Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      authority: row.authority as 'HUMAN_RUN' | 'DELEGATED_RUN',
+      ...(row.goal_id === null ? {} : { goalId: String(row.goal_id) }),
+      ...(row.delegation_id === null ? {} : { delegationId: String(row.delegation_id) }),
+      ...(row.controller_id === null ? {} : { controllerId: String(row.controller_id) }),
+      dispatchedAt: Number(row.dispatched_at),
+      proposalFingerprint: String(row.proposal_fingerprint),
+      tool: String(row.tool),
+      workspaceId: String(row.workspace_id),
+      sessionId: String(row.session_id),
+      adapterId: String(row.adapter_id),
+      origin: String(row.origin),
+      ...(row.result_id === null ? {} : { resultId: String(row.result_id) }),
+    };
+  }
+
+  listDelegationClaims(delegationId: string): Array<{ proposalId: string; claimedAt: number }> {
     return (this.db.prepare(
-      'SELECT nonce, tool, dispatched_at FROM delegated_runs WHERE delegation_id = ? ORDER BY dispatched_at',
-    ).all(delegationId) as Array<{ nonce: string; tool: string; dispatched_at: number }>)
-      .map((r) => ({ nonce: r.nonce, tool: r.tool, dispatchedAt: Number(r.dispatched_at) }));
+      `SELECT proposal_id, claimed_at FROM delegation_claims
+       WHERE delegation_id = ? ORDER BY claimed_at, proposal_id`,
+    ).all(delegationId) as Array<{ proposal_id: string; claimed_at: number }>)
+      .map((r) => ({ proposalId: r.proposal_id, claimedAt: Number(r.claimed_at) }));
+  }
+
+  listDelegatedRunRefusals(input: { sessionId: string; adapterId: string }): Array<{
+    authority: 'DELEGATED_RUN_REFUSED'; requestedDelegationId?: string; requestedProposalId?: string;
+    goalId?: string; refusedAt: number; reasonCode: string; slotClaimed: boolean;
+  }> {
+    return (this.db.prepare(
+      `SELECT * FROM delegated_run_refusals WHERE session_id = ? AND adapter_id = ?
+       ORDER BY refused_at, refusal_id`,
+    ).all(input.sessionId, input.adapterId) as Array<Record<string, unknown>>)
+      .map((row) => ({
+        authority: 'DELEGATED_RUN_REFUSED' as const,
+        ...(row.requested_delegation_id === null
+          ? {} : { requestedDelegationId: String(row.requested_delegation_id) }),
+        ...(row.requested_proposal_id === null
+          ? {} : { requestedProposalId: String(row.requested_proposal_id) }),
+        ...(row.goal_id === null ? {} : { goalId: String(row.goal_id) }),
+        refusedAt: Number(row.refused_at),
+        reasonCode: String(row.reason_code),
+        slotClaimed: Number(row.slot_claimed) === 1,
+      }));
   }
 
   insertGoalLease(record: {
