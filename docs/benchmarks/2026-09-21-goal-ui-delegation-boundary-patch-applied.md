@@ -65,25 +65,43 @@ replacement 1..5   each anchors exactly 1x
 VERDICT: the working tree is exactly HEAD + the authorised patch, and nothing else.
 ```
 
-The replacement table was loaded from `scripts/apply-delegation-rule-patch.ts` itself — with only
-`export` added and the `main()` call removed — so the check cannot drift from what a human would run.
+The replacement table was loaded from the applier itself — with only `export` added and the `main()`
+call removed — so the check could not drift from what a human would run.
+
+### The applier has since been retired
+
+`scripts/apply-delegation-rule-patch.ts` was deleted once the patch was applied and committed. It
+had to embed the rule file's invariant block verbatim in order to rewrite it, which left a second
+copy of `.claude/rules/` text living in `scripts/` — and the fixture-lane isolation suite refused
+that, because the block names the lane's own invariant and the suite asserts by substring that
+nothing shipped mentions the lane.
+
+The suite was right beyond that technicality: a second copy of a rule file is a second thing to
+drift, and these files are the one artifact here whose exact bytes *are* the security property.
+
+`scripts/verify-delegation-rule-patch.ts` replaces it and carries no rule text — only the digests
+below. That turns a historical tool into a live invariant: it answers "are these files still the
+ones a human authorised", which stays worth asking long after "apply the patch" stops being. It
+reports rather than gating, because a human may legitimately edit these files and a gate that failed
+the suite on every such edit is a gate people learn to edit.
 
 ## The two digests over the patch document, and why they differ
 
 A review flagged a discrepancy: PowerShell reported one value, the applier another. Both are correct
-and they cover different things. Neither should be called "the file's SHA256" without qualification.
+and they cover different things. Neither should be called "the file's SHA256" without qualification,
+and `scripts/verify-delegation-rule-patch.ts` now checks both, each named.
 
 | Digest | Covers | Value |
 | --- | --- | --- |
 | **Raw file** | the 11,618 bytes on disk, as `sha256sum` / `Get-FileHash` report them | `35b3ff68…f25caac` |
 | **Patch payload** | the file with its single `sha256(...)` line removed, including its newline | `bedf1543…e2fd67de` |
 
-The payload digest is the authorised one, and the one the applier enforces. The reason is not
+The payload digest is the authorised one. The reason is not
 subtle: the document states its own digest, and **a digest cannot cover itself** — writing the value
 into the file changes the file. Removing exactly the line that carries it is what makes a
 self-describing artifact possible at all. The patch document has always said so in as many words;
 what was ambiguous was the label on the number, in the gate presentation and in the applier's
-output. Both now name which digest they mean.
+output. The successor names which digest it means, for both.
 
 ### The transformation is unambiguous — measured, not assumed
 
@@ -102,10 +120,9 @@ bytes removed          106
 
 `utf8 round-trips = true` matters: it is why the raw-byte digest and a digest over the decoded
 string agree for this file. They would not agree for a file with a BOM or invalid UTF-8, so the
-applier now hashes the bytes for the line that claims to be `sha256sum`'s answer, rather than
-inferring it from the decoded string.
+raw-byte line is hashed from the bytes rather than inferred from the decoded string.
 
-The applier also now **refuses** rather than guessing if the count is ever not exactly one.
+The check also reports **AMBIGUOUS** rather than guessing if the count is ever not exactly one.
 
 ## What the patch actually changed
 
@@ -156,6 +173,6 @@ human acts that no amount of wiring removes: issuing the row, and naming it in l
 - A shell remains a same-user escape hatch (ADR-0019). Whoever can write these files is already
   outside the containment claim. The deny list is a boundary for Claude's sanctioned tools, not a
   sandbox.
-- The patch document must not be edited. Editing it changes both of its digests and would make
-  `AUTHORISED_PATCH_SHA256` refuse — which is the intended behaviour, and the reason the corrected
-  labelling went into the applier and this receipt rather than into the document.
+- The patch document must not be edited. Editing it changes both of its digests, which
+  `scripts/verify-delegation-rule-patch.ts` reports as drift — the intended behaviour, and the reason
+  the corrected labelling went into the tooling and this receipt rather than into the document.
