@@ -139,6 +139,22 @@ test('every bound it grants is strictly inside the ceiling the policy would allo
   assert.ok(number('SESSION_MAX_AGE_MINUTES') <= 120, 'a stale session is refused');
 });
 
+test('it names BOTH grants in configuration, because an unnamed grant is inert', () => {
+  // The first version issued the lease row and never named it, which produced a live-looking lease
+  // that the runtime never loaded: goalLeaseId absent means goalLease is undefined, no admission
+  // timer is created, and every effect still needs the operator. It looked activated and was not.
+  assert.ok(source.includes('\goalUiDelegationId'), 'it must write the delegation id');
+  assert.ok(source.includes('\goalLeaseId'), 'it must write the lease id');
+  assert.ok(
+    source.includes('goalLeaseId !== leaseId'),
+    'and it must read the config back and refuse if the lease is not named',
+  );
+  assert.ok(
+    source.includes('refusing to replace one that is already in force'),
+    'and refuse to overwrite a lease that is already named',
+  );
+});
+
 test('it binds one origin, one session, one adapter and one workspace — never a list', () => {
   for (const singular of [
     'allowedOrigins: [ORIGIN]',

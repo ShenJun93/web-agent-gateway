@@ -250,6 +250,34 @@ async function main() {
     }
     out(`  ok   lease ${leaseId}`);
 
+    // ---- 5b. name the lease too, or it is inert -------------------------------------------
+    //
+    // A lease that is not named in configuration grants nothing, exactly as a delegation does not.
+    // The first version of this instrument issued the lease row and stopped there, which produced
+    // a live-looking lease that `browser-operator-runtime.ts` never loaded — `goalLeaseId` absent
+    // means `goalLease` is undefined, so no admission timer is created and every effect still
+    // needs the operator. It looked activated and was not.
+    const withDelegation = await readFile(CONFIG, 'utf8');
+    if (withDelegation.includes('"goalLeaseId"')) {
+      fail('the config already names a lease; refusing to replace one that is already in force');
+    }
+    const anchor = `"goalUiDelegationId": "${delegationId}"`;
+    if (withDelegation.split(anchor).length - 1 !== 1) {
+      fail('cannot find the delegation line to insert the lease beside');
+    }
+    const withLease = withDelegation.replace(
+      anchor, `${anchor},\n      "goalLeaseId": "${leaseId}"`,
+    );
+    await writeFile(CONFIG, withLease, 'utf8');
+    const finalConfig = JSON.parse(await readFile(CONFIG, 'utf8'));
+    if (finalConfig.repositoryEngineering?.mutation?.goalLeaseId !== leaseId) {
+      fail('the config does not name the new lease after the write');
+    }
+    if (finalConfig.repositoryEngineering?.mutation?.goalUiDelegationId !== delegationId) {
+      fail('naming the lease disturbed the delegation id');
+    }
+    out(`  ok   config now names ${leaseId}`);
+
     // ---- 6. the composition, asserted ------------------------------------------------------
     out('');
     out('composition');
@@ -278,7 +306,8 @@ async function main() {
     out(`  workspace   ${workspaceId}  ->  ${root}`);
     out(`  branch      ${branch} @ ${headSha.slice(0, 12)}`);
     out('');
-    out('Restart WAG so it re-reads the config. To stop everything at any time: npm run lease:stop');
+    out('Both grants are now named in configuration. Restart WAG so it re-reads them.');
+    out('To stop everything at any time: npm run lease:stop');
     return 0;
   } finally {
     store.close();
