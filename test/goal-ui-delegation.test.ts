@@ -11,6 +11,7 @@ import {
   type StagedProposalRecord,
   type UiDelegationBindings,
   type UiDelegationRecord,
+  type WorkspaceAuthorityRecord,
 } from '../src/goal-ui-delegation.js';
 import { canonicalProposalFingerprint } from '../src/proposal-fingerprint.js';
 
@@ -47,6 +48,13 @@ const CONNECTION: ConnectionIdentity = {
   adapterId: 'browser.chatgpt.native.operator.v4',
 };
 
+/** The durable workspace row, owned by exactly the connection above unless a case says otherwise. */
+const WORKSPACE: WorkspaceAuthorityRecord = {
+  ownerId: 'owner_1',
+  sessionId: 'session_1',
+  adapterId: 'browser.chatgpt.native.operator.v4',
+};
+
 function stage(over: Partial<StagedProposalRecord> = {}): StagedProposalRecord {
   const base = {
     proposalId: 'prop_1',
@@ -71,6 +79,7 @@ function decide(over: {
   delegation?: UiDelegationRecord | undefined;
   proposal?: StagedProposalRecord | undefined;
   connection?: ConnectionIdentity;
+  workspace?: WorkspaceAuthorityRecord | undefined;
   spend?: { actionsUsed: number };
   now?: number;
   killSwitch?: boolean;
@@ -83,6 +92,7 @@ function decide(over: {
     delegation: 'delegation' in over ? over.delegation : DELEGATION,
     proposal: 'proposal' in over ? over.proposal : stage(),
     connection: over.connection ?? CONNECTION,
+    workspace: 'workspace' in over ? over.workspace : WORKSPACE,
     now: over.now ?? NOW,
     spend: over.spend ?? { actionsUsed: 0 },
   });

@@ -52,6 +52,7 @@ import {
 } from '../src/goal-ui-delegation-dispatch.js';
 import { DelegatedDispatchRouter } from '../src/delegated-dispatch-router.js';
 import { DelegatedRunCoordinator } from '../src/delegated-run-executor.js';
+import { giveWorkspace } from './support/workspace-fixture.js';
 import { startDelegationDispatchHttpServer } from '../src/delegation-dispatch-http.js';
 import { HttpLocalDelegationAdapterLink } from '../src/browser-adapter/local-link-v5.js';
 import { runNativeDelegationHost } from '../src/browser-adapter/native-host-v5.js';
@@ -107,8 +108,18 @@ async function harness(
   const admission = new BrowserAdmissionRegistry(BROWSER_DELEGATION_ADAPTER_ID, store);
 
   const correlationId = `session_${randomUUID()}`;
-  const sessionId = admission.admit(correlationId).callerContext.sessionId;
+  const admitted = admission.admit(correlationId).callerContext;
+  const sessionId = admitted.sessionId;
   assert.notEqual(sessionId, correlationId, 'correlation and session id must be different strings');
+  // The delegated workspace is a row this admitted context owns. A reloaded extension gets
+  // a new session and therefore does *not* own it — which is one of the things this suite
+  // already proves, by a different code, and both refusals are correct.
+  giveWorkspace(store, {
+    workspaceId: WORKSPACE,
+    ownerId: admitted.ownerId,
+    sessionId,
+    adapterId: BROWSER_DELEGATION_ADAPTER_ID,
+  });
 
   const control = new UiDelegationControlPlane({
     store, key: createControllerPlaneKey('local.operator.cli'),

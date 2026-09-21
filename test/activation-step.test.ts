@@ -100,7 +100,7 @@ test('without the issuing and confirm flags it only prints usage and writes noth
   const result = await run([]);
   assert.equal(result.code, 0);
   assert.match(result.stdout, /usage: node docs\/pending\/activate-delegation-control\.mjs/);
-  assert.match(result.stdout, /Refuses stale, ambiguous or widened state/);
+  assert.match(result.stdout, /Refuses stale, ambiguous,/);
 });
 
 // -------------------------------------------------------------------------------------------
@@ -342,11 +342,23 @@ test('it refuses when the config no longer holds the placeholder', async (t) => 
   assert.match(result.stderr, /already activated|never applied/);
 });
 
-test('it refuses without both references', async (t) => {
+test('it refuses without a session', async (t) => {
   const h = await harness(t);
-  const result = await runScript(h.script, [ISSUE, '--session', 'session_x', '--confirm']);
+  const result = await runScript(h.script, [ISSUE, '--root', h.dir, '--confirm']);
   assert.equal(result.code, 2);
-  assert.match(result.stderr, /--session and --workspace are both required/);
+  assert.match(result.stderr, /--session is required/);
+});
+
+test('it refuses neither or both of --root and --workspace, because either is ambiguous', async (t) => {
+  const h = await harness(t, { withSession: true, withWorkspace: true });
+  for (const args of [
+    [ISSUE, '--session', h.sessionId!, '--confirm'],
+    [ISSUE, '--session', h.sessionId!, '--root', h.dir, '--workspace', h.workspaceId!, '--confirm'],
+  ]) {
+    const result = await runScript(h.script, args);
+    assert.equal(result.code, 2, JSON.stringify(args));
+    assert.match(result.stderr, /exactly one of --root .* or --workspace/);
+  }
 });
 
 test('it refuses when the kill switch is engaged, before anything else is read', async (t) => {
@@ -531,4 +543,125 @@ test('only stale sessions refuses, and says so rather than blaming the reference
   ]);
   assert.equal(result.code, 2);
   assert.match(result.stderr, /no v5 session is younger than/);
+});
+
+// -------------------------------------------------------------------------------------------
+// The workspace the grant is bound to must be one the v5 session owns
+// -------------------------------------------------------------------------------------------
+
+/**
+ * Re-own the fixture workspace, to model the states the production dead end and its neighbours
+ * present. `INSERT OR REPLACE` through the store's own handle, the same reach the delegated
+ * suites already take.
+ */
+async function reownWorkspace(storePath: string, workspaceId: string, over: {
+  ownerId?: string; sessionId?: string; adapterId?: string; canonicalRoot: string;
+}): Promise<void> {
+  const { SqliteDurableStore } = await import('../src/durable-store.js');
+  const { giveWorkspace } = await import('./support/workspace-fixture.js');
+  const store = new SqliteDurableStore(storePath);
+  try {
+    const existing = store.getWorkspace(workspaceId);
+    assert.ok(existing, 'the fixture workspace must exist before it is re-owned');
+    giveWorkspace(store, {
+      workspaceId,
+      ownerId: over.ownerId ?? existing.ownerId,
+      sessionId: over.sessionId ?? existing.sessionId,
+      adapterId: over.adapterId ?? existing.adapterId,
+      canonicalRoot: over.canonicalRoot,
+    });
+  } finally { store.close(); }
+}
+
+const workspaceRootOf = async (storePath: string, workspaceId: string): Promise<string> => {
+  const { SqliteDurableStore } = await import('../src/durable-store.js');
+  const store = new SqliteDurableStore(storePath);
+  try { return store.getWorkspace(workspaceId)!.canonicalRoot; } finally { store.close(); }
+};
+
+test('ACTIVATION FAIL: a v4-owned workspace and a v5 session is refused, and mints nothing', async (t) => {
+  // The exact production state of 2026-09-22. Previously this activated cleanly and produced a
+  // delegation bound to a workspace the v5 caller could never act in.
+  const h = await harness(t, { withSession: true, withWorkspace: true });
+  const root = await workspaceRootOf(h.store, h.workspaceId!);
+  await reownWorkspace(h.store, h.workspaceId!, {
+    adapterId: 'browser.chatgpt.native.operator.v4',
+    sessionId: 'session_v4_owner',
+    canonicalRoot: root,
+  });
+
+  const result = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /is owned by/);
+  assert.match(result.stderr, /browser\.chatgpt\.native\.operator\.v4/);
+  assert.match(result.stderr, /spend a budget slot on work/);
+
+  assert.deepEqual(await grantCounts(h.store), { delegations: 0, leases: 0 },
+    'a refusal must mint neither grant');
+  assert.equal(await readFile(h.config, 'utf8'), h.configBefore,
+    'a refusal must leave the config byte-identical');
+});
+
+test('ACTIVATION FAIL: a workspace owned by another session, or another principal, is refused', async (t) => {
+  for (const over of [
+    { sessionId: 'session_v5_someone_else' },
+    { ownerId: 'owner_someone_else' },
+  ]) {
+    const h = await harness(t, { withSession: true, withWorkspace: true });
+    const root = await workspaceRootOf(h.store, h.workspaceId!);
+    await reownWorkspace(h.store, h.workspaceId!, { ...over, canonicalRoot: root });
+
+    const result = await runScript(h.script, [
+      ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+    ]);
+    assert.equal(result.code, 2, JSON.stringify(over) + result.stdout + result.stderr);
+    assert.match(result.stderr, /is owned by/);
+    assert.deepEqual(await grantCounts(h.store), { delegations: 0, leases: 0 });
+  }
+});
+
+test('ACTIVATION PASS: a workspace this v5 session owns activates, and the grant names it', async (t) => {
+  const h = await harness(t, { withSession: true, withWorkspace: true });
+  const result = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /is owned by this v5 session/);
+
+  const after = await readMutation(h.config);
+  assert.match(String(after.goalUiDelegationId), /^uidel_/);
+  assert.match(String(after.goalLeaseId), /^lease_/);
+
+  // The delegation binds the workspace that was checked, not some other one.
+  const { SqliteDurableStore } = await import('../src/durable-store.js');
+  const store = new SqliteDurableStore(h.store);
+  try {
+    const row = store.getUiDelegationRow(String(after.goalUiDelegationId));
+    const bindings = JSON.parse(row!.bindings) as { workspaceId: string; sessionId: string };
+    assert.equal(bindings.workspaceId, h.workspaceId);
+    assert.equal(bindings.sessionId, h.sessionId);
+  } finally { store.close(); }
+});
+
+test('--root fails closed without the DevSpace token, rather than minting a workspace some other way', async (t) => {
+  // The mint goes through `AdmittedWorkspaceService.open`, which needs the running DevSpace. With
+  // no way to reach it the instrument refuses; it does not fall back to writing a row itself.
+  const h = await harness(t, { withSession: true, withWorkspace: true });
+  const root = await workspaceRootOf(h.store, h.workspaceId!);
+  const result = await runScript(h.script, [ISSUE, '--session', h.sessionId!, '--root', root, '--confirm']);
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /DEVSPACE_OAUTH_OWNER_TOKEN is not set/);
+  assert.deepEqual(await grantCounts(h.store), { delegations: 0, leases: 0 });
+});
+
+test('--root outside the configured allowedRoots is refused before anything is reached', async (t) => {
+  const h = await harness(t, { withSession: true, withWorkspace: true });
+  const result = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--root', tmpdir(), '--confirm',
+  ]);
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /not an allowed workspace root/);
+  assert.deepEqual(await grantCounts(h.store), { delegations: 0, leases: 0 });
 });

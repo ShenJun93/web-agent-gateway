@@ -16,6 +16,7 @@ import {
 } from '../src/goal-ui-delegation-dispatch.js';
 import { createProposalRateLimit } from '../src/proposal-rate-limit.js';
 import type { ConnectionIdentity, UiDelegationBindings } from '../src/goal-ui-delegation.js';
+import { giveWorkspace } from './support/workspace-fixture.js';
 
 /**
  * The design gate, executed.
@@ -53,6 +54,11 @@ async function harness(t: { after(fn: () => void | Promise<void>): void }) {
   let killSwitch = false;
   let configured: string | undefined;
   const opened = [store];
+  // `ws_1` is a row this connection owns, because a delegated Run now requires that. Written once
+  // here rather than threaded through every fixture: the id these tests already name is the id the
+  // store now holds. Cases that deliberately name another workspace still name a string with no
+  // row, which is exactly what they are testing.
+  giveWorkspace(store, { workspaceId: 'ws_1', ...CONNECTION, createdAt: clock });
   // One cleanup hook, in one order. Two hooks closing and removing separately is how this suite
   // previously produced EBUSY on Windows: the removal ran before the handle was released.
   t.after(async () => {

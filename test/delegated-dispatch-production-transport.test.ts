@@ -41,6 +41,7 @@ import {
 } from '../src/goal-ui-delegation-dispatch.js';
 import { DelegatedDispatchRouter } from '../src/delegated-dispatch-router.js';
 import { DelegatedRunCoordinator } from '../src/delegated-run-executor.js';
+import { giveWorkspace } from './support/workspace-fixture.js';
 import { startDelegationDispatchHttpServer } from '../src/delegation-dispatch-http.js';
 import { HttpLocalDelegationAdapterLink } from '../src/browser-adapter/local-link-v5.js';
 import { runNativeDelegationHost } from '../src/browser-adapter/native-host-v5.js';
@@ -93,6 +94,14 @@ async function harness(t: test.TestContext, options: { maxActions?: number; tool
   const correlationId = correlation();
   const discovered = admission.admit(correlationId);
   const sessionId = discovered.callerContext.sessionId;
+  // The delegated workspace is a row this admitted context owns, exactly as the human
+  // activation step now mints one before binding a delegation to it.
+  giveWorkspace(store, {
+    workspaceId: WORKSPACE,
+    ownerId: discovered.callerContext.ownerId,
+    sessionId,
+    adapterId: BROWSER_DELEGATION_ADAPTER_ID,
+  });
   assert.notEqual(
     sessionId, correlationId,
     'the durable session id must differ from the correlation, or this suite proves nothing',

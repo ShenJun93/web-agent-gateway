@@ -48,6 +48,7 @@ import {
   type UiDelegationBindings,
   type UiDelegationRecord,
 } from './goal-ui-delegation.js';
+import { sameAuthorityTuple } from './authority-tuple.js';
 import { validateStageableArguments } from './browser-adapter/protocol-v5.js';
 import { canonicalProposalFingerprint, NonCanonicalValueError } from './proposal-fingerprint.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
@@ -62,6 +63,15 @@ import type { SqliteDurableStore } from './durable-store.js';
  */
 export interface DelegationDispatchPort {
   getUiDelegationRow: SqliteDurableStore['getUiDelegationRow'];
+  /**
+   * Read one workspace row, to learn who owns it.
+   *
+   * A read, and only a read: the plane cannot open, re-own or delete a workspace, and the method
+   * that mints one (`openWorkspaceRecord`) is deliberately absent from this list. Adding a read to
+   * the browser-reachable surface widens what the plane can *refuse*, not what it can do — and the
+   * id it looks up is one the delegation already bound, so nothing is learned by asking.
+   */
+  getWorkspace: SqliteDurableStore['getWorkspace'];
   getStagedProposalRow: SqliteDurableStore['getStagedProposalRow'];
   insertStagedProposal: SqliteDurableStore['insertStagedProposal'];
   countStagedProposals: SqliteDurableStore['countStagedProposals'];
@@ -78,7 +88,7 @@ export interface DelegationDispatchPort {
 
 /** The methods a dispatch port carries. Exported so a test can assert the surface exactly. */
 export const DELEGATION_DISPATCH_PORT_METHODS = [
-  'getUiDelegationRow', 'getStagedProposalRow', 'insertStagedProposal',
+  'getUiDelegationRow', 'getWorkspace', 'getStagedProposalRow', 'insertStagedProposal',
   'countStagedProposals', 'countOpenStagedProposals', 'countAllStagedProposals',
   'countDelegationClaims', 'hasDelegationClaimForFingerprint',
   'claimDelegatedDispatch', 'markDelegatedDispatched',
@@ -403,6 +413,24 @@ export class UiDelegationDispatchPlane {
       if (input.workspaceId !== bindings.workspaceId) {
         return refuseStage('WORKSPACE_MISMATCH', 'the workspace is not the one delegated');
       }
+      // Ownership, which the binding check does not imply. `requireWorkspaceBinding` above proves
+      // the *arguments* name the delegated workspace; this proves the delegated workspace is one
+      // this browser context may actually act in.
+      //
+      // Refusing here rather than only at dispatch is what makes the dead end free. A candidate
+      // whose workspace belongs elsewhere can never produce an effect, so staging it queues a row
+      // destined to consume a budget slot and fail — which is precisely what happened in
+      // production. This costs one indexed read and leaves nothing behind.
+      const workspace = this.port.getWorkspace(input.workspaceId);
+      if (!workspace) {
+        return refuseStage('WORKSPACE_NOT_OWNED', 'the delegated workspace does not exist');
+      }
+      if (!sameAuthorityTuple(workspace, input.connection)) {
+        return refuseStage(
+          'WORKSPACE_NOT_OWNED',
+          'the delegated workspace belongs to a different owner, session or adapter',
+        );
+      }
       if (!bindings.allowedTools.includes(input.tool)) {
         return refuseStage('TOOL_NOT_DELEGATED', `${input.tool} is not delegated`);
       }
@@ -512,12 +540,33 @@ export class UiDelegationDispatchPlane {
 
     const proposal = this.loadProposal(proposalId);
 
+    // Re-read at dispatch, not carried from staging. Staging's copy of this fact is a fail-fast;
+    // this one is the guarantee, and the two are separated by however long the candidate sat in the
+    // queue. The row is looked up by the *delegation's* workspace binding rather than by anything
+    // the proposal or the request said, so a proposal naming another workspace cannot steer the
+    // lookup to a row it does own — the policy compares the two ids itself, immediately below.
+    //
+    // Read defensively: at this point the bindings have only been JSON-parsed, and it is the policy
+    // that validates their shape — which has not run yet, so `null.workspaceId` would throw on the
+    // one path that ends in a consequence.
+    //
+    // The fallback *value* is unobservable, and deliberately so: bindings this malformed are denied
+    // as `DELEGATION_MALFORMED` before the policy reaches its workspace check, so nothing downstream
+    // can tell `undefined` from any other answer. A mutation proved that. What is observable, and
+    // what a test pins, is that this does not throw.
+    const boundWorkspaceId: unknown = (loaded.record.bindings as { workspaceId?: unknown } | null)
+      ?.workspaceId;
+    const workspace = typeof boundWorkspaceId === 'string' && boundWorkspaceId.length > 0
+      ? this.port.getWorkspace(boundWorkspaceId)
+      : undefined;
+
     const decision = evaluateDelegatedRun({
       killSwitch,
       configuredDelegationId: this.configuredDelegationId,
       delegation: loaded.record,
       proposal,
       connection: input.connection,
+      workspace,
       now: this.now(),
       spend: { actionsUsed: this.port.countDelegationClaims(delegationId) },
     });

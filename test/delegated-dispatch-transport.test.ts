@@ -26,6 +26,7 @@ import {
   buildDispatchEnvelope, buildStageEnvelope, readResponse, stageAndDispatch,
 } from '../browser/extension/delegated-dispatch-core-v5.js';
 import type { ConnectionIdentity, UiDelegationBindings } from '../src/goal-ui-delegation.js';
+import { giveWorkspace } from './support/workspace-fixture.js';
 
 /**
  * The transport seam, on its own: schema in, envelope out.
@@ -59,6 +60,8 @@ async function harness(t: { after(fn: () => void | Promise<void>): void }) {
   const dir = await mkdtemp(join(tmpdir(), 'wag-transport-'));
   const store = new SqliteDurableStore(join(dir, 'store.sqlite'));
   t.after(async () => { store.close(); await rm(dir, { recursive: true, force: true }); });
+  // The delegated workspace is a row this connection owns, which a delegated Run now requires.
+  giveWorkspace(store, { workspaceId: 'ws_1', ...CONNECTION });
 
   const control = new UiDelegationControlPlane({
     store, key: createControllerPlaneKey(CONTROLLER), now: () => 1_000_000,

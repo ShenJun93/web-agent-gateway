@@ -4,9 +4,30 @@
  * ```bash
  * node docs/pending/activate-delegation-control.mjs --issue \
  *   --session  session_<uuid>            the live v5 session, from --sessions
- *   --workspace ws_<uuid>                the workspace the candidate named
+ *   --root     E:/path/to/checkout       the approved root; a NEW v5-owned workspace is minted
  *   --confirm
+ *
+ * # or, to bind a workspace the same v5 session already owns:
+ * #   --workspace ws_<uuid>              refused unless that exact tuple owns it
  * ```
+ *
+ * ## The workspace, and why it is minted here
+ *
+ * A delegation binds one `workspaceId`, and every tool resolves a workspace through
+ * `AdmittedWorkspaceService`, which admits a row only when the owner, session **and** adapter all
+ * match. So a delegation bound to a workspace its own session does not own authorises work that
+ * cannot run — and it costs a budget slot to find that out, because the refusal happens at
+ * execution, after the CLAIM.
+ *
+ * Measured in production on 2026-09-22: every workspace in the store was owned by a
+ * `…operator.v4` session, the delegated caller was `…delegation.v5`, and the delegated Run was
+ * admitted, spent a slot, wrote its audit row and produced nothing.
+ *
+ * So the workspace is minted **here**, for the exact v5 tuple the delegation will bind, through the
+ * gateway's own workspace service — the same `canonicalWorkspace` check against the same
+ * `allowedRoots`, the same DevSpace open, the same row shape. There is no second workspace
+ * subsystem, no ownership transfer and no row cloning. The human names the root on the command
+ * line; no page, provider or proposal can choose or widen it.
  *
  * ## Why Claude cannot run it, by construction rather than by promise
  *
@@ -20,16 +41,23 @@
  *
  * ## What it does, in this order, and why the order matters
  *
- *   1. every precondition, writing nothing
- *   2. issue the Goal UI Delegation and verify the stored row
- *   3. issue the matching Goal Lease for the same goal and verify the stored row
- *   4. ONE atomic write naming both in the live config
- *   5. read the config back through the gateway's own loader and verify both
+ *   1. every precondition, writing nothing — including who owns the workspace, if one was named
+ *   2. mint the v5-owned workspace (`--root`), or verify the named one is owned, and read it back
+ *   3. issue the Goal UI Delegation bound to that workspace, and verify the stored row
+ *   4. issue the matching Goal Lease for the same goal and verify the stored row
+ *   5. ONE atomic write naming both in the live config
+ *   6. read the config back through the gateway's own loader and verify both
  *
  * Both grants are minted before either is named, and they are named in a single atomic replace.
- * A row that is not named in configuration is inert, so every failure before step 4 leaves the
- * machine with no new authority at all, and step 4 either lands whole or not at all. There is no
+ * A row that is not named in configuration is inert, so every failure before step 5 leaves the
+ * machine with no new authority at all, and step 5 either lands whole or not at all. There is no
  * ordering in which effect authority ends up broader than intended.
+ *
+ * Step 2 writes a workspace row, which is why it is numbered separately rather than folded into
+ * the preconditions. A workspace is not authority: only the tuple that owns it can name it, and
+ * naming it does nothing until a configured delegation binds it. A failure between steps 2 and 5
+ * therefore leaves a workspace and no grant — which is the same state the machine was in before,
+ * plus one row nobody can reach.
  *
  * ## What it refuses
  *
@@ -78,10 +106,12 @@ const fail = (why) => { process.stderr.write(`\nREFUSED: ${why}\n`); process.exi
 async function main() {
   if (!flag('--issue') || !flag('--confirm')) {
     out('usage: node docs/pending/activate-delegation-control.mjs --issue --session <id> '
-      + '--workspace <id> --confirm');
+      + '(--root <path> | --workspace <id>) --confirm');
     out('');
-    out('Issues ONE bounded Goal UI Delegation, names it in the live config, and issues ONE');
-    out('matching Goal Lease for the same goal. Refuses stale, ambiguous or widened state.');
+    out('Mints a v5-owned workspace at --root (or reuses --workspace, if that exact v5 session');
+    out('owns it), issues ONE bounded Goal UI Delegation bound to it, issues ONE matching Goal');
+    out('Lease for the same goal, and names both in one atomic write. Refuses stale, ambiguous,');
+    out('widened or foreign-owned state.');
     return 0;
   }
   if (!process.stdin.isTTY) {
@@ -89,8 +119,13 @@ async function main() {
   }
 
   const sessionId = value('--session');
-  const workspaceId = value('--workspace');
-  if (!sessionId || !workspaceId) fail('--session and --workspace are both required');
+  const suppliedWorkspaceId = value('--workspace');
+  const suppliedRoot = value('--root');
+  if (!sessionId) fail('--session is required');
+  if (!suppliedWorkspaceId === !suppliedRoot) {
+    fail('give exactly one of --root (mint a new v5-owned workspace) or --workspace (reuse one '
+      + 'this same v5 session already owns)');
+  }
 
   const { SqliteDurableStore } = require(join(REPO, 'dist/durable-store.js'));
   const { UiDelegationControlPlane, createControllerPlaneKey } =
@@ -101,6 +136,9 @@ async function main() {
 
   const now = Date.now();
   const store = new SqliteDurableStore(STATE);
+  // Declared beside the store because the DevSpace session opened inside the try has to be
+  // released by the same `finally`.
+  let closeRuntime;
   try {
     // ---- 1. preconditions, writing nothing -------------------------------------------------
     out('preconditions');
@@ -171,17 +209,51 @@ async function main() {
     }
     out(`  ok   exactly one fresh v5 session, ${Math.round(ageOf(session))} min old, matches --session`);
 
-    const config = JSON.parse(configText);
-    const allowedRoots = config.allowedRoots ?? [];
-    const workspace = store.getWorkspace(workspaceId);
-    if (!workspace) fail(`workspace ${workspaceId} does not exist`);
-    const root = workspace.canonicalRoot;
-    const rootAllowed = allowedRoots.some(
-      (r) => r.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
-        === root.split('\\').join('/').replace(/\/+$/, '').toLowerCase(),
-    );
-    if (!rootAllowed) fail(`workspace root ${root} is not one of the configured allowedRoots`);
-    out(`  ok   workspace resolves to an allowed root: ${root}`);
+    // The caller tuple every later check is measured against. All three fields come from the
+    // durable session row, never from a flag: `--session` selects which row, and the row says who
+    // owns it. A delegation bound to any other tuple is the defect this instrument now refuses.
+    const caller = {
+      ownerId: session.ownerId,
+      sessionId: session.sessionId,
+      adapterId: ADAPTER,
+    };
+    if (caller.adapterId !== session.adapterId) {
+      fail(`session ${sessionId} is on adapter ${session.adapterId}, not ${ADAPTER}`);
+    }
+
+    const { loadPrivateGatewayConfig } = require(join(REPO, 'dist/private-config.js'));
+    const config = await loadPrivateGatewayConfig(CONFIG);
+    const { canonicalWorkspace } = require(join(REPO, 'dist/path-policy.js'));
+
+    // One notion of "is this root allowed", and it is the gateway's own. The previous version
+    // lower-cased and slash-normalised the strings itself, which is a second, subtly different
+    // answer to a question `canonicalWorkspace` already answers — and the one the tools will use.
+    let root;
+    if (suppliedWorkspaceId) {
+      const existing = store.getWorkspace(suppliedWorkspaceId);
+      if (!existing) fail(`workspace ${suppliedWorkspaceId} does not exist`);
+      // The check the production dead end was missing. A workspace another owner, session or
+      // adapter opened is refused here, where a human is present and nothing has been minted yet.
+      if (existing.ownerId !== caller.ownerId
+        || existing.sessionId !== caller.sessionId
+        || existing.adapterId !== caller.adapterId) {
+        fail(`workspace ${suppliedWorkspaceId} is owned by `
+          + `${existing.adapterId} / ${existing.sessionId}, not by the v5 session `
+          + `${caller.sessionId}. A delegation bound to it would spend a budget slot on work `
+          + 'every tool would refuse. Pass --root instead and a new one will be minted.');
+      }
+      try { root = await canonicalWorkspace(existing.canonicalRoot, config.allowedRoots); }
+      catch (error) { fail(`workspace root is not allowed: ${String(error)}`); }
+      if (root !== existing.canonicalRoot) {
+        fail('the stored root no longer canonicalises to itself; refusing to bind it');
+      }
+      out(`  ok   workspace ${suppliedWorkspaceId} is owned by this v5 session`);
+      out(`  ok   root is allowed: ${root}`);
+    } else {
+      try { root = await canonicalWorkspace(suppliedRoot, config.allowedRoots); }
+      catch (error) { fail(`--root is not an allowed workspace root: ${String(error)}`); }
+      out(`  ok   root is allowed: ${root}`);
+    }
 
     const goalId = `goal_delegated_run_${now.toString(36)}`;
     if (store.countLiveDelegationsForGoal(goalId, now) > 0) fail('a live delegation already exists for this goal');
@@ -203,7 +275,61 @@ async function main() {
     }
     out(`  ok   git: branch ${branch} at ${headSha.slice(0, 12)}`);
 
-    // ---- 2. issue the delegation -----------------------------------------------------------
+    // ---- 2. the workspace this v5 session will act in --------------------------------------
+    //
+    // Minted through `AdmittedWorkspaceService.open`, which is the only route to a workspace the
+    // gateway has: it canonicalises the path against `allowedRoots`, opens it on DevSpace, and
+    // stamps the calling tuple onto the row. Passing the v5 caller is the whole fix — the row
+    // comes out owned by the session the delegation is about to bind, so `sameAuthority` admits it
+    // at execution instead of refusing after a slot is gone.
+    //
+    // A workspace row is not authority. It grants nothing on its own: only the tuple that owns it
+    // can name it, and naming it does nothing until a delegation the human issues and configures
+    // binds it. So minting one before the grants does not widen anything, and a failure after this
+    // point leaves a workspace and no authority at all.
+    let workspaceId = suppliedWorkspaceId;
+    if (!workspaceId) {
+      if (!process.env.DEVSPACE_OAUTH_OWNER_TOKEN) {
+        fail('DEVSPACE_OAUTH_OWNER_TOKEN is not set, so a workspace cannot be opened. It is the '
+          + 'loopback secret the running DevSpace and gateway already share — set it in this '
+          + 'shell from the same file the stack was started with.');
+      }
+      out('');
+      out('minting the v5-owned workspace');
+      const { bootstrapPrivateGateway } = require(join(REPO, 'dist/private-runtime.js'));
+      const { AdmittedWorkspaceService } = require(join(REPO, 'dist/admitted-workspace.js'));
+      const { DevspaceRepositoryInspectionBackend } =
+        require(join(REPO, 'dist/repository-inspection.js'));
+      let runtime;
+      try { runtime = await bootstrapPrivateGateway(config, { env: process.env }); }
+      catch (error) { fail(`DevSpace is not reachable: ${String(error)}`); }
+      closeRuntime = () => runtime.close();
+      const workspaces = new AdmittedWorkspaceService({
+        store,
+        executor: runtime.executor,
+        inspection: new DevspaceRepositoryInspectionBackend(runtime.executor),
+        allowedRoots: config.allowedRoots,
+      });
+      try { ({ workspaceId } = await workspaces.open(caller, root)); }
+      catch (error) { fail(`the workspace could not be opened: ${String(error)}`); }
+      out(`  ok   workspace ${workspaceId}`);
+    }
+
+    // Read back from the durable row, not from what `open` returned. What the delegation binds is
+    // a row, and the only fact that matters about it is who owns it.
+    const bound = store.getWorkspace(workspaceId);
+    if (!bound) fail('the workspace did not persist');
+    if (bound.ownerId !== caller.ownerId
+      || bound.sessionId !== caller.sessionId
+      || bound.adapterId !== caller.adapterId) {
+      fail('the stored workspace is not owned by the v5 session; refusing to bind a grant to it');
+    }
+    if (bound.canonicalRoot !== root) {
+      fail(`the stored workspace root ${bound.canonicalRoot} is not ${root}`);
+    }
+    out(`  ok   owned by ${caller.adapterId} / ${caller.sessionId}`);
+
+    // ---- 3. issue the delegation -----------------------------------------------------------
     const delegationBindings = {
       goalId,
       controllerId: CONTROLLER,
@@ -225,7 +351,7 @@ async function main() {
     });
     out(`  ok   delegation ${delegationId}`);
 
-    // ---- 3. verify it reads back exactly ---------------------------------------------------
+    // ---- 4. verify it reads back exactly ---------------------------------------------------
     const storedDelegation = store.getUiDelegationRow(delegationId);
     if (!storedDelegation) fail('the delegation did not persist');
     const readBack = JSON.parse(storedDelegation.bindings);
@@ -237,7 +363,7 @@ async function main() {
     }
     out('  ok   stored bindings are byte-identical to the intended ones');
 
-    // ---- 4. issue the matching lease, still writing nothing to configuration -------------
+    // ---- 5. issue the matching lease, still writing nothing to configuration -------------
     //
     // Both grants are minted *before* either is named. A row that is not named in configuration
     // is inert — that is the property the whole design rests on — so every failure up to the
@@ -277,7 +403,7 @@ async function main() {
     }
     out(`  ok   lease ${leaseId}`);
 
-    // ---- 5. ONE atomic write naming BOTH grants ------------------------------------------
+    // ---- 6. ONE atomic write naming BOTH grants ------------------------------------------
     //
     // One write, not two. The first version of this instrument named the delegation, then issued
     // the lease, then named the lease — and stopped after the second step, leaving a live-looking
@@ -324,7 +450,6 @@ async function main() {
     await rename(temporary, CONFIG);
 
     // Read back from disk through the real loader, so the check is the gateway's own parse.
-    const { loadPrivateGatewayConfig } = require(join(REPO, 'dist/private-config.js'));
     let live;
     try { live = await loadPrivateGatewayConfig(CONFIG); }
     catch (error) {
@@ -339,7 +464,7 @@ async function main() {
     out(`  ok   goalUiDelegationId = ${delegationId}`);
     out(`  ok   goalLeaseId        = ${leaseId}`);
 
-    // ---- 6. the composition, asserted ------------------------------------------------------
+    // ---- 7. the composition, asserted ------------------------------------------------------
     out('');
     out('composition');
     const d = JSON.parse(store.getUiDelegationRow(delegationId).bindings);
@@ -366,12 +491,14 @@ async function main() {
     out('  both are named in configuration; neither is in force until WAG restarts');
     out(`  session     ${sessionId}`);
     out(`  workspace   ${workspaceId}  ->  ${root}`);
+    out(`  owned by    ${caller.adapterId} / ${caller.sessionId}`);
     out(`  branch      ${branch} @ ${headSha.slice(0, 12)}`);
     out('');
     out('Both grants are now named in configuration. Restart WAG so it re-reads them.');
     out('To stop everything at any time: npm run lease:stop');
     return 0;
   } finally {
+    if (typeof closeRuntime === 'function') await closeRuntime().catch(() => undefined);
     store.close();
   }
 }

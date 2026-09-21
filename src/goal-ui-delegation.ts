@@ -62,6 +62,7 @@
  * delegation authorised this", which is what WAG can actually know — not "a person was present".
  * ADR-0029 states this.
  */
+import { sameAuthorityTuple, type GatewayAuthority } from './authority-tuple.js';
 import { canonicalProposalFingerprint, NonCanonicalValueError } from './proposal-fingerprint.js';
 import type { CanonicalValue } from './proposal-fingerprint.js';
 
@@ -102,6 +103,20 @@ export type DelegationDenialCode =
   | 'ORIGIN_NOT_ALLOWED'
   | 'TOOL_NOT_DELEGATED'
   | 'WORKSPACE_MISMATCH'
+  /**
+   * The delegated workspace exists but this browser context does not own it.
+   *
+   * Distinct from `WORKSPACE_MISMATCH`, which says the proposal named a workspace the delegation
+   * did not bind. This says the delegation's *own* workspace belongs to a different owner, session
+   * or adapter — so every tool would refuse it at execution, having already spent a budget slot.
+   *
+   * Measured in production on 2026-09-22: a delegation bound to a workspace a `…operator.v4`
+   * session owned was admitted for a `…delegation.v5` caller, a slot was spent, a `DELEGATED_RUN`
+   * row was written, and `AdmittedWorkspaceService` then refused the work that row asserted. The
+   * refusal there was correct; the gap was that nothing refused earlier, so an impossible run cost
+   * a slot it could never use.
+   */
+  | 'WORKSPACE_NOT_OWNED'
   | 'ACTION_LIMIT_REACHED';
 
 export type DelegationDecision =
@@ -202,6 +217,19 @@ export interface ConnectionIdentity {
   readonly sessionId: string;
   readonly adapterId: string;
 }
+
+/**
+ * The authority tuple carried on a durable workspace row.
+ *
+ * Deliberately narrower than `WorkspaceRecord`: this decision needs to know who owns the workspace
+ * and nothing else — not its root, not its backend. It is `GatewayAuthority`, the type the rest of
+ * the gateway already uses for exactly this, rather than a second name for the same three fields.
+ *
+ * The comparison below is likewise `sameAuthorityTuple`, the same predicate
+ * `AdmittedWorkspaceService` applies at execution — asked here at the moment a budget slot would be
+ * spent instead of only at the moment the work would run.
+ */
+export type WorkspaceAuthorityRecord = GatewayAuthority;
 
 /** Facts the caller read from durable state immediately before asking. */
 export interface DelegationSpend {
@@ -388,10 +416,20 @@ export function evaluateDelegatedRun(input: {
   readonly delegation: UiDelegationRecord | undefined;
   readonly proposal: StagedProposalRecord | undefined;
   readonly connection: ConnectionIdentity;
+  /**
+   * The durable workspace row the proposal names, or `undefined` when there is none.
+   *
+   * Required rather than optional, and allowed to be `undefined`, so that every call site has to
+   * decide what to pass. An optional parameter would have let a future construction site omit the
+   * fact and silently restore exactly the gap this closes.
+   */
+  readonly workspace: WorkspaceAuthorityRecord | undefined;
   readonly now: number;
   readonly spend: DelegationSpend;
 }): DelegationDecision {
-  const { delegation, proposal, connection, now, spend } = input;
+  const {
+    delegation, proposal, connection, workspace, now, spend,
+  } = input;
 
   // Checked first, before anything is loaded, so the local stop is unconditional.
   if (input.killSwitch) return deny('KILL_SWITCH_ENGAGED', 'the local kill switch is engaged');
@@ -444,6 +482,24 @@ export function evaluateDelegatedRun(input: {
 
   if (proposal.workspaceId !== b.workspaceId) {
     return deny('WORKSPACE_MISMATCH', 'the workspace is not the one delegated');
+  }
+
+  // The delegated workspace must be *this* context's workspace, not merely the one named in the
+  // bindings. Both facts are needed and neither implies the other: the binding says which workspace
+  // the human granted, the row says who may act in it. A delegation issued naming a workspace some
+  // other session opened passes the binding check and is refused by every tool, after the slot is
+  // gone — so the check belongs here, before the claim, rather than only at execution.
+  //
+  // Absent denies. A workspace id that resolves to no row is not "unconstrained"; it is a
+  // delegation pointing at nothing, and the only safe reading of nothing is no.
+  if (!workspace) {
+    return deny('WORKSPACE_NOT_OWNED', 'the delegated workspace does not exist');
+  }
+  if (!sameAuthorityTuple(workspace, connection)) {
+    return deny(
+      'WORKSPACE_NOT_OWNED',
+      'the delegated workspace belongs to a different owner, session or adapter',
+    );
   }
 
   // Compared as an exact origin. A delegation for one provider page must not authorise a proposal

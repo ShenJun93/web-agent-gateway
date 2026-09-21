@@ -86,8 +86,8 @@ test('the dispatch plane imports only what a browser-facing decision needs', asy
   assert.deepEqual(
     [...new Set(imports)].sort(),
     [
-      './browser-adapter/protocol-v5.js', './durable-store.js', './goal-ui-delegation.js',
-      './proposal-fingerprint.js', './proposal-rate-limit.js',
+      './authority-tuple.js', './browser-adapter/protocol-v5.js', './durable-store.js',
+      './goal-ui-delegation.js', './proposal-fingerprint.js', './proposal-rate-limit.js',
     ],
     'a new import here is how issuance would arrive on the browser path by accident',
   );
@@ -99,6 +99,18 @@ test('the dispatch plane imports only what a browser-facing decision needs', asy
   // review measured what their absence cost. The import brings one pure validator and no protocol
   // state, and the protocol module reaches nothing the plane could not already reach.
   assert.match(source, /validateStageableArguments/, 'and the protocol import is for that one validator');
+
+  // `authority-tuple.js` is the shared "are these the same owner, session and adapter" predicate.
+  // It was added to this list deliberately, and the reason it is safe is checkable rather than
+  // asserted: the module has **no runtime imports at all**, so allowing it here cannot become a
+  // route to anything. If it ever grows one, this fails and the decision gets made again.
+  const tuple = await read('src/authority-tuple.ts');
+  const tupleImports = [...tuple.matchAll(/^import (?!type )/gm)];
+  assert.deepEqual(
+    tupleImports.map((m) => m[0]), [],
+    'authority-tuple.ts must stay import-free at runtime; it is on the browser path',
+  );
+  assert.match(tuple, /export function sameAuthorityTuple/, 'and it is there for that predicate');
 });
 
 test('the v4 protocol has no verb that issues, renews or revokes anything', async () => {

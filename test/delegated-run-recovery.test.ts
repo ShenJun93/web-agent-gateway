@@ -35,6 +35,7 @@ import {
 import { DelegatedDispatchRouter } from '../src/delegated-dispatch-router.js';
 import { DelegatedRunCoordinator, delegatedRunResultId } from '../src/delegated-run-executor.js';
 import { DelegationClaimSweeper } from '../src/delegation-claim-sweeper.js';
+import { giveWorkspace } from './support/workspace-fixture.js';
 
 const WORKSPACE = 'ws_recovery';
 const ORIGIN = 'https://chatgpt.com';
@@ -65,6 +66,9 @@ async function fixture(t: test.TestContext, options: { maxActions?: number } = {
   const build = (existingDelegationId?: string): Fixture => {
     const store = new SqliteDurableStore(path);
     stores.push(store);
+    // The delegated workspace is a row this connection owns. Re-applied on every reopen
+    // because `INSERT OR REPLACE` is idempotent and a restart must find the same row.
+    giveWorkspace(store, { workspaceId: WORKSPACE, ...CONNECTION });
     const port = createDelegationDispatchPort(store);
 
     let delegationId = existingDelegationId;
