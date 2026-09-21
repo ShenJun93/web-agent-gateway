@@ -4,6 +4,8 @@ Date: 2026-09-20
 Status: Accepted
 Depends on: ADR-0019, ADR-0023, ADR-0026
 Evidence: `docs/benchmarks/2026-09-20-harness-test-lane-decision.md`
+Amended by: ADR-0028 (Approve) and ADR-0029 (Run) — see ADR-0029,
+  *Consequence for the invariant*, for the model as it now stands.
 
 ## Context
 

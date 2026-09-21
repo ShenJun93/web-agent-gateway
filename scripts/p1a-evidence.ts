@@ -7,6 +7,12 @@
  *   - **gestures are counted, never hidden.** `humanRun` and `humanApprove` are required fields
  *     with no default. The spec says P1A must measure these rather than hide them, and a field
  *     that defaults to zero is a field that quietly reports success;
+ *   - **and since ADR-0028/0029, a zero is ambiguous unless the other authority is recorded too.**
+ *     `humanRun: 0` used to mean only one thing. It can now mean a Goal UI Delegation authorised
+ *     the Run, and `humanApprove: 0` can mean a Goal Lease admitted the effect — both legitimate,
+ *     both deliberately granted by a person out of band, and neither the same measurement as "no
+ *     gesture was needed". `delegatedRun` and `policyApproved` record which, so a reader who was
+ *     not present can tell a task that needed no help from one that was helped by a grant;
  *   - **a record is append-only.** Evidence is JSONL; nothing here rewrites a prior line. A
  *     measurement you can edit after seeing the total is not a measurement.
  *
@@ -35,6 +41,17 @@ export interface P1ATaskRecord {
   /** The two gestures, counted. Required — see the module header. */
   humanRun: number;
   humanApprove: number;
+  /**
+   * The two *other* authorities, counted: `DELEGATED_RUN` rows and `POLICY_APPROVED` admissions.
+   *
+   * Optional where the gestures are required, and the asymmetry is the point. A gesture count that
+   * defaulted to zero would hide a gesture that happened; a grant count that defaults to zero says
+   * "no grant was in play", which is the truth for every record written before these authorities
+   * existed and for every task run without one. Defaulting here is therefore accurate rather than
+   * flattering, which is the only reason it is allowed.
+   */
+  delegatedRun?: number;
+  policyApproved?: number;
   reconnectNeeded: boolean;
   /** Transport/tool time, not wall-clock including human thinking. */
   elapsedMs: number;
@@ -78,6 +95,13 @@ export function assertComplete(record: Partial<P1ATaskRecord>): asserts record i
   }
   if (!Array.isArray(record.tools) || record.tools.length === 0) {
     throw new Error('P1A evidence requires at least one tool');
+  }
+  for (const field of ['delegatedRun', 'policyApproved'] as const) {
+    const value = record[field];
+    if (value === undefined) continue;
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`${field} must be a non-negative integer when present`);
+    }
   }
   for (const field of ['humanRun', 'humanApprove', 'elapsedMs'] as const) {
     if (!Number.isInteger(record[field]) || (record[field] as number) < 0) {

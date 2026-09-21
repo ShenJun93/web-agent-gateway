@@ -3,6 +3,7 @@
 Status: proposed
 Date: 2026-09-21
 Supersedes nothing. Constrained by ADR-0019, ADR-0022/0023, ADR-0026, ADR-0027, ADR-0028.
+Amends: ADR-0026, ADR-0027 and ADR-0028 — see *Consequence for the invariant* below.
 
 > **Gate — passed.** This ADR removes a human gesture, so it could not take effect until a human
 > applied `docs/pending/human-presence-boundary-goal-ui-delegation.md` to the rule file. **A human
@@ -220,6 +221,147 @@ confident-prose-over-absent-mechanism failure this project keeps finding.
 It stops delegated staging and delegated dispatch. It deliberately does **not** stop the human
 route — staging is how a human Run's proposal comes into existence, and someone stopping runaway
 automation must still be able to act themselves.
+
+## Consequence for the invariant
+
+ADR-0026 fixed one invariant covering both gestures, and ADR-0028 amended it for Approve only:
+
+```text
+ADR-0026   RUN_AND_APPROVAL = HUMAN
+ADR-0027   RUN_AND_APPROVAL = HUMAN_ON_THE_PRODUCTION_PATH
+ADR-0028   RUN_AND_APPROVAL = HUMAN_UNLESS_A_LEASE_ADMITS_THE_ACTION
+```
+
+All three are now wrong as written, and for a reason ADR-0028 already named about itself: a reader
+following AGENTS.md's reading order meets the earlier text first, and a carve-out recorded only at
+the benchmark layer leaves the ADR-layer invariant reading as absolute. ADR-0028's line is wrong in
+a second and worse way — it reads as though a lease relaxes Run, which it never did and still does
+not.
+
+**The two gestures are two invariants, not one.** That is the substantive amendment:
+
+```text
+LOCAL_OPERATOR_APPROVAL = REQUIRED_FOR_EVERY_EFFECT_NOT_ADMITTED_BY_AN_ACTIVE_GOAL_LEASE
+APPROVAL                = HUMAN_UNLESS_A_VALID_LEASE_ADMITS_THE_ACTION
+RUN                     = HUMAN_UNLESS_A_VALID_UI_DELEGATION_ADMITS_THE_PROPOSAL
+GOAL_LEASE_SCOPE        = APPROVE_ONLY_NEVER_RUN
+UI_DELEGATION_SCOPE     = RUN_ONLY_NEVER_APPROVE
+GOAL_LEASE_ADMISSION    = DETERMINISTIC_LOCAL_POLICY_OVER_DURABLE_RECORDS
+UI_DELEGATION_ADMISSION = DETERMINISTIC_LOCAL_POLICY_OVER_DURABLE_RECORDS
+ZERO_GESTURE_EFFECT     = REQUIRES_BOTH_GRANTS_NAMING_ONE_GOAL
+NOTHING_CONFIGURED      = ADR_0026_UNCHANGED_IN_FULL
+LEASE_ISSUANCE          = HUMAN_ONLY_AND_OUT_OF_BAND
+UI_DELEGATION_ISSUANCE  = HUMAN_ONLY_AND_OUT_OF_BAND
+PAGE_AND_MODEL          = NEVER_AUTHORITY
+```
+
+Read as prose, and this is the whole normative model:
+
+- **Run** is a human gesture, unless a valid, configured Goal UI Delegation admits *that proposal*.
+- **Approve** is a human gesture, unless a valid, configured Goal Lease admits *that action*.
+- A delegation never approves anything. A lease never runs anything. Neither implies the other.
+- With neither configured — every installation until someone deliberately changes that — ADR-0026
+  holds in full, and that is asserted by tests rather than by this paragraph.
+- The page is never authority and the model is never authority. Neither may create, widen, renew,
+  select or substitute either grant. `.claude/rules/human-presence-boundary.md` carries the same
+  three lines, applied to Claude specifically.
+
+`GOAL_LEASE_SCOPE = APPROVE_ONLY_NEVER_RUN` is new here and is a clarification rather than a
+change: no lease ever lifted Run, and nothing in ADR-0028's implementation did. Stating it stops
+the symmetry from being inferred in the wrong direction by a later reader — the direction that
+would produce an auto-clicking extension.
+
+## Composing a delegation with a lease
+
+Both grants live, both bounded, both issued by a human out of band: that composition is the only
+path in WAG from an untrusted page's text to a durable effect **with no human gesture at any
+step**. It is supposed to be reachable. What must not be reachable is reaching it by accident.
+
+### What was wrong
+
+Measured before this section was written: the lease checked `admittedSessions` and
+`admittedAdapters`; the delegation checked `sessionId` and `adapterId`. Nothing compared the two
+grants to each other. So a lease issued on Tuesday to let a benchmark rewrite `docs/**` would
+silently admit effects that a delegation issued on Wednesday for something else entirely had
+proposed — two humans, two bounded grants, and an authority neither of them had described.
+
+That is composition by **union of coincidence**, and it is exactly the failure mode ADR-0019 is
+about: authority acquired by nobody's decision.
+
+### What it is now
+
+```text
+GoalLeaseBindings.delegatedGoalIds   goals whose DELEGATED work this lease will admit. Absent
+                                     means none, which is every lease that existed before this.
+LeaseRequest.delegatedGoalId         the goal of the live configured delegation bound to this
+                                     session and adapter, re-read from durable rows at the
+                                     consequence — never from a message, a proposal or an argument.
+```
+
+`evaluateGoalLease` refuses an action reaching it from a delegated adapter unless the lease names
+a goal **and** that goal is the one a live delegation put in force for that browser context:
+
+```text
+adapter is not delegated     ADR-0028 unchanged, in full. No new check applies.
+lease names no goal          DELEGATED_GOAL_NOT_ADMITTED — the effect needs the operator.
+goal not resolvable          DELEGATED_GOAL_UNKNOWN — unknown provenance is not admitted.
+goal not in the lease list   DELEGATED_GOAL_NOT_ADMITTED.
+both name one goal           admitted, and every other bound of both grants still applies.
+```
+
+The composition is therefore an **intersection of two deliberate statements**: the delegation says
+which goal may Run; the lease says which goal's delegated work it will Approve. Every other
+dimension — session, adapter, workspace, tool, origin, path, byte and file budgets, commit
+semantics, both validity windows, both kill-switch checks — is a conjunction, so the composed
+authority is the intersection of the two grants and never their union.
+
+Two consequences worth stating rather than leaving to be inferred:
+
+- **This is a narrowing, not a new grant.** A lease written before this section keeps exactly the
+  authority it had. What it loses is an authority nobody wrote down.
+- **The composed window is the shorter of the two.** A delegation's ceiling is four hours and a
+  lease's is twelve, so the zero-gesture path can never outlive four hours of delegation without a
+  fresh human act. A test asserts that ordering, because if it ever inverts the window grows
+  silently.
+
+### The over-refusal, named
+
+WAG cannot tell, at the *effect*, whether a v5 proposal reached it by `run.dispatch` or by
+`run.human`: the mutation record carries a session and an adapter, not a proposal id, so the
+`run_authority` row is not reachable from it. Rather than guess, the gate applies to the delegated
+**adapter** — so a human-Run proposal on a v5 session also needs the lease to name the goal.
+
+That is stricter than necessary and deliberately so. The alternative is a heuristic on the one path
+that ends with no human gesture at all, and this project has already paid once for a bound that was
+arithmetically correct and semantically wrong.
+
+## Replay, and where its bound actually lives
+
+The extension suppresses a re-observed provider message from `chrome.storage.session`. That memory
+is ephemeral by construction — cleared by an extension reload, evicted past 256 entries, and read
+as empty when the read itself fails, deliberately, because suppressing work that never ran is the
+worse error.
+
+Every one of those re-offers the same message, which stages a **new proposal id** carrying the
+**same WAG-computed fingerprint**. Before this, that claimed a second slot and ran a second effect,
+with `maxActions` holding arithmetically the whole time.
+
+So the bound is in `claimDelegatedDispatch`, inside the transaction that spends the slot, over a
+row the browser cannot write: two claims under one delegation may not share a fingerprint
+(`PROPOSAL_REPLAY`). The extension's memory is demoted to an optimisation that saves a round trip.
+
+```text
+REPLAY_BOUND          = DURABLE_AND_INSIDE_THE_CLAIM_TRANSACTION
+MAX_ACTIONS_SEMANTICS = DISTINCT_ACTIONS_NOT_DISPATCHES
+```
+
+The second line is a real change and is stated as one: a genuine repeat of an identical call now
+needs a new delegation, which is a human act. An abandoned claim never releases its slot, so a
+re-observation after a crash is refused rather than resurrected.
+
+Across an extension **reload** the session id changes, so the delegation binds a context that no
+longer exists and everything is refused with `SESSION_MISMATCH` before any claim — nothing spent,
+nothing run. Both cases rest on durable WAG state; neither rests on the extension remembering.
 
 ## What this does not do
 

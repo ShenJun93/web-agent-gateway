@@ -789,5 +789,180 @@
     "suite": "test/delegated-dispatch-production-transport.test.ts",
     "from": "      await Promise.all(open.map((coordinator) => coordinator.close().catch(() => undefined)));",
     "to": "      void open;"
+  },
+  {
+    "name": "the claim transaction stops refusing a replayed fingerprint",
+    "file": "src/durable-store.ts",
+    "suite": "test/delegated-run-replay-durability.test.ts",
+    "from": "      if (replayed) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "the replay lookup ignores the fingerprint and matches any claim",
+    "file": "src/durable-store.ts",
+    "suite": "test/delegated-run-replay-durability.test.ts",
+    "from": "         WHERE delegation_id = ? AND fingerprint = ? LIMIT 1`,",
+    "to": "         WHERE delegation_id = ? AND fingerprint != ? LIMIT 1`,"
+  },
+  {
+    "name": "the replay lookup matches any claim regardless of the delegation",
+    "file": "src/durable-store.ts",
+    "suite": "test/delegated-run-replay-durability.test.ts",
+    "from": "         WHERE delegation_id = ? AND fingerprint = ? LIMIT 1`,",
+    "to": "         WHERE delegation_id != ? AND fingerprint = ? LIMIT 1`,"
+  },
+  {
+    "name": "a fingerprint already claimed reports as unclaimed",
+    "file": "src/durable-store.ts",
+    "suite": "test/delegated-run-replay-durability.test.ts",
+    "from": "    return row !== undefined;",
+    "to": "    return false;"
+  },
+  {
+    "name": "staging no longer fails fast on a re-observed action",
+    "file": "src/goal-ui-delegation-dispatch.ts",
+    "suite": "test/delegated-run-replay-durability.test.ts",
+    "from": "      if (this.port.hasDelegationClaimForFingerprint(input.delegationId, fingerprint)) {",
+    "to": "      if (false) {"
+  },
+  {
+    "name": "the lease stops checking whether the adapter can have its Run delegated",
+    "file": "src/goal-lease.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (DELEGATED_RUN_ADAPTERS.includes(request.adapterId)) {",
+    "to": "  if (false) {"
+  },
+  {
+    "name": "a lease naming no delegated goal admits delegated work anyway",
+    "file": "src/goal-lease.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "    if (!Array.isArray(admittedGoals) || admittedGoals.length === 0) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "an unresolvable provenance passes instead of denying",
+    "file": "src/goal-lease.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "    if (request.delegatedGoalId === undefined) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "any goal satisfies a lease that names one",
+    "file": "src/goal-lease.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "    if (!admittedGoals.includes(request.delegatedGoalId)) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "an empty delegated-goal list reads as every goal",
+    "file": "src/goal-lease.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "    if (!Array.isArray(admittedGoals) || admittedGoals.length === 0) {",
+    "to": "    if (!Array.isArray(admittedGoals)) {"
+  },
+  {
+    "name": "malformed delegatedGoalIds are read as absent rather than denying",
+    "file": "src/goal-lease.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "    if (!Array.isArray(bindings.delegatedGoalIds)) return 'delegatedGoalIds must be an array';",
+    "to": "    if (!Array.isArray(bindings.delegatedGoalIds)) return undefined;"
+  },
+  {
+    "name": "the delegated adapter list is emptied, so the gate never applies",
+    "file": "src/goal-lease.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "export const DELEGATED_RUN_ADAPTERS: readonly string[] = ['browser.chatgpt.native.delegation.v5'];",
+    "to": "export const DELEGATED_RUN_ADAPTERS: readonly string[] = [];"
+  },
+  {
+    "name": "a revoked delegation still puts its goal in force",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (row.revokedAt !== undefined) return undefined;",
+    "to": "  // mutated: revocation ignored"
+  },
+  {
+    "name": "a superseded delegation still puts its goal in force",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (row.supersededBy !== undefined) return undefined;",
+    "to": "  // mutated: supersession ignored"
+  },
+  {
+    "name": "an expired delegation still puts its goal in force",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (!(input.now < row.expiresAt)) return undefined;",
+    "to": "  // mutated: expiry ignored"
+  },
+  {
+    "name": "a delegation bound to another session is honoured here",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (bindings.sessionId !== input.sessionId) return undefined;",
+    "to": "  // mutated: session binding ignored"
+  },
+  {
+    "name": "a delegation bound to another adapter is honoured here",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (bindings.adapterId !== input.adapterId) return undefined;",
+    "to": "  // mutated: adapter binding ignored"
+  },
+  {
+    "name": "an unconfigured delegation resolves anyway",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (input.configuredDelegationId === undefined) return undefined;",
+    "to": "  // mutated: configuration ignored"
+  },
+  {
+    "name": "a window past the delegation ceiling is accepted on the effect path",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  if (row.expiresAt - row.notBefore > MAX_DELEGATION_WINDOW_MS) return undefined;",
+    "to": "  // mutated: ceiling ignored"
+  },
+  {
+    "name": "unparseable bindings resolve to a goal instead of nothing",
+    "file": "src/delegated-run-provenance.ts",
+    "suite": "test/goal-lease-delegation-composition.test.ts",
+    "from": "  catch { return undefined; }",
+    "to": "  catch { bindings = { goalId: 'anything', sessionId: input.sessionId, adapterId: input.adapterId } as UiDelegationBindings; }"
+  },
+  {
+    "name": "the pending guard patch stops refusing the issuing CLI",
+    "file": "docs/pending/apply-authority-issuance-guard.mjs",
+    "suite": "test/authority-issuance-guard.test.ts",
+    "from": "    return 'issues or renews a Goal UI Delegation';",
+    "to": "    return undefined;"
+  },
+  {
+    "name": "the pending guard patch stops refusing a direct issuance call",
+    "file": "docs/pending/apply-authority-issuance-guard.mjs",
+    "suite": "test/authority-issuance-guard.test.ts",
+    "from": "  if (GRANT_CALL.test(text)) return 'calls delegation or lease issuance directly';",
+    "to": "  if (false) return 'unreachable';"
+  },
+  {
+    "name": "the pending guard patch stops refusing a config that names a grant",
+    "file": "docs/pending/apply-authority-issuance-guard.mjs",
+    "suite": "test/authority-issuance-guard.test.ts",
+    "from": "  return GRANT_CONFIG_FIELD.test(serialize(input))",
+    "to": "  return false"
+  },
+  {
+    "name": "the pending guard patch refuses revocation too",
+    "file": "docs/pending/apply-authority-issuance-guard.mjs",
+    "suite": "test/authority-issuance-guard.test.ts",
+    "from": "const GRANT_CLI_FLAG = /--(?:issue|renew)\\\\b/;",
+    "to": "const GRANT_CLI_FLAG = /--(?:issue|renew|revoke)\\\\b/;"
+  },
+  {
+    "name": "the pending guard patch no longer requires a runner, so reading is refused",
+    "file": "docs/pending/apply-authority-issuance-guard.mjs",
+    "suite": "test/authority-issuance-guard.test.ts",
+    "from": "  if (!SCRIPT_RUNNER.test(text)) return undefined;",
+    "to": "  // mutated: a mention is treated as an invocation"
   }
 ]
