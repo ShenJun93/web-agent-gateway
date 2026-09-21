@@ -111,7 +111,39 @@ export class DelegatedDispatchRouter {
       });
     }
 
-    // Identity: from the admitted connection, compared against what the envelope claims.
+    // `session.bind` is the one verb whose `sessionId` is deliberately *not* compared, and the
+    // reason took a production wiring pass to notice.
+    //
+    // The extension mints a **correlation** and sends it as `sessionId`. The gateway hashes that
+    // correlation and looks up — or creates — a durable session whose id is a *different*
+    // `session_<uuid>`. The two have the same shape and are never the same value. Comparing them
+    // at bind would refuse every real connection, and the fixture could not have caught it: it
+    // used one value for both sides, so the comparison always held.
+    //
+    // Nothing is weakened by skipping it. Identity here comes from the bearer the gateway admitted,
+    // not from the envelope — by the time this runs, admission has already happened and `connection`
+    // is fixed. The bind response hands back the authoritative id, and every verb after this one is
+    // compared against it. So the envelope's session goes from meaningless-at-bind to
+    // checked-thereafter, rather than from forgeable to trusted.
+    if (envelope.type === 'session.bind') {
+      this.bound = true;
+      // The offered id goes back so the extension knows *which* reference to name when it wants
+      // the delegated path. It is a reference and not a grant: the plane honours exactly this id
+      // and re-reads every binding, window and budget from durable rows, so a browser holding it
+      // can ask and nothing more. Absent when none is configured — which is the browser learning
+      // that it should stay on the human path, not learning anything about issuance.
+      const offered = this.options.plane.offeredDelegationId;
+      return resultEnvelope(envelope.requestId, {
+        bound: true,
+        // The authoritative session id, which the caller must use on every later envelope. It is
+        // not a secret and not a capability: it names the connection the caller already holds.
+        sessionId: this.options.connection.sessionId,
+        ...(offered === undefined ? {} : { delegationId: offered }),
+      });
+    }
+
+    // Identity: from the admitted connection, compared against what the envelope claims. A message
+    // naming another session does not borrow that session's delegation — it gets SESSION_MISMATCH.
     if (envelope.sessionId !== this.options.connection.sessionId) {
       return errorEnvelope(
         envelope.requestId, 'SESSION_MISMATCH',
@@ -119,10 +151,6 @@ export class DelegatedDispatchRouter {
       );
     }
 
-    if (envelope.type === 'session.bind') {
-      this.bound = true;
-      return resultEnvelope(envelope.requestId, { bound: true });
-    }
     if (envelope.type === 'session.unbind') {
       this.bound = false;
       return resultEnvelope(envelope.requestId, { bound: false });
@@ -173,6 +201,21 @@ export class DelegatedDispatchRouter {
         goalId: authorization.goalId,
         authority: 'DELEGATED_RUN',
         dispatchedAt: authorization.dispatchedAt,
+      });
+    }
+
+    if (envelope.type === 'run.human') {
+      // No delegation is consulted and no budget is touched. The store refuses a proposal staged
+      // under a delegation, inside the transaction, so this verb cannot be used to run delegated
+      // work off the books — which was a measured hole before that check existed.
+      const outcome = this.options.plane.recordHumanRun({
+        connection: this.options.connection,
+        proposalId: envelope.proposalId,
+      });
+      if (!outcome.ok) return errorEnvelope(envelope.requestId, outcome.code, outcome.detail);
+      return resultEnvelope(envelope.requestId, {
+        proposalId: envelope.proposalId,
+        authority: 'HUMAN_RUN',
       });
     }
 

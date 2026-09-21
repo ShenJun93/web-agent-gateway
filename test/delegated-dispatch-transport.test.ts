@@ -100,7 +100,7 @@ const codeOf = (envelope: unknown): string => {
 test('the v5 surface is exactly the declared verbs, and has no tool.call', () => {
   assert.deepEqual([...DELEGATED_DISPATCH_VERBS], [
     'hello', 'session.bind', 'session.unbind', 'ping', 'verbs.list',
-    'run.stage', 'run.dispatch', 'run.result',
+    'run.stage', 'run.dispatch', 'run.human', 'run.result',
   ]);
   // v4's shape is the thing this revision deliberately does *not* have: on v4 the browser names
   // a tool and its arguments and the gateway runs it. Here the tool that runs is the stored one.

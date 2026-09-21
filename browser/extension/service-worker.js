@@ -5,6 +5,8 @@ import {
 } from './service-worker-core-v4.js';
 import { parseChatGptOperatorObservation } from './chatgpt-call-parser-v4.js';
 import { createNativeOperatorSessionController } from './native-session-core-v4.js';
+import { createNativeDelegationSessionController } from './native-session-core-v5.js';
+import { stageAndDispatch } from './delegated-dispatch-core-v5.js';
 
 /**
  * The shipped entry point, now the operator adapter (ADR-0026).
@@ -38,6 +40,69 @@ const native = createNativeOperatorSessionController({
   },
 });
 
+/**
+ * The delegated-dispatch port (ADR-0029), on its own native host.
+ *
+ * A second host, not a second mode on the first: the two admit into different adapter identities
+ * and a delegation binds one of them. Connecting is lazy — `tryDelegatedRun` below is the only
+ * caller, and it gives up quietly if the host is not installed, which is the state on every
+ * machine that has not opted in.
+ */
+const delegation = createNativeDelegationSessionController({
+  connectNative: () => chrome.runtime.connectNative('com.openai.web_agent_gateway_v5'),
+  randomUUID: () => crypto.randomUUID(),
+});
+
+/**
+ * Try to run one observed candidate under a delegation, before offering it to a human.
+ *
+ * Returns the outcome when WAG ran it, and `undefined` whenever it did not — no host, no
+ * delegation offered, no workspace to bind to, or a refusal. **Every one of those falls through to
+ * the human queue**, which is the direction that has to be true: `human-presence-boundary.md` says
+ * Run stays human wherever a delegation does not admit the proposal, so the failure mode of this
+ * whole function is "a person is asked", never "it happened anyway".
+ *
+ * Nothing here decides anything. It names a delegation id WAG handed it at bind time and asks. WAG
+ * re-reads the row, the window, the budget and every binding, and answers.
+ */
+async function tryDelegatedRun({ correlationId, call, origin }) {
+  // The delegation binds one workspace, and a staged candidate must name the same one in its
+  // arguments. A tool that resolves no workspace (`health`) cannot be matched against the binding
+  // here, so it is left for a person rather than guessed at.
+  const workspaceId = call.arguments && call.arguments.workspace_id;
+  if (typeof workspaceId !== 'string' || workspaceId.length === 0) return undefined;
+
+  try {
+    await delegation.ensureReady(correlationId);
+  } catch {
+    // No v5 native host installed, or the handshake failed. Not an error worth surfacing: it is
+    // the ordinary state of a machine that has not enabled delegated Run.
+    return undefined;
+  }
+
+  const delegationId = delegation.delegationId();
+  // WAG offered none, so none is configured and every proposal waits for a person.
+  if (delegationId === undefined) return undefined;
+
+  try {
+    return await stageAndDispatch(delegation.send, {
+      requestId: `req_${crypto.randomUUID()}`,
+      // Distinct by construction. Equal ids would let a stage answer be read as a dispatch answer,
+      // and the core refuses that outright — but not generating them equal is cheaper than relying
+      // on being refused.
+      dispatchRequestId: `dsp_${crypto.randomUUID()}`,
+      sessionId: delegation.boundSessionId(),
+      delegationId,
+      tool: call.tool,
+      workspaceId,
+      origin,
+      arguments: call.arguments,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // The actor is derived from what Chrome put in `sender`, never from what the message claims.
   const actor = senderActor(sender, chrome.runtime);
@@ -52,7 +117,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     const call = parseChatGptOperatorObservation({ text: message.text, codeBlocks: message.codeBlocks });
     if (!call) { sendResponse({ queued: false }); return false; }
-    void sessionCorrelations.forTab(tabId).then((sessionId) => {
+    void sessionCorrelations.forTab(tabId).then(async (sessionId) => {
+      // Offered to a delegation first, and to a person otherwise. The order matters only because
+      // doing it the other way would queue a proposal that then ran without the human ever seeing
+      // it — two records of one candidate, one of them misleading.
+      const delegated = await tryDelegatedRun({
+        correlationId: sessionId,
+        call,
+        origin: new URL(senderUrl).origin,
+      });
+      if (delegated && delegated.ok && delegated.dispatched) {
+        chrome.runtime.sendMessage({
+          type: 'panel.delegated',
+          proposalId: delegated.proposalId,
+          result: delegated.result,
+        }).catch(() => undefined);
+        sendResponse({ queued: false, delegated: true, proposalId: delegated.proposalId });
+        return;
+      }
+
       const request = {
         version: 4,
         type: 'tool.call',
@@ -64,7 +147,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // The provider's own message id is what makes a rescan idempotent; it is carried, never
       // trusted as authority.
       const queued = core.queueProviderRequest({ url: senderUrl, tabId }, request, message.messageId);
-      sendResponse({ queued, requestId: queued ? request.requestId : undefined });
+      sendResponse({
+        queued,
+        requestId: queued ? request.requestId : undefined,
+        // Surfaced so a refused delegation is visible rather than looking like nothing happened.
+        // It is a reason code, not a decision, and the panel treats it as text.
+        ...(delegated && !delegated.ok ? { delegationRefusal: delegated.code } : {}),
+      });
     }).catch(() => sendResponse({ queued: false }));
     return true;
   }

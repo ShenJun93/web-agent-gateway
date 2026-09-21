@@ -167,6 +167,21 @@ export class UiDelegationDispatchPlane {
 
   private readonly dispatchRateLimit: ProposalRateLimit;
 
+  /**
+   * The configured delegation id, for the transport to hand back at bind time.
+   *
+   * A reference, not a credential. The browser has to name a delegation to ask for the delegated
+   * path, and it cannot invent an id that would be honoured — the plane compares every staged and
+   * dispatched id against exactly this one, and everything else about the delegation is re-read
+   * from durable rows. So telling the browser which id to name gives it nothing it could not
+   * already have obtained by guessing, and saves it from asserting issuance state, which is the
+   * thing it genuinely must never do.
+   *
+   * `undefined` when none is configured, and that is the honest answer: no delegation is offered,
+   * so the browser should stay on the human path.
+   */
+  get offeredDelegationId(): string | undefined { return this.configuredDelegationId; }
+
   constructor(options: {
     port: DelegationDispatchPort;
     /**

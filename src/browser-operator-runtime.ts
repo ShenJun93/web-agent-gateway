@@ -4,6 +4,7 @@ import { dirname, isAbsolute } from 'node:path';
 import { AdmittedWorkspaceService } from './admitted-workspace.js';
 import {
   BrowserAdmissionRegistry,
+  BROWSER_DELEGATION_ADAPTER_ID,
   BROWSER_OPERATOR_ADAPTER_ID,
   OPERATOR_CORRELATION_PATTERN,
 } from './adapter-admission.js';
@@ -23,6 +24,16 @@ import { bootstrapPrivateGateway } from './private-runtime.js';
 import { createBrowserOperatorAdmittedMcpServer } from './server.js';
 import { DevspaceRepositoryInspectionBackend } from './repository-inspection.js';
 import { BROWSER_OPERATOR_PROTOCOL_VERSION } from './browser-adapter/protocol-v4.js';
+import { DELEGATED_DISPATCH_PROTOCOL_VERSION } from './browser-adapter/protocol-v5.js';
+import { DelegatedDispatchRouter } from './delegated-dispatch-router.js';
+import { DelegatedRunCoordinator } from './delegated-run-executor.js';
+import { McpDelegatedToolExecutionPort } from './delegated-tool-execution.js';
+import { DelegationClaimSweeper } from './delegation-claim-sweeper.js';
+import { startDelegationDispatchHttpServer } from './delegation-dispatch-http.js';
+import {
+  UiDelegationDispatchPlane,
+  createDelegationDispatchPort,
+} from './goal-ui-delegation-dispatch.js';
 
 /** How often a configured lease is offered the pending queue. Idle when nothing is pending. */
 const LEASE_ADMISSION_INTERVAL_MS = 2_000;
@@ -51,18 +62,35 @@ export interface BrowserOperatorRuntime {
    * that autonomous admission is on, rather than it being invisible in a config file.
    */
   goalLeaseId?: string;
+  /**
+   * The Goal UI Delegation this runtime honours, if any (ADR-0029). Absent is the default and means
+   * Run stays human for every proposal. Surfaced for the same reason the lease is: an authority that
+   * is only visible by reading a config file is one an operator can be running without knowing.
+   */
+  goalUiDelegationId?: string;
+  /** Where the v5 discovery was written, when a delegation is configured. Removed on shutdown. */
+  delegationDiscoveryPath?: string;
   close(): Promise<void>;
 }
 
 export async function startBrowserOperatorRuntime(options: {
   configPath: string;
   discoveryPath: string;
+  /**
+   * Where the v5 discovery goes, when a delegation is configured. Its own file, never the v4 one:
+   * sharing a path would let whichever runtime started last delete the other's discovery, and — far
+   * worse — would let a v4 host read a v5 bootstrap and admit into the wrong identity.
+   */
+  delegationDiscoveryPath?: string;
   statePath: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<BrowserOperatorRuntime> {
   if (!isAbsolute(options.configPath)) throw new Error('Browser operator config path must be absolute');
   if (!isAbsolute(options.discoveryPath)) throw new Error('Browser operator discovery path must be absolute');
   if (!isAbsolute(options.statePath)) throw new Error('Browser operator state path must be absolute');
+  if (options.delegationDiscoveryPath !== undefined && !isAbsolute(options.delegationDiscoveryPath)) {
+    throw new Error('Delegation discovery path must be absolute');
+  }
 
   const env = options.env ?? process.env;
   const operatorUrlFile = `${options.statePath}.operator-url`;
@@ -85,6 +113,23 @@ export async function startBrowserOperatorRuntime(options: {
   let http: Awaited<ReturnType<typeof startBrowserAdmissionHttpServer>> | undefined;
   let operator: Awaited<ReturnType<typeof startOperatorServer>> | undefined;
   let leaseTimer: ReturnType<typeof setInterval> | undefined;
+  let delegationAdmission: BrowserAdmissionRegistry | undefined;
+  let delegationHttp: Awaited<ReturnType<typeof startDelegationDispatchHttpServer>> | undefined;
+  let claimSweeper: DelegationClaimSweeper | undefined;
+  let delegationDiscoveryWritten: string | undefined;
+  const delegationExecutors = new Set<McpDelegatedToolExecutionPort>();
+
+  /** Tear down the delegation surface. Shared by the close path and the failure path. */
+  const closeDelegation = async (): Promise<void> => {
+    claimSweeper?.stop();
+    await delegationHttp?.close().catch(() => undefined);
+    for (const executor of delegationExecutors) await executor.close().catch(() => undefined);
+    delegationExecutors.clear();
+    delegationAdmission?.close();
+    if (delegationDiscoveryWritten !== undefined) {
+      await rm(delegationDiscoveryWritten, { force: true }).catch(() => undefined);
+    }
+  };
 
   try {
     await mkdir(dirname(options.statePath), { recursive: true });
@@ -205,6 +250,90 @@ export async function startBrowserOperatorRuntime(options: {
       },
     });
 
+    /**
+     * The Goal UI Delegation surface (ADR-0029), if this runtime was configured with one.
+     *
+     * Everything below exists only when `goalUiDelegationId` is named in the config. With none —
+     * the default, and the only behaviour before this field existed — no v5 server is started, no
+     * v5 discovery is written, no sweeper runs, and Run stays human exactly as ADR-0026 says.
+     *
+     * Naming an id grants nothing by itself. The row still has to exist, be unrevoked, be inside
+     * its window and its 4h ceiling, and bind this session, adapter, workspace, tool and origin.
+     * An id naming no row is refused rather than read as unrestricted, and it is `evaluateDelegatedRun`
+     * that decides — not this file, which only assembles.
+     */
+    const delegationId = engineering.mutation.goalUiDelegationId;
+    if (delegationId !== undefined) {
+      const delegationDiscoveryPath = options.delegationDiscoveryPath
+        ?? `${options.statePath}.delegation-discovery.json`;
+      const delegationBootstrap = randomBytes(32).toString('base64url');
+
+      // Its own registry, on the v5 identity. Disjoint token maps are what make "a v4 bearer
+      // cannot reach a v5 route" structural rather than a comparison someone remembers to write.
+      // The strict correlation shape is defaulted by the registry for this adapter, because a
+      // caller who can choose the correlation can join the session a delegation is bound to.
+      delegationAdmission = new BrowserAdmissionRegistry(BROWSER_DELEGATION_ADAPTER_ID, store, Date.now);
+
+      const dispatchPort = createDelegationDispatchPort(store);
+
+      // Retires claims that never reached dispatch. Without a caller, a crash in that window
+      // stranded a CLAIMED row forever — the slot stayed spent and the row never reached a
+      // terminal state. It sweeps once on start, because the rows that most need retiring are
+      // the ones already on disk after a crash.
+      claimSweeper = new DelegationClaimSweeper({
+        port: { abandonExpiredClaims: (now, ttl) => store!.abandonExpiredClaims(now, ttl) },
+        onSwept: (abandoned) => process.stderr.write(`${JSON.stringify({
+          type: 'gateway.delegation.claimsAbandoned', abandoned,
+        })}\n`),
+      });
+      claimSweeper.start();
+
+      delegationHttp = await startDelegationDispatchHttpServer({
+        context: {
+          bootstrapToken: delegationBootstrap,
+          admission: delegationAdmission,
+          coordinatorFor: (caller) => {
+            // One plane and one router per admitted connection, carrying the identity the gateway
+            // established — never anything an envelope claimed. The router refuses outright if the
+            // connection is not the v5 identity.
+            const plane = new UiDelegationDispatchPlane({
+              port: dispatchPort,
+              killSwitch: () => isKillSwitchEngaged(killSwitchDir),
+              configuredDelegationId: delegationId,
+            });
+            const router = new DelegatedDispatchRouter({
+              plane,
+              connection: {
+                ownerId: caller.ownerId,
+                sessionId: caller.sessionId,
+                adapterId: caller.adapterId,
+              },
+            });
+            const executorPort = new McpDelegatedToolExecutionPort(
+              () => createBrowserOperatorAdmittedMcpServer(
+                privateRuntime!.gateway,
+                { callerContext: caller, workspaces, verify, mutation, commit },
+              ),
+            );
+            delegationExecutors.add(executorPort);
+            return new DelegatedRunCoordinator({
+              router, port: dispatchPort, executor: executorPort, sessionId: caller.sessionId,
+            });
+          },
+        },
+      });
+
+      // Same contents and same 0600 mode as the v4 discovery, and the same omissions: the
+      // admission URL and a one-time bootstrap, never the operator origin or its credential.
+      await writeFile(delegationDiscoveryPath, JSON.stringify({
+        admissionUrl: delegationHttp.admissionUrl,
+        bootstrapToken: delegationBootstrap,
+        protocolVersion: DELEGATED_DISPATCH_PROTOCOL_VERSION,
+        adapterId: BROWSER_DELEGATION_ADAPTER_ID,
+      }), { encoding: 'utf8', mode: 0o600 });
+      delegationDiscoveryWritten = delegationDiscoveryPath;
+    }
+
     if (!http.admissionUrl) throw new Error('Browser admission URL missing');
     // Discovery carries the admission URL and its one-time bootstrap only. No operator origin,
     // no operator credential: the browser must never be able to reach the approval channel.
@@ -222,10 +351,17 @@ export async function startBrowserOperatorRuntime(options: {
       operatorBootstrapUrl: operator.bootstrapUrl,
       operatorUrlFile,
       ...(leaseId === undefined ? {} : { goalLeaseId: leaseId }),
+      ...(engineering.mutation.goalUiDelegationId === undefined
+        ? {}
+        : { goalUiDelegationId: engineering.mutation.goalUiDelegationId }),
+      ...(delegationDiscoveryWritten === undefined
+        ? {}
+        : { delegationDiscoveryPath: delegationDiscoveryWritten }),
       async close() {
         if (closed) return;
         closed = true;
         if (leaseTimer) clearInterval(leaseTimer);
+        await closeDelegation();
         await rm(options.discoveryPath, { force: true });
         await rm(operatorUrlFile, { force: true }).catch(() => undefined);
         await http?.close();
@@ -236,6 +372,7 @@ export async function startBrowserOperatorRuntime(options: {
       },
     };
   } catch (error) {
+    await closeDelegation();
     await rm(options.discoveryPath, { force: true }).catch(() => undefined);
     await rm(operatorUrlFile, { force: true }).catch(() => undefined);
     await http?.close().catch(() => undefined);

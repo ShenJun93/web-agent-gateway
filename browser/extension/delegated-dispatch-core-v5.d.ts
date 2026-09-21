@@ -64,3 +64,42 @@ export function stageAndDispatch(
   send: (envelope: unknown) => Promise<unknown>,
   input: StageAndDispatchInput,
 ): Promise<StageAndDispatchOutcome>;
+
+export type V5HumanRunEnvelope = {
+  version: 5;
+  type: 'run.human';
+  requestId: string;
+  sessionId: string;
+  proposalId: string;
+};
+
+export type HumanRunOutcome =
+  | { phase: 'human'; ok: true; proposalId: string; result: unknown }
+  | { phase: 'human'; ok: false; code: string; message: string };
+
+export type BindOutcome =
+  | {
+    ok: true;
+    /**
+     * The authoritative session id WAG resolved from the correlation that was sent — a different
+     * string, and the one every later envelope must carry.
+     */
+    sessionId: string | undefined;
+    /** Opaque. A reference the caller may name to ask for the delegated path; never a grant. */
+    delegationId: string | undefined;
+  }
+  | { ok: false; code: string; message: string };
+
+export function buildHumanRunEnvelope(input: {
+  requestId: string; sessionId: string; proposalId: string;
+}): V5HumanRunEnvelope;
+
+export function runAsHuman(
+  send: (envelope: unknown) => Promise<unknown>,
+  input: { requestId: string; sessionId: string; proposalId: string },
+): Promise<HumanRunOutcome>;
+
+export function bindSession(
+  send: (envelope: unknown) => Promise<unknown>,
+  input: { requestId: string; sessionId: string },
+): Promise<BindOutcome>;

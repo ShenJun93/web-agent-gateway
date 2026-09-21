@@ -127,6 +127,29 @@ const dispatchRequest = z.object({
   proposalId: opaqueRef,
 }).strict();
 
+/**
+ * Ask for a staged proposal to be run on the **human** path — the click, not the delegation.
+ *
+ * This verb is what keeps v5 from being delegated-only. Without it, a v5 session could stage a
+ * proposal and then had no way to run anything a delegation did not admit, so every ordinary Run
+ * needed a v4 session too; a measured gap, listed in the ADR as unbuilt wiring.
+ *
+ * It grants nothing v4 did not already grant. On v4 a human clicks Run and the extension sends
+ * `tool.call`; here a human clicks Run and the extension sends `run.stage` then `run.human`. The
+ * gateway cannot tell a clicked Run from an unclicked one on either protocol — the human gate lives
+ * in the side panel and always has — so this is parity, not a widening. What it adds is a durable
+ * `HUMAN_RUN` row, which v4 never wrote.
+ *
+ * It carries no `delegationId`, because it is not the delegated path and must not be able to
+ * become it: the store refuses `PROPOSAL_IS_DELEGATED` for a proposal staged under a delegation,
+ * inside the transaction, so this verb can never launder delegated work into an unbudgeted run.
+ */
+const humanRunRequest = z.object({
+  ...sessionRequestBase,
+  type: z.literal('run.human'),
+  proposalId: opaqueRef,
+}).strict();
+
 /** Ask for a dispatched proposal's result id to be recorded. Also two references. */
 const attachResultRequest = z.object({
   ...sessionRequestBase,
@@ -143,6 +166,7 @@ const requestSchema = z.union([
   listVerbsRequest,
   stageRequest,
   dispatchRequest,
+  humanRunRequest,
   attachResultRequest,
 ]);
 
@@ -176,7 +200,7 @@ export type DelegatedDispatchResponseEnvelope = z.infer<typeof responseSchema>;
 /** Every verb a v5 session may speak. Exported so a test can assert the surface exactly. */
 export const DELEGATED_DISPATCH_VERBS = [
   'hello', 'session.bind', 'session.unbind', 'ping', 'verbs.list',
-  'run.stage', 'run.dispatch', 'run.result',
+  'run.stage', 'run.dispatch', 'run.human', 'run.result',
 ] as const;
 
 export function serializedDispatchBytes(value: unknown): number {

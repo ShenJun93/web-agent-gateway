@@ -597,6 +597,25 @@ export class SqliteDurableStore {
     return row ? adapterSessionFromRow(row as Record<string, unknown>) : undefined;
   }
 
+  /**
+   * Every admitted session for one adapter, newest first.
+   *
+   * For the local controller's tooling only, and it exists because of a bootstrap problem: a
+   * delegation binds a `sessionId`, and a session id is minted by WAG when the extension connects.
+   * So a human issuing a delegation has to be able to *find out* which session to bind it to, and
+   * the alternative — reading it out of a log, or off a screen — is how people bind the wrong one.
+   *
+   * Adding it to the store widens nothing on the browser path. The dispatch port is built by
+   * enumerating the names it may carry, not by removing the ones it may not, so a method added here
+   * is absent there until someone deliberately lists it.
+   */
+  listAdapterSessions(adapterId: string): readonly AdapterSessionRecord[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM adapter_sessions WHERE adapter_id = ? ORDER BY created_at DESC',
+    ).all(adapterId) as Record<string, unknown>[];
+    return rows.map(adapterSessionFromRow);
+  }
+
   findAdapterSession(ownerId: string, adapterId: string, correlationSha256: string): AdapterSessionRecord | undefined {
     const row = this.db.prepare(`SELECT * FROM adapter_sessions
       WHERE owner_id = ? AND adapter_id = ? AND correlation_sha256 = ?`)
@@ -616,6 +635,20 @@ export class SqliteDurableStore {
   getWorkspace(workspaceId: string): WorkspaceRecord | undefined {
     const row = this.db.prepare('SELECT * FROM workspaces WHERE workspace_id = ?').get(workspaceId);
     return row ? workspaceFromRow(row as Record<string, unknown>) : undefined;
+  }
+
+  /**
+   * Open workspaces for one principal, newest first. For the local controller's tooling.
+   *
+   * Same reasoning as `listAdapterSessions`: a delegation binds exactly one `workspaceId`, and a
+   * human who has to transcribe that id from a screen will eventually bind the wrong one — which
+   * would be a delegation that silently authorises work in a directory nobody meant.
+   */
+  listWorkspacesForOwner(ownerId: string): readonly WorkspaceRecord[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM workspaces WHERE owner_id = ? ORDER BY created_at DESC',
+    ).all(ownerId) as Record<string, unknown>[];
+    return rows.map(workspaceFromRow);
   }
   createMutation(input: CreateMutationRecord): MutationRecord {
     const record: MutationRecord = {

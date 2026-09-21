@@ -77,6 +77,28 @@ export function buildDispatchEnvelope(input) {
   };
 }
 
+/**
+ * Build the envelope that runs a staged proposal on the **human** path.
+ *
+ * One reference. There is no `delegationId` parameter here and the schema has no such field, so
+ * this envelope cannot become a delegated one by accident or by edit — and WAG refuses it outright
+ * for a proposal that *was* staged under a delegation, inside the transaction, so it can never be
+ * used to run delegated work without spending a slot.
+ *
+ * Sending it is not what makes a Run human. A person clicking Run in the side panel is; this is
+ * how the panel tells WAG that happened, exactly as v4's `tool.call` was. The gateway cannot see
+ * the click on either protocol.
+ */
+export function buildHumanRunEnvelope(input) {
+  return {
+    version: DELEGATED_DISPATCH_PROTOCOL_VERSION,
+    type: 'run.human',
+    requestId: input.requestId,
+    sessionId: input.sessionId,
+    proposalId: input.proposalId,
+  };
+}
+
 /** Build the envelope that records a dispatched proposal's result id. Also two references. */
 export function buildResultEnvelope(input) {
   return {
@@ -157,4 +179,55 @@ export async function stageAndDispatch(send, input) {
   const dispatched = readResponse(dispatchEnvelope.requestId, await send(dispatchEnvelope));
   if (!dispatched.ok) return { phase: 'dispatch', proposalId, ...dispatched };
   return { phase: 'dispatch', ok: true, proposalId, dispatched: true, result: dispatched.result };
+}
+
+/**
+ * Run a proposal that was already staged, on the human path.
+ *
+ * Separate from `stageAndDispatch` because the two are reached at different moments by different
+ * causes. A delegated run happens when the candidate is observed; a human run happens later, when
+ * someone clicks. Folding them into one function would mean one call site had to hold a flag for
+ * "has a person acted yet", and that flag would be the most security-relevant boolean in the
+ * extension — which is precisely the kind of thing that must not live in the browser.
+ */
+export async function runAsHuman(send, input) {
+  const envelope = buildHumanRunEnvelope(input);
+  const answered = readResponse(envelope.requestId, await send(envelope));
+  if (!answered.ok) return { phase: 'human', ...answered };
+  return { phase: 'human', ok: true, proposalId: input.proposalId, result: answered.result };
+}
+
+/**
+ * Bind a session and report which delegation, if any, WAG offered for it.
+ *
+ * The id that comes back is opaque and is the only thing the extension ever learns about the
+ * delegation: no expiry, no budget, no goal, no authority label. It exists so the extension knows
+ * which reference to name when it asks for the delegated path, and naming it is an *ask* — WAG
+ * re-reads every binding from durable rows and refuses anything that does not match.
+ *
+ * `delegationId` absent means no delegation is offered and every proposal waits for a person.
+ */
+export async function bindSession(send, input) {
+  const envelope = {
+    version: DELEGATED_DISPATCH_PROTOCOL_VERSION,
+    type: 'session.bind',
+    requestId: input.requestId,
+    sessionId: input.sessionId,
+    provider: 'chatgpt',
+    origin: 'https://chatgpt.com',
+  };
+  const answered = readResponse(envelope.requestId, await send(envelope));
+  if (!answered.ok) return { ok: false, code: answered.code, message: answered.message };
+  const offered = answered.result && answered.result.delegationId;
+  const authoritative = answered.result && answered.result.sessionId;
+  return {
+    ok: true,
+    // The session id WAG resolved from the correlation we sent. It is *not* the value we sent —
+    // the correlation is hashed and names a durable row whose id is a different string — and every
+    // later envelope must carry this one, because this is what the gateway compares against.
+    sessionId: typeof authoritative === 'string' && authoritative.length > 0 ? authoritative : undefined,
+    // Normalised to undefined rather than passed through, so a malformed value cannot become a
+    // delegation id the extension goes on to name.
+    delegationId: typeof offered === 'string' && offered.length > 0 ? offered : undefined,
+  };
 }

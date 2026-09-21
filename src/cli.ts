@@ -184,6 +184,10 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
     runtime = await (deps.startBrowserOperator ?? startBrowserOperatorRuntime)({
       configPath,
       discoveryPath: join(home, 'browser-adapter-v4.json'),
+      // Its own file, matching what the v5 native host looks for by default. Sharing the v4 path
+      // would let one runtime delete the other's discovery — and let a host admit into the wrong
+      // adapter identity, which is the identity a delegation binds.
+      delegationDiscoveryPath: join(home, 'browser-adapter-v5.json'),
       statePath: join(home, 'browser-operator-v4.sqlite'),
       env: deps.env,
     });
@@ -212,6 +216,17 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
       type: 'gateway.goalLease',
       leaseId: runtime.goalLeaseId,
       note: 'autonomous admission is ENABLED for actions inside this lease; npm run lease:stop halts it',
+    })}\n`);
+  }
+  // Announced for the same reason, and phrased to keep the two authorities apart. A delegation
+  // lifts Run and never Approve: an effect still needs the operator, or a lease that admits it.
+  if (runtime.goalUiDelegationId !== undefined) {
+    deps.stderr.write(`${JSON.stringify({
+      type: 'gateway.goalUiDelegation',
+      delegationId: runtime.goalUiDelegationId,
+      discoveryPath: runtime.delegationDiscoveryPath,
+      note: 'delegated Run is ENABLED for proposals inside this delegation; APPROVAL is unchanged '
+        + 'and still requires the operator or an active lease. npm run lease:stop halts it',
     })}\n`);
   }
 
