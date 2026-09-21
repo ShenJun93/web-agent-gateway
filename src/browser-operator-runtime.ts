@@ -14,6 +14,7 @@ import { DurableVerifyJobCoordinator } from './durable-verify-job.js';
 import { DurableCommitCoordinator } from './git-commit.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
+import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
 import { DevspaceVerifyExecutionPort } from './executor/devspace-verify.js';
 import { startBrowserAdmissionHttpServer } from './http-server.js';
 import { operatorDenialsToStderr, startOperatorServer } from './operator-server.js';
@@ -41,6 +42,12 @@ export interface BrowserOperatorRuntime {
   operatorBootstrapUrl: string;
   /** Where the single-use bootstrap URL was written, 0600, removed on shutdown. */
   operatorUrlFile: string;
+  /**
+   * The Autonomous Goal Lease this runtime honours, if any (ADR-0028). Absent is the default and
+   * means every effect still needs the operator's Approve. Surfaced so the CLI can say plainly
+   * that autonomous admission is on, rather than it being invisible in a config file.
+   */
+  goalLeaseId?: string;
   close(): Promise<void>;
 }
 
@@ -111,10 +118,30 @@ export async function startBrowserOperatorRuntime(options: {
 
     // One review window for both record kinds, so the operator does not have to learn two.
     const reviewTtlMs = engineering.mutation.reviewTtlMs;
+
+    /**
+     * The Autonomous Goal Lease, if this runtime was configured with one (ADR-0028).
+     *
+     * Absent unless the config names a lease, so autonomous admission is off by default and the
+     * only route to an effect stays the operator's Approve button. Naming one grants nothing on
+     * its own: the lease's bindings, expiry and revocation still decide every action, and an id
+     * that is not in the store is refused rather than read as unrestricted.
+     *
+     * The kill switch is read from disk on every admission rather than captured here, so
+     * engaging it stops this already-running process without restarting it.
+     */
+    const leaseId = engineering.mutation.goalLeaseId;
+    const killSwitchDir = dirname(options.statePath);
+    const goalLease = leaseId === undefined ? undefined : {
+      leaseId,
+      killSwitch: () => isKillSwitchEngaged(killSwitchDir),
+    };
+
     const mutation = new DurableMutationCoordinator({
       store,
       backends: [new DevspaceFileMutationBackend(privateRuntime.executor)],
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
+      ...(goalLease === undefined ? {} : { goalLease }),
     });
     await mutation.reconcile();
 
@@ -125,6 +152,7 @@ export async function startBrowserOperatorRuntime(options: {
         ? {}
         : { protectedBranches: engineering.gitCommit.protectedBranches }),
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
+      ...(goalLease === undefined ? {} : { goalLease }),
     });
     await commit.reconcile();
 
@@ -171,6 +199,7 @@ export async function startBrowserOperatorRuntime(options: {
       operatorOrigin: operator.origin,
       operatorBootstrapUrl: operator.bootstrapUrl,
       operatorUrlFile,
+      ...(leaseId === undefined ? {} : { goalLeaseId: leaseId }),
       async close() {
         if (closed) return;
         closed = true;

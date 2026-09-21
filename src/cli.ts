@@ -205,6 +205,15 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
     origin: runtime.operatorOrigin,
     urlFile: runtime.operatorUrlFile,
   })}\n`);
+  // Announced loudly when on, and silent when off. An autonomous-admission mode that is only
+  // visible by reading a config file is one an operator can be running without knowing.
+  if (runtime.goalLeaseId !== undefined) {
+    deps.stderr.write(`${JSON.stringify({
+      type: 'gateway.goalLease',
+      leaseId: runtime.goalLeaseId,
+      note: 'autonomous admission is ENABLED for actions inside this lease; npm run lease:stop halts it',
+    })}\n`);
+  }
 
   let exitCode = 0;
   try {

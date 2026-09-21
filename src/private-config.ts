@@ -25,6 +25,16 @@ const repositoryEngineeringSchema = z.object({
      * gestures. Five minutes is the ceiling the commit path already allows.
      */
     reviewTtlMs: z.number().int().min(1_000).max(5 * 60_000).optional(),
+    /**
+     * The Autonomous Goal Lease this runtime will honour (ADR-0028).
+     *
+     * Absent means autonomous admission is off and every effect needs a human on the operator's
+     * Approve route, which is the default and the only behaviour before this field existed.
+     * Naming a lease here does not create one or grant anything: the lease's own bindings,
+     * expiry and revocation still decide, and a lease id that is not in the durable store is
+     * refused rather than treated as unrestricted.
+     */
+    goalLeaseId: z.string().min(1).max(128).regex(/^lease_[A-Za-z0-9._:-]+$/).optional(),
   }).strict().optional(),
 }).strict();
 
@@ -46,6 +56,7 @@ export interface PrivateRepositoryEngineeringMutation {
   statePath: string;
   ownerId: string;
   reviewTtlMs?: number;
+  goalLeaseId?: string;
 }
 export interface PrivateRepositoryEngineeringGitCommit {
   protectedBranches?: string[];
@@ -112,6 +123,7 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
             statePath: mutation.statePath,
             ownerId: mutation.ownerId,
             ...(mutation.reviewTtlMs === undefined ? {} : { reviewTtlMs: mutation.reviewTtlMs }),
+            ...(mutation.goalLeaseId === undefined ? {} : { goalLeaseId: mutation.goalLeaseId }),
           },
         }),
       },
