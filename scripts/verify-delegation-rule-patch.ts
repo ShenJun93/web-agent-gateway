@@ -60,6 +60,31 @@ const PATCH = 'docs/pending/human-presence-boundary-goal-ui-delegation.md';
 const PATCH_RAW_SHA256 = '35b3ff68b929ae35ca6e8f3f27d1e8e4f88830029d4ddd340365f5496f25caac';
 const PATCH_PAYLOAD_SHA256 = 'bedf154361e8bd23dae8173cc8ce6594fa9c38cea097c17ec18422e6e2fd67de';
 
+/**
+ * The PreToolUse guard, which has **two** legitimate states rather than one.
+ *
+ * `docs/pending/authority-issuance-guard.md` is a prepared patch that a human applies. Until they
+ * do, the committed guard is correct; after they do, the patched one is. Reporting either as drift
+ * would make this script cry wolf for however long the patch is pending, and a check people learn
+ * to ignore is worse than no check.
+ *
+ * What *is* drift is a third value: a guard that is neither. That means someone edited it outside
+ * the patch, and the digests in the patch document are stale.
+ */
+const GUARD = '.claude/hooks/wag-human-gate-guard.mjs';
+const GUARD_BEFORE = 'f13670516976e7c8cfc43fdd0d263e6c860993175d10c32478fce8d83569d241';
+const GUARD_AFTER = '3f0787de4e0d8cf2a5df58e7f4a07a76738a82ec22097af071cd1d61a1273a61';
+
+/** The pending patch's own artifacts, so a silent edit to either is visible. */
+const PENDING_DOC = 'docs/pending/authority-issuance-guard.md';
+const PENDING_DOC_PAYLOAD_SHA256 =
+  'c4d148d3a205b71d505688494fed79cd6bf982087000e5e3cb872c66f4a58200';
+const PENDING_APPLIER = 'docs/pending/apply-authority-issuance-guard.mjs';
+const PENDING_APPLIER_RAW_SHA256 =
+  'bf78665843df8dc5783f0e3f92d65acd29d2727c8e7d86cd233a7e71a8665133';
+/** The lines the payload digest removes, because a digest cannot cover itself. */
+const PENDING_DOC_DIGEST_LINE = /^ {2}(?:raw file|payload) {2,3}[0-9a-f]{64}\n/gm;
+
 const out = (line = ''): void => { process.stdout.write(`${line}\n`); };
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
 
@@ -110,8 +135,55 @@ function main(): number {
   }
 
   out('');
+  out('issuance guard');
+  let guardDigest: string | undefined;
+  try { guardDigest = sha256(readFileSync(join(repoRoot, GUARD))); }
+  catch { out(`  MISSING  ${GUARD}`); drift += 1; }
+
+  if (guardDigest === GUARD_AFTER) {
+    out(`  ok       ${GUARD}`);
+    out('           the authority-issuance patch is APPLIED: issuing or renewing a grant, and');
+    out('           naming one in a JSON config, are refused by the hook.');
+  } else if (guardDigest === GUARD_BEFORE) {
+    out(`  pending  ${GUARD}`);
+    out('           the authority-issuance patch is NOT APPLIED. Issuance has a rule and no');
+    out(`           pattern. To apply it:  node ${PENDING_APPLIER} --apply`);
+  } else if (guardDigest !== undefined) {
+    drift += 1;
+    out(`  DRIFTED  ${GUARD}`);
+    out(`             now   ${guardDigest}`);
+    out(`             known ${GUARD_BEFORE} (committed)`);
+    out(`             known ${GUARD_AFTER} (patched)`);
+    out('             it is neither, so the patch digests are stale. Read the diff.');
+  }
+
+  out('');
+  out('pending patch');
+  for (const [path, expected, digestOf] of [
+    [PENDING_APPLIER, PENDING_APPLIER_RAW_SHA256, (bytes: Buffer) => sha256(bytes)],
+    [PENDING_DOC, PENDING_DOC_PAYLOAD_SHA256, (bytes: Buffer) => createHash('sha256')
+      .update(bytes.toString('utf8').replace(PENDING_DOC_DIGEST_LINE, ''), 'utf8').digest('hex')],
+  ] as const) {
+    let bytes: Buffer;
+    try { bytes = readFileSync(join(repoRoot, path)); }
+    catch {
+      // Absent is the expected end state: the patch and its applier are deleted once applied.
+      out(`  absent   ${path}${guardDigest === GUARD_AFTER ? '  (applied and retired)' : '  MISSING'}`);
+      if (guardDigest !== GUARD_AFTER) drift += 1;
+      continue;
+    }
+    const digest = digestOf(bytes);
+    out(`  ${digest === expected ? 'ok      ' : 'DRIFTED '} ${path}`);
+    if (digest !== expected) {
+      out(`             now   ${digest}`);
+      out(`             want  ${expected}`);
+      drift += 1;
+    }
+  }
+
+  out('');
   out(drift === 0
-    ? 'the boundary is exactly what was authorised on 2026-09-21.'
+    ? 'the boundary is exactly what was authorised.'
     : `${drift} file(s) differ from what was authorised. Read the diff before trusting any receipt.`);
   return drift === 0 ? 0 : 1;
 }
