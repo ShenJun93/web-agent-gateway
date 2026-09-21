@@ -717,8 +717,8 @@
     "name": "a re-observed candidate is dispatched again",
     "file": "browser/extension/delegated-observation-v5.js",
     "suite": "test/delegated-observation-idempotence.test.ts",
-    "from": "    if (memory.has(identity)) return { alreadyDecided: true };",
-    "to": "    // mutated: no idempotence"
+    "from": "    if (memory.has(identity)) {",
+    "to": "    if (false) {"
   },
   {
     "name": "a decided candidate is never remembered",
@@ -752,8 +752,8 @@
     "name": "a tool with no workspace argument is asked about anyway",
     "file": "browser/extension/delegated-observation-v5.js",
     "suite": "test/delegated-observation-idempotence.test.ts",
-    "from": "    if (typeof workspaceId !== 'string' || workspaceId.length === 0) return undefined;",
-    "to": "    // mutated: unbindable tools are asked about"
+    "from": "    if (typeof workspaceId !== 'string' || workspaceId.length === 0) {",
+    "to": "    if (false) {"
   },
   {
     "name": "a lost dispatch answer is reported as an ordinary refusal",
@@ -957,5 +957,124 @@
     "suite": "test/delegated-run-replay-durability.test.ts",
     "from": "      CREATE UNIQUE INDEX IF NOT EXISTS idx_delegation_claims_fingerprint",
     "to": "      CREATE INDEX IF NOT EXISTS idx_delegation_claims_fingerprint"
+  },
+  {
+    "name": "every outcome classifies as a stage refusal, so the classes collapse",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "  if (outcome.ok) return DELEGATED_REASONS.DISPATCHED;",
+    "to": "  if (false) return DELEGATED_REASONS.DISPATCHED;"
+  },
+  {
+    "name": "an indeterminate dispatch reports as an ordinary refusal",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "  if (outcome.indeterminate === true) return DELEGATED_REASONS.DISPATCH_INDETERMINATE;",
+    "to": "  // mutated: indeterminate is indistinguishable from a refusal"
+  },
+  {
+    "name": "a transport failure reports as a stage refusal, hiding that it is retryable",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "  if (outcome.code === 'STAGE_TRANSPORT_FAILED') return DELEGATED_REASONS.STAGE_TRANSPORT_FAILED;",
+    "to": "  // mutated: transport failure is indistinguishable from a refusal"
+  },
+  {
+    "name": "no delegation offered is no longer reported",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "      diagnostics(DELEGATED_REASONS.NO_DELEGATION_OFFERED, { tool: call.tool });",
+    "to": "      // mutated: silent again"
+  },
+  {
+    "name": "an ineligible candidate is no longer reported",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "      diagnostics(DELEGATED_REASONS.CANDIDATE_NOT_ELIGIBLE, { tool: call.tool });",
+    "to": "      // mutated: silent again"
+  },
+  {
+    "name": "the ensureReady failure class is dropped, so all four look like a missing host",
+    "file": "browser/extension/delegated-observation-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "        (error && error.wagReason) || DELEGATED_REASONS.HOST_UNAVAILABLE,",
+    "to": "        DELEGATED_REASONS.HOST_UNAVAILABLE,"
+  },
+  {
+    "name": "the record allow-list is bypassed, so arbitrary fields reach the log",
+    "file": "browser/extension/delegated-diagnostics-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "      write({ at: Date.now(), reason, ...safeDetail(detail) });",
+    "to": "      write({ at: Date.now(), reason, ...detail });"
+  },
+  {
+    "name": "a non-reference value is truncated into the record instead of dropped",
+    "file": "browser/extension/delegated-diagnostics-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "    if (typeof value === 'string' && SAFE_VALUE.test(value)) out[key] = value;",
+    "to": "    if (typeof value === 'string') out[key] = value.slice(0, 128);"
+  },
+  {
+    "name": "the reason set stops being closed",
+    "file": "browser/extension/delegated-diagnostics-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "      if (!REASONS.has(reason)) return;",
+    "to": "      // mutated: any reason is accepted"
+  },
+  {
+    "name": "a throwing sink is allowed to propagate, so a diagnostic can change the outcome",
+    "file": "browser/extension/delegated-diagnostics-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "    } catch {\n      // A diagnostic may not affect the decision it describes.\n    }",
+    "to": "    } finally {\n      // mutated: the guard is gone\n    }"
+  },
+  {
+    "name": "a refused bind is tagged as a dead link, conflating decision with transport",
+    "file": "browser/extension/native-session-core-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "            linkGone ? DELEGATED_REASONS.LINK_UNAVAILABLE : DELEGATED_REASONS.BIND_REFUSED,",
+    "to": "            DELEGATED_REASONS.LINK_UNAVAILABLE,"
+  },
+  {
+    "name": "connectNative throwing is no longer tagged",
+    "file": "browser/extension/native-session-core-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "          DELEGATED_REASONS.HOST_UNAVAILABLE,\n        );",
+    "to": "          'SOMETHING_ELSE',\n        );"
+  },
+  {
+    "name": "a handshake mismatch is tagged as a bind refusal",
+    "file": "browser/extension/native-session-core-v5.js",
+    "suite": "test/delegated-diagnostics.test.ts",
+    "from": "            DELEGATED_REASONS.HANDSHAKE_FAILED,",
+    "to": "            DELEGATED_REASONS.BIND_REFUSED,"
+  },
+  {
+    "name": "activation names the delegation and not the lease, the live defect",
+    "file": "docs/pending/activate-delegation-control.mjs",
+    "suite": "test/activation-step.test.ts",
+    "from": "      `\"goalUiDelegationId\": \"${delegationId}\",\\n      \"goalLeaseId\": \"${leaseId}\"`,",
+    "to": "      `\"goalUiDelegationId\": \"${delegationId}\"`,"
+  },
+  {
+    "name": "activation stops verifying that both fields read back",
+    "file": "docs/pending/activate-delegation-control.mjs",
+    "suite": "test/activation-step.test.ts",
+    "from": "    if (liveMutation.goalUiDelegationId !== delegationId || liveMutation.goalLeaseId !== leaseId) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "activation overwrites a lease that may already be in force",
+    "file": "docs/pending/activate-delegation-control.mjs",
+    "suite": "test/activation-step.test.ts",
+    "from": "    if (configText.includes('\"goalLeaseId\"')) {",
+    "to": "    if (false) {"
+  },
+  {
+    "name": "activation stops refusing a session that is not the live one",
+    "file": "docs/pending/activate-delegation-control.mjs",
+    "suite": "test/activation-step.test.ts",
+    "from": "    if (session.sessionId !== sessionId) {",
+    "to": "    if (false) {"
   }
 ]

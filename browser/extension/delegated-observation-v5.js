@@ -36,6 +36,23 @@
  * knows better." A rescan is such a loop.
  */
 
+import { DELEGATED_REASONS, NO_DIAGNOSTICS } from './delegated-diagnostics-v5.js';
+
+/**
+ * Which reason one `stageAndDispatch` outcome is.
+ *
+ * Reads the outcome the dispatch core already produces; it derives nothing new and decides
+ * nothing. A shape it does not recognise reports as a stage refusal, which is the conservative
+ * reading — the caller's own branching is unchanged either way.
+ */
+function classify(outcome) {
+  if (outcome.ok) return DELEGATED_REASONS.DISPATCHED;
+  if (outcome.code === 'STAGE_TRANSPORT_FAILED') return DELEGATED_REASONS.STAGE_TRANSPORT_FAILED;
+  if (outcome.indeterminate === true) return DELEGATED_REASONS.DISPATCH_INDETERMINATE;
+  if (outcome.phase === 'dispatch') return DELEGATED_REASONS.DISPATCH_REFUSED;
+  return DELEGATED_REASONS.STAGE_REFUSED;
+}
+
 const DELEGATED_SEEN_KEY = 'wag.delegation.seen.v5';
 /** Bounded like the v4 queue's own memory, and evicted in first-seen order. */
 export const MAX_REMEMBERED_DELEGATED = 256;
@@ -94,29 +111,46 @@ export function createDelegatedObservationMemory(storageSession) {
  * Nothing here decides anything itself. It names a delegation id WAG handed it at bind time and
  * asks; WAG re-reads the row, the window, the budget and every binding, and answers.
  */
-export function createDelegatedRunAttempt({ delegation, memory, stageAndDispatch, randomUUID }) {
+export function createDelegatedRunAttempt({
+  delegation, memory, stageAndDispatch, randomUUID, diagnostics = NO_DIAGNOSTICS,
+}) {
   return async function attempt({ identity, correlationId, call, origin }) {
     // Already decided once — a rescan, a panel open, a worker restart or an extension reload.
-    if (memory.has(identity)) return { alreadyDecided: true };
+    if (memory.has(identity)) {
+      diagnostics(DELEGATED_REASONS.ALREADY_DECIDED, {});
+      return { alreadyDecided: true };
+    }
 
     // The delegation binds one workspace, and a staged candidate must name the same one in its
     // arguments. A tool that resolves no workspace — `health`, and `workspace.open`, which takes a
     // path — cannot be matched against the binding at all, so it is left for a person. WAG refuses
     // these on the delegated path too; not asking is simply cheaper than being refused.
     const workspaceId = call.arguments && call.arguments.workspace_id;
-    if (typeof workspaceId !== 'string' || workspaceId.length === 0) return undefined;
+    if (typeof workspaceId !== 'string' || workspaceId.length === 0) {
+      diagnostics(DELEGATED_REASONS.CANDIDATE_NOT_ELIGIBLE, { tool: call.tool });
+      return undefined;
+    }
 
     try {
       await delegation.ensureReady(correlationId);
-    } catch {
-      // No v5 native host installed, or the handshake failed. The ordinary state of a machine that
-      // has not enabled delegated Run, and deliberately not remembered.
+    } catch (error) {
+      // No v5 native host installed, the link is gone, the handshake failed, or the bind was
+      // refused. The ordinary state of a machine that has not enabled delegated Run, and
+      // deliberately not remembered — but no longer indistinguishable: `ensureReady` classifies
+      // which of the four it was and the record says so.
+      diagnostics(
+        (error && error.wagReason) || DELEGATED_REASONS.HOST_UNAVAILABLE,
+        { code: error && error.wagCode, tool: call.tool },
+      );
       return undefined;
     }
 
     const delegationId = delegation.delegationId();
     // WAG offered none, so none is configured and every proposal waits for a person.
-    if (delegationId === undefined) return undefined;
+    if (delegationId === undefined) {
+      diagnostics(DELEGATED_REASONS.NO_DELEGATION_OFFERED, { tool: call.tool });
+      return undefined;
+    }
 
     const outcome = await stageAndDispatch(delegation.send, {
       requestId: `req_${randomUUID()}`,
@@ -130,6 +164,15 @@ export function createDelegatedRunAttempt({ delegation, memory, stageAndDispatch
       workspaceId,
       origin,
       arguments: call.arguments,
+    });
+
+    diagnostics(classify(outcome), {
+      code: outcome.code,
+      phase: outcome.phase,
+      tool: call.tool,
+      workspaceId,
+      delegationId,
+      proposalId: outcome.proposalId,
     });
 
     // A candidate that only failed to *reach* WAG is not decided, and may be offered to a person:

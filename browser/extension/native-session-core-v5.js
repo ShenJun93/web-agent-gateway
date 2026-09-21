@@ -21,6 +21,20 @@
  * offers none it stays `undefined` and every proposal waits for a person.
  */
 import { bindSession } from './delegated-dispatch-core-v5.js';
+import { DELEGATED_REASONS } from './delegated-diagnostics-v5.js';
+
+/**
+ * Tag a failure with the class it belongs to, so the caller can report *which* silence this was.
+ *
+ * The error is still thrown and still caught in the same place, so control flow is untouched; the
+ * tag only survives onto the object so a diagnostic can read it.
+ */
+function tagged(message, reason, code) {
+  const error = new Error(message);
+  error.wagReason = reason;
+  if (typeof code === 'string') error.wagCode = code;
+  return error;
+}
 
 const BROWSER_DELEGATION_PROTOCOL_VERSION = 5;
 
@@ -75,7 +89,13 @@ export function createNativeDelegationSessionController({ connectNative, randomU
     if (port && helloVerified && correlationForSession === correlationId) return;
 
     if (!port) {
-      port = connectNative();
+      try { port = connectNative(); }
+      catch (error) {
+        throw tagged(
+          `native host unavailable: ${error && error.message}`,
+          DELEGATED_REASONS.HOST_UNAVAILABLE,
+        );
+      }
       port.onMessage.addListener(handleMessage);
       port.onDisconnect.addListener(handleDisconnect);
       helloVerified = false;
@@ -97,7 +117,11 @@ export function createNativeDelegationSessionController({ connectNative, randomU
           requestId: `ctl_hello_${randomUUID()}`,
         });
         if (hello?.type !== 'result' || hello?.result?.version !== BROWSER_DELEGATION_PROTOCOL_VERSION) {
-          throw new Error('Native host hello protocol mismatch');
+          throw tagged(
+            'Native host hello protocol mismatch',
+            DELEGATED_REASONS.HANDSHAKE_FAILED,
+            typeof hello?.error?.code === 'string' ? hello.error.code : undefined,
+          );
         }
         helloVerified = true;
       }
@@ -124,9 +148,28 @@ export function createNativeDelegationSessionController({ connectNative, randomU
           requestId: `ctl_bind_${randomUUID()}`,
           sessionId: correlationId,
         });
-        if (!bound.ok) throw new Error(`session.bind refused: ${bound.code}`);
+        if (!bound.ok) {
+          // A refused bind and an unreachable gateway look the same from here unless the code is
+          // carried: the host answers both as an error envelope. `NO_RESPONSE` and a transport
+          // code mean the link is gone; anything else is the gateway deciding.
+          // Every code the dispatch core raises without the gateway having decided anything.
+          // `VERSION_MISMATCH` belongs here and was missing: a responder that is not speaking v5
+          // is a broken link, not a policy answer, and conflating the two is exactly the
+          // indistinguishability this whole change exists to remove.
+          const linkGone = bound.code === 'NO_RESPONSE' || bound.code === 'VERSION_MISMATCH'
+            || bound.code === 'REQUEST_ID_MISMATCH' || bound.code === 'UNEXPECTED_TYPE';
+          throw tagged(
+            `session.bind refused: ${bound.code}`,
+            linkGone ? DELEGATED_REASONS.LINK_UNAVAILABLE : DELEGATED_REASONS.BIND_REFUSED,
+            bound.code,
+          );
+        }
         if (typeof bound.sessionId !== 'string' || bound.sessionId.length === 0) {
-          throw new Error('session.bind returned no session id');
+          throw tagged(
+            'session.bind returned no session id',
+            DELEGATED_REASONS.BIND_REFUSED,
+            'NO_SESSION_ID',
+          );
         }
         boundSession = bound.sessionId;
         correlationForSession = correlationId;

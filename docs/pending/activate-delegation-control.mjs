@@ -21,23 +21,23 @@
  * ## What it does, in this order, and why the order matters
  *
  *   1. every precondition, writing nothing
- *   2. issue the Goal UI Delegation
- *   3. verify the stored row reads back exactly as intended
- *   4. replace the placeholder in the live config with that exact id
- *   5. issue the matching Goal Lease, naming the same goal
- *   6. verify both rows and the config again
+ *   2. issue the Goal UI Delegation and verify the stored row
+ *   3. issue the matching Goal Lease for the same goal and verify the stored row
+ *   4. ONE atomic write naming both in the live config
+ *   5. read the config back through the gateway's own loader and verify both
  *
- * A failure between 2 and 4 leaves a delegation that is **not named in configuration**, which is
- * inert — the row alone is not the grant. A failure between 4 and 5 leaves delegated Run enabled
- * with no lease, which is Run-only: proposals appear and every effect still needs the operator.
- * Both partial states are safe, which is why the order is this way round.
+ * Both grants are minted before either is named, and they are named in a single atomic replace.
+ * A row that is not named in configuration is inert, so every failure before step 4 leaves the
+ * machine with no new authority at all, and step 4 either lands whole or not at all. There is no
+ * ordering in which effect authority ends up broader than intended.
  *
  * ## What it refuses
  *
  * Stale, ambiguous or already-activated state, and any binding wider than the one intended.
  */
 import { createRequire } from 'node:module';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, rename } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 
@@ -118,6 +118,15 @@ async function main() {
     }
     if (occurrences !== 1) fail(`the placeholder occurs ${occurrences} times; expected exactly 1`);
     out('  ok   config holds exactly one placeholder');
+
+    // Checked here, in the preconditions, and not at the write. A mutation proved why: with the
+    // check at the write, a config that already named a lease was refused *after* a fresh lease had
+    // been minted, leaving a stray grant row behind. Inert, because an unnamed row grants nothing —
+    // but a refusal should leave the store exactly as it found it.
+    if (configText.includes('"goalLeaseId"')) {
+      fail('the config already names a lease; refusing to replace one that may be in force');
+    }
+    out('  ok   config names no lease yet');
 
     const sessions = store.listAdapterSessions(ADAPTER);
     if (sessions.length === 0) fail('no v5 session exists. Connect the extension and observe a candidate first.');
@@ -207,17 +216,11 @@ async function main() {
     }
     out('  ok   stored bindings are byte-identical to the intended ones');
 
-    // ---- 4. name it in the live config -----------------------------------------------------
-    const patched = configText.replace(PLACEHOLDER, delegationId);
-    if (patched === configText) fail('the placeholder vanished between the check and the write');
-    await writeFile(CONFIG, patched, 'utf8');
-    const reread = JSON.parse(await readFile(CONFIG, 'utf8'));
-    if (reread.repositoryEngineering?.mutation?.goalUiDelegationId !== delegationId) {
-      fail('the config does not name the new delegation after the write');
-    }
-    out(`  ok   config now names ${delegationId}`);
-
-    // ---- 5. issue the matching lease --------------------------------------------------------
+    // ---- 4. issue the matching lease, still writing nothing to configuration -------------
+    //
+    // Both grants are minted *before* either is named. A row that is not named in configuration
+    // is inert — that is the property the whole design rests on — so every failure up to the
+    // single write below leaves the machine with no new authority at all.
     const leaseBindings = {
       workspaceRoots: [root],
       allowedTools: [...LEASE_TOOLS],
@@ -235,7 +238,7 @@ async function main() {
     const malformedLease = validateBindings(leaseBindings);
     if (malformedLease) fail(`intended lease bindings are malformed: ${malformedLease}`);
 
-    const leaseId = `lease_${now.toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const leaseId = `lease_${now.toString(36)}_${randomBytes(4).toString('hex')}`;
     store.insertGoalLease({
       leaseId,
       createdAt: now,
@@ -248,35 +251,72 @@ async function main() {
     if (JSON.stringify(JSON.parse(storedLease.bindings)) !== JSON.stringify(leaseBindings)) {
       fail('the stored lease bindings are not the ones intended');
     }
+    if (storedLease.expiresAt - storedLease.notBefore > LEASE_TTL_MINUTES * 60_000 + 2_000) {
+      fail('the stored lease window is wider than intended');
+    }
     out(`  ok   lease ${leaseId}`);
 
-    // ---- 5b. name the lease too, or it is inert -------------------------------------------
+    // ---- 5. ONE atomic write naming BOTH grants ------------------------------------------
     //
-    // A lease that is not named in configuration grants nothing, exactly as a delegation does not.
-    // The first version of this instrument issued the lease row and stopped there, which produced
-    // a live-looking lease that `browser-operator-runtime.ts` never loaded — `goalLeaseId` absent
-    // means `goalLease` is undefined, so no admission timer is created and every effect still
-    // needs the operator. It looked activated and was not.
-    const withDelegation = await readFile(CONFIG, 'utf8');
-    if (withDelegation.includes('"goalLeaseId"')) {
-      fail('the config already names a lease; refusing to replace one that is already in force');
+    // One write, not two. The first version of this instrument named the delegation, then issued
+    // the lease, then named the lease — and stopped after the second step, leaving a live-looking
+    // lease row that the runtime never loaded. `goalLeaseId` absent means `goalLease` is
+    // undefined, no admission pass is created, and every effect still needs the operator. It read
+    // as activated and was not.
+    //
+    // Two writes are also two windows in which a crash leaves configuration naming one grant and
+    // not the other. Naming both in a single atomic replace collapses the outcomes to exactly two:
+    // neither grant is named and nothing was granted, or both are and the grant is the intended
+    // one. There is no ordering in which effect authority ends up broader than intended, because
+    // the delegation and the lease become live in the same instant or not at all.
+    out('');
+    out('naming both grants in configuration');
+    const current = await readFile(CONFIG, 'utf8');
+    // Re-read rather than reused: the precondition above ran before the grants were minted, and
+    // this is the last moment before the write. Both are kept — the first so a refusal costs
+    // nothing, the second so a config edited underneath us is still caught.
+    if (current.includes('"goalLeaseId"')) {
+      fail('the config gained a lease name while this was running; refusing to overwrite it');
     }
-    const anchor = `"goalUiDelegationId": "${delegationId}"`;
-    if (withDelegation.split(anchor).length - 1 !== 1) {
-      fail('cannot find the delegation line to insert the lease beside');
+    if (current.split(PLACEHOLDER).length - 1 !== 1) {
+      fail('the placeholder is no longer present exactly once; the config changed under us');
     }
-    const withLease = withDelegation.replace(
-      anchor, `${anchor},\n      "goalLeaseId": "${leaseId}"`,
+    const named = current.replace(
+      `"goalUiDelegationId": "${PLACEHOLDER}"`,
+      `"goalUiDelegationId": "${delegationId}",\n      "goalLeaseId": "${leaseId}"`,
     );
-    await writeFile(CONFIG, withLease, 'utf8');
-    const finalConfig = JSON.parse(await readFile(CONFIG, 'utf8'));
-    if (finalConfig.repositoryEngineering?.mutation?.goalLeaseId !== leaseId) {
-      fail('the config does not name the new lease after the write');
+    if (named === current) {
+      fail('the placeholder is not in the expected "goalUiDelegationId" position; refusing to guess');
     }
-    if (finalConfig.repositoryEngineering?.mutation?.goalUiDelegationId !== delegationId) {
-      fail('naming the lease disturbed the delegation id');
+    // Parsed before it is written, so a malformed result never reaches disk.
+    let candidate;
+    try { candidate = JSON.parse(named); }
+    catch (error) { fail(`the patched config is not JSON: ${String(error)}`); }
+    if (candidate.repositoryEngineering?.mutation?.goalUiDelegationId !== delegationId
+      || candidate.repositoryEngineering?.mutation?.goalLeaseId !== leaseId) {
+      fail('the patched config does not name both grants; refusing to write it');
     }
-    out(`  ok   config now names ${leaseId}`);
+
+    // Atomic: write beside the target, then rename over it. A crash mid-write leaves the original.
+    const temporary = `${CONFIG}.activating`;
+    await writeFile(temporary, named, 'utf8');
+    await rename(temporary, CONFIG);
+
+    // Read back from disk through the real loader, so the check is the gateway's own parse.
+    const { loadPrivateGatewayConfig } = require(join(REPO, 'dist/private-config.js'));
+    let live;
+    try { live = await loadPrivateGatewayConfig(CONFIG); }
+    catch (error) {
+      await writeFile(CONFIG, current, 'utf8');
+      fail(`the written config does not load; the original was restored. ${String(error)}`);
+    }
+    const liveMutation = live.repositoryEngineering?.mutation ?? {};
+    if (liveMutation.goalUiDelegationId !== delegationId || liveMutation.goalLeaseId !== leaseId) {
+      await writeFile(CONFIG, current, 'utf8');
+      fail('the config does not name both grants after the write; the original was restored');
+    }
+    out(`  ok   goalUiDelegationId = ${delegationId}`);
+    out(`  ok   goalLeaseId        = ${leaseId}`);
 
     // ---- 6. the composition, asserted ------------------------------------------------------
     out('');
@@ -302,6 +342,7 @@ async function main() {
     out(`  goal        ${goalId}`);
     out(`  delegation  ${delegationId}   (${DELEGATION_TTL_MINUTES} min, ${MAX_ACTIONS} actions)`);
     out(`  lease       ${leaseId}   (${LEASE_TTL_MINUTES} min, ${LEASE_MAX_FILES} files)`);
+    out('  both are named in configuration; neither is in force until WAG restarts');
     out(`  session     ${sessionId}`);
     out(`  workspace   ${workspaceId}  ->  ${root}`);
     out(`  branch      ${branch} @ ${headSha.slice(0, 12)}`);

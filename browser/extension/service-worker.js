@@ -7,6 +7,7 @@ import {
 import { parseChatGptOperatorObservation } from './chatgpt-call-parser-v4.js';
 import { createNativeOperatorSessionController } from './native-session-core-v4.js';
 import { createNativeDelegationSessionController } from './native-session-core-v5.js';
+import { createDelegatedDiagnostics } from './delegated-diagnostics-v5.js';
 import { stageAndDispatch } from './delegated-dispatch-core-v5.js';
 import {
   createDelegatedObservationMemory,
@@ -77,6 +78,10 @@ const tryDelegatedRun = createDelegatedRunAttempt({
   memory: delegatedSeen,
   stageAndDispatch,
   randomUUID: () => crypto.randomUUID(),
+  // One console line per decision, carrying a reason code and reference ids and nothing else.
+  // Without it, four distinct failures on this path were indistinguishable from outside — which
+  // is what stalled a live production attempt.
+  diagnostics: createDelegatedDiagnostics(),
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

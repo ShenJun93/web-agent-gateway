@@ -21,7 +21,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, cp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, cp, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -139,20 +140,30 @@ test('every bound it grants is strictly inside the ceiling the policy would allo
   assert.ok(number('SESSION_MAX_AGE_MINUTES') <= 120, 'a stale session is refused');
 });
 
-test('it names BOTH grants in configuration, because an unnamed grant is inert', () => {
-  // The first version issued the lease row and never named it, which produced a live-looking lease
-  // that the runtime never loaded: goalLeaseId absent means goalLease is undefined, no admission
-  // timer is created, and every effect still needs the operator. It looked activated and was not.
-  assert.ok(source.includes('\goalUiDelegationId'), 'it must write the delegation id');
-  assert.ok(source.includes('\goalLeaseId'), 'it must write the lease id');
+test('it names BOTH grants in configuration, in one atomic write', () => {
+  // The first version named the delegation, issued the lease, then named the lease — and stopped
+  // after the second step. The result was a live-looking lease row the runtime never loaded:
+  // goalLeaseId absent means goalLease is undefined, no admission pass is created, and every
+  // effect still needs the operator. It read as activated and was not.
+  assert.ok(source.includes('goalUiDelegationId'), 'it writes the delegation id');
+  assert.ok(source.includes('goalLeaseId'), 'it writes the lease id');
   assert.ok(
-    source.includes('goalLeaseId !== leaseId'),
-    'and it must read the config back and refuse if the lease is not named',
+    source.includes('liveMutation.goalUiDelegationId !== delegationId')
+    && source.includes('liveMutation.goalLeaseId !== leaseId'),
+    'it reads the config back through the gateway loader and refuses unless BOTH are named',
   );
   assert.ok(
-    source.includes('refusing to replace one that is already in force'),
-    'and refuse to overwrite a lease that is already named',
+    source.includes('refusing to replace one that may be in force'),
+    'it refuses to overwrite a lease that may already be in force',
   );
+  // Two writes are two windows in which a crash names one grant and not the other. The atomic
+  // rename collapses the outcomes to neither-or-both, so effect authority can never end up
+  // broader than intended. The only direct CONFIG writes are the two rollback restores.
+  assert.equal(
+    source.split('await writeFile(CONFIG,').length - 1, 2,
+    'the only direct CONFIG writes are the rollback restores',
+  );
+  assert.ok(source.includes('await rename(temporary, CONFIG)'), 'the naming write is atomic');
 });
 
 test('it binds one origin, one session, one adapter and one workspace — never a list', () => {
@@ -203,30 +214,95 @@ test('the lease tools are a subset of the delegated tools, so the lease cannot w
  * against the real file. What is exercised here is everything after it.
  */
 async function harness(t: test.TestContext, options: {
-  placeholderCount?: number;
-} = {}): Promise<{ script: string; store: string; config: string }> {
+  /** What the config names. 'placeholder' is the state a correct activation starts from. */
+  names?: 'placeholder' | 'delegation-only' | 'lease-already-named';
+  /** Create a v5 session row and return its id. */
+  withSession?: boolean;
+  /** Create a workspace row over a real git repository inside the temp tree. */
+  withWorkspace?: boolean;
+} = {}): Promise<{
+  script: string; store: string; config: string; dir: string;
+  sessionId?: string; workspaceId?: string; configBefore: string;
+}> {
   const dir = await mkdtemp(join(tmpdir(), 'wag-activation-'));
   t.after(async () => { await rm(dir, { recursive: true, force: true }).catch(() => undefined); });
 
-  const store = join(dir, 'state.sqlite');
-  const config = join(dir, 'wag.config.json');
+  const storePath = join(dir, 'state.sqlite');
+  const configPath = join(dir, 'wag.config.json');
+  const workRoot = join(dir, 'workspace');
+  await mkdir(workRoot, { recursive: true });
+
+  let sessionId: string | undefined;
+  let workspaceId: string | undefined;
+  if (options.withSession || options.withWorkspace) {
+    const { SqliteDurableStore } = await import('../src/durable-store.js');
+    const { BROWSER_DELEGATION_ADAPTER_ID } = await import('../src/adapter-admission.js');
+    const store = new SqliteDurableStore(storePath);
+    try {
+      if (options.withSession) {
+        sessionId = store.getOrCreateAdapterSession({
+          ownerId: store.getOrCreateLocalPrincipal(Date.now()).ownerId,
+          adapterId: BROWSER_DELEGATION_ADAPTER_ID,
+          correlationSha256: 'a'.repeat(64),
+          createdAt: Date.now(),
+        }).sessionId;
+      }
+      if (options.withWorkspace) {
+        for (const argv of [
+          ['init', '-b', 'work'], ['config', 'user.email', 'a@b.c'], ['config', 'user.name', 'T'],
+        ]) execFileSync('git', ['-C', workRoot, ...argv], { stdio: 'ignore' });
+        await writeFile(join(workRoot, 'seed.md'), '# seed\n', 'utf8');
+        execFileSync('git', ['-C', workRoot, 'add', '.'], { stdio: 'ignore' });
+        execFileSync('git', ['-C', workRoot, 'commit', '-m', 'seed'], { stdio: 'ignore' });
+        workspaceId = store.openWorkspaceRecord({
+          ownerId: store.getOrCreateLocalPrincipal(Date.now()).ownerId,
+          sessionId: sessionId ?? 'session_unused',
+          adapterId: BROWSER_DELEGATION_ADAPTER_ID,
+          canonicalRoot: workRoot,
+          backendKind: 'devspace',
+          createdAt: Date.now(),
+        }).workspaceId;
+      }
+    } finally { store.close(); }
+  }
+
   const placeholder = 'uidel_PLACEHOLDER-NOT-ISSUED-0000000000000000';
-  const body = options.placeholderCount === 0
-    ? { goalUiDelegationId: 'uidel_already_activated_0000' }
-    : { goalUiDelegationId: placeholder };
-  await writeFile(config, JSON.stringify({
-    allowedRoots: [dir.split('\\').join('/')],
-    repositoryEngineering: { mutation: { ...body } },
-  }, null, 2), 'utf8');
+  const mutation: Record<string, string> =
+    options.names === 'delegation-only' ? { goalUiDelegationId: 'uidel_already000000000000' }
+      // Placeholder *and* a lease already named: the state a half-edited config presents, and the
+      // one in which overwriting the lease would silently replace a grant that may be in force.
+      : options.names === 'lease-already-named'
+        ? { goalUiDelegationId: placeholder, goalLeaseId: 'lease_already_in_force' }
+        : { goalUiDelegationId: placeholder };
+  // A complete, schema-valid config: the instrument reads the result back through the gateway's
+  // own loader, so a fixture missing required fields would fail for the wrong reason.
+  const configBefore = `${JSON.stringify({
+    allowedRoots: [workRoot.split('\\').join('/')],
+    devspace: { baseUrl: 'http://127.0.0.1:7676', resourceUrl: 'http://127.0.0.1:7676/mcp' },
+    verifyProfiles: { unit: { argv: ['node', '--version'], timeoutMs: 30000, maxOutputTokens: 2000 } },
+    repositoryEngineering: {
+      inspect: true,
+      mutation: {
+        statePath: storePath.split('\\').join('/'),
+        ownerId: 'local.browser.operator',
+        ...mutation,
+      },
+    },
+  }, null, 2)}\n`;
+  await writeFile(configPath, configBefore, 'utf8');
 
   const script = join(dir, 'activate-delegation-control.mjs');
   await cp(SCRIPT, script);
   const patched = (await readFile(script, 'utf8'))
-    .replace(/const CONFIG = '[^']*';/, `const CONFIG = ${JSON.stringify(config)};`)
-    .replace(/const STATE = [^;]*;/, `const STATE = ${JSON.stringify(store)};`)
+    .replace(/const CONFIG = '[^']*';/, `const CONFIG = ${JSON.stringify(configPath)};`)
+    .replace(/const STATE = [^;]*;/, `const STATE = ${JSON.stringify(storePath)};`)
     .replace('if (!process.stdin.isTTY) {', 'if (false) {');
   await writeFile(script, patched, 'utf8');
-  return { script, store, config };
+  return {
+    script, store: storePath, config: configPath, dir, configBefore,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+  };
 }
 
 const runScript = async (script: string, args: readonly string[]) => {
@@ -249,7 +325,7 @@ test('it refuses when no v5 session exists', async (t) => {
 });
 
 test('it refuses when the config no longer holds the placeholder', async (t) => {
-  const h = await harness(t, { placeholderCount: 0 });
+  const h = await harness(t, { names: 'delegation-only' });
   const result = await runScript(h.script, [ISSUE, '--session', 'session_x', '--workspace', 'ws_y', '--confirm']);
   assert.equal(result.code, 2);
   assert.match(result.stderr, /does not hold the placeholder/);
@@ -270,4 +346,144 @@ test('it refuses when the kill switch is engaged, before anything else is read',
   const result = await runScript(h.script, [ISSUE, '--session', 'session_x', '--workspace', 'ws_y', '--confirm']);
   assert.equal(result.code, 2);
   assert.match(result.stderr, /kill switch is engaged/);
+});
+
+// -------------------------------------------------------------------------------------------
+// The two states the failed live attempt produced, and the one it should have
+// -------------------------------------------------------------------------------------------
+
+/** Count issued grants by opening the store file, rather than reaching into the class. */
+async function grantCounts(path: string): Promise<{ delegations: number; leases: number }> {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const n = (table: string) => Number(
+      (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as unknown as { n: number }).n,
+    );
+    return { delegations: n('ui_delegations'), leases: n('goal_leases') };
+  } finally { db.close(); }
+}
+
+const readMutation = async (config: string) =>
+  (JSON.parse(await readFile(config, 'utf8')) as {
+    repositoryEngineering?: { mutation?: Record<string, unknown> };
+  }).repositoryEngineering?.mutation ?? {};
+
+test('ACTIVATION FAIL: a config naming the delegation but no lease is refused', async (t) => {
+  // This is exactly the state the previous instrument left behind: a delegation named, a lease
+  // row issued and never named, so `goalLease` stays undefined and every effect still needs the
+  // operator. Re-running must refuse rather than patch over it.
+  const h = await harness(t, { names: 'delegation-only', withSession: true, withWorkspace: true });
+  const result = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /does not hold the placeholder/);
+
+  const after = await readMutation(h.config);
+  assert.equal(after.goalLeaseId, undefined, 'it must not have named a lease');
+  assert.equal(
+    await readFile(h.config, 'utf8'), h.configBefore,
+    'a refusal must leave the config byte-identical',
+  );
+});
+
+test('ACTIVATION PASS: both grants are issued, named together, and read back identical', async (t) => {
+  const h = await harness(t, { withSession: true, withWorkspace: true });
+  const result = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /ACTIVATED\./);
+
+  const after = await readMutation(h.config);
+  assert.match(String(after.goalUiDelegationId), /^uidel_[0-9a-f]{24}$/, 'a real delegation id');
+  assert.match(String(after.goalLeaseId), /^lease_/, 'and a real lease id');
+
+  const { SqliteDurableStore } = await import('../src/durable-store.js');
+  const store = new SqliteDurableStore(h.store);
+  try {
+    const delegation = store.getUiDelegationRow(String(after.goalUiDelegationId));
+    const lease = store.getGoalLeaseRow(String(after.goalLeaseId));
+    assert.ok(delegation, 'the named delegation exists');
+    assert.ok(lease, 'the named lease exists');
+
+    const d = JSON.parse(delegation!.bindings) as Record<string, unknown>;
+    const l = JSON.parse(lease!.bindings) as Record<string, unknown>;
+
+    // The identities the config names are the identities the rows bind — the whole point.
+    assert.equal(d.sessionId, h.sessionId);
+    assert.equal(d.workspaceId, h.workspaceId);
+    assert.deepEqual(l.admittedSessions, [h.sessionId]);
+    assert.deepEqual(l.delegatedGoalIds, [d.goalId], 'the lease admits exactly this goal');
+    assert.deepEqual(l.admittedAdapters, [d.adapterId]);
+    for (const tool of l.allowedTools as string[]) {
+      assert.ok((d.allowedTools as string[]).includes(tool), `${tool} leased but not delegated`);
+    }
+  } finally { store.close(); }
+});
+
+test('a second run over an activated config refuses and changes nothing', async (t) => {
+  const h = await harness(t, { withSession: true, withWorkspace: true });
+  const first = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(first.code, 0, first.stderr);
+  const afterFirst = await readFile(h.config, 'utf8');
+
+  const second = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(second.code, 2);
+  assert.equal(await readFile(h.config, 'utf8'), afterFirst, 'the config is untouched by the refusal');
+});
+
+test('every refusal leaves the config byte-identical, so authority can never widen partially', async (t) => {
+  for (const [what, args] of [
+    ['no session', [ISSUE, '--session', 'session_missing', '--workspace', 'ws_missing', '--confirm']],
+    ['missing workspace flag', [ISSUE, '--session', 'session_missing', '--confirm']],
+  ] as const) {
+    const h = await harness(t, { withSession: true, withWorkspace: true });
+    const result = await runScript(h.script, [...args]);
+    assert.equal(result.code, 2, `${what} must refuse`);
+    assert.equal(await readFile(h.config, 'utf8'), h.configBefore, `${what} must not touch the config`);
+    const counts = await grantCounts(h.store);
+    assert.equal(counts.delegations, 0, `${what} must not have issued a delegation`);
+    assert.equal(counts.leases, 0, `${what} must not have issued a lease`);
+  }
+});
+
+test('it refuses when a lease is already named, rather than replacing one that may be in force', async (t) => {
+  const h = await harness(t, {
+    names: 'lease-already-named', withSession: true, withWorkspace: true,
+  });
+  const result = await runScript(h.script, [
+    ISSUE, '--session', h.sessionId!, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /already names a lease/);
+  assert.equal(
+    await readFile(h.config, 'utf8'), h.configBefore,
+    'the existing lease name must survive untouched',
+  );
+  const counts = await grantCounts(h.store);
+  assert.equal(counts.leases, 0, 'and no second lease may be minted');
+});
+
+test('it refuses a --session that is not the one live session', async (t) => {
+  // Distinct from "no session exists": here a session *does* exist and the caller named a
+  // different one. Binding a grant to a session the browser is not using either wastes the grant
+  // or binds it somewhere nobody intended.
+  const h = await harness(t, { withSession: true, withWorkspace: true });
+  const wrong = 'session_00000000-0000-4000-8000-000000000000';
+  assert.notEqual(wrong, h.sessionId);
+  const result = await runScript(h.script, [
+    ISSUE, '--session', wrong, '--workspace', h.workspaceId!, '--confirm',
+  ]);
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /is not the one live session/);
+  assert.equal(await readFile(h.config, 'utf8'), h.configBefore);
+  const counts = await grantCounts(h.store);
+  assert.equal(counts.delegations, 0);
+  assert.equal(counts.leases, 0);
 });

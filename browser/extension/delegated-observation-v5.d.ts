@@ -1,4 +1,5 @@
 import type { StageAndDispatchInput, StageAndDispatchOutcome } from './delegated-dispatch-core-v5.js';
+import type { DelegatedDiagnostics } from './delegated-diagnostics-v5.js';
 
 /** Identities the delegated path has already decided. See the module header for what that means. */
 export interface DelegatedObservationMemory {
@@ -55,4 +56,9 @@ export function createDelegatedRunAttempt(options: {
     input: StageAndDispatchInput,
   ) => Promise<StageAndDispatchOutcome>;
   randomUUID(): string;
+  /**
+   * One record per decision. Optional, defaults to a no-op, and the return value is ignored at
+   * every call site — a diagnostic may never change what this path decides.
+   */
+  diagnostics?: DelegatedDiagnostics;
 }): (input: DelegatedRunAttemptInput) => Promise<DelegatedRunAttemptOutcome>;
