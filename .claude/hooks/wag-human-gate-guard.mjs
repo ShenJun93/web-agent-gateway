@@ -121,6 +121,37 @@ const HTTP_CLIENT =
 const FILE_READ_VERB =
   /\b(?:cat|type|more|less|head|tail|Get-Content|gc|Copy-Item|copy|cp|mv|Move-Item|xargs|base64|od|xxd|strings)\b|[<>|]/;
 
+/**
+ * Minting an authority that removes a human gesture, or naming one in local configuration.
+ *
+ * A Goal Lease lifts Approve (ADR-0028); a Goal UI Delegation lifts Run (ADR-0029). Both rules say
+ * the same thing in the same words — issuance is human-only and out of band, Claude may *use* a
+ * grant and must *report* on one but may never create, widen or renew one — and until this block
+ * that was the only rule in `human-presence-boundary.md` with no pattern behind it anywhere.
+ *
+ * Two acts are refused, because there are two ways a shell reaches authority:
+ *
+ *   1. **running** issuance — the control CLI with an issuing flag, or a one-liner that calls the
+ *      store or the control plane directly;
+ *   2. **naming** a grant in local configuration — which is the quieter half and the one that
+ *      actually matters. A delegation not named in config is inert whatever its row says, so
+ *      writing the name is the act that turns a row into live authority.
+ *
+ * Deliberately **not** refused: `--show`, `--sessions`, `--workspaces`, every read of any of
+ * these files, `--revoke`, and `npm run lease:stop`. Narrowing a grant and stopping automation
+ * are things a person may need help with in a hurry, and a guard that refused them is a guard
+ * people learn to turn off.
+ */
+const GRANT_CLI = /\bdelegation-control(?:\.[cm]?[jt]s)?\b/i;
+const GRANT_CLI_FLAG = /--(?:issue|renew)\b/;
+/** A *call*, not a mention: the open bracket is what separates invoking from describing. */
+const GRANT_CALL =
+  /\b(?:insertUiDelegation|renewUiDelegation|insertGoalLease)\s*\(|\bnew\s+UiDelegationControlPlane\s*\(/;
+/** The two configuration fields that turn a durable row into authority this process will honour. */
+const GRANT_CONFIG_FIELD = /\b(?:goalUiDelegationId|goalLeaseId)\b/;
+/** Something that *runs* a script, as opposed to reading, grepping or quoting one. */
+const SCRIPT_RUNNER = /\b(?:node|npx|npm|pnpm|yarn|bun|deno|tsx|ts-node)\b/i;
+
 const BOUNDARY_RULE = 'See .claude/rules/human-presence-boundary.md.';
 
 function serialize(value) {
@@ -163,6 +194,43 @@ function matchRunSurface(text) {
   return undefined;
 }
 
+/**
+ * A shell command that mints or renews a grant.
+ *
+ * A runner is required for the same reason `BROWSER_DRIVER` is required beside the Run surface:
+ * `grep -- --issue scripts/delegation-control.ts` is reading about issuance, not performing it,
+ * and a guard that refused reading would be refusing the review of itself.
+ */
+function matchAuthorityIssuance(text) {
+  if (!SCRIPT_RUNNER.test(text)) return undefined;
+  if (GRANT_CLI.test(text) && GRANT_CLI_FLAG.test(text)) {
+    return 'issues or renews a Goal UI Delegation';
+  }
+  if (GRANT_CALL.test(text)) return 'calls delegation or lease issuance directly';
+  return undefined;
+}
+
+/**
+ * A write that hands Claude an authority rather than describing one.
+ *
+ * Scoped to JSON, which is what a private gateway config is. It is deliberately **not** extended
+ * to source files that merely contain these names: `durable-store.ts` defines the insert,
+ * `goal-ui-delegation-dispatch.ts` discusses it in a comment, and refusing those would refuse
+ * ordinary work and the analysis of this boundary alike — the same over-match that once refused a
+ * commit message for quoting a filename. What a text rule can say precisely is "this JSON names a
+ * grant", and that is the act that makes a row live.
+ */
+function matchAuthorityWrite(input) {
+  const target = input && typeof input === 'object'
+    ? input.file_path ?? input.notebook_path
+    : undefined;
+  if (typeof target !== 'string') return undefined;
+  if (!/\.json$/i.test(target.split('\\').join('/'))) return undefined;
+  return GRANT_CONFIG_FIELD.test(serialize(input))
+    ? 'names a Goal Lease or a Goal UI Delegation in a configuration file'
+    : undefined;
+}
+
 export function decide(event) {
   const tool = typeof event?.tool_name === 'string' ? event.tool_name : '';
   if (!tool) {
@@ -181,6 +249,18 @@ export function decide(event) {
       deny: true,
       reason: `wag-human-gate-guard: this writes the hook that decides what is refused. Changing it is the operator's call, made deliberately and reviewed. ${BOUNDARY_RULE}`,
     };
+  }
+
+  // Naming a grant in config is proposing to grant Claude authority, so it is the operator's
+  // edit to make. Checked after the hook-directory rule because that one is the narrower target.
+  if (WRITERS.has(tool)) {
+    const why = matchAuthorityWrite(event?.tool_input);
+    if (why) {
+      return {
+        deny: true,
+        reason: `wag-human-gate-guard: this write ${why}. A delegation or lease that is not named in local configuration is inert, so writing the name is what turns a row into live authority — and issuance is human-only and out of band. ${BOUNDARY_RULE}`,
+      };
+    }
   }
 
   if (tool.startsWith('mcp__computer-use__')) {
@@ -225,6 +305,13 @@ export function decide(event) {
   }
 
   if (tool === 'Bash' || tool === 'PowerShell') {
+    const issuing = matchAuthorityIssuance(text);
+    if (issuing) {
+      return {
+        deny: true,
+        reason: `wag-human-gate-guard: this command ${issuing}. Claude may use a Goal Lease or a Goal UI Delegation and must report on one; it may not create, widen or renew one. Revocation and \`npm run lease:stop\` are not refused. ${BOUNDARY_RULE}`,
+      };
+    }
     // Naming a route or a credential is not reaching for one: an analysis script may quote both,
     // and refusing that refused the security review's own scripts. Requiring something that
     // actually performs a request, reads a file, or drives a browser is what separates the two.
