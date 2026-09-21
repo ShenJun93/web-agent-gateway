@@ -29,49 +29,38 @@ One session, nothing staged, no budget spent, no refusal rows. The candidate rea
 `stageProposal`, which refused it before writing anything because the configured placeholder names
 no row — naming is not granting, working exactly as designed.
 
-## A measured production defect on the current chatgpt.com renderer
+## CORRECTION: the renderer defect I reported does not exist
 
-The first attempt produced no candidate at all, and the reason is worth recording because it will
-recur.
+An earlier version of this receipt claimed chatgpt.com's CodeMirror viewer virtualises
+horizontally and clips long single lines out of the DOM, so the extension could not read a compact
+payload. **That was wrong, and it was published before it was checked properly.**
 
-The extension extracts code blocks with `pre code` and reads `innerText || textContent`. Asked for
-the payload as **one compact line**, the assistant produced it — and the DOM contained only:
+What I measured was real: twenty-five seconds after pressing Enter, the assistant turn's `pre code`
+contained exactly `{"tool` — six characters. What I concluded from it was not. The viewer was
+**mid-hydration**; the assistant was still streaming and CodeMirror had not finished rendering the
+block.
 
-```text
-pre[0].textContent  =  'wag-tool{"tool'      (14 characters, whole turn)
-pre[1].textContent  =  '{"tool'              (6 characters, the cm-content node)
-```
-
-chatgpt.com now renders code blocks in a CodeMirror read-only viewer that **virtualises
-horizontally**: a long single line is clipped to the visible span, and the rest is never in the DOM.
-No selector can recover it. This is the same family as live-dogfood defect #2 from the cutover
-(the fence info string being dropped) and it recurred because the renderer changed again.
-
-**Workaround used, and it is a genuine one rather than a dodge:** the parser's `compactJson` strips
-whitespace outside strings before comparing, so a *pretty-printed* payload is accepted. Asked for
-2-space indentation with lines under 45 characters, every line rendered into the DOM and the
-shipped parser accepted the exact text:
+Re-read minutes later, the same untouched turn contains the whole payload:
 
 ```text
-{
-  "tool": "repo.search",
-  "arguments": {
-    "workspace_id":
-      "ws_4e2d106c-9023-40d0-a734-f6fa18711ee0",
-    "query": "canonicalizeTicketId",
-    "max_results": 5
-  }
-}
+pre code textContent length = 140
+{"tool":"repo.search","arguments":{"workspace_id":"ws_…","query":"canonicalizeTicketId","max_results":5}}
 ```
 
-Note the value split across two lines after `"workspace_id":` — whitespace outside a string, so
-`compactJson` removes it and the parse is unaffected. Verified by running
-`parseChatGptOperatorObservation` over that exact text.
+So a compact single-line payload is read correctly by the shipped content script, and no fix is
+needed. The pretty-printed second prompt was not a workaround for a defect — it merely happened to
+be sent after enough time had passed, and `compactJson` accepts both shapes equally.
 
-**Left unrepaired, deliberately.** It blocks one payload shape, not the closure, and a fix means
-changing the shipped content script's extraction against a renderer that has now moved twice. It
-belongs in its own milestone with its own acceptance, not bolted onto an activation. Recorded here
-so the next person does not rediscover it at the same cost.
+The mistake worth naming is the method, not the conclusion: I sampled a live, still-rendering page
+once, treated one reading as a property of the renderer, and wrote it up as a measured defect
+alongside a real one from the cutover. A single observation of a page that is still changing is not
+a measurement. The earlier receipt text is replaced rather than annotated, because leaving a wrong
+diagnosis in place with a note under it is how a wrong diagnosis gets cited.
+
+**What this does change:** nothing about the session, the grants or the durable state above, all of
+which were read from SQLite rather than from the page. What it changes is that the next person
+should not go looking for a renderer bug that is not there, and should wait for the turn to settle
+before reading it.
 
 ## How the browser was driven, and what was not touched
 
