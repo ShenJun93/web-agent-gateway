@@ -130,14 +130,20 @@ export async function startRepositoryEngineeringRuntime(
         // tool's contract is unchanged and records left pending across a restart are picked up.
         // `unref` so it never holds the process open; errors swallowed per tick so a failing
         // admission cannot take down a gateway whose human review path is working.
+        // Declared before the timer so the same pass can drive it. Commits were missing from this
+        // pass entirely — a lease granting `git.commit` left its records at PENDING_APPROVAL while
+        // the runtime reported autonomous admission as enabled, which is the same gap this comment
+        // says was "not repeated here", repeated here for the other record kind.
+        let commitCoordinator: DurableCommitCoordinator | undefined;
+
         if (goalLease) {
           leaseTimer = setInterval(() => {
             void coordinator.admitPendingUnderLease().catch(() => undefined);
+            void commitCoordinator?.admitPendingUnderLease().catch(() => undefined);
           }, LEASE_ADMISSION_INTERVAL_MS);
           leaseTimer.unref?.();
         }
 
-        let commitCoordinator: DurableCommitCoordinator | undefined;
         if (gitCommitSettings) {
           commitCoordinator = new DurableCommitCoordinator({
             store,

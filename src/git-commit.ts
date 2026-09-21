@@ -238,6 +238,39 @@ export class DurableCommitCoordinator {
    * Every path in the commit is checked, not just the first. A commit touching ten files under a
    * lease granting one directory must be refused if any single one of them falls outside it.
    */
+  /**
+   * Offer every commit currently awaiting review to the lease policy.
+   *
+   * The exact counterpart of `DurableMutationCoordinator.admitPendingUnderLease`, and it exists for
+   * exactly the same reason that one does: `admitByPolicy` decides one record and **nothing called
+   * it**. A review caught that gap on the mutation side and added the driver there; the commit side
+   * kept the per-record decision and never got one.
+   *
+   * Measured in production on 2026-09-22: a delegated `git.commit` was admitted as `DELEGATED_RUN`,
+   * the commit record was written, the lease granted `git.commit` on the exact branch and HEAD it
+   * bound — and the record sat at `PENDING_APPROVAL` until its review window expired, because the
+   * runtime's lease interval drove mutations only. The CLI announced that autonomous admission was
+   * enabled, and for commits it was not.
+   *
+   * Bounded and driven rather than continuous, and a commit the lease does not cover is simply left
+   * pending for a human, which is the correct outcome and not an error.
+   *
+   * Returns the ids it admitted, so a caller can log what autonomy actually did.
+   */
+  async admitPendingUnderLease(limit = 20): Promise<string[]> {
+    if (!this.options.goalLease) return [];
+    const admitted: string[] = [];
+    // Snapshot first: admitting mutates the pending set underneath an iterator.
+    const pending = this.options.store.listPendingCommits(
+      Math.min(Math.max(limit, 1), COMMIT_PENDING_SCAN_LIMIT),
+    );
+    for (const record of pending) {
+      const decision = await this.admitByPolicy(record.commitId);
+      if (decision.admitted) admitted.push(record.commitId);
+    }
+    return admitted;
+  }
+
   async admitByPolicy(commitId: string): Promise<LeaseDecision> {
     const lease = this.options.goalLease;
     if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };

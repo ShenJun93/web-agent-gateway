@@ -238,3 +238,85 @@ test('with no lease configured the commit coordinator admits nothing by policy',
   assert.equal(store.getCommit(preview.commitId)?.state, 'PENDING_APPROVAL',
     'and the record still awaits a human');
 });
+
+// -------------------------------------------------------------------------------------------
+// The driver, which is what makes a configured lease do anything for commits
+// -------------------------------------------------------------------------------------------
+
+test('pending commits are offered to the lease by a driver, not only one id at a time', async (t) => {
+  // Measured in production on 2026-09-22: a delegated `git.commit` was admitted as DELEGATED_RUN,
+  // the commit record was written, and the lease granted `git.commit` on exactly that branch and
+  // HEAD — and the record sat at PENDING_APPROVAL until its review window closed, because the
+  // runtime's lease interval drove mutations only. `admitByPolicy` decided one record and nothing
+  // called it. This is the counterpart of the mutation-side driver a review added for the same
+  // reason, and it is the thing the runtimes now call on their interval.
+  const h = await harness(t);
+  h.grant();
+  await seed(h.root, ['src/a.ts', 'src/b.ts']);
+  const first = await h.coordinator.preview(h.caller, h.workspaceId, {
+    paths: ['src/a.ts'], message: 'first autonomous change',
+  });
+  const second = await h.coordinator.preview(h.caller, h.workspaceId, {
+    paths: ['src/b.ts'], message: 'second autonomous change',
+  });
+  assert.equal(h.backend.committed.length, 0, 'proposing commits nothing');
+
+  const admitted = await h.coordinator.admitPendingUnderLease();
+
+  assert.deepEqual([...admitted].sort(), [first.commitId, second.commitId].sort());
+  assert.equal(h.store.getCommit(first.commitId)?.state, 'SUCCEEDED');
+  assert.equal(h.store.getCommit(second.commitId)?.state, 'SUCCEEDED');
+  assert.equal(h.backend.committed.length, 2, 'and the driver is what caused both commits');
+});
+
+test('the driver leaves a commit the lease does not cover pending for a human', async (t) => {
+  const h = await harness(t);
+  h.grant({ pathPatterns: ['src/*.ts'] });
+  await seed(h.root, ['src/a.ts', 'docs/readme.md']);
+  const granted = await h.coordinator.preview(h.caller, h.workspaceId, {
+    paths: ['src/a.ts'], message: 'inside the lease',
+  });
+  const outside = await h.coordinator.preview(h.caller, h.workspaceId, {
+    paths: ['docs/readme.md'], message: 'outside the lease',
+  });
+
+  const admitted = await h.coordinator.admitPendingUnderLease();
+
+  assert.deepEqual(admitted, [granted.commitId], 'only the covered one');
+  assert.equal(h.store.getCommit(outside.commitId)?.state, 'PENDING_APPROVAL',
+    'an uncovered commit is left for a person, which is the correct outcome and not an error');
+  assert.equal(h.backend.committed.length, 1);
+});
+
+test('with no lease configured the driver admits nothing and reports nothing', async (t) => {
+  const h = await harness(t);
+  await seed(h.root, ['src/a.ts']);
+  const preview = await h.coordinator.preview(h.caller, h.workspaceId, {
+    paths: ['src/a.ts'], message: 'no lease is configured',
+  });
+  assert.deepEqual(await h.coordinator.admitPendingUnderLease(), []);
+  assert.equal(h.store.getCommit(preview.commitId)?.state, 'PENDING_APPROVAL');
+  assert.equal(h.backend.committed.length, 0);
+});
+
+test('both runtimes drive the commit driver on the same pass as the mutation one', async () => {
+  // A source assertion, and labelled as one: it pins the *wiring*, not the behaviour. The driver's
+  // behaviour is covered by the three tests above; what this catches is the failure that actually
+  // happened — a coordinator with a working `admitByPolicy` that no pass ever called, so a
+  // configured lease admitted mutations and silently never admitted commits.
+  //
+  // Neither runtime's interval is reachable from a unit test today (both are created inside a live
+  // bootstrap), so this is the cheapest guard that fails if the call is removed.
+  const { readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  for (const file of ['src/browser-operator-runtime.ts', 'src/repository-engineering-runtime.ts']) {
+    const source = await readFile(`${root}${file}`, 'utf8');
+    const interval = /setInterval\(\(\) => \{([\s\S]*?)\}, LEASE_ADMISSION_INTERVAL_MS\)/.exec(source);
+    assert.ok(interval, `${file} must drive lease admission on an interval`);
+    const body = interval[1] ?? '';
+    assert.match(body, /mutation|coordinator/, `${file}: the pass must drive mutations`);
+    assert.match(body, /commit(Coordinator)?\??\.admitPendingUnderLease/,
+      `${file}: the pass must drive commits too, or a leased git.commit waits for a human forever`);
+  }
+});

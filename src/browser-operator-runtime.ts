@@ -238,6 +238,11 @@ export async function startBrowserOperatorRuntime(options: {
     if (goalLease) {
       leaseTimer = setInterval(() => {
         void mutation.admitPendingUnderLease().catch(() => undefined);
+        // Commits too. Driving only mutations here meant a lease that granted `git.commit`, bound
+        // the exact branch and pinned the exact HEAD still never admitted one: the record sat at
+        // PENDING_APPROVAL until its review window closed, while the runtime reported that
+        // autonomous admission was enabled. Measured in production on 2026-09-22.
+        void commit.admitPendingUnderLease().catch(() => undefined);
       }, LEASE_ADMISSION_INTERVAL_MS);
       leaseTimer.unref?.();
     }
