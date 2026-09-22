@@ -1,6 +1,7 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
+import { OPERATOR_CORRELATION_PATTERN } from './adapter-admission.js';
 import { canonicalWorkspace } from './path-policy.js';
 
 const verifyProfileSchema = z.object({
@@ -48,6 +49,29 @@ const repositoryEngineeringSchema = z.object({
      * is inert — which is how issuance stays a human act even though a row is just a row.
      */
     goalUiDelegationId: z.string().min(1).max(128).regex(/^uidel_[A-Za-z0-9._:-]+$/).optional(),
+    /**
+     * The correlation that gives this surface a *stable* durable session (ADR-0017, ADR-0030).
+     *
+     * Absent — the default, and every deployment before this field existed — the session id is
+     * minted fresh per process, exactly as ADR-0020 §5 describes. That is the right default for
+     * an interactive local caller: no MCP client can read, resume or replay a record proposed by
+     * a previous process.
+     *
+     * It is the wrong default for a Goal Lease. A lease admits only the sessions listed in its own
+     * row, so a session that changes on every start can never be the session a lease was issued
+     * for — which made autonomous admission unreachable on this surface rather than merely unused.
+     * Naming a correlation here resolves the session through the same
+     * `getOrCreateAdapterSession` path a browser adapter uses: the same string returns the same
+     * durable session across restarts, so a lease issued for it keeps applying.
+     *
+     * Required shape is the strong one, for the reason `OPERATOR_CORRELATION_PATTERN` gives:
+     * whoever can choose the string joins the session, and this surface can propose changes. It
+     * is read from local configuration only — never from a tool argument, the transport, the
+     * client's environment or repository text — so it is a human act, like naming a lease.
+     * Because it selects which session a lease's bindings match, it must be treated as authority
+     * configuration: an agent may read and report it, and must never write it.
+     */
+    sessionCorrelation: z.string().regex(OPERATOR_CORRELATION_PATTERN).optional(),
   }).strict().optional(),
 }).strict();
 
@@ -71,6 +95,7 @@ export interface PrivateRepositoryEngineeringMutation {
   reviewTtlMs?: number;
   goalLeaseId?: string;
   goalUiDelegationId?: string;
+  sessionCorrelation?: string;
 }
 export interface PrivateRepositoryEngineeringGitCommit {
   protectedBranches?: string[];
@@ -140,6 +165,8 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
             ...(mutation.goalLeaseId === undefined ? {} : { goalLeaseId: mutation.goalLeaseId }),
             ...(mutation.goalUiDelegationId === undefined
               ? {} : { goalUiDelegationId: mutation.goalUiDelegationId }),
+            ...(mutation.sessionCorrelation === undefined
+              ? {} : { sessionCorrelation: mutation.sessionCorrelation }),
           },
         }),
       },

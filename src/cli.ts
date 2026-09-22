@@ -257,9 +257,17 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
  * operator reads it from there.
  */
 function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime): void {
-  const { inspect, mutation, gitCommit } = engineering.profile;
+  const { inspect, mutation, gitCommit, stableSessionId } = engineering.profile;
   if (!inspect && !mutation && !gitCommit) return;
-  stderr.write(`${JSON.stringify({ type: 'gateway.profile', inspect, mutation, gitCommit })}\n`);
+  stderr.write(`${JSON.stringify({
+    type: 'gateway.profile',
+    inspect,
+    mutation,
+    gitCommit,
+    // Only when a correlation makes it stable, so the default profile line is byte-identical to
+    // what it was. This is how a human finds the session id a Goal Lease has to be bound to.
+    ...(stableSessionId === undefined ? {} : { stableSessionId }),
+  })}\n`);
   if (engineering.operator) {
     stderr.write(`${JSON.stringify({
       type: 'gateway.operator',

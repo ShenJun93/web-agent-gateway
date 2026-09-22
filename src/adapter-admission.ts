@@ -80,7 +80,7 @@ export class BrowserAdmissionRegistry {
     const session = this.store.getOrCreateAdapterSession({
       ownerId: principal.ownerId,
       adapterId: this.adapterId,
-      correlationSha256: correlationSha256(principal.ownerId, this.adapterId, validatedCorrelation),
+      correlationSha256: adapterCorrelationDigest(principal.ownerId, this.adapterId, validatedCorrelation),
       createdAt: this.now(),
     });
     const callerContext = createGatewayCallerContext({
@@ -120,7 +120,15 @@ export class BrowserAdmissionRegistry {
   }
 }
 
-function correlationSha256(ownerId: string, adapterId: string, raw: string): string {
+/**
+ * The one derivation from a correlation to the key of a durable adapter session.
+ *
+ * Exported because the private stdio surface needs the *same* stable session identity a browser
+ * adapter gets, and a second copy of a security derivation is how this codebase has produced
+ * defects before. `ownerId` and `adapterId` are inside the digest, so the same correlation string
+ * under a different owner or adapter is a different session and can never join this one.
+ */
+export function adapterCorrelationDigest(ownerId: string, adapterId: string, raw: string): string {
   return createHash('sha256')
     .update('wag.adapter-correlation.v1\0', 'utf8')
     .update(ownerId, 'utf8').update('\0')
