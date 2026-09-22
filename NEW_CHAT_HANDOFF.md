@@ -1,0 +1,70 @@
+# Current handoff
+
+Read `NEW_CHAT_HANDOFF_2026-09-19_AI_NATIVE_BROWSER_COMMUNITY_SCAN.md` first.
+
+Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, ADR-0018, ADR-0019, and current research receipts before any decision or mutation.
+
+Current research now reaches:
+- `docs/research/2026-09-20-ai-native-browser-research-pass-14.md`
+- `docs/research/2026-09-20-ai-native-browser-research-pass-15.md`
+plus all earlier receipts referenced by the detailed handoff.
+
+The user explicitly requested more research. **Do not run local benchmarks yet.**
+
+Pass 10 materially adds:
+- MCP OAuth/EMA/machine auth can replace more WAG custom identity ingress;
+- DPoP is the preferred standard bearer-theft hardening when supported;
+- MCP WIF/SPIFFE are workload-identity donors, but not default solo-Windows infrastructure;
+- MCP first-class agent-instance identity/delegation remains an evolving gap;
+- UserConsentVerifier is lightweight local re-verification;
+- Win32 WebAuthn can bind a signed assertion to a proposal challenge, but plain WebAuthn does not prove the human saw exact arbitrary effect text;
+- exact-effect display therefore stays in an independent WAG-owned local UI;
+- OAuth RAR/PAR are structured authorization prior art, not ADR-0019 replacements;
+- Secure MCP Tunnel is explicitly reachability/data transport: MCP payloads/results and some auth artifacts can traverse OpenAI, so Tunnel is not strict-local-auth or consequential authority.
+
+Current direction:
+- standardize identity ingress;
+- reduce WAG custom auth;
+- keep WAG semantic capability/ownership/approval/effect core;
+- keep Guardian continuity and SessionCommander exact-owned lifecycle;
+- keep generic browser mechanics frozen.
+
+Next action: **Pass 16 loopback-operator security + browser-localhost evolution research, still no local benchmark.**
+
+
+Pass 11 adds:
+- MCP connection/process is not application ownership under 2026 stateless semantics.
+- Delegated/agentic access, tool scopes and RAR remain active MCP standardization work.
+- Biscuit is a strong future capability-token donor but not an adoption decision.
+- Windows Hello KeyCredential is a lightweight local-only exact-challenge signing donor; WebAuthn remains the portable/FIDO path.
+- DPoP over Secure MCP Tunnel is unproven because of target-URI binding versus tunnel URL rewriting.
+
+
+Pass 12 adds:
+- stable MCP OAuth/EMA can replace more custom ingress;
+- WIMSE is the primary future delegation/evidence standards watch;
+- Biscuit stays prior-art/watch rather than trust core;
+- KeyCredential remains promising but unpackaged/native-host support needs proof;
+- DPoP over Secure MCP Tunnel remains unproven and must not be claimed.
+
+
+Pass 13 adds:
+- WIMSE delegation/evidence drafts are high-fit but still individual drafts;
+- KeyCredential is not a reliable full-trust same-user app/process boundary and is downgraded to an optional verification/signing factor;
+- independent WAG-owned exact-effect UI/authority remains necessary;
+- Win32 WebAuthn same-user isolation is now the next security question.
+
+
+Pass 14 adds:
+- native Win32 WebAuthn is not a documented process/app identity boundary;
+- AppContainer is real isolation but Win32 App Isolation remains preview;
+- current ADR-0019 threat model does not require hostile-same-user containment;
+- short-lived native child broker + inherited anonymous handles is now the primary minimal approval research direction;
+- AppContainer/service broker stays a future stronger-isolation gate.
+
+
+Pass 15 corrects Pass 14:
+- existing hardened WAG loopback operator server remains the default approval transport;
+- native child broker is fallback only if a measured loopback gap appears;
+- UIInspect.MCP is strong Windows approval prior art, not a reason to copy a persistent broker;
+- standard Windows Job Object/handle-list primitives are enough if a future broker is justified.
