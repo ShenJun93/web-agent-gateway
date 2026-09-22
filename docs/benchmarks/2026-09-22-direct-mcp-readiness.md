@@ -438,3 +438,30 @@ and so is choosing the correlation that decides which session that lease matches
 Until step 1 resolves, `CHATGPT_DIRECT_READ_E2E` and `CHATGPT_DIRECT_WRITE_E2E` stay BLOCKED, and a
 human or Claude still relays between ChatGPT and WAG. That relay is the *only* remaining reason for
 an intermediary — WAG's side of the direct loop is complete and tested.
+
+## Provider acceptance update — 2026-09-22
+
+The provider gate described above was subsequently exercised on a real ChatGPT
+Business workspace.
+
+See:
+
+`docs/benchmarks/2026-09-22-chatgpt-business-direct-mcp-acceptance.md`
+
+Current observed state:
+
+CHATGPT_DIRECT_READ_E2E                 = PASS
+CHATGPT_DIRECT_PROPOSAL_E2E             = PASS
+CHATGPT_DIRECT_DURABLE_WRITE_EFFECT_E2E = NOT_YET_PROVEN
+CHATGPT_DIRECT_VERIFY_E2E               = NOT_YET_PROVEN
+CHATGPT_DIRECT_GIT_COMMIT_E2E           = NOT_YET_PROVEN
+CHATGPT_DIRECT_AUTONOMOUS_LEASE_E2E     = NOT_YET_PROVEN
+
+The earlier BLOCKED values in this document describe the state when this
+readiness receipt was originally written. They are retained as historical
+evidence rather than silently rewritten.
+
+The live Business connector exposed six configured tools. The thirteen-tool
+list above remains the extended profile projected and locally tested by the
+readiness instrument; it was not the live configuration used for this first
+provider acceptance.
