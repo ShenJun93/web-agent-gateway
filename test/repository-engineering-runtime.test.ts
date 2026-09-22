@@ -283,3 +283,48 @@ test('an attach failure closes the privileged runtime and never serves the surfa
   assert.equal(h.stdioOptions.length, 0);
   assert.deepEqual(h.closed, ['engineering', 'runtime']);
 });
+test('stdio git commit inherits the configured mutation review TTL', async () => {
+  const statePath = join(
+    process.cwd(),
+    `.wag-runtime-ttl-${process.pid}-${Date.now()}.sqlite`,
+  );
+
+  const runtime = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: {
+        statePath,
+        ownerId: 'local.private.stdio',
+        reviewTtlMs: 300_000,
+      },
+      gitCommit: {},
+    }),
+    {
+      startOperatorServer: async () => ({
+        origin: 'http://127.0.0.1:1',
+        bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+        close: async () => {},
+      }),
+    },
+  );
+
+  try {
+    await runtime.attach(fakeExecutor);
+
+    assert.ok(runtime.gitCommitContext, 'git commit must be enabled after attach');
+
+    const coordinator = runtime.gitCommitContext!.coordinator as unknown as {
+      reviewTtlMs: number;
+    };
+
+    assert.equal(
+      coordinator.reviewTtlMs,
+      300_000,
+      'stdio commit review must inherit mutation.reviewTtlMs',
+    );
+  } finally {
+    await runtime.close();
+    await rm(statePath, { force: true });
+    await rm(`${statePath}.operator-url`, { force: true });
+  }
+});

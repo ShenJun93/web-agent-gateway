@@ -212,6 +212,8 @@ export async function startRepositoryEngineeringRuntime(
             ...(gitCommitSettings.protectedBranches === undefined
               ? {}
               : { protectedBranches: gitCommitSettings.protectedBranches }),
+            ...(mutationSettings.reviewTtlMs === undefined
+              ? {} : { reviewTtlMs: mutationSettings.reviewTtlMs }),
             ...(goalLease === undefined ? {} : { goalLease }),
           });
           await commitCoordinator.reconcile();
