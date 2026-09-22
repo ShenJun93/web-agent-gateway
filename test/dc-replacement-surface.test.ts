@@ -146,7 +146,7 @@ test('private stdio search opt-in adds exactly repo.search in the accepted posit
   assert.deepEqual(tools.tools.map((tool) => tool.name), INSPECT_TOOLS);
 
   const search = tools.tools.find((tool) => tool.name === 'repo.search');
-  assert.deepEqual(search?.annotations, { readOnlyHint: true, destructiveHint: false, openWorldHint: false });
+  assert.deepEqual(search?.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
 });
 
 test('the inspect profile declares every added tool read-only and strictly typed', async (t) => {
@@ -157,7 +157,7 @@ test('the inspect profile declares every added tool read-only and strictly typed
   for (const name of ['repo.list', 'repo.search', 'repo.diff']) {
     const tool = tools.tools.find((candidate) => candidate.name === name);
     assert.ok(tool, `${name} must be present under the inspect profile`);
-    assert.deepEqual(tool!.annotations, { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    assert.deepEqual(tool!.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       `${name} must be annotated read-only and non-destructive`);
   }
 
