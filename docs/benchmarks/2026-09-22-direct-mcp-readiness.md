@@ -285,14 +285,17 @@ its startup profile, and only when a correlation makes it stable — so the defa
 byte-identical to what it was. A session id is an identity, not a secret: it grants nothing without
 a lease row a person wrote.
 
-#### One guard-rail this milestone could not install itself
+#### The guard-rail this milestone could not install itself — now installed
 
 `sessionCorrelation` selects which session a lease's bindings match, so writing it is authority
-configuration in the same sense that naming a lease is. The PreToolUse guard already refuses an
-agent writing `goalLeaseId` or `goalUiDelegationId` into a `.json`; it does **not** yet know about
-`sessionCorrelation`. Extending it means editing `.claude/`, which this agent is denied and must not
-do. **Flagged for the operator: add `sessionCorrelation` to that refusal list.** Until then the
-protection is the deny rules and the classifier rather than the pattern.
+configuration in the same sense that naming a lease is. The PreToolUse guard already refused an
+agent writing `goalLeaseId` or `goalUiDelegationId` into a `.json`; it did **not** know about
+`sessionCorrelation`. Extending it meant editing `.claude/`, which this agent is denied — so the
+change was prepared as a byte-verified patch and **applied by a human out of band**. The guard now
+refuses naming `sessionCorrelation` in a JSON config identically to the other two grants
+(`.claude/hooks/wag-human-gate-guard.mjs`, SHA `d3218fd6…`, recorded in
+`scripts/verify-delegation-rule-patch.ts`; `test/authority-issuance-guard.test.ts` pins it). The
+refusal-list gap is closed.
 
 ### The composition hands a credential to a vendor-run parent
 

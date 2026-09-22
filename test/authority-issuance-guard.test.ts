@@ -135,7 +135,7 @@ test('writing a grant id into a JSON configuration is refused', () => {
     }),
     'naming a delegation in config',
   );
-  assert.match(reason, /names a Goal Lease or a Goal UI Delegation in a configuration file/);
+  assert.match(reason, /names a Goal Lease, a Goal UI Delegation, or a session correlation in a configuration file/);
   assert.match(reason, /inert/, 'the refusal explains why naming is the consequential act');
 
   denied(
@@ -145,6 +145,47 @@ test('writing a grant id into a JSON configuration is refused', () => {
       new_string: '{ "goalLeaseId": "lease_abc" }',
     }),
     'naming a lease in config, with Windows separators',
+  );
+});
+
+test('naming a session correlation in a JSON config is refused', () => {
+  // sessionCorrelation (ADR-0030) selects which durable session the stdio surface acts as, and so
+  // which session a Goal Lease's admittedSessions is matched against. Writing it is authority
+  // configuration in the same sense as naming a lease, and is refused for the same reason.
+  const reason = denied(
+    call('Write', {
+      file_path: 'E:/config/wag-private.json',
+      content: JSON.stringify({
+        repositoryEngineering: {
+          mutation: { sessionCorrelation: 'session_11111111-2222-3333-4444-555555555555' },
+        },
+      }),
+    }),
+    'naming a session correlation in config',
+  );
+  assert.match(reason, /session correlation/);
+
+  denied(
+    call('Edit', {
+      file_path: 'C:\\Users\\x\\wag.json',
+      old_string: '{}',
+      new_string: '{ "sessionCorrelation": "session_11111111-2222-3333-4444-555555555555" }',
+    }),
+    'naming a session correlation in config, with Windows separators',
+  );
+});
+
+test('the session-correlation refusal does not spill onto reads or non-grant config', () => {
+  // Only a WRITE that names the field is refused. Reading, grepping, a JSON write that names no
+  // grant, and a prose mention in a non-config file all stay allowed.
+  allowed(bash('rg sessionCorrelation E:/config'), 'grepping for the field is reading, not naming');
+  allowed(
+    call('Write', { file_path: 'E:/config/wag-private.json', content: '{"allowedRoots":["E:/x"]}' }),
+    'a JSON config write that names no grant is unaffected',
+  );
+  allowed(
+    call('Write', { file_path: 'E:/notes.txt', content: 'sessionCorrelation is set by a person' }),
+    'a prose mention in a non-config file is not a grant-naming write',
   );
 });
 
@@ -299,7 +340,7 @@ test('each issuance pattern is the thing that refuses, proved by weakening it', 
     },
     {
       name: 'the config-field pattern',
-      from: 'const GRANT_CONFIG_FIELD = /\\b(?:goalUiDelegationId|goalLeaseId)\\b/;',
+      from: 'const GRANT_CONFIG_FIELD = /\\b(?:goalUiDelegationId|goalLeaseId|sessionCorrelation)\\b/;',
       to: 'const GRANT_CONFIG_FIELD = /\\b(?:nothingAtAll)\\b/;',
       probe: {
         tool: 'Write',

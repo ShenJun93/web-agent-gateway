@@ -61,32 +61,30 @@ const PATCH_RAW_SHA256 = '35b3ff68b929ae35ca6e8f3f27d1e8e4f88830029d4ddd340365f5
 const PATCH_PAYLOAD_SHA256 = 'bedf154361e8bd23dae8173cc8ce6594fa9c38cea097c17ec18422e6e2fd67de';
 
 /**
- * The PreToolUse guard, which has **two** legitimate states rather than one.
+ * The PreToolUse guard has one authorised digest at any time, and one named prior digest.
  *
- * `docs/pending/authority-issuance-guard.md` is a prepared patch that a human applies. Until they
- * do, the committed guard is correct; after they do, the patched one is. Reporting either as drift
- * would make this script cry wolf for however long the patch is pending, and a check people learn
- * to ignore is worse than no check.
- *
- * What *is* drift is a third value: a guard that is neither. That means someone edited it outside
- * the patch, and the digests in the patch document are stale.
+ * A human occasionally edits it, out of band, through a prepared patch under `docs/pending/`. When
+ * that lands, the authorised digest below is updated to the new bytes and the previous authorised
+ * value moves to the before-anchor, so a revert is named precisely rather than reported as an
+ * anonymous mismatch. Anything that is neither authorised nor the named prior state is drift:
+ * someone edited the guard outside a patch.
  */
 export const GUARD_PATH_RELATIVE = '.claude/hooks/wag-human-gate-guard.mjs';
 
 /**
- * The guard as a human installed it on 2026-09-21, out of band.
+ * The guard as a human last installed it, out of band: the authority-issuance patterns of
+ * 2026-09-21, plus the `sessionCorrelation` refusal of 2026-09-22 (ADR-0030).
  *
- * Exported so `test/authority-issuance-guard.test.ts` reads it from one place rather than keeping
- * a second copy of the number. The patch that produced it, and its applier, were retired once
- * applied — a pending patch that stays in the tree after it lands is a second thing to drift, which
- * is the lesson that retired the previous applier too.
+ * Exported so `test/authority-issuance-guard.test.ts` reads it from one place rather than keeping a
+ * second copy of the number. Each patch that produced a state, and its pending doc, were retired
+ * once applied — a landed patch left in the tree is a second thing to drift.
  *
- * The before-digest is kept because a guard that has been *reverted* is the failure worth naming
- * precisely, rather than reporting as an anonymous mismatch.
+ * The before-digest names the immediately prior authorised guard (issuance patterns, no
+ * `sessionCorrelation`), so a revert of the latest patch is reported as a revert, not a mystery.
  */
 export const ISSUANCE_GUARD_SHA256 =
-  '3f0787de4e0d8cf2a5df58e7f4a07a76738a82ec22097af071cd1d61a1273a61';
-const GUARD_BEFORE_PATCH = 'f13670516976e7c8cfc43fdd0d263e6c860993175d10c32478fce8d83569d241';
+  'd3218fd6d5f33fb8a68f57e48aca86261a9d9236b85eae26741fedebbe87bba9';
+const GUARD_BEFORE_PATCH = '3f0787de4e0d8cf2a5df58e7f4a07a76738a82ec22097af071cd1d61a1273a61';
 
 const out = (line = ''): void => { process.stdout.write(`${line}\n`); };
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
@@ -149,8 +147,8 @@ function main(): number {
   } else if (guardDigest === GUARD_BEFORE_PATCH) {
     drift += 1;
     out(`  REVERTED ${GUARD_PATH_RELATIVE}`);
-    out('           this is the pre-patch guard. Issuance has a rule and no pattern again, and');
-    out('           the patch that gave it one was retired after a human applied it.');
+    out('           this is the immediately prior authorised guard: the sessionCorrelation refusal');
+    out('           has been dropped, so naming that field in a JSON config is no longer refused.');
   } else if (guardDigest !== undefined) {
     drift += 1;
     out(`  DRIFTED  ${GUARD_PATH_RELATIVE}`);

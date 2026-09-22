@@ -147,8 +147,12 @@ const GRANT_CLI_FLAG = /--(?:issue|renew)\b/;
 /** A *call*, not a mention: the open bracket is what separates invoking from describing. */
 const GRANT_CALL =
   /\b(?:insertUiDelegation|renewUiDelegation|insertGoalLease)\s*\(|\bnew\s+UiDelegationControlPlane\s*\(/;
-/** The two configuration fields that turn a durable row into authority this process will honour. */
-const GRANT_CONFIG_FIELD = /\b(?:goalUiDelegationId|goalLeaseId)\b/;
+/**
+ * The configuration fields that bind Claude to durable authority this process will honour: a Goal
+ * Lease, a Goal UI Delegation, and the session correlation that selects which durable session a
+ * lease's bindings are matched against. Naming any of them is the operator's edit, not Claude's.
+ */
+const GRANT_CONFIG_FIELD = /\b(?:goalUiDelegationId|goalLeaseId|sessionCorrelation)\b/;
 /** Something that *runs* a script, as opposed to reading, grepping or quoting one. */
 const SCRIPT_RUNNER = /\b(?:node|npx|npm|pnpm|yarn|bun|deno|tsx|ts-node)\b/i;
 
@@ -227,7 +231,7 @@ function matchAuthorityWrite(input) {
   if (typeof target !== 'string') return undefined;
   if (!/\.json$/i.test(target.split('\\').join('/'))) return undefined;
   return GRANT_CONFIG_FIELD.test(serialize(input))
-    ? 'names a Goal Lease or a Goal UI Delegation in a configuration file'
+    ? 'names a Goal Lease, a Goal UI Delegation, or a session correlation in a configuration file'
     : undefined;
 }
 
