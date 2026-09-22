@@ -65,9 +65,17 @@ executor        = devspace
 protocolVersion = 2026-07-28
 toolCount       = 6
 
-The live configured connector surface used in this acceptance was therefore six
-tools, not the thirteen-tool extended profile projected by the readiness
-instrument. This is recorded as configuration state, not as a transport defect.
+The observed `toolCount = 6` is the DevSpace executor contract count returned by
+WAG health, not the ChatGPT-facing WAG MCP tool inventory. WAG health validates
+DevSpace `tools/list` against the six required internal DevSpace operations, so
+this observation proves:
+
+DEVSPACE_EXECUTOR_TOOL_CONTRACT = 6 / PASS
+CHATGPT_WAG_MCP_SURFACE_COUNT   = NOT_MEASURED
+
+The thirteen-tool extended profile remains a locally projected and tested WAG
+surface. This health result does not establish how many WAG tools the live
+Business connector exposed.
 
 The calls were executed in this order:
 
