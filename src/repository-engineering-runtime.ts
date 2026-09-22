@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { adapterCorrelationDigest } from './adapter-admission.js';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { SqliteDurableStore } from './durable-store.js';
@@ -20,6 +21,16 @@ export interface RepositoryEngineeringProfile {
   inspect: boolean;
   mutation: boolean;
   gitCommit: boolean;
+  /**
+   * The durable session this surface will keep using, present only when a `sessionCorrelation`
+   * makes it stable.
+   *
+   * It is reported for one reason: a lease binds a session id, and a human issuing a lease out of
+   * band has to be able to find out which one to bind. The browser path solved the same bootstrap
+   * problem with `listAdapterSessions`; this is its stdio equivalent. A session id is an identity,
+   * not a credential — it grants nothing without a lease row a human wrote.
+   */
+  stableSessionId?: string;
 }
 
 export interface RepositoryEngineeringRuntime {
@@ -73,13 +84,58 @@ export async function startRepositoryEngineeringRuntime(
     };
   }
 
-  const callerContext: GatewayCallerContext = createGatewayCallerContext({
-    ownerId: mutationSettings.ownerId,
-    sessionId: `sid_${randomUUID()}`,
-    adapterId: PRIVATE_STDIO_ADAPTER_ID,
-  });
+  /**
+   * A lease admits only the sessions its own row lists, so a session that changes on every start
+   * can never be one of them. Naming a lease without a stable session is therefore not a working
+   * configuration that happens to be strict — it is one that can never admit anything, while the
+   * profile reports autonomous admission as enabled.
+   *
+   * This project has shipped that shape twice now (a coordinator nothing called; a rule nothing
+   * could satisfy), so it fails at startup rather than at the first silent denial.
+   *
+   * Checked before the store is opened, so a refused configuration leaves no handle behind.
+   */
+  if (mutationSettings.goalLeaseId !== undefined && mutationSettings.sessionCorrelation === undefined) {
+    throw new Error(
+      'Private gateway names a goalLeaseId without a sessionCorrelation: this surface mints a new '
+      + 'session every start, so the lease could never admit. Add repositoryEngineering.mutation'
+      + '.sessionCorrelation, or remove the lease and use local operator approval.',
+    );
+  }
+
   const store = new SqliteDurableStore(mutationSettings.statePath);
   const urlFile = `${mutationSettings.statePath}.operator-url`;
+
+  /**
+   * The session this surface acts as.
+   *
+   * Without a correlation, fresh per process — ADR-0020 §5, and the default for every deployment
+   * that predates this field. With one, resolved through the same durable adapter-session path a
+   * browser adapter uses, so the same correlation is the same session across restarts and a lease
+   * issued for it keeps applying through a tunnel client's reconnects.
+   *
+   * The correlation comes from local configuration only. `adapterCorrelationDigest` puts
+   * `ownerId` and `adapterId` inside the digest, and `adapterId` here is the fixed stdio literal,
+   * so this can only ever resolve a `private.stdio.v1` session: an identical correlation string
+   * configured for another owner, or used by any browser adapter, is a different session and
+   * cannot inherit this one's lease.
+   */
+  const sessionId = mutationSettings.sessionCorrelation === undefined
+    ? `sid_${randomUUID()}`
+    : store.getOrCreateAdapterSession({
+      ownerId: mutationSettings.ownerId,
+      adapterId: PRIVATE_STDIO_ADAPTER_ID,
+      correlationSha256: adapterCorrelationDigest(
+        mutationSettings.ownerId, PRIVATE_STDIO_ADAPTER_ID, mutationSettings.sessionCorrelation,
+      ),
+      createdAt: Date.now(),
+    }).sessionId;
+
+  const callerContext: GatewayCallerContext = createGatewayCallerContext({
+    ownerId: mutationSettings.ownerId,
+    sessionId,
+    adapterId: PRIVATE_STDIO_ADAPTER_ID,
+  });
 
   /**
    * The Autonomous Goal Lease this surface honours, if the config names one (ADR-0028).
@@ -103,7 +159,12 @@ export async function startRepositoryEngineeringRuntime(
   let attached = false;
   let closed = false;
   const runtime: RepositoryEngineeringRuntime = {
-    profile: { inspect, mutation: true, gitCommit: gitCommitSettings !== undefined },
+    profile: {
+      inspect,
+      mutation: true,
+      gitCommit: gitCommitSettings !== undefined,
+      ...(mutationSettings.sessionCorrelation === undefined ? {} : { stableSessionId: sessionId }),
+    },
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,
       sessionId: callerContext.sessionId,
@@ -130,14 +191,20 @@ export async function startRepositoryEngineeringRuntime(
         // tool's contract is unchanged and records left pending across a restart are picked up.
         // `unref` so it never holds the process open; errors swallowed per tick so a failing
         // admission cannot take down a gateway whose human review path is working.
+        // Declared before the timer so the same pass can drive it. Commits were missing from this
+        // pass entirely — a lease granting `git.commit` left its records at PENDING_APPROVAL while
+        // the runtime reported autonomous admission as enabled, which is the same gap this comment
+        // says was "not repeated here", repeated here for the other record kind.
+        let commitCoordinator: DurableCommitCoordinator | undefined;
+
         if (goalLease) {
           leaseTimer = setInterval(() => {
             void coordinator.admitPendingUnderLease().catch(() => undefined);
+            void commitCoordinator?.admitPendingUnderLease().catch(() => undefined);
           }, LEASE_ADMISSION_INTERVAL_MS);
           leaseTimer.unref?.();
         }
 
-        let commitCoordinator: DurableCommitCoordinator | undefined;
         if (gitCommitSettings) {
           commitCoordinator = new DurableCommitCoordinator({
             store,

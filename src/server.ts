@@ -357,8 +357,20 @@ export function createGatewayMcpServer(
   { inspect, mutationContext, gitCommitContext }: { inspect?: boolean; mutationContext?: MutationMcpContext; gitCommitContext?: GitCommitMcpContext } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
-  server.registerTool('health', { description: 'Check gateway and executor compatibility.', annotations: { readOnlyHint: true } }, async () => toolResult(await gateway.health()));
-  server.registerTool('workspace.open', { description: 'Open one approved local workspace and return an opaque workspace id.', inputSchema: z.object({ path: z.string().min(1) }), annotations: { readOnlyHint: true } }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
+  server.registerTool('health', {
+    description: 'Check gateway and executor compatibility.',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async () => toolResult(await gateway.health()));
+  // Not read-only: this canonicalises a root, opens a DevSpace workspace and mints a durable
+  // caller-owned workspace record. ADR-0020 records the provider's own warning that a read-only
+  // annotation may cause a client's write confirmation to be skipped, so the surface that a
+  // remote client discovers must not under-declare. `createBrowserVerifyAdmittedMcpServer`
+  // already declares this correctly; this surface had disagreed with it.
+  server.registerTool('workspace.open', {
+    description: 'Open one approved local workspace and return an opaque workspace id.',
+    inputSchema: z.object({ path: z.string().min(1) }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
   if (inspect === true) {
     server.registerTool('repo.list', {
       description: 'List the immediate tracked and untracked entries of one workspace directory.',
@@ -367,7 +379,7 @@ export function createGatewayMcpServer(
         path: z.string().min(1).max(1024).optional(),
         max_entries: z.number().int().min(1).max(1_000).optional(),
       }).strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id, path, max_entries }) => toolResult(
       await gateway.repoList(workspace_id, { path, maxEntries: max_entries }),
     ));
@@ -381,7 +393,7 @@ export function createGatewayMcpServer(
         max_results: z.number().int().min(1).max(50).optional(),
         context_lines: z.number().int().min(0).max(2).optional(),
       }).strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id, query, ignore_case, max_results, context_lines }) => {
       if (!validSearchQuery(query)) throw new Error('Gateway denied search query');
       return toolResult(await gateway.repoSearch(workspace_id, query, {
@@ -389,7 +401,11 @@ export function createGatewayMcpServer(
       }));
     });
   }
-  server.registerTool('repo.snapshot', { description: 'Return bounded repository status, HEAD, diff summary, and tracked files.', inputSchema: z.object({ workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }), annotations: { readOnlyHint: true } }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
+  server.registerTool('repo.snapshot', {
+    description: 'Return bounded repository status, HEAD, diff summary, and tracked files.',
+    inputSchema: z.object({ workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
   if (inspect === true) {
     server.registerTool('repo.diff', {
       description: 'Return the bounded unified diff of the working tree against HEAD.',
@@ -397,14 +413,22 @@ export function createGatewayMcpServer(
         workspace_id: z.string().min(1).max(256),
         path: z.string().min(1).max(1024).optional(),
       }).strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id, path }) => toolResult(await gateway.repoDiff(workspace_id, { path })));
   }
-  server.registerTool('file.read', { description: 'Read bounded text from an opened workspace.', inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }), annotations: { readOnlyHint: true } }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
+  server.registerTool('file.read', {
+    description: 'Read bounded text from an opened workspace.',
+    inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
+  // `openWorldHint: false` is a claim about the *tool*, not about any one profile's argv: the
+  // profile set is local configuration and the model cannot choose or extend it (ADR-0025), so
+  // the domain of interaction is closed even though a profile may run a substantial command.
+  // Not idempotent, and not read-only: it executes.
   server.registerTool('verify.run', {
     description: 'Run one locally configured verification profile; arbitrary shell input is not accepted.',
-    inputSchema: z.object({ workspace_id: z.string().min(1), profile: z.string().min(1) }),
-    annotations: { readOnlyHint: false },
+    inputSchema: z.object({ workspace_id: z.string().min(1), profile: z.string().min(1) }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async ({ workspace_id, profile }) => toolResult(await gateway.verifyRun(workspace_id, profile)));
   if (mutationContext) {
     const previewInput = z.object({

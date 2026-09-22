@@ -1,10 +1,18 @@
 import {
   createBrowserOperatorExtensionCore,
   createSessionCorrelationStore,
+  proposalIdentity,
   senderActor,
 } from './service-worker-core-v4.js';
 import { parseChatGptOperatorObservation } from './chatgpt-call-parser-v4.js';
 import { createNativeOperatorSessionController } from './native-session-core-v4.js';
+import { createNativeDelegationSessionController } from './native-session-core-v5.js';
+import { createDelegatedDiagnostics } from './delegated-diagnostics-v5.js';
+import { stageAndDispatch } from './delegated-dispatch-core-v5.js';
+import {
+  createDelegatedObservationMemory,
+  createDelegatedRunAttempt,
+} from './delegated-observation-v5.js';
 
 /**
  * The shipped entry point, now the operator adapter (ADR-0026).
@@ -38,6 +46,44 @@ const native = createNativeOperatorSessionController({
   },
 });
 
+/**
+ * The delegated-dispatch port (ADR-0029), on its own native host.
+ *
+ * A second host, not a second mode on the first: the two admit into different adapter identities
+ * and a delegation binds one of them. Connecting is lazy — `tryDelegatedRun` below is the only
+ * caller, and it gives up quietly if the host is not installed, which is the state on every
+ * machine that has not opted in.
+ */
+const delegation = createNativeDelegationSessionController({
+  connectNative: () => chrome.runtime.connectNative('com.openai.web_agent_gateway_v5'),
+  randomUUID: () => crypto.randomUUID(),
+});
+const delegatedSeen = createDelegatedObservationMemory(chrome.storage.session);
+
+/**
+ * Attempt one observed candidate on the delegated path, before offering it to a person.
+ *
+ * The logic lives in `delegated-observation-v5.js` so it can be executed by a test rather than
+ * asserted against as source text — which is how the missing idempotence got past review: the
+ * absent call looked exactly like the code around it.
+ *
+ * Every failure falls through to the human queue, which is the direction that has to be true.
+ * `human-presence-boundary.md` says Run stays human wherever a delegation does not admit the
+ * proposal, so the failure mode of this whole path is "a person is asked", never "it happened
+ * anyway" — with one exception, handled at the call site: a dispatch whose answer was lost may
+ * already have run, and offering that to a person would run it twice.
+ */
+const tryDelegatedRun = createDelegatedRunAttempt({
+  delegation,
+  memory: delegatedSeen,
+  stageAndDispatch,
+  randomUUID: () => crypto.randomUUID(),
+  // One console line per decision, carrying a reason code and reference ids and nothing else.
+  // Without it, four distinct failures on this path were indistinguishable from outside — which
+  // is what stalled a live production attempt.
+  diagnostics: createDelegatedDiagnostics(),
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // The actor is derived from what Chrome put in `sender`, never from what the message claims.
   const actor = senderActor(sender, chrome.runtime);
@@ -52,7 +98,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     const call = parseChatGptOperatorObservation({ text: message.text, codeBlocks: message.codeBlocks });
     if (!call) { sendResponse({ queued: false }); return false; }
-    void sessionCorrelations.forTab(tabId).then((sessionId) => {
+    // A turn with no provider-assigned identity cannot be deduplicated at all, so the delegated
+    // path refuses it outright — `queueProviderRequest` refuses it too, for the same reason, and
+    // an unstable identity would be worse than none.
+    if (typeof message.messageId !== 'string' || !message.messageId || message.messageId.length > 128) {
+      sendResponse({ queued: false });
+      return false;
+    }
+    void sessionCorrelations.forTab(tabId).then(async (sessionId) => {
+      await delegatedSeen.ready();
+      // The same identity `queueProviderRequest` uses, computed from the same five stable parts.
+      // Sharing it is the point: a candidate the delegated path decided and one the human queue
+      // remembers are the same proposal, and a rescan must not raise either again.
+      const identity = proposalIdentity(sessionId, tabId, message.messageId, call.tool, call.arguments);
+
+      // Offered to a delegation first, and to a person otherwise. The order matters only because
+      // doing it the other way would queue a proposal that then ran without the human ever seeing
+      // it — two records of one candidate, one of them misleading.
+      const delegated = await tryDelegatedRun({
+        identity,
+        correlationId: sessionId,
+        call,
+        origin: new URL(senderUrl).origin,
+      });
+
+      // Decided on an earlier observation. Nothing to queue and nothing to re-run.
+      if (delegated && delegated.alreadyDecided) {
+        sendResponse({ queued: false, alreadyDecided: true });
+        return;
+      }
+      if (delegated && delegated.ok && delegated.dispatched) {
+        chrome.runtime.sendMessage({
+          type: 'panel.delegated',
+          proposalId: delegated.proposalId,
+          result: delegated.result,
+        }).catch(() => undefined);
+        sendResponse({ queued: false, delegated: true, proposalId: delegated.proposalId });
+        return;
+      }
+      // The dispatch was sent and the answer was lost, so the work may already have happened.
+      // Offering it to a person would run it twice — and for `mutation.preview` or `file.create`
+      // that means two review records for one page message. The proposal is visible in WAG's own
+      // durable state, as a DISPATCHED row, which is where an operator should look.
+      if (delegated && delegated.indeterminate) {
+        sendResponse({ queued: false, indeterminate: true, proposalId: delegated.proposalId });
+        return;
+      }
+
       const request = {
         version: 4,
         type: 'tool.call',
@@ -64,7 +156,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // The provider's own message id is what makes a rescan idempotent; it is carried, never
       // trusted as authority.
       const queued = core.queueProviderRequest({ url: senderUrl, tabId }, request, message.messageId);
-      sendResponse({ queued, requestId: queued ? request.requestId : undefined });
+      sendResponse({
+        queued,
+        requestId: queued ? request.requestId : undefined,
+        // Surfaced so a refused delegation is visible rather than looking like nothing happened.
+        // It is a reason code, not a decision, and the panel treats it as text.
+        ...(delegated && !delegated.ok ? { delegationRefusal: delegated.code } : {}),
+      });
     }).catch(() => sendResponse({ queued: false }));
     return true;
   }

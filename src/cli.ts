@@ -184,6 +184,10 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
     runtime = await (deps.startBrowserOperator ?? startBrowserOperatorRuntime)({
       configPath,
       discoveryPath: join(home, 'browser-adapter-v4.json'),
+      // Its own file, matching what the v5 native host looks for by default. Sharing the v4 path
+      // would let one runtime delete the other's discovery — and let a host admit into the wrong
+      // adapter identity, which is the identity a delegation binds.
+      delegationDiscoveryPath: join(home, 'browser-adapter-v5.json'),
       statePath: join(home, 'browser-operator-v4.sqlite'),
       env: deps.env,
     });
@@ -214,6 +218,17 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
       note: 'autonomous admission is ENABLED for actions inside this lease; npm run lease:stop halts it',
     })}\n`);
   }
+  // Announced for the same reason, and phrased to keep the two authorities apart. A delegation
+  // lifts Run and never Approve: an effect still needs the operator, or a lease that admits it.
+  if (runtime.goalUiDelegationId !== undefined) {
+    deps.stderr.write(`${JSON.stringify({
+      type: 'gateway.goalUiDelegation',
+      delegationId: runtime.goalUiDelegationId,
+      discoveryPath: runtime.delegationDiscoveryPath,
+      note: 'delegated Run is ENABLED for proposals inside this delegation; APPROVAL is unchanged '
+        + 'and still requires the operator or an active lease. npm run lease:stop halts it',
+    })}\n`);
+  }
 
   let exitCode = 0;
   try {
@@ -242,9 +257,17 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
  * operator reads it from there.
  */
 function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime): void {
-  const { inspect, mutation, gitCommit } = engineering.profile;
+  const { inspect, mutation, gitCommit, stableSessionId } = engineering.profile;
   if (!inspect && !mutation && !gitCommit) return;
-  stderr.write(`${JSON.stringify({ type: 'gateway.profile', inspect, mutation, gitCommit })}\n`);
+  stderr.write(`${JSON.stringify({
+    type: 'gateway.profile',
+    inspect,
+    mutation,
+    gitCommit,
+    // Only when a correlation makes it stable, so the default profile line is byte-identical to
+    // what it was. This is how a human finds the session id a Goal Lease has to be bound to.
+    ...(stableSessionId === undefined ? {} : { stableSessionId }),
+  })}\n`);
   if (engineering.operator) {
     stderr.write(`${JSON.stringify({
       type: 'gateway.operator',

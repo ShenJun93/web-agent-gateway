@@ -337,8 +337,18 @@ test('production carries no auto-approve bypass and does not know this lane exis
     // type and `validateBindings`. As with `operator-server.js`, the direction is what the
     // containment rests on and is asserted above — the lane may reach into production, production
     // may never reach into the lane.
-    ['./caller-context.js', './durable-mutation.js', './durable-store.js', './file-mutation-backend.js', './goal-lease.js', './operator-server.js', './path-policy.js'],
-    'the lane reaches only the coordinator, the store, the caller context, the path policy, the review server and the lease policy',
+    // The five delegation modules join for the same reason (ADR-0029): the lane drives a real
+    // router over a real dispatch plane so the zero-manual-Run proof runs against production's own
+    // policy rather than a stub, and issues fixture delegations so the proof needs no human act.
+    // The direction is unchanged and is what matters: no production module imports this file, and
+    // none of these five imports the lane back.
+    [
+      './adapter-admission.js', './caller-context.js', './delegated-dispatch-router.js',
+      './durable-mutation.js', './durable-store.js', './file-mutation-backend.js',
+      './goal-lease.js', './goal-ui-delegation-control.js', './goal-ui-delegation-dispatch.js',
+      './goal-ui-delegation.js', './operator-server.js', './path-policy.js',
+    ],
+    'the lane reaches only the coordinator, the store, the caller context, the path policy, the review server, the lease policy and the delegation planes',
   );
   // A static import list is blind to a dynamic one, and this file used to contain one. Matching
   // only the awaited form would still miss `import(x).then(...)`, `void import(x)` and

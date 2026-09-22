@@ -4,6 +4,10 @@ Date: 2026-09-20
 Status: Accepted
 Depends on: ADR-0013, ADR-0014, ADR-0015, ADR-0017, ADR-0018, ADR-0019, ADR-0020, ADR-0022, ADR-0023, ADR-0024
 Research: `docs/research/2026-09-20-wag-git-execution-surface.md`
+Amended by: ADR-0028 (Approve) and ADR-0029 (Run). `RUN_AND_APPROVAL = HUMAN` below is the
+  invariant **as decided here** and is no longer the whole model — see ADR-0029,
+  *Consequence for the invariant*. The text below is left as written; it is the record of what
+  this decision decided, not a statement of current policy.
 
 ## Context
 

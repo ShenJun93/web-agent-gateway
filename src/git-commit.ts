@@ -7,6 +7,7 @@ import type { GitCommitBackend, GitCommitChange, GitCommitPlan } from './git-com
 import { assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
+import { resolveDelegatedGoal } from './delegated-run-provenance.js';
 
 /** As in the mutation coordinator: a constant, so a proposal cannot nominate its own grant. */
 const COMMIT_TOOL = 'git.commit';
@@ -114,6 +115,20 @@ export class DurableCommitCoordinator {
     reviewTtlMs?: number;
     /** Absent by default, so autonomous commit admission is off unless deliberately wired. */
     goalLease?: { leaseId: string; killSwitch: () => boolean };
+    /**
+     * The Goal UI Delegation named in local configuration, if any (ADR-0029).
+     *
+     * Carried here *only* so that the lease policy can be told which goal is currently allowed to
+     * Run without a click on the browser context that produced a record. It grants nothing: this
+     * coordinator cannot issue, renew or widen a delegation, and the id is a reference the plane
+     * re-reads every binding behind.
+     *
+     * Absent means delegated Run is off, in which case nothing reaches the effect path from a
+     * delegated adapter and the resolution never matters. Present but stale, revoked, superseded or
+     * bound elsewhere resolves to `undefined`, which the policy denies on a delegated adapter —
+     * see `delegated-run-provenance.ts`.
+     */
+    uiDelegation?: { configuredDelegationId: string };
   }) {
     this.now = options.now ?? Date.now;
     this.reviewTtlMs = Math.min(Math.max(options.reviewTtlMs ?? DEFAULT_REVIEW_TTL_MS, 1_000), MAX_TTL_MS);
@@ -223,6 +238,39 @@ export class DurableCommitCoordinator {
    * Every path in the commit is checked, not just the first. A commit touching ten files under a
    * lease granting one directory must be refused if any single one of them falls outside it.
    */
+  /**
+   * Offer every commit currently awaiting review to the lease policy.
+   *
+   * The exact counterpart of `DurableMutationCoordinator.admitPendingUnderLease`, and it exists for
+   * exactly the same reason that one does: `admitByPolicy` decides one record and **nothing called
+   * it**. A review caught that gap on the mutation side and added the driver there; the commit side
+   * kept the per-record decision and never got one.
+   *
+   * Measured in production on 2026-09-22: a delegated `git.commit` was admitted as `DELEGATED_RUN`,
+   * the commit record was written, the lease granted `git.commit` on the exact branch and HEAD it
+   * bound — and the record sat at `PENDING_APPROVAL` until its review window expired, because the
+   * runtime's lease interval drove mutations only. The CLI announced that autonomous admission was
+   * enabled, and for commits it was not.
+   *
+   * Bounded and driven rather than continuous, and a commit the lease does not cover is simply left
+   * pending for a human, which is the correct outcome and not an error.
+   *
+   * Returns the ids it admitted, so a caller can log what autonomy actually did.
+   */
+  async admitPendingUnderLease(limit = 20): Promise<string[]> {
+    if (!this.options.goalLease) return [];
+    const admitted: string[] = [];
+    // Snapshot first: admitting mutates the pending set underneath an iterator.
+    const pending = this.options.store.listPendingCommits(
+      Math.min(Math.max(limit, 1), COMMIT_PENDING_SCAN_LIMIT),
+    );
+    for (const record of pending) {
+      const decision = await this.admitByPolicy(record.commitId);
+      if (decision.admitted) admitted.push(record.commitId);
+    }
+    return admitted;
+  }
+
   async admitByPolicy(commitId: string): Promise<LeaseDecision> {
     const lease = this.options.goalLease;
     if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
@@ -254,6 +302,16 @@ export class DurableCommitCoordinator {
     };
     const spend = this.options.store.goalLeaseSpend(stored.leaseId);
     const killSwitch = lease.killSwitch();
+    // Resolved once for the whole commit: every path in it came from the same browser context, so
+    // the delegated goal in force cannot differ between them. Re-reading per path would only give
+    // a commit that could be half-admitted by a delegation revoked mid-loop.
+    const delegatedGoalId = resolveDelegatedGoal({
+      port: this.options.store,
+      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      now: this.now(),
+    });
 
     // The HEAD compared here is the one the *proposal* was planned against, which is sound
     // because it closes a chain rather than standing alone:
@@ -282,6 +340,7 @@ export class DurableCommitCoordinator {
           path,
           diffBytes: 0,
           wantsCommit: true,
+          ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
           ...(record.branch === undefined ? {} : { branch: record.branch }),
           ...(head === undefined ? {} : { headSha: head }),
         },

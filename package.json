@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "build:native-host": "tsx scripts/build-native-host.ts",
+    "build:delegation-native-host": "tsx scripts/build-delegation-native-host.ts",
     "verify:native-host-licenses": "tsx scripts/verify-native-host-license-compliance.ts",
     "record:native-host-candidate": "tsx scripts/record-native-host-unsigned-candidate.ts",
     "verify:native-host-candidate": "tsx scripts/verify-signed-native-host-candidate.ts",
@@ -20,7 +21,12 @@
     "test:operator-browser": "tsx scripts/verify-operator-browser-origin.ts",
     "operator:open": "tsx scripts/open-operator.ts",
     "lease:stop": "tsx scripts/lease-stop.ts",
-    "test:goal-lease": "npm run build && tsx --test --test-concurrency=1 test/goal-lease-e2e.acceptance.ts"
+    "test:goal-lease": "npm run build && tsx --test --test-concurrency=1 test/goal-lease-e2e.acceptance.ts",
+    "p1a:tools": "tsx scripts/p1a-tool-inventory.ts",
+    "p1a:snapshot": "tsx scripts/p1a-state-snapshot.ts",
+    "test:delegation-mutations": "tsx scripts/delegation-mutation-battery.ts",
+    "test:delegation-e2e": "npm run build && tsx --test --test-concurrency=1 test/delegated-dispatch-e2e.acceptance.ts",
+    "mcp:tunnel-profile": "tsx scripts/prepare-direct-mcp-tunnel.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",

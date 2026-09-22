@@ -3,3 +3,6 @@ node_modules/
 dist/
 coverage/
 artifacts/browser-adapter/
+# The v5 delegated-dispatch host, built by build:delegation-native-host. A 94 MB SEA binary
+# belongs in a release, never in the tree.
+artifacts/delegation-adapter/

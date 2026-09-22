@@ -1,0 +1,87 @@
+- generic [ref=e1]:
+  - main "ChatGPT" [ref=e4]:
+    - generic [ref=e8]:
+      - complementary "Sidebar" [ref=e9]:
+        - generic [ref=e11]:
+          - generic [ref=e12]:
+            - img "ChatGPT logo" [ref=e13]
+            - button "Close sidebar" [expanded] [ref=e16] [cursor=pointer]
+          - link "New chat" [ref=e20] [cursor=pointer]:
+            - /url: /?noauth_recent_chat_failed=1
+          - navigation "Sidebar" [ref=e27]:
+            - generic [ref=e28]:
+              - link "Images" [ref=e29] [cursor=pointer]:
+                - /url: /images
+              - link "Plugins" [ref=e35] [cursor=pointer]:
+                - /url: https://chatgpt.com/plugins
+              - button "Deep research" [ref=e41] [cursor=pointer]
+            - generic [ref=e46]:
+              - link "See plans and pricing" [ref=e47] [cursor=pointer]:
+                - /url: https://openai.com/chatgpt/pricing/
+              - button "Settings" [ref=e56] [cursor=pointer]
+              - link "OpenAI Help" [ref=e61] [cursor=pointer]:
+                - /url: https://help.openai.com
+                - generic [ref=e62]: Help
+          - region [ref=e70]:
+            - heading "Get responses tailored to you" [level=2] [ref=e71]
+            - paragraph [ref=e72]: Log in to get answers based on saved chats, plus create images and upload files.
+            - button "Log in" [ref=e73] [cursor=pointer]
+      - generic [ref=e76]:
+        - generic [ref=e78]:
+          - button "ChatGPT" [ref=e80] [cursor=pointer]
+          - generic [ref=e85]:
+            - button "Log in" [ref=e86] [cursor=pointer]
+            - button "Sign up for free" [ref=e87] [cursor=pointer]
+        - region "Conversation" [ref=e89]:
+          - region "Conversation chat-7d792d34-7e47-4ed4-9e61-1103d2354967" [ref=e90]:
+            - generic [ref=e92]:
+              - generic:
+                - list "Conversation"
+      - generic:
+        - generic:
+          - generic [ref=e94]:
+            - heading "Where should we begin?" [level=1] [ref=e95]
+            - generic [ref=e100]:
+              - button [aria-hidden] [ref=e101]
+              - button [aria-hidden] [ref=e102]
+              - button [aria-hidden] [ref=e103]
+              - generic [ref=e105]:
+                - button "Add files and more" [ref=e107] [cursor=pointer]
+                - generic [ref=e111]:
+                  - generic [ref=e112]: Chat with ChatGPT
+                  - textbox "Chat with ChatGPT" [ref=e115]:
+                    - /placeholder: Ask ChatGPT
+                  - status [ref=e117]
+              - generic [ref=e118]:
+                - button "Start dictation" [ref=e119] [cursor=pointer]
+                - button "Send message" [disabled] [ref=e123]
+            - button "What can you do?" [ref=e128] [cursor=pointer]
+          - paragraph [ref=e131]:
+            - generic [ref=e132]:
+              - text: ChatGPT is AI. By using it, you agree to our
+              - link "Terms" [ref=e133] [cursor=pointer]:
+                - /url: https://openai.com/terms
+              - text: "&"
+              - link "Privacy Policy" [ref=e134] [cursor=pointer]:
+                - /url: https://openai.com/privacy
+              - text: . Chats may be reviewed and used to improve our AI models.
+              - link "Learn more about how your data is used to improve AI models" [ref=e135] [cursor=pointer]:
+                - /url: https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance
+                - text: Learn more
+  - dialog [ref=e137]:
+    - generic [ref=e138]:
+      - button "Close" [active] [ref=e140] [cursor=pointer]
+      - heading "We use cookies" [level=1] [ref=e143]
+      - paragraph [ref=e144]:
+        - text: Cookies help this site function, measure usage, and support marketing.
+        - link "Manage" [ref=e145] [cursor=pointer]:
+          - /url: /privacy?returnTo=%2F
+        - text: your cookie preferences anytime. Learn more about our
+        - link "cookie policy" [ref=e146] [cursor=pointer]:
+          - /url: https://openai.com/policies/cookie-policy/
+        - text: .
+      - generic [ref=e147]:
+        - button "Accept all" [ref=e149] [cursor=pointer]
+        - button "Reject non-essential" [ref=e151] [cursor=pointer]
+        - link "Cookie preferences" [ref=e152] [cursor=pointer]:
+          - /url: /privacy?returnTo=%2F

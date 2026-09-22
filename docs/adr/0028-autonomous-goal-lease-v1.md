@@ -5,6 +5,9 @@ Status: Accepted
 Depends on: ADR-0019, ADR-0023, ADR-0026, ADR-0027
 Evidence: `docs/benchmarks/2026-09-21-autonomous-goal-lease-v1-acceptance.md`
 Amends: ADR-0026 and ADR-0027 — see *Consequence for the invariant* below
+Amended by: ADR-0029 — a lease lifts Approve and **never Run**, and a lease that admits work
+  from a delegated adapter must now name that delegation's goal. See ADR-0029,
+  *Consequence for the invariant* and *Composing a delegation with a lease*.
 
 ## Context
 

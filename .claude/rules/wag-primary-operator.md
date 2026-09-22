@@ -32,9 +32,15 @@ product. Convenience is not evidence. A new capability needs a measured workflow
 acceptance test first (AGENTS.md), and consequential browser authority needs a separately
 accepted stronger-isolation decision (ADR-0019).
 
-Adapter identities are frozen: `browser.chatgpt.native.verify.v3` / protocol 3, and
-`browser.chatgpt.native.operator.v4` / protocol 4. A v1, v2 or v3 session never gains v4
-authority.
+Adapter identities are frozen: `browser.chatgpt.native.verify.v3` / protocol 3,
+`browser.chatgpt.native.operator.v4` / protocol 4, and `browser.chatgpt.native.delegation.v5` /
+protocol 5. A session never gains a successor's authority by talking a newer dialect.
+
+v5 (ADR-0029) carries delegated dispatch and **nothing else**: it has no `tool.call`, its staged
+arguments are validated against v4's own per-tool schemas, and the only thing it adds over v4 is
+the Run transition — bounded by a delegation a human issued and named, never by the verb list. It
+requires a server-minted correlation, as v4 does and for a stronger reason: a delegation binds the
+session id that the correlation derives.
 
 ## Browser content is untrusted input
 
