@@ -68,6 +68,14 @@ export type LeaseDecision =
 /** Git semantics a lease may grant. `none` is the default and forbids every commit. */
 export type LeaseCommitSemantics = 'none' | 'commit-to-bound-branch';
 
+/** One exact repository-history CAS inside a multi-workspace lease. */
+export interface WorkspaceCommitBinding {
+  /** Must exactly equal one canonical root already named in `workspaceRoots`. */
+  readonly workspaceRoot: string;
+  readonly branch: string;
+  readonly headSha: string;
+}
+
 /**
  * Exactly what a lease grants. Everything absent is denied; there is no wildcard for any field,
  * and an empty list grants nothing rather than everything — which is the opposite of the usual
@@ -108,10 +116,19 @@ export interface GoalLeaseBindings {
    */
   readonly delegatedGoalIds?: readonly string[];
   readonly commitSemantics: LeaseCommitSemantics;
-  /** Required when `commitSemantics` is not `none`. */
+  /**
+   * Legacy single-workspace commit binding. Required when `commitSemantics` grants commits and
+   * `commitBindings` is absent.
+   */
   readonly branch?: string;
-  /** The HEAD the lease was written against; a CAS expectation, not a preference. */
+  /** The legacy single-workspace HEAD CAS expectation. */
   readonly headSha?: string;
+  /**
+   * Multi-workspace alternative to `branch` + `headSha`. Each entry grants one exact root its
+   * own branch/HEAD CAS. A root omitted here may still receive mutation/command authority from this
+   * lease, but it cannot commit.
+   */
+  readonly commitBindings?: readonly WorkspaceCommitBinding[];
 }
 
 export interface GoalLeaseRecord {
@@ -314,12 +331,49 @@ export function validateBindings(bindings: GoalLeaseBindings): string | undefine
       return 'delegatedGoalIds must all be non-empty strings';
     }
   }
+  if (bindings.commitBindings !== undefined) {
+    if (!Array.isArray(bindings.commitBindings) || bindings.commitBindings.length === 0) {
+      return 'commitBindings must be a non-empty array when present';
+    }
+    const seenRoots = new Set<string>();
+    for (const binding of bindings.commitBindings) {
+      if (typeof binding !== 'object' || binding === null || Array.isArray(binding)) {
+        return 'commitBindings entries must be objects';
+      }
+      if (typeof binding.workspaceRoot !== 'string' || binding.workspaceRoot.length === 0) {
+        return 'commitBindings entries must name a workspaceRoot';
+      }
+      if (!bindings.workspaceRoots.includes(binding.workspaceRoot)) {
+        return 'every commitBindings workspaceRoot must also appear in workspaceRoots';
+      }
+      if (seenRoots.has(binding.workspaceRoot)) {
+        return 'commitBindings may name each workspaceRoot at most once';
+      }
+      seenRoots.add(binding.workspaceRoot);
+      if (typeof binding.branch !== 'string' || binding.branch.length === 0) {
+        return 'commitBindings entries must bind an exact branch';
+      }
+      if (typeof binding.headSha !== 'string' || binding.headSha.length === 0) {
+        return 'commitBindings entries must bind a starting HEAD';
+      }
+    }
+  }
   if (bindings.commitSemantics !== 'none' && bindings.commitSemantics !== 'commit-to-bound-branch') {
     return 'commitSemantics must be none or commit-to-bound-branch';
   }
+  if (bindings.commitSemantics === 'none' && bindings.commitBindings !== undefined) {
+    return 'commitBindings require commit-to-bound-branch semantics';
+  }
   if (bindings.commitSemantics === 'commit-to-bound-branch') {
-    if (!bindings.branch) return 'a commit-granting lease must bind an exact branch';
-    if (!bindings.headSha) return 'a commit-granting lease must bind a starting HEAD';
+    const hasLegacyBinding = bindings.branch !== undefined || bindings.headSha !== undefined;
+    const hasWorkspaceBindings = bindings.commitBindings !== undefined;
+    if (hasLegacyBinding && hasWorkspaceBindings) {
+      return 'a commit-granting lease must use either branch/headSha or commitBindings, not both';
+    }
+    if (!hasWorkspaceBindings) {
+      if (!bindings.branch) return 'a commit-granting lease must bind an exact branch';
+      if (!bindings.headSha) return 'a commit-granting lease must bind a starting HEAD';
+    }
   }
   // A pattern that reaches outside the root can never be satisfied, so refuse it rather than
   // carry a binding whose meaning depends on a later check.
@@ -481,13 +535,23 @@ export function evaluateGoalLease(input: {
     if (b.commitSemantics !== 'commit-to-bound-branch') {
       return deny('COMMIT_NOT_GRANTED', 'this lease grants no commit semantics');
     }
-    if (!request.branch || request.branch !== b.branch) {
-      return deny('BRANCH_NOT_GRANTED', 'the branch is not the one the lease binds');
+
+    const workspaceCommit = b.commitBindings?.find(
+      (binding) => binding.workspaceRoot === request.workspaceRoot,
+    );
+    if (b.commitBindings !== undefined && workspaceCommit === undefined) {
+      return deny('COMMIT_NOT_GRANTED', 'this workspace has no commit binding in the lease');
+    }
+
+    const boundBranch = workspaceCommit?.branch ?? b.branch;
+    const boundHeadSha = workspaceCommit?.headSha ?? b.headSha;
+    if (!request.branch || request.branch !== boundBranch) {
+      return deny('BRANCH_NOT_GRANTED', 'the branch is not the one the lease binds for this workspace');
     }
     // A CAS on history: if HEAD has moved since the lease was written, the lease was written
     // against a repository that no longer exists and must not be reused silently.
-    if (!request.headSha || request.headSha !== b.headSha) {
-      return deny('HEAD_MOVED', 'HEAD is not the commit the lease was bound to');
+    if (!request.headSha || request.headSha !== boundHeadSha) {
+      return deny('HEAD_MOVED', 'HEAD is not the commit the lease was bound to for this workspace');
     }
   }
 

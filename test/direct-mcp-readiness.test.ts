@@ -17,6 +17,9 @@ import {
   startRepositoryEngineeringRuntime,
 } from '../src/repository-engineering-runtime.js';
 import { projectedTools } from '../scripts/prepare-direct-mcp-tunnel.js';
+import './goal-lease-policy.test.js';
+import './goal-lease-commit.test.js';
+import './goal-lease-multi-workspace.test.js';
 
 /**
  * The direct-MCP surface is the one a remote MCP client discovers over the Secure MCP Tunnel.
