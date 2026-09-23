@@ -29,7 +29,7 @@ const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const builtCli = join(repoRoot, 'dist', 'cli.js');
 
 const EXTENDED_TOOLS = [
-  'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
+  'health', 'workspace.open', 'capabilities.describe', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
   'file.read', 'verify.run', 'command.run',
   'mutation.preview', 'file.replace', 'file.create', 'mutation.result',
   'git.commit', 'git.commit.result',
@@ -56,72 +56,10 @@ function parse<T>(response: unknown): T {
   return JSON.parse((response as ToolText).content[0]!.text) as T;
 }
 
-/**
- * Drives the local operator review server exactly as a human browser would: redeem the
- * one-time bootstrap URL, keep the session cookie, read the CSRF token out of the rendered
- * review page, and POST the approval with a matching Origin header.
- */
-class OperatorBrowser {
-  private cookie = '';
-  constructor(private readonly origin: string) {}
-
-  static async open(bootstrapUrl: string): Promise<OperatorBrowser> {
-    const response = await fetch(bootstrapUrl, { redirect: 'manual' });
-    assert.equal(response.status, 303, 'bootstrap redemption must redirect into an authenticated session');
-    const setCookie = response.headers.get('set-cookie');
-    assert.ok(setCookie, 'bootstrap must issue an operator session cookie');
-    const browser = new OperatorBrowser(new URL(bootstrapUrl).origin);
-    browser.cookie = setCookie.split(';')[0]!;
-    return browser;
-  }
-
-  async review(recordId: string, kind: 'mutations' | 'commits' = 'mutations'): Promise<string> {
-    const response = await fetch(`${this.origin}/${kind}/${encodeURIComponent(recordId)}`, {
-      headers: { cookie: this.cookie },
-    });
-    assert.equal(response.status, 200, 'the operator must be able to read the exact pending review');
-    return response.text();
-  }
-
-  async act(
-    mutationId: string,
-    action: 'approve' | 'reject',
-    csrf: string,
-    overrides: { origin?: string; kind?: 'mutations' | 'commits' } = {},
-  ) {
-    return fetch(`${this.origin}/${overrides.kind ?? 'mutations'}/${encodeURIComponent(mutationId)}/${action}`, {
-      method: 'POST',
-      redirect: 'manual',
-      headers: {
-        cookie: this.cookie,
-        origin: overrides.origin ?? this.origin,
-        'content-type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({ csrf }).toString(),
-    });
-  }
-
-  /** An unauthenticated caller, i.e. anything that only learned the origin. */
-  static async anonymous(origin: string, mutationId: string) {
-    return fetch(`${origin}/mutations/${encodeURIComponent(mutationId)}/approve`, {
-      method: 'POST',
-      redirect: 'manual',
-      headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ csrf: 'guessed' }).toString(),
-    });
-  }
-}
-
 /** A tool call that must be refused; MCP reports refusal as isError rather than by throwing. */
 function assertNotError(response: unknown): never {
   assert.equal((response as { isError?: boolean }).isError, true, 'the call must be refused');
   throw new Error('refused as expected');
-}
-
-function csrfFrom(html: string): string {
-  const match = /name="csrf" value="([^"]+)"/.exec(html);
-  assert.ok(match, 'the review page must carry a CSRF token');
-  return match[1]!;
 }
 
 test('WAG DC Replacement v1 production-local acceptance', async (t) => {
@@ -137,36 +75,38 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   const configPath = join(temp, 'private.json');
   const ownerId = 'local.private.stdio';
   const sessionCorrelation = 'session_11111111-2222-3333-4444-555555555555';
-  const commandLeaseId = 'lease_acceptance_command';
-  const commandLeaseStore = new SqliteDurableStore(statePath);
+  const developmentLeaseId = 'lease_acceptance_development';
+  let admittedSessionId = '';
+  const developmentLeaseStore = new SqliteDurableStore(statePath);
   try {
     const now = Date.now();
     const workspaceRoot = await realpath(fixture.workspaceRoot);
-    const session = commandLeaseStore.getOrCreateAdapterSession({
+    const session = developmentLeaseStore.getOrCreateAdapterSession({
       ownerId,
       adapterId: PRIVATE_STDIO_ADAPTER_ID,
       correlationSha256: adapterCorrelationDigest(ownerId, PRIVATE_STDIO_ADAPTER_ID, sessionCorrelation),
       createdAt: now,
     });
-    commandLeaseStore.insertGoalLease({
-      leaseId: commandLeaseId,
+    admittedSessionId = session.sessionId;
+    developmentLeaseStore.insertGoalLease({
+      leaseId: developmentLeaseId,
       createdAt: now,
       notBefore: now - 1_000,
       expiresAt: now + 10 * 60_000,
       bindings: JSON.stringify({
         workspaceRoots: [workspaceRoot],
-        allowedTools: ['command.run'],
-        pathPatterns: ['src/**'],
-        maxFiles: 1,
-        maxBytes: 1,
-        maxDiffBytes: 1,
+        allowedTools: ['command.run', 'mutation.preview'],
+        pathPatterns: ['src/**', 'test/**'],
+        maxFiles: 8,
+        maxBytes: 100_000,
+        maxDiffBytes: 32_000,
         admittedSessions: [session.sessionId],
         admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
         commitSemantics: 'none',
       }),
     });
   } finally {
-    commandLeaseStore.close();
+    developmentLeaseStore.close();
   }
 
   await writeFile(configPath, JSON.stringify({
@@ -179,7 +119,7 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
         statePath,
         ownerId,
         sessionCorrelation,
-        goalLeaseId: commandLeaseId,
+        goalLeaseId: developmentLeaseId,
       },
       gitCommit: {},
     },
@@ -268,11 +208,10 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   assert.equal((unsafeCommand as { isError?: boolean }).isError, true,
     'unsafe argv must fail before executor invocation');
 
-  // C1 — propose, then approve through the real loopback operator server. The lease intentionally
-  // does NOT grant mutation.preview or git.commit, so these steps must still require the operator.
-
+  // C1 — direct stdio is lease-only. The matching Goal Lease executes the effect immediately;
+  // there is no operator/browser approval fallback in this path.
   const original = await readFile(join(fixture.workspaceRoot, DC_FIXTURE_IMPLEMENTATION), 'utf8');
-  const preview = parse<{ status: string; mutationId: string; fingerprint: string }>(await client.callTool({
+  const mutation = parse<{ state: string; mutationId: string; fingerprint: string }>(await client.callTool({
     name: 'mutation.preview',
     arguments: {
       workspace_id: workspaceId,
@@ -282,48 +221,12 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
       after: 'return value.trim().toLowerCase();',
     },
   }));
-  assert.equal(preview.status, 'approval_required');
-  assert.equal(await readFile(join(fixture.workspaceRoot, DC_FIXTURE_IMPLEMENTATION), 'utf8'), original);
-  assert.deepEqual(await fixtureStatus(fixture.workspaceRoot), []);
-
-  const operatorMatch = /"type":"gateway\.operator","origin":"([^"]+)","urlFile":"([^"]+)"/.exec(stderr);
-  assert.ok(operatorMatch, `the gateway must announce the operator origin locally; stderr was: ${stderr}`);
-  const operatorOrigin = operatorMatch[1]!;
-  assert.match(operatorOrigin, /^http:\/\/127\.0\.0\.1:/, 'operator review must bind loopback only');
-  assert.equal(/token=/.test(stderr), false,
-    'the single-use bootstrap token must not reach the stderr pipe the spawning client inherits');
-
-  // The operator reads the single-use token from disk, beside the state database.
-  const bootstrapUrl = (await readFile(JSON.parse(`"${operatorMatch[2]!}"`) as string, 'utf8')).trim();
-  assert.equal(new URL(bootstrapUrl).origin, operatorOrigin);
-
-  const anonymous = await OperatorBrowser.anonymous(operatorOrigin, preview.mutationId);
-  assert.equal(anonymous.status, 401, 'knowing the operator origin must not grant approval authority');
-  assert.equal(await readFile(join(fixture.workspaceRoot, DC_FIXTURE_IMPLEMENTATION), 'utf8'), original);
-
-  const operator = await OperatorBrowser.open(bootstrapUrl);
-  const reviewPage = await operator.review(preview.mutationId);
-  assert.ok(reviewPage.includes(DC_FIXTURE_IMPLEMENTATION), 'the operator must see the exact target path');
-  const csrf = csrfFrom(reviewPage);
-
-  const replayedBootstrap = await fetch(bootstrapUrl, { redirect: 'manual' });
-  assert.equal(replayedBootstrap.status, 403, 'the bootstrap token must be single use');
-
-  const wrongOrigin = await operator.act(preview.mutationId, 'approve', csrf, { origin: 'http://evil.invalid' });
-  assert.equal(wrongOrigin.status, 403, 'a cross-origin approval must be refused');
-  assert.equal(await readFile(join(fixture.workspaceRoot, DC_FIXTURE_IMPLEMENTATION), 'utf8'), original);
-
-  const approved = await operator.act(preview.mutationId, 'approve', csrf);
-  assert.equal(approved.status, 303, 'the local operator approval must succeed');
-
-  const replayed = await operator.act(preview.mutationId, 'approve', csrf);
-  assert.equal(replayed.status, 409, 'approval must be single use');
-
-  assert.equal(parse<{ state: string }>(await client.callTool({
-    name: 'mutation.result', arguments: { mutation_id: preview.mutationId },
-  })).state, 'SUCCEEDED');
+  assert.equal(mutation.state, 'SUCCEEDED');
   assert.equal(await readFile(join(fixture.workspaceRoot, DC_FIXTURE_IMPLEMENTATION), 'utf8'),
     DC_FIXTURE_FIXED_IMPLEMENTATION);
+  assert.equal(parse<{ state: string }>(await client.callTool({
+    name: 'mutation.result', arguments: { mutation_id: mutation.mutationId },
+  })).state, 'SUCCEEDED');
 
   // D1 — close the loop on the same built surface.
   const afterFix = parse<{ exitCode: number; output: string }>(
@@ -332,7 +235,7 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   assert.match(afterFix.output, /pass 2/);
   assert.match(afterFix.output, /fail 0/);
 
-  // C2 — a brand new file, the step that previously forced another tool entirely.
+  // C2 — file.create uses the same lease-only mutation authority and returns the terminal result.
   const createdPath = 'test/ticket-id.extra.test.js';
   const createdContent = [
     "import test from 'node:test';",
@@ -344,17 +247,11 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
     '});',
     '',
   ].join('\n');
-  const createPreview = parse<{ status: string; mutationId: string }>(await client.callTool({
+  const createResult = parse<{ state: string; mutationId: string }>(await client.callTool({
     name: 'file.create',
     arguments: { workspace_id: workspaceId, path: createdPath, content: createdContent },
   }));
-  assert.equal(createPreview.status, 'approval_required');
-  await assert.rejects(() => readFile(join(fixture.workspaceRoot, createdPath), 'utf8'),
-    'a creation proposal must not touch the workspace');
-
-  const createReview = await operator.review(createPreview.mutationId);
-  assert.ok(createReview.includes(createdPath), 'the operator must see the exact new path');
-  assert.equal((await operator.act(createPreview.mutationId, 'approve', csrfFrom(createReview))).status, 303);
+  assert.equal(createResult.state, 'SUCCEEDED');
   assert.equal(await readFile(join(fixture.workspaceRoot, createdPath), 'utf8'), createdContent);
 
   // The created test must actually run, proving the file landed usable rather than merely present.
@@ -421,30 +318,56 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   // what makes everything recorded afterwards attributable to WAG and its execution backend.
   await rm(canaryPath, { force: true });
 
-  const commitPreview = parse<{ status: string; commitId: string; branch: string; oldHead: string; treeSha: string }>(
-    await client.callTool({
-      name: 'git.commit',
-      arguments: {
-        workspace_id: workspaceId,
-        paths: [DC_FIXTURE_IMPLEMENTATION, createdPath],
-        message: 'fix: trim outer whitespace before lowercasing\n\nProposed by WAG; $(touch pwned) stays data.\n',
-      },
-    }));
-  assert.equal(commitPreview.status, 'approval_required');
-  assert.equal(commitPreview.branch, 'wag-work');
-  assert.equal(commitPreview.oldHead, DC_FIXTURE_BASELINE_HEAD);
+  // Add a commit-only lease after the branch exists. It does not overlap command/mutation
+  // authority, so request-time resolution remains unique.
+  const commitLeaseStore = new SqliteDurableStore(statePath);
+  try {
+    const now = Date.now();
+    const workspaceRoot = await realpath(fixture.workspaceRoot);
+    commitLeaseStore.insertGoalLease({
+      leaseId: 'lease_acceptance_commit',
+      createdAt: now,
+      notBefore: now - 1_000,
+      expiresAt: now + 10 * 60_000,
+      bindings: JSON.stringify({
+        workspaceRoots: [workspaceRoot],
+        allowedTools: ['git.commit'],
+        pathPatterns: ['src/**', 'test/**'],
+        maxFiles: 8,
+        maxBytes: 100_000,
+        maxDiffBytes: 32_000,
+        admittedSessions: [admittedSessionId],
+        admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
+        commitSemantics: 'commit-to-bound-branch',
+        commitBindings: [{
+          workspaceRoot,
+          branch: 'wag-work',
+          headSha: DC_FIXTURE_BASELINE_HEAD,
+        }],
+      }),
+    });
+  } finally {
+    commitLeaseStore.close();
+  }
 
-  const commitReview = await operator.review(commitPreview.commitId, 'commits');
-  assert.ok(commitReview.includes(createdPath), 'the operator must see every selected path');
-  assert.ok(commitReview.includes(fixture.workspaceRoot),
-    'the operator must see which repository the commit lands in');
-  assert.ok(commitReview.includes(`M ${DC_FIXTURE_IMPLEMENTATION}`) && commitReview.includes(`A ${createdPath}`),
-    'the operator must see the resulting change set, not only the requested paths');
-  assert.equal((await operator.act(commitPreview.commitId, 'approve', csrfFrom(commitReview), { kind: 'commits' })).status, 303);
-
-  const commitView = parse<{ state: string; commit: string }>(
-    await client.callTool({ name: 'git.commit.result', arguments: { commit_id: commitPreview.commitId } }));
+  const commitView = parse<{
+    state: string; commitId: string; branch: string; oldHead: string; treeSha: string; commit: string;
+  }>(await client.callTool({
+    name: 'git.commit',
+    arguments: {
+      workspace_id: workspaceId,
+      paths: [DC_FIXTURE_IMPLEMENTATION, createdPath],
+      message: 'fix: trim outer whitespace before lowercasing\n\nProposed by WAG; $(touch pwned) stays data.\n',
+    },
+  }));
   assert.equal(commitView.state, 'SUCCEEDED');
+  assert.equal(commitView.branch, 'wag-work');
+  assert.equal(commitView.oldHead, DC_FIXTURE_BASELINE_HEAD);
+
+  const persistedCommit = parse<{ state: string; commit: string }>(
+    await client.callTool({ name: 'git.commit.result', arguments: { commit_id: commitView.commitId } }));
+  assert.equal(persistedCommit.state, 'SUCCEEDED');
+  assert.equal(persistedCommit.commit, commitView.commit);
 
   // Read the canary before this test runs any git of its own: `git write-tree` below would fire
   // post-index-change from the same hostile hooks path and blur the attribution. Everything in it
@@ -459,7 +382,7 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
     (await execFileAsync('git', args, { cwd: fixture.workspaceRoot })).stdout.trim();
   assert.equal(await gitOut(['rev-parse', 'HEAD']), commitView.commit);
   assert.equal(await gitOut(['rev-parse', 'HEAD^']), DC_FIXTURE_BASELINE_HEAD, 'exactly one parent');
-  assert.equal(await gitOut(['rev-parse', 'HEAD^{tree}']), commitPreview.treeSha);
+  assert.equal(await gitOut(['rev-parse', 'HEAD^{tree}']), commitView.treeSha);
   assert.deepEqual((await gitOut(['show', '--name-only', '--format=', 'HEAD'])).split('\n').sort(),
     [DC_FIXTURE_IMPLEMENTATION, createdPath].sort());
   assert.equal(await gitOut(['show', `HEAD:${DC_FIXTURE_IMPLEMENTATION}`]), DC_FIXTURE_FIXED_IMPLEMENTATION.trimEnd());
@@ -498,9 +421,10 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
     fixtureTree: fixture.tree,
     baselineExitCode: baseline.exitCode,
     afterFixExitCode: afterFix.exitCode,
-    operatorApprovals: 3,
+    operatorApprovals: 0,
+    directLeaseOnlyEffects: true,
     createdFile: createdPath,
-    commitBranch: commitPreview.branch,
+    commitBranch: commitView.branch,
     commitSha: commitView.commit,
     commitParent: DC_FIXTURE_BASELINE_HEAD,
     commitClassHooksFired: false,

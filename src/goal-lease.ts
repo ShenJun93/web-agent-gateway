@@ -40,6 +40,8 @@ export type LeaseDenialCode =
   | 'SESSION_NOT_ADMITTED'
   | 'ADAPTER_NOT_ADMITTED'
   | 'WORKSPACE_NOT_GRANTED'
+  | 'WORKSPACE_IDENTITY_NOT_GRANTED'
+  | 'WORKSPACE_IDENTITY_MISMATCH'
   | 'PATH_NOT_GRANTED'
   | 'PATH_ESCAPES_ROOT'
   | 'FILE_BUDGET_EXHAUSTED'
@@ -165,6 +167,12 @@ export function rolloverCommitBindingHeads(
   return successor;
 }
 
+/** One stable filesystem/repository identity bound to one canonical workspace root. */
+export interface WorkspaceIdentityBinding {
+  readonly workspaceRoot: string;
+  readonly fingerprint: string;
+}
+
 /**
  * Exactly what a lease grants. Everything absent is denied; there is no wildcard for any field,
  * and an empty list grants nothing rather than everything — which is the opposite of the usual
@@ -173,6 +181,8 @@ export function rolloverCommitBindingHeads(
 export interface GoalLeaseBindings {
   /** Canonical absolute roots. A workspace must resolve to one of these exactly. */
   readonly workspaceRoots: readonly string[];
+  /** Optional stable identity layer. When present it covers every root exactly once. */
+  readonly workspaceIdentities?: readonly WorkspaceIdentityBinding[];
   readonly allowedTools: readonly string[];
   /** Relative to the matched root, `/`-separated. `*` stays inside a segment, `**` crosses. */
   readonly pathPatterns: readonly string[];
@@ -236,6 +246,8 @@ export interface LeaseRequest {
   readonly adapterId: string;
   /** The workspace's canonical root as read from the durable record, already resolved. */
   readonly workspaceRoot: string;
+  /** Stable filesystem/repository identity observed by WAG for this durable workspace handle. */
+  readonly workspaceFingerprint?: string;
   /** Relative to `workspaceRoot`, `/`-separated, never absolute and never containing `..`. */
   readonly path: string;
   /** Bytes this one proposal would write. */
@@ -396,6 +408,30 @@ export function validateBindings(bindings: GoalLeaseBindings): string | undefine
   }
   if (bindings.workspaceRoots.some((r) => typeof r !== 'string' || r.length === 0)) {
     return 'workspaceRoots must all be non-empty';
+  }
+  if (bindings.workspaceIdentities !== undefined) {
+    if (!Array.isArray(bindings.workspaceIdentities) || bindings.workspaceIdentities.length === 0) {
+      return 'workspaceIdentities must be a non-empty array when present';
+    }
+    if (bindings.workspaceIdentities.length !== bindings.workspaceRoots.length) {
+      return 'workspaceIdentities must cover every workspaceRoot exactly once';
+    }
+    const seenIdentityRoots = new Set<string>();
+    for (const identity of bindings.workspaceIdentities) {
+      if (typeof identity !== 'object' || identity === null || Array.isArray(identity)) {
+        return 'workspaceIdentities entries must be objects';
+      }
+      if (typeof identity.workspaceRoot !== 'string' || !bindings.workspaceRoots.includes(identity.workspaceRoot)) {
+        return 'workspaceIdentities entries must name a workspaceRoot';
+      }
+      if (seenIdentityRoots.has(identity.workspaceRoot)) {
+        return 'workspaceIdentities may name each workspaceRoot at most once';
+      }
+      seenIdentityRoots.add(identity.workspaceRoot);
+      if (typeof identity.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(identity.fingerprint)) {
+        return 'workspaceIdentities fingerprints must be lowercase SHA-256 values';
+      }
+    }
   }
   if (!Array.isArray(bindings.allowedTools) || bindings.allowedTools.length === 0) {
     return 'allowedTools must list at least one tool';
@@ -573,6 +609,15 @@ export function evaluateGoalLease(input: {
   }
   if (!b.workspaceRoots.includes(request.workspaceRoot)) {
     return deny('WORKSPACE_NOT_GRANTED', 'the workspace root is not one the lease names');
+  }
+  if (b.workspaceIdentities !== undefined) {
+    const identity = b.workspaceIdentities.find((entry) => entry.workspaceRoot === request.workspaceRoot);
+    if (!identity) {
+      return deny('WORKSPACE_IDENTITY_NOT_GRANTED', 'the workspace root has no stable identity binding');
+    }
+    if (request.workspaceFingerprint !== identity.fingerprint) {
+      return deny('WORKSPACE_IDENTITY_MISMATCH', 'the observed workspace identity does not match the lease');
+    }
   }
   // Refused whatever the patterns say, and refused before them: a lease over the gateway's own
   // checkout could edit the approver, the kill switch or the extension manifest, and a bound that

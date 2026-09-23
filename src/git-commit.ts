@@ -117,7 +117,11 @@ export class DurableCommitCoordinator {
     /** Absent by default, so autonomous commit admission is off unless deliberately wired. */
     goalLease?: { leaseId: string; killSwitch: () => boolean };
     /** Multi-active resolver; the configured goalLease above is retained only as a compatibility fallback. */
-    goalLeaseResolver?: { killSwitch: () => boolean };
+    goalLeaseResolver?: {
+      killSwitch: () => boolean;
+      workspaceFingerprint?: (workspaceId: string) => string | undefined;
+      liveWorkspaceFingerprint?: (workspaceId: string, canonicalRoot: string) => Promise<string | undefined>;
+    };
     /**
      * The Goal UI Delegation named in local configuration, if any (ADR-0029).
      *
@@ -291,11 +295,13 @@ export class DurableCommitCoordinator {
       now: this.now(),
     });
     const head = record.oldHead;
+    const workspaceFingerprint = this.options.goalLeaseResolver?.workspaceFingerprint?.(record.workspaceId);
     const requests = record.paths.map((path) => ({
       tool: COMMIT_TOOL,
       sessionId: record.sessionId,
       adapterId: record.adapterId,
       workspaceRoot: workspace.canonicalRoot,
+      ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
       path,
       diffBytes: 0,
       wantsCommit: true,
@@ -382,6 +388,64 @@ export class DurableCommitCoordinator {
       : { admitted: false, code: 'LEASE_EXPIRED', detail: 'the commit was no longer awaiting review' };
   }
 
+  /**
+   * Re-resolve a policy-approved commit immediately before the backend may move a ref.
+   * Human-approved commits do not depend on a Goal Lease and keep their existing path.
+   */
+  private async revalidatePolicyAuthority(record: CommitRecord, root: string): Promise<LeaseDecision> {
+    const authority = this.options.store.getCommitAuthority(record.commitId);
+    if (!authority) {
+      return { admitted: false, code: 'NO_LEASE', detail: 'claimed commit has no durable authority row' };
+    }
+    if (authority.authority !== 'POLICY_APPROVED') return { admitted: true };
+
+    // Legacy singleton mode is compatibility-only. Current production runtimes always wire the
+    // multi-active resolver, which is the path this effect-boundary check hardens.
+    if (!this.options.goalLeaseResolver) return { admitted: true };
+    if (!authority.leaseId) {
+      return { admitted: false, code: 'NO_LEASE', detail: 'policy-approved commit has no lease id' };
+    }
+
+    const delegatedGoalId = resolveDelegatedGoal({
+      port: this.options.store,
+      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      now: this.now(),
+    });
+    const workspaceFingerprint = this.options.goalLeaseResolver.liveWorkspaceFingerprint === undefined
+      ? this.options.goalLeaseResolver.workspaceFingerprint?.(record.workspaceId)
+      : await this.options.goalLeaseResolver.liveWorkspaceFingerprint(record.workspaceId, root);
+    const requests = record.paths.map((path) => ({
+      tool: COMMIT_TOOL,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      workspaceRoot: root,
+      ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
+      path,
+      diffBytes: 0,
+      wantsCommit: true,
+      ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
+      branch: record.branch,
+      headSha: record.oldHead,
+    }));
+    const resolution = resolveGoalLease(this.options.store, {
+      now: this.now(),
+      requests,
+      killSwitch: this.options.goalLeaseResolver.killSwitch(),
+      gatewayRoot: GATEWAY_ROOT,
+    });
+    if (!resolution.admitted) return resolution;
+    if (resolution.resolved.lease.leaseId !== authority.leaseId) {
+      return {
+        admitted: false,
+        code: 'NO_LEASE',
+        detail: `execution authority changed from ${authority.leaseId} to ${resolution.resolved.lease.leaseId}`,
+      };
+    }
+    return { admitted: true };
+  }
+
   async approveLocal(commitId: string): Promise<boolean> {
     const now = this.now();
     // Captured before the claim, because claiming changes the state this describes.
@@ -431,6 +495,13 @@ export class DurableCommitCoordinator {
       // The path policy is re-applied here, not only at preview: approval is a separate moment,
       // and a stored path must still pass workspace confinement before it reaches git.
       const paths = await validatePaths(claimed.paths, workspace.canonicalRoot);
+      const authorityDecision = await this.revalidatePolicyAuthority(claimed, workspace.canonicalRoot);
+      if (!authorityDecision.admitted) {
+        this.options.store.finishCommit(
+          commitId, 'FAILED', this.now(), undefined, `GoalLease_${authorityDecision.code}`,
+        );
+        return true;
+      }
       const result = await this.options.backend.commit(workspace.canonicalRoot, {
         paths,
         message: claimed.message,

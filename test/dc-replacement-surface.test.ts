@@ -223,6 +223,147 @@ test('workspace.open embeds capability preflight and capabilities.describe retur
   assert.deepEqual(described, opened.authority);
 });
 
+test('direct stdio lease-only mutation executes immediately and returns the terminal result', async (t) => {
+  const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
+  const callerContext = createGatewayCallerContext({
+    ownerId: 'owner_direct_lease',
+    sessionId: 'session_direct_lease',
+    adapterId: 'private.stdio.v1',
+  });
+  let admissions = 0;
+  let rejections = 0;
+  const preview = {
+    status: 'approval_required' as const,
+    mutationId: 'mut_direct_lease',
+    fingerprint: 'f'.repeat(64),
+    expiresAt: 2_000,
+    path: 'note.txt',
+    baseSha256: 'a'.repeat(64),
+    resultSha256: 'b'.repeat(64),
+    additions: 1,
+    removals: 1,
+  };
+  const result = {
+    mutationId: preview.mutationId,
+    state: 'SUCCEEDED' as const,
+    path: preview.path,
+    baseSha256: preview.baseSha256,
+    resultSha256: preview.resultSha256,
+    fingerprint: preview.fingerprint,
+    additions: 1,
+    removals: 1,
+    reviewDeadline: 2_000,
+    completedAt: 1_100,
+  };
+  const coordinator = {
+    async preview() { return preview; },
+    async replace() { return preview; },
+    result() { return result; },
+    async admitByPolicy() { admissions += 1; return { admitted: true as const }; },
+    rejectLocal() { rejections += 1; return true; },
+  };
+  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), {
+    mutationContext: { callerContext, coordinator, leaseOnly: true },
+  }));
+
+  const response = await client.callTool({
+    name: 'file.replace',
+    arguments: {
+      workspace_id: 'ws_direct',
+      path: 'note.txt',
+      base_sha256: preview.baseSha256,
+      content: 'changed\n',
+    },
+  });
+
+  assert.notEqual(response.isError, true);
+  assert.equal((response.structuredContent as { state?: string }).state, 'SUCCEEDED');
+  assert.equal('status' in (response.structuredContent as object), false,
+    'direct stdio must not return approval_required after policy admission');
+  assert.equal(admissions, 1);
+  assert.equal(rejections, 0);
+});
+
+test('direct stdio lease-only denial has no human-review fallback for mutations or commits', async (t) => {
+  const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
+  const callerContext = createGatewayCallerContext({
+    ownerId: 'owner_direct_deny',
+    sessionId: 'session_direct_deny',
+    adapterId: 'private.stdio.v1',
+  });
+  let mutationRejected = 0;
+  let commitRejected = 0;
+  const mutationPreview = {
+    status: 'approval_required' as const,
+    mutationId: 'mut_direct_deny',
+    fingerprint: 'c'.repeat(64),
+    expiresAt: 2_000,
+    path: 'note.txt',
+    baseSha256: 'a'.repeat(64),
+    resultSha256: 'b'.repeat(64),
+    additions: 1,
+    removals: 1,
+  };
+  const commitPreview = {
+    status: 'approval_required' as const,
+    commitId: 'cmt_direct_deny',
+    branch: 'work',
+    oldHead: '1'.repeat(40),
+    treeSha: '2'.repeat(40),
+    paths: ['note.txt'],
+    changes: [],
+    eolNormalized: [],
+    messageSha256: 'd'.repeat(64),
+    fingerprint: 'e'.repeat(64),
+    expiresAt: 2_000,
+  };
+  const denied = { admitted: false as const, code: 'NO_LEASE' as const, detail: 'no matching lease' };
+  const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), {
+    mutationContext: {
+      callerContext,
+      leaseOnly: true,
+      coordinator: {
+        async preview() { return mutationPreview; },
+        async replace() { return mutationPreview; },
+        result() { throw new Error('denied direct mutation must not read a success result'); },
+        async admitByPolicy() { return denied; },
+        rejectLocal() { mutationRejected += 1; return true; },
+      },
+    },
+    gitCommitContext: {
+      callerContext,
+      leaseOnly: true,
+      coordinator: {
+        async preview() { return commitPreview; },
+        result() { throw new Error('denied direct commit must not read a success result'); },
+        async admitByPolicy() { return denied; },
+        rejectLocal() { commitRejected += 1; return true; },
+      },
+    },
+  }));
+
+  const mutation = await client.callTool({
+    name: 'file.replace',
+    arguments: {
+      workspace_id: 'ws_direct',
+      path: 'note.txt',
+      base_sha256: mutationPreview.baseSha256,
+      content: 'changed\n',
+    },
+  });
+  assert.equal(mutation.isError, true);
+  assert.match(JSON.stringify(mutation.content), /NO_LEASE/);
+  assert.equal(mutationRejected, 1);
+
+  const commit = await client.callTool({
+    name: 'git.commit',
+    arguments: { workspace_id: 'ws_direct', paths: ['note.txt'], message: 'test: direct deny' },
+  });
+  assert.equal(commit.isError, true);
+  assert.match(JSON.stringify(commit.content), /NO_LEASE/);
+  assert.equal(commitRejected, 1);
+});
+
 // --------------------------------------------------------------------------
 // Gate 3 — capability profile
 // --------------------------------------------------------------------------

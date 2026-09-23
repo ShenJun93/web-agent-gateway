@@ -49,6 +49,10 @@ type Decide = (event: unknown) => Verdict;
 const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 
 const liveSource = await readFile(guardPath, 'utf8');
+const leaseControlSource = await readFile(
+  new URL('../scripts/goal-lease-delegation-control.ts', import.meta.url),
+  'utf8',
+);
 const { decide } = (await import(guardUrl.href)) as { decide: Decide };
 
 const call = (tool_name: string, tool_input: unknown): Verdict => decide({ tool_name, tool_input });
@@ -88,6 +92,16 @@ test('the live guard is the one a human authorised', () => {
     'the guard on disk is not the authorised build. It was applied out of band by a human on '
     + '2026-09-21 and verified by reproducing the transformation from the committed baseline; a '
     + 'different digest means someone has edited it since, and the receipt is stale.',
+  );
+});
+
+test('Goal Lease issuance keeps the exact 12-hour ceiling valid despite the skew allowance', () => {
+  assert.match(leaseControlSource, /const notBefore = createdAt - 1_000;/);
+  assert.match(leaseControlSource, /expiresAt: notBefore \+ fresh\.plan\.ttlMs/);
+  assert.doesNotMatch(
+    leaseControlSource,
+    /expiresAt: createdAt \+ fresh\.plan\.ttlMs/,
+    '720 minutes must not become a 12h+1s malformed lease',
   );
 });
 
@@ -226,6 +240,11 @@ test('read-only inspection of the issuance surfaces is never refused', () => {
   allowed(
     bash(`npx tsx ${LEASE_CONTROL_CLI} --show lease_abc --state E:/wag.sqlite`),
     'showing a Goal Lease',
+  );
+  allowed(
+    bash(`npx tsx ${LEASE_CONTROL_CLI} --plan --state E:/wag.sqlite `
+      + '--bindings E:/reviewed-bindings.json --ttl-minutes 240'),
+    'validating a Goal Lease issue plan without inserting authority',
   );
   allowed(bash(`npx tsx ${LEASE_CONTROL_CLI} --help`), 'reading Goal Lease usage');
 });

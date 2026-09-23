@@ -26,7 +26,7 @@ import { readDevspaceText } from './executor/devspace-read.js';
 import { readDevspaceRawFileIdentity } from './executor/devspace-file-identity.js';
 import { describeReadableUtf8Text } from './file-read-metadata.js';
 
-export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, openWorkspaceId }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string> }) {
+export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, openWorkspaceId, bindWorkspaceIdentity }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string>; bindWorkspaceIdentity?: (workspaceId: string, canonicalRoot: string, devspaceWorkspaceId: string) => Promise<void> }) {
   const workspaces = new Map<string, WorkspaceBinding>();
   const inspection = new DevspaceRepositoryInspectionBackend(executor);
 
@@ -59,6 +59,9 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
         const devspaceWorkspaceId = await trace.phase('executorMs', () => executor.openWorkspace(canonicalRoot));
         const result = await trace.phase('aggregationMs', async () => {
           const workspaceId = openWorkspaceId ? await openWorkspaceId(canonicalRoot) : `ws_${randomUUID()}`;
+          if (bindWorkspaceIdentity) {
+            await bindWorkspaceIdentity(workspaceId, canonicalRoot, devspaceWorkspaceId);
+          }
           workspaces.set(workspaceId, { devspaceWorkspaceId, canonicalRoot });
           return { workspaceId };
         });
@@ -139,7 +142,7 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
     async commandRun(
       workspaceId: string,
       argv: readonly string[],
-      options: { cwd?: string; timeoutMs?: number; maxOutputTokens?: number } = {},
+      options: { cwd?: string; timeoutMs?: number; maxOutputTokens?: number; beforeExecute?: () => void | Promise<void> } = {},
     ) {
       const trace = startTrace('command.run', telemetry); trace.markIngress();
       const startedAt = Date.now();
@@ -161,6 +164,9 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
           }, cwd);
           return { profile, devspaceWorkspaceId: workspace.devspaceWorkspaceId };
         });
+        if (options.beforeExecute) {
+          await trace.phase('policyMs', async () => { await options.beforeExecute!(); });
+        }
         const result = await trace.phase('executorMs', () => executor.execCommand(
           scoped.devspaceWorkspaceId,
           scoped.profile.command,
@@ -424,12 +430,20 @@ export function createBrowserVerifyAdmittedMcpServer(
 
 export interface GitCommitMcpContext {
   callerContext: GatewayCallerContext;
-  coordinator: Pick<DurableCommitCoordinator, 'preview' | 'result'>;
+  coordinator: Pick<DurableCommitCoordinator, 'preview' | 'result' | 'admitByPolicy' | 'rejectLocal'>;
+  /**
+   * Direct stdio development is lease-only: a commit either executes under one uniquely matching
+   * Goal Lease or is terminally refused. Browser proposal surfaces leave this false/absent and keep
+   * their human-review semantics.
+   */
+  leaseOnly?: boolean;
 }
 
 export interface MutationMcpContext {
   callerContext: GatewayCallerContext;
-  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'replace' | 'result'>;
+  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'replace' | 'result' | 'admitByPolicy' | 'rejectLocal'>;
+  /** Same direct-stdio lease-only boundary as GitCommitMcpContext. */
+  leaseOnly?: boolean;
 }
 
 /**
@@ -563,6 +577,7 @@ export function createGatewayMcpServer(
         ...(cwd === undefined ? {} : { cwd }),
         ...(timeout_ms === undefined ? {} : { timeoutMs: timeout_ms }),
         ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+        beforeExecute: () => commandContext.authorize(workspace_id),
       }));
     });
   }
@@ -576,11 +591,14 @@ export function createGatewayMcpServer(
       after: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
     }).strict();
     server.registerTool('mutation.preview', {
-      description: 'Persist an immutable preview of one bounded existing-file update for local human review.',
+      description: mutationContext.leaseOnly
+        ? 'Execute one bounded existing-file update under one uniquely matching Goal Lease; otherwise deny without pending review.'
+        : 'Persist an immutable preview of one bounded existing-file update for local human review.',
       inputSchema: previewInput,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    }, async ({ workspace_id, path, base_sha256, before, after }) => directMutationToolResult(
-      await mutationContext.coordinator.preview(
+    }, async ({ workspace_id, path, base_sha256, before, after }) => directMutationExecution(
+      mutationContext,
+      () => mutationContext.coordinator.preview(
         mutationContext.callerContext,
         workspace_id,
         { path, baseSha256: base_sha256, before, after },
@@ -588,7 +606,9 @@ export function createGatewayMcpServer(
     ));
 
     server.registerTool('file.replace', {
-      description: 'Propose replacing one existing text file by exact base SHA-256; no raw patch text is accepted.',
+      description: mutationContext.leaseOnly
+        ? 'Replace one existing text file under one uniquely matching Goal Lease and exact base SHA-256.'
+        : 'Propose replacing one existing text file by exact base SHA-256; no raw patch text is accepted.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         path: z.string().min(1).max(4096),
@@ -596,8 +616,9 @@ export function createGatewayMcpServer(
         content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    }, async ({ workspace_id, path, base_sha256, content }) => directMutationToolResult(
-      await mutationContext.coordinator.replace(
+    }, async ({ workspace_id, path, base_sha256, content }) => directMutationExecution(
+      mutationContext,
+      () => mutationContext.coordinator.replace(
         mutationContext.callerContext,
         workspace_id,
         { path, baseSha256: base_sha256, content },
@@ -605,15 +626,23 @@ export function createGatewayMcpServer(
     ));
 
     server.registerTool('file.create', {
-      description: 'Propose creating one new file for local human review; nothing is written until approved.',
+      description: mutationContext.leaseOnly
+        ? 'Create one new file under one uniquely matching Goal Lease; otherwise deny without pending review.'
+        : 'Propose creating one new file for local human review; nothing is written until approved.',
       inputSchema: z.object({
         workspace_id: z.string().min(1),
         path: z.string().min(1),
         content: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
       }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, async ({ workspace_id, path, content }) => directMutationToolResult(
-      await mutationContext.coordinator.preview(
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: mutationContext.leaseOnly === true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    }, async ({ workspace_id, path, content }) => directMutationExecution(
+      mutationContext,
+      () => mutationContext.coordinator.preview(
         mutationContext.callerContext,
         workspace_id,
         // A creation is an empty-base mutation (ADR-0022): the base is the empty file, so the
@@ -633,16 +662,26 @@ export function createGatewayMcpServer(
 
   if (gitCommitContext) {
     server.registerTool('git.commit', {
-      description: 'Propose one commit of an exact path set for local human review; nothing is committed until approved.',
+      description: gitCommitContext.leaseOnly
+        ? 'Create one exact-path commit under one uniquely matching Goal Lease and branch/HEAD CAS.'
+        : 'Propose one commit of an exact path set for local human review; nothing is committed until approved.',
       inputSchema: z.object({
         workspace_id: z.string().min(1),
         paths: z.array(z.string().min(1).max(1024)).min(1).max(64),
         message: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 8 * 1024),
       }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, async ({ workspace_id, paths, message }) => toolResult(await gitCommitContext.coordinator.preview(
-      gitCommitContext.callerContext, workspace_id, { paths, message },
-    )));
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: gitCommitContext.leaseOnly === true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    }, async ({ workspace_id, paths, message }) => directCommitExecution(
+      gitCommitContext,
+      () => gitCommitContext.coordinator.preview(
+        gitCommitContext.callerContext, workspace_id, { paths, message },
+      ),
+    ));
 
     server.registerTool('git.commit.result', {
       description: 'Read the durable state and bounded result of one proposed commit.',
@@ -652,6 +691,44 @@ export function createGatewayMcpServer(
   }
 
   return server;
+}
+
+async function directMutationExecution<T extends object & {
+  mutationId: string;
+  baseSha256: string;
+  resultSha256: string;
+}>(
+  context: MutationMcpContext,
+  create: () => Promise<T>,
+) {
+  const preview = await create();
+  if (context.leaseOnly !== true) return directMutationToolResult(preview);
+
+  const decision = await context.coordinator.admitByPolicy(preview.mutationId);
+  if (!decision.admitted) {
+    // Direct stdio has no human-review fallback. Terminalize the just-created record so it never
+    // appears on the operator page, then report only the policy denial to the caller.
+    context.coordinator.rejectLocal(preview.mutationId);
+    throw new Error(`Gateway denied mutation: ${decision.code}`);
+  }
+  return directMutationToolResult(
+    context.coordinator.result(context.callerContext, preview.mutationId),
+  );
+}
+
+async function directCommitExecution<T extends object & { commitId: string }>(
+  context: GitCommitMcpContext,
+  create: () => Promise<T>,
+) {
+  const preview = await create();
+  if (context.leaseOnly !== true) return toolResult(preview);
+
+  const decision = await context.coordinator.admitByPolicy(preview.commitId);
+  if (!decision.admitted) {
+    context.coordinator.rejectLocal(preview.commitId);
+    throw new Error(`Gateway denied commit: ${decision.code}`);
+  }
+  return toolResult(context.coordinator.result(context.callerContext, preview.commitId));
 }
 
 function directMutationToolResult<T extends object & { baseSha256: string; resultSha256: string }>(value: T) {

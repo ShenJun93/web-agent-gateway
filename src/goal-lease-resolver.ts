@@ -17,7 +17,11 @@ export type GoalLeaseResolution =
   | { readonly admitted: true; readonly resolved: ResolvedGoalLease }
   | { readonly admitted: false; readonly code: LeaseDenialCode | 'AMBIGUOUS_LEASE'; readonly detail: string };
 
-function parseLease(store: SqliteDurableStore, leaseId: string): ResolvedGoalLease | undefined {
+function parseLease(
+  store: SqliteDurableStore,
+  leaseId: string,
+  spendOverride?: LeaseSpend,
+): ResolvedGoalLease | undefined {
   const row = store.getGoalLeaseRow(leaseId);
   if (!row) return undefined;
   let bindings: GoalLeaseBindings;
@@ -35,7 +39,7 @@ function parseLease(store: SqliteDurableStore, leaseId: string): ResolvedGoalLea
       ...(row.revokedAt === undefined ? {} : { revokedAt: row.revokedAt }),
       bindings,
     },
-    spend: store.goalLeaseSpend(row.leaseId),
+    spend: spendOverride ?? store.goalLeaseSpend(row.leaseId),
   };
 }
 
@@ -53,6 +57,12 @@ export function resolveGoalLease(
     readonly requests: readonly LeaseRequest[];
     readonly killSwitch: boolean;
     readonly gatewayRoot?: string;
+    /**
+     * Narrow execution-boundary override used when an effect already has a durable authority row.
+     * It lets the caller re-check the exact authority envelope without double-counting that same
+     * effect. Ordinary admission must omit this and always uses durable spend.
+     */
+    readonly spendOverrides?: ReadonlyMap<string, LeaseSpend>;
   },
 ): GoalLeaseResolution {
   if (input.requests.length === 0) {
@@ -62,7 +72,7 @@ export function resolveGoalLease(
   const matches: ResolvedGoalLease[] = [];
 
   for (const leaseId of store.listGoalLeaseIds()) {
-    const candidate = parseLease(store, leaseId);
+    const candidate = parseLease(store, leaseId, input.spendOverrides?.get(leaseId));
     if (!candidate) continue;
 
     let admitsAll = true;

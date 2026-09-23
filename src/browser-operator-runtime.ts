@@ -15,7 +15,9 @@ import { DurableVerifyJobCoordinator } from './durable-verify-job.js';
 import { DurableCommitCoordinator } from './git-commit.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
+import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
 import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
+import { installGoalLeaseAtomicBudgetGuard } from './goal-lease-atomic-budget.js';
 import { DevspaceVerifyExecutionPort } from './executor/devspace-verify.js';
 import { startBrowserAdmissionHttpServer } from './http-server.js';
 import { operatorDenialsToStderr, startOperatorServer } from './operator-server.js';
@@ -34,6 +36,7 @@ import {
   UiDelegationDispatchPlane,
   createDelegationDispatchPort,
 } from './goal-ui-delegation-dispatch.js';
+import { WorkspaceIdentityRegistry } from './workspace-identity.js';
 
 /** How often a configured lease is offered the pending queue. Idle when nothing is pending. */
 const LEASE_ADMISSION_INTERVAL_MS = 2_000;
@@ -108,6 +111,7 @@ export async function startBrowserOperatorRuntime(options: {
   }
   const bootstrapToken = randomBytes(32).toString('base64url');
   let store: SqliteDurableStore | undefined;
+  let workspaceIdentities: WorkspaceIdentityRegistry | undefined;
   let admission: BrowserAdmissionRegistry | undefined;
   let privateRuntime: Awaited<ReturnType<typeof bootstrapPrivateGateway>> | undefined;
   let http: Awaited<ReturnType<typeof startBrowserAdmissionHttpServer>> | undefined;
@@ -135,6 +139,8 @@ export async function startBrowserOperatorRuntime(options: {
     await mkdir(dirname(options.statePath), { recursive: true });
     await mkdir(dirname(options.discoveryPath), { recursive: true });
     store = new SqliteDurableStore(options.statePath);
+    installGoalLeaseAtomicBudgetGuard(options.statePath);
+    workspaceIdentities = new WorkspaceIdentityRegistry(options.statePath);
     // The correlation is the session key, so on the adapter that can propose changes it must be
     // a server-minted UUID rather than any string a caller chose.
     admission = new BrowserAdmissionRegistry(
@@ -146,6 +152,8 @@ export async function startBrowserOperatorRuntime(options: {
     const workspaces = new AdmittedWorkspaceService({
       store,
       executor: privateRuntime.executor,
+      identityExecutor: privateRuntime.executor,
+      workspaceIdentities,
       inspection,
       allowedRoots: config.allowedRoots,
     });
@@ -175,8 +183,42 @@ export async function startBrowserOperatorRuntime(options: {
      */
     const legacyGoalLeaseId = engineering.mutation.goalLeaseId;
     const killSwitchDir = dirname(options.statePath);
+    const authorityStore = store;
+    const authorityRuntime = privateRuntime;
+    const identityRegistry = workspaceIdentities;
+
+    async function liveWorkspaceFingerprint(
+      workspaceId: string,
+      canonicalRoot: string,
+    ): Promise<string | undefined> {
+      const workspace = authorityStore.getWorkspace(workspaceId);
+      if (!workspace || workspace.backendKind !== 'devspace') {
+        throw new Error('Gateway denied workspace identity backend');
+      }
+      const observedWorkspaceRoot = process.platform === 'win32'
+        ? workspace.canonicalRoot.toLowerCase() : workspace.canonicalRoot;
+      const expectedWorkspaceRoot = process.platform === 'win32'
+        ? canonicalRoot.toLowerCase() : canonicalRoot;
+      if (observedWorkspaceRoot !== expectedWorkspaceRoot) {
+        throw new Error('Gateway denied workspace identity drift');
+      }
+
+      const devspaceWorkspaceId = await authorityRuntime.executor.openWorkspace(canonicalRoot);
+      const observation = await observeDevspaceWorkspaceIdentity(
+        authorityRuntime.executor, devspaceWorkspaceId, canonicalRoot,
+      );
+      const observedRoot = process.platform === 'win32'
+        ? observation.canonicalRoot.toLowerCase() : observation.canonicalRoot;
+      if (observedRoot !== expectedWorkspaceRoot) {
+        throw new Error('Gateway denied workspace identity drift');
+      }
+      return identityRegistry.record(workspaceId, observation).fingerprint;
+    }
+
     const goalLeaseResolver = {
       killSwitch: () => isKillSwitchEngaged(killSwitchDir),
+      workspaceFingerprint: (workspaceId: string) => identityRegistry.fingerprint(workspaceId),
+      liveWorkspaceFingerprint,
     };
 
     /**
@@ -393,6 +435,7 @@ export async function startBrowserOperatorRuntime(options: {
         await operator?.close();
         admission?.close();
         await privateRuntime?.close();
+        workspaceIdentities?.close();
         store?.close();
       },
     };
@@ -404,6 +447,7 @@ export async function startBrowserOperatorRuntime(options: {
     await operator?.close().catch(() => undefined);
     admission?.close();
     await privateRuntime?.close().catch(() => undefined);
+    workspaceIdentities?.close();
     store?.close();
     throw error;
   }

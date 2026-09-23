@@ -5,6 +5,7 @@ import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-p
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
 import { resolveGoalLease } from './goal-lease-resolver.js';
+import { goalLeaseAtomicBudgetDenial } from './goal-lease-atomic-budget.js';
 import { resolveDelegatedGoal } from './delegated-run-provenance.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
@@ -120,6 +121,8 @@ export class DurableMutationCoordinator {
      */
     goalLeaseResolver?: {
       killSwitch: () => boolean;
+      workspaceFingerprint?: (workspaceId: string) => string | undefined;
+      liveWorkspaceFingerprint?: (workspaceId: string, canonicalRoot: string) => Promise<string | undefined>;
     };
     /**
      * The Goal UI Delegation named in local configuration, if any (ADR-0029).
@@ -345,11 +348,13 @@ export class DurableMutationCoordinator {
       adapterId: record.adapterId,
       now: this.now(),
     });
+    const workspaceFingerprint = this.options.goalLeaseResolver?.workspaceFingerprint?.(record.workspaceId);
     const request = {
       tool: MUTATION_TOOL,
       sessionId: record.sessionId,
       adapterId: record.adapterId,
       workspaceRoot: workspace.canonicalRoot,
+      ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
       path: record.path,
       diffBytes: affectedBytes(record),
       ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
@@ -364,12 +369,19 @@ export class DurableMutationCoordinator {
       });
       if (!resolution.admitted) return resolution;
 
-      const admitted = this.options.store.policyAdmitMutation({
-        mutationId,
-        leaseId: resolution.resolved.lease.leaseId,
-        now: this.now(),
-        admissionTtlMs: this.admissionTtlMs,
-      });
+      let admitted: MutationRecord | undefined;
+      try {
+        admitted = this.options.store.policyAdmitMutation({
+          mutationId,
+          leaseId: resolution.resolved.lease.leaseId,
+          now: this.now(),
+          admissionTtlMs: this.admissionTtlMs,
+        });
+      } catch (error) {
+        const denial = goalLeaseAtomicBudgetDenial(error);
+        if (denial) return denial;
+        throw error;
+      }
       if (!admitted) {
         return { admitted: false, code: 'LEASE_EXPIRED', detail: 'the record was no longer awaiting review' };
       }
@@ -407,12 +419,19 @@ export class DurableMutationCoordinator {
     });
     if (!decision.admitted) return decision;
 
-    const admitted = this.options.store.policyAdmitMutation({
-      mutationId,
-      leaseId: stored.leaseId,
-      now: this.now(),
-      admissionTtlMs: this.admissionTtlMs,
-    });
+    let admitted: MutationRecord | undefined;
+    try {
+      admitted = this.options.store.policyAdmitMutation({
+        mutationId,
+        leaseId: stored.leaseId,
+        now: this.now(),
+        admissionTtlMs: this.admissionTtlMs,
+      });
+    } catch (error) {
+      const denial = goalLeaseAtomicBudgetDenial(error);
+      if (denial) return denial;
+      throw error;
+    }
     if (!admitted) {
       return { admitted: false, code: 'LEASE_EXPIRED', detail: 'the record was no longer awaiting review' };
     }
@@ -502,6 +521,13 @@ export class DurableMutationCoordinator {
       await this.revalidateStoredPlan(workspace.canonicalRoot, claimed, backend);
       const original = await readBase(backend, workspace.canonicalRoot, claimed.path, claimed);
       const candidate = original.replace(claimed.before, claimed.after);
+      const authorityDecision = await this.revalidatePolicyAuthority(workspace.canonicalRoot, claimed);
+      if (!authorityDecision.admitted) {
+        this.options.store.finishMutation(
+          mutationId, 'FAILED', this.now(), undefined, `GoalLease_${authorityDecision.code}`,
+        );
+        return;
+      }
       if (isCreationInput(claimed)) {
         await backend.createNew(workspace.canonicalRoot, claimed.path, candidate);
       } else {
@@ -539,6 +565,66 @@ export class DurableMutationCoordinator {
       return;
     }
     this.options.store.finishMutation(record.mutationId, 'OUTCOME_UNKNOWN', this.now(), undefined, 'DivergentTarget');
+  }
+
+  /**
+   * Re-check policy authority at the last synchronous boundary before a filesystem write.
+   *
+   * The POLICY_APPROVED row is already the durable budget reservation for this mutation. Feeding
+   * that same row back into aggregate spend would charge it twice, so this liveness re-check
+   * deliberately overrides spend only for the lease that already admitted this exact mutation.
+   * Cross-process atomic reservation is a separate store-level gate; this method does not claim it.
+   */
+  private async revalidatePolicyAuthority(root: string, record: MutationRecord): Promise<LeaseDecision> {
+    const authority = this.options.store.getMutationAuthority(record.mutationId);
+    if (!authority) {
+      return { admitted: false, code: 'NO_LEASE', detail: 'queued mutation has no durable authority row' };
+    }
+    if (authority.authority !== 'POLICY_APPROVED') return { admitted: true };
+
+    // Legacy singleton mode is retained only for compatibility tests/config parsing. Production
+    // resolver runtimes take the branch below; removing legacy mode is a separate migration.
+    if (!this.options.goalLeaseResolver) return { admitted: true };
+    if (!authority.leaseId) {
+      return { admitted: false, code: 'NO_LEASE', detail: 'policy-approved mutation has no lease id' };
+    }
+
+    const delegatedGoalId = resolveDelegatedGoal({
+      port: this.options.store,
+      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      now: this.now(),
+    });
+    const workspaceFingerprint = this.options.goalLeaseResolver.liveWorkspaceFingerprint === undefined
+      ? this.options.goalLeaseResolver.workspaceFingerprint?.(record.workspaceId)
+      : await this.options.goalLeaseResolver.liveWorkspaceFingerprint(record.workspaceId, root);
+    const request = {
+      tool: MUTATION_TOOL,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      workspaceRoot: root,
+      ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
+      path: record.path,
+      diffBytes: affectedBytes(record),
+      ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
+    };
+    const resolution = resolveGoalLease(this.options.store, {
+      now: this.now(),
+      requests: [request],
+      killSwitch: this.options.goalLeaseResolver.killSwitch(),
+      gatewayRoot: GATEWAY_ROOT,
+      spendOverrides: new Map([[authority.leaseId, { filesChanged: 0, bytesWritten: 0 }]]),
+    });
+    if (!resolution.admitted) return resolution;
+    if (resolution.resolved.lease.leaseId !== authority.leaseId) {
+      return {
+        admitted: false,
+        code: 'NO_LEASE',
+        detail: `execution authority changed from ${authority.leaseId} to ${resolution.resolved.lease.leaseId}`,
+      };
+    }
+    return { admitted: true };
   }
 
   private async revalidateStoredPlan(root: string, record: MutationRecord, backend: FileMutationBackend): Promise<void> {

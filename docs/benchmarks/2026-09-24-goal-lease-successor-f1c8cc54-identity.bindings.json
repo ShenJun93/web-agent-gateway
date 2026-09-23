@@ -1,0 +1,36 @@
+{
+  "workspaceRoots": [
+    "E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1"
+  ],
+  "workspaceIdentities": [
+    {
+      "workspaceRoot": "E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1",
+      "fingerprint": "92398c31ed6f74e3ee4470eabb83d897200892a1ed053950c3a5e4bca1a5c849"
+    }
+  ],
+  "allowedTools": [
+    "mutation.preview",
+    "git.commit",
+    "command.run"
+  ],
+  "pathPatterns": [
+    "**"
+  ],
+  "maxFiles": 96,
+  "maxBytes": 3500000,
+  "maxDiffBytes": 262144,
+  "admittedSessions": [
+    "session_d9e39801-87fd-40f5-92b7-999a48609f1d"
+  ],
+  "admittedAdapters": [
+    "private.stdio.v1"
+  ],
+  "commitSemantics": "commit-to-bound-branch",
+  "commitBindings": [
+    {
+      "workspaceRoot": "E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1",
+      "branch": "feat/goal-ui-delegation-v1",
+      "headSha": "f1c8cc54cb47b23253992993ba9e583f9864ce60"
+    }
+  ]
+}

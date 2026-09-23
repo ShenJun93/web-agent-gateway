@@ -18,6 +18,7 @@ import {
   validateBindings,
   type GoalLeaseBindings,
 } from '../src/goal-lease.js';
+import { buildSafeGitEnv, SAFE_GIT_BASE_ARGS } from '../src/safe-git.js';
 
 const argv = process.argv.slice(2);
 
@@ -62,10 +63,12 @@ function ttlMs(): number {
 }
 
 function git(root: string, args: readonly string[]): string {
-  const result = spawnSync('git.exe', ['-C', root, ...args], {
+  const executable = process.platform === 'win32' ? 'git.exe' : 'git';
+  const result = spawnSync(executable, [...SAFE_GIT_BASE_ARGS, '-C', root, ...args], {
     encoding: 'utf8',
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: buildSafeGitEnv(process.env),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -200,9 +203,12 @@ async function main(): Promise<number> {
     out('  --list --state <absolute sqlite path>');
     out('  --show <lease_...> --state <absolute sqlite path>');
     out('  --revoke <lease_...> --state <absolute sqlite path>');
+    out('  --plan --state <absolute sqlite path> --bindings <absolute json path>');
+    out('         [--ttl-minutes <n>]');
     out('  --issue --state <absolute sqlite path> --bindings <absolute json path>');
     out('          [--ttl-minutes <n>]');
     out('');
+    out('--plan performs the same binding/session/branch/HEAD validation without inserting authority.');
     out('Issuance requires an interactive TTY and exact ISSUE <sha256> confirmation.');
     out('It inserts a lease row only; matching runtimes resolve it without config edits or restart.');
     return 0;
@@ -222,6 +228,15 @@ async function main(): Promise<number> {
     if (revokeId !== undefined) {
       const changed = store.revokeGoalLease(revokeId, Date.now());
       out(changed ? 'revoked ' + revokeId : 'nothing to revoke: ' + revokeId);
+      return 0;
+    }
+
+    if (argv.includes('--plan')) {
+      const measured = buildIssuePlan(store);
+      out('=== GOAL LEASE ISSUE PLAN (READ ONLY) ===');
+      out(JSON.stringify(measured.plan, null, 2));
+      out('GOAL_LEASE_ISSUE_PLAN_SHA256=' + measured.digest);
+      out('AUTHORITY_CHANGED=False');
       return 0;
     }
 
@@ -260,11 +275,14 @@ async function main(): Promise<number> {
 
     const createdAt = Date.now();
     const leaseId = 'lease_' + createdAt.toString(36) + '_' + randomBytes(4).toString('hex');
+    // Preserve the one-second skew allowance without extending a ceiling-sized lease past the
+    // runtime's exact MAX_LEASE_WINDOW_MS bound. Previously, 720 minutes became 12h + 1s.
+    const notBefore = createdAt - 1_000;
     store.insertGoalLease({
       leaseId,
       createdAt,
-      notBefore: createdAt - 1_000,
-      expiresAt: createdAt + fresh.plan.ttlMs,
+      notBefore,
+      expiresAt: notBefore + fresh.plan.ttlMs,
       bindings: JSON.stringify(fresh.plan.bindings),
     });
 

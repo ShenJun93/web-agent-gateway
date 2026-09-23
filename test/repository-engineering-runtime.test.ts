@@ -100,6 +100,8 @@ test('mutation opt-in binds workspace.open to durable records owned by a per-pro
 
   await first.attach(fakeExecutor);
   assert.ok(first.mutationContext);
+  assert.equal(first.mutationContext!.leaseOnly, true,
+    'direct stdio mutations must be Goal-Lease-only, with no per-change operator fallback');
   assert.equal(first.mutationContext!.callerContext.adapterId, PRIVATE_STDIO_ADAPTER_ID);
   assert.equal(first.mutationContext!.callerContext.ownerId, 'local.private.stdio');
   assert.match(first.mutationContext!.callerContext.sessionId, /^sid_/);
@@ -314,6 +316,8 @@ test('stdio git commit inherits the configured mutation review TTL', async () =>
     await runtime.attach(fakeExecutor);
 
     assert.ok(runtime.gitCommitContext, 'git commit must be enabled after attach');
+    assert.equal(runtime.gitCommitContext!.leaseOnly, true,
+      'direct stdio commits must be Goal-Lease-only, with no per-change operator fallback');
 
     const coordinator = runtime.gitCommitContext!.coordinator as unknown as {
       reviewTtlMs: number;
@@ -453,6 +457,23 @@ test('a running direct runtime observes issue, ambiguity and revoke without rest
     assert.ok(runtime.capabilityContext);
 
     await assert.rejects(async () => runtime.commandContext!.authorize(workspaceId), /NO_LEASE/);
+
+    const noLeaseAuthority = await runtime.capabilityContext!.describe(workspaceId) as {
+      capabilities: {
+        FILE_WRITE: { granted: boolean; denied: boolean; requires_human: boolean; reason: string };
+        GIT_COMMIT: { granted: boolean; denied: boolean; requires_human: boolean; reason: string };
+      };
+    };
+    for (const capability of [
+      noLeaseAuthority.capabilities.FILE_WRITE,
+      noLeaseAuthority.capabilities.GIT_COMMIT,
+    ]) {
+      assert.equal(capability.granted, false);
+      assert.equal(capability.denied, true);
+      assert.equal(capability.requires_human, false,
+        'direct stdio has no per-change human-review fallback');
+      assert.equal(capability.reason, 'GOAL_LEASE_REQUIRED');
+    }
 
     const sessionId = runtime.profile.stableSessionId!;
     const bindings = {

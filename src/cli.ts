@@ -88,6 +88,7 @@ export async function main(
       env: deps.env,
       telemetry: deps.telemetry,
       openWorkspaceId: engineering.openWorkspaceId,
+      bindWorkspaceIdentity: engineering.bindWorkspaceIdentity,
     });
   } catch (error) {
     await closeQuietly(engineering);

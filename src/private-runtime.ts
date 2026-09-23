@@ -24,6 +24,7 @@ export interface PrivateRuntimeOptions {
   telemetry?: TelemetrySink;
   oauthFactory?: typeof createDevspaceOAuthSession;
   openWorkspaceId?: (canonicalRoot: string) => string | Promise<string>;
+  bindWorkspaceIdentity?: (workspaceId: string, canonicalRoot: string, devspaceWorkspaceId: string) => Promise<void>;
 }
 export interface PrivateGatewayRuntime {
   gateway: GatewayApi;
@@ -66,6 +67,7 @@ export async function bootstrapPrivateGateway(
     verifyProfiles: config.verifyProfiles,
     telemetry: options.telemetry,
     openWorkspaceId: options.openWorkspaceId,
+    bindWorkspaceIdentity: options.bindWorkspaceIdentity,
   });
 
   try {
