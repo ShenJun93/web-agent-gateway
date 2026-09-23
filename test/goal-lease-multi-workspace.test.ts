@@ -9,6 +9,7 @@ import { DurableCommitCoordinator } from '../src/git-commit.js';
 import type { GitCommitBackend, GitCommitPlan, GitCommitResult } from '../src/git-commit-backend.js';
 import {
   evaluateGoalLease,
+  rolloverCommitBindingHeads,
   validateBindings,
   type GoalLeaseBindings,
   type GoalLeaseRecord,
@@ -293,4 +294,96 @@ test('the real commit coordinator executes two workspaces under their own CAS bi
     { root: rootA, branch: 'feat/a', head: 'a'.repeat(40) },
     { root: rootB, branch: 'feat/b', head: 'b'.repeat(40) },
   ]);
+});
+
+test('rollover changes only commit HEAD CAS values, carries residual budget and admits successor heads', () => {
+  const priorSpend = { filesChanged: 3, bytesWritten: 12_500 };
+  const successor = rolloverCommitBindingHeads(BINDINGS, [
+    { workspaceRoot: ROOT_A, branch: 'feat/a', headSha: 'aaa999' },
+    { workspaceRoot: ROOT_B, branch: 'feat/b', headSha: 'bbb999' },
+  ], priorSpend);
+
+  const withoutMovingParts = (value: GoalLeaseBindings) => {
+    const { maxFiles: _files, maxBytes: _bytes, commitBindings: _commits, ...fixed } = value;
+    return fixed;
+  };
+  assert.deepEqual(
+    withoutMovingParts(successor),
+    withoutMovingParts(BINDINGS),
+    'rollover must not widen or rewrite roots, tools, paths, sessions, adapters or commit semantics',
+  );
+  assert.equal(successor.maxFiles, BINDINGS.maxFiles - priorSpend.filesChanged);
+  assert.equal(successor.maxBytes, BINDINGS.maxBytes - priorSpend.bytesWritten);
+  assert.deepEqual(successor.commitBindings, [
+    { workspaceRoot: ROOT_A, branch: 'feat/a', headSha: 'aaa999' },
+    { workspaceRoot: ROOT_B, branch: 'feat/b', headSha: 'bbb999' },
+  ]);
+
+  const successorLease: GoalLeaseRecord = { ...LEASE, bindings: successor };
+  const next = (over: Partial<LeaseRequest>) => evaluateGoalLease({
+    lease: successorLease,
+    now: NOW,
+    request: request(over),
+    // A successor lease has a fresh durable id. Residual ceilings above carry the predecessor's
+    // spend forward without mutating the predecessor or resetting effective authority.
+    spend: { filesChanged: 0, bytesWritten: 0 },
+    killSwitch: false,
+  });
+
+  assert.deepEqual(next({ headSha: 'aaa999' }), { admitted: true });
+  assert.equal((next({ headSha: 'aaa111' }) as { code: string }).code, 'HEAD_MOVED');
+  assert.deepEqual(next({
+    workspaceRoot: ROOT_B,
+    branch: 'feat/b',
+    headSha: 'bbb999',
+  }), { admitted: true });
+});
+
+test('rollover refuses missing, extra, duplicate, branch-drift or exhausted-budget observations', () => {
+  const noSpend = { filesChanged: 0, bytesWritten: 0 };
+  const observations = [
+    { workspaceRoot: ROOT_A, branch: 'feat/a', headSha: 'aaa999' },
+    { workspaceRoot: ROOT_B, branch: 'feat/b', headSha: 'bbb999' },
+  ];
+  assert.throws(
+    () => rolloverCommitBindingHeads(BINDINGS, [
+      { workspaceRoot: ROOT_A, branch: 'feat/a', headSha: 'aaa999' },
+    ], noSpend),
+    /every commit-bound workspace/,
+  );
+  assert.throws(
+    () => rolloverCommitBindingHeads(BINDINGS, [
+      { workspaceRoot: ROOT_A, branch: 'feat/a', headSha: 'aaa999' },
+      { workspaceRoot: ROOT_C, branch: 'feat/c', headSha: 'ccc999' },
+    ], noSpend),
+    /unbound workspaceRoot/,
+  );
+  assert.throws(
+    () => rolloverCommitBindingHeads(BINDINGS, [
+      { workspaceRoot: ROOT_A, branch: 'feat/a', headSha: 'aaa999' },
+      { workspaceRoot: ROOT_A, branch: 'feat/a', headSha: 'aaa998' },
+    ], noSpend),
+    /repeats workspaceRoot/,
+  );
+  assert.throws(
+    () => rolloverCommitBindingHeads(BINDINGS, [
+      { workspaceRoot: ROOT_A, branch: 'feat/not-a', headSha: 'aaa999' },
+      { workspaceRoot: ROOT_B, branch: 'feat/b', headSha: 'bbb999' },
+    ], noSpend),
+    /branch changed/,
+  );
+  assert.throws(
+    () => rolloverCommitBindingHeads(BINDINGS, observations, {
+      filesChanged: BINDINGS.maxFiles,
+      bytesWritten: 0,
+    }),
+    /remaining mutation budget/,
+  );
+  assert.throws(
+    () => rolloverCommitBindingHeads(BINDINGS, observations, {
+      filesChanged: 0,
+      bytesWritten: BINDINGS.maxBytes,
+    }),
+    /remaining mutation budget/,
+  );
 });

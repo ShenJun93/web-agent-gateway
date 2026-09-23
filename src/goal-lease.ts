@@ -76,6 +76,94 @@ export interface WorkspaceCommitBinding {
   readonly headSha: string;
 }
 
+/** One current repository observation used to roll a commit CAS forward without widening authority. */
+export interface WorkspaceCommitObservation {
+  readonly workspaceRoot: string;
+  readonly branch: string;
+  readonly headSha: string;
+}
+
+/**
+ * Build successor multi-workspace bindings by changing **only** each commit binding's HEAD.
+ *
+ * Rollover is authority-sensitive: roots, branches, tools, paths, budgets, sessions and adapters
+ * are copied from the existing lease verbatim. The caller must observe every commit-granted root
+ * and the observed branch must still equal the one the human originally granted. A missing root,
+ * an extra root, a duplicate root or a branch change refuses the whole rollover rather than
+ * silently shrinking or widening it.
+ *
+ * This function is deliberately pure. It neither creates nor names a lease; an operator-owned
+ * control path can bind a reviewed plan digest to the returned value before doing either.
+ */
+export function rolloverCommitBindingHeads(
+  bindings: GoalLeaseBindings,
+  observations: readonly WorkspaceCommitObservation[],
+  spend: LeaseSpend,
+): GoalLeaseBindings {
+  const malformed = validateBindings(bindings);
+  if (malformed) throw new Error(`Cannot roll over malformed Goal Lease bindings: ${malformed}`);
+  if (bindings.commitSemantics !== 'commit-to-bound-branch' || bindings.commitBindings === undefined) {
+    throw new Error('Rollover v1 requires multi-workspace commitBindings');
+  }
+  if (!Number.isInteger(spend.filesChanged) || spend.filesChanged < 0
+    || !Number.isInteger(spend.bytesWritten) || spend.bytesWritten < 0) {
+    throw new Error('Rollover spend must be non-negative integer counters');
+  }
+  if (observations.length !== bindings.commitBindings.length) {
+    throw new Error('Rollover observations must cover every commit-bound workspace exactly once');
+  }
+
+  const remainingFiles = bindings.maxFiles - spend.filesChanged;
+  const remainingBytes = bindings.maxBytes - spend.bytesWritten;
+  if (remainingFiles <= 0 || remainingBytes <= 0) {
+    throw new Error('Rollover requires remaining mutation budget; issue a new lease explicitly instead');
+  }
+
+  const expected = new Map(bindings.commitBindings.map((binding) => [binding.workspaceRoot, binding]));
+  const seen = new Set<string>();
+  const observed = new Map<string, WorkspaceCommitObservation>();
+
+  for (const observation of observations) {
+    if (!observation.workspaceRoot || !observation.branch || !observation.headSha) {
+      throw new Error('Rollover observations must name a root, branch and HEAD');
+    }
+    if (seen.has(observation.workspaceRoot)) {
+      throw new Error(`Rollover observation repeats workspaceRoot ${observation.workspaceRoot}`);
+    }
+    seen.add(observation.workspaceRoot);
+
+    const binding = expected.get(observation.workspaceRoot);
+    if (!binding) {
+      throw new Error(`Rollover observation names unbound workspaceRoot ${observation.workspaceRoot}`);
+    }
+    if (observation.branch !== binding.branch) {
+      throw new Error(`Rollover branch changed for ${observation.workspaceRoot}`);
+    }
+    observed.set(observation.workspaceRoot, observation);
+  }
+
+  for (const binding of bindings.commitBindings) {
+    if (!observed.has(binding.workspaceRoot)) {
+      throw new Error(`Rollover observation missing workspaceRoot ${binding.workspaceRoot}`);
+    }
+  }
+
+  const successor: GoalLeaseBindings = {
+    ...bindings,
+    maxFiles: remainingFiles,
+    maxBytes: remainingBytes,
+    commitBindings: bindings.commitBindings.map((binding) => ({
+      ...binding,
+      headSha: observed.get(binding.workspaceRoot)!.headSha,
+    })),
+  };
+  const successorMalformed = validateBindings(successor);
+  if (successorMalformed) {
+    throw new Error(`Rollover produced malformed Goal Lease bindings: ${successorMalformed}`);
+  }
+  return successor;
+}
+
 /**
  * Exactly what a lease grants. Everything absent is denied; there is no wildcard for any field,
  * and an empty list grants nothing rather than everything — which is the opposite of the usual

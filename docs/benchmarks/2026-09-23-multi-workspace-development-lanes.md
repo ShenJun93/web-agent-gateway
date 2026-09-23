@@ -144,3 +144,79 @@ not reset the operator's index; no index reset was performed to manufacture a cl
 No DevSpace restart or second promotion was required for acceptance. PFP was not opened as an
 acceptance workspace and received no mutation, command or commit authority.
 
+## Next slice — rollover and multi-session source acceptance
+
+The live acceptance above deliberately consumed each commit binding's starting-HEAD CAS. Continuing
+development therefore needs a new human-reviewed authority statement rather than an automatic
+"advance HEAD" shortcut.
+
+### Lease/Lane Rollover v1
+
+The source now exposes a pure `rolloverCommitBindingHeads` policy. It may change the HEAD CAS for
+each already commit-bound workspace only when every bound root is observed exactly once and its
+branch is unchanged. Missing roots, extra roots, duplicate roots and branch drift fail closed.
+
+Rollover also carries the predecessor's mutation spend forward by shrinking the successor ceilings:
+
+```text
+successor.maxFiles = predecessor.maxFiles - predecessor.filesChanged
+successor.maxBytes = predecessor.maxBytes - predecessor.bytesWritten
+```
+
+This prevents a fresh lease id from becoming a budget reset. If either residual budget is exhausted,
+rollover refuses and a genuinely new lease must be issued as a separate human authority decision.
+`maxDiffBytes`, roots, tools, path patterns, admitted sessions/adapters and commit semantics are
+copied unchanged.
+
+The tracked promotion helper now has a read-only `--preview-rollover` mode. It reads the configured
+lease and durable spend, observes the current branch/HEAD of every commit-bound workspace, computes
+the bounded successor bindings and prints a SHA-256 plan receipt. It inserts no lease, writes no
+configuration and restarts nothing.
+
+The matching `--apply-rollover <reviewed-plan-sha256>` path is intentionally human-only. It refuses
+unless both stdin and stdout are interactive TTYs, prints the exact reviewed plan, requires the
+operator to type `APPLY <digest>`, then re-measures config, spend, branches and HEADs after that
+gesture and refuses any digest drift. Only then may it insert the successor row, atomically name it
+in local config, restart the WAG tunnel runtime, and revoke the predecessor. The successor keeps the
+predecessor's exact expiration; extending the time window is renewal, not rollover. A failed
+activation restores the original config, revokes the inert successor row and attempts to restore the
+previous WAG runtime.
+
+The direct MCP `command.run` runner has no interactive TTY. A live probe of the apply command
+therefore exited 1 with `interactive TTY human confirmation` before any authority write, proving
+that the same autonomous surface which can preview a rollover cannot activate one.
+
+The helper also no longer deletes itself after a successful promotion. It is now tracked source, so
+self-deletion would itself be an unintended repository mutation.
+
+### Multi-Session Identity Isolation v1
+
+This slice does not claim that one ChatGPT connector exposes trustworthy per-chat identity; it
+does not. The accepted composition instead uses separate connector/runtime configurations, each
+with its own human-written `sessionCorrelation`.
+
+The runtime-level source test uses one shared durable store and two exact workspace roots. Two
+different stdio correlations resolve to two different durable `stableSessionId` values, survive
+runtime restart independently, and bind to separate Goal Leases. A caller from lane A using lane
+B's lease is refused with `SESSION_NOT_ADMITTED`; using its own lease against B's root is refused
+with `WORKSPACE_NOT_GRANTED`, and vice versa.
+
+This proves connector/runtime-lane identity isolation from WAG-owned inputs. A later live acceptance
+still needs two separately configured WAG connector/runtime lanes and human-issued leases; until
+that is exercised, it is not described as provider-level per-chat identity.
+
+Measured source gates for this slice:
+
+```text
+goal-lease multi-workspace + rollover   6 pass, 0 fail
+direct MCP session binding              9 pass, 0 fail
+typecheck                               pass
+diffcheck                               pass
+rollover preview                        pass, read-only
+```
+
+The remaining production gate is operational, not an authority shortcut: a person reviews a fresh
+rollover preview and issues/names any successor out of band. Live multi-session acceptance then uses
+two connector/runtime lanes and proves independent command/mutation/commit behavior plus independent
+revocation/recovery.
+

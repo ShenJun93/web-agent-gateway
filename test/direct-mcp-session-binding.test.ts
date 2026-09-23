@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -258,4 +258,142 @@ test('a guessable correlation is refused by configuration', async (t) => {
   await write(CORRELATION);
   const config = await loadPrivateGatewayConfig(configPath);
   assert.equal(config.repositoryEngineering?.mutation?.sessionCorrelation, CORRELATION);
+});
+
+test('two direct connector lanes keep distinct stable sessions, roots and leases in one store', async (t) => {
+  const dir = await scratch(t);
+  const rootA = join(dir, 'lane-a');
+  const rootB = join(dir, 'lane-b');
+  const statePath = join(dir, 'shared-state.sqlite');
+  await mkdir(rootA, { recursive: true });
+  await mkdir(rootB, { recursive: true });
+
+  const laneConfig = (root: string, correlation: string, goalLeaseId?: string): PrivateGatewayConfig => ({
+    allowedRoots: [root],
+    devspace: { baseUrl: 'http://127.0.0.1:1', resourceUrl: 'http://127.0.0.1:1/mcp' },
+    verifyProfiles: { unit: { argv: ['node', '--version'] } },
+    repositoryEngineering: {
+      inspect: true,
+      gitCommit: {},
+      mutation: {
+        statePath,
+        ownerId: OWNER,
+        sessionCorrelation: correlation,
+        ...(goalLeaseId === undefined ? {} : { goalLeaseId }),
+      },
+    },
+  });
+
+  const firstA = await startRepositoryEngineeringRuntime(laneConfig(rootA, CORRELATION));
+  const firstB = await startRepositoryEngineeringRuntime(laneConfig(rootB, OTHER_CORRELATION));
+  let sessionA = '';
+  let sessionB = '';
+  try {
+    sessionA = firstA.profile.stableSessionId ?? '';
+    sessionB = firstB.profile.stableSessionId ?? '';
+    assert.match(sessionA, /^session_/);
+    assert.match(sessionB, /^session_/);
+    assert.notEqual(sessionA, sessionB, 'two connector correlations must never collapse to one session');
+
+    const workspaceA = firstA.openWorkspaceId?.(rootA);
+    const workspaceB = firstB.openWorkspaceId?.(rootB);
+    assert.ok(workspaceA);
+    assert.ok(workspaceB);
+
+    const store = new SqliteDurableStore(statePath);
+    try {
+      assert.equal(store.getWorkspace(workspaceA)?.sessionId, sessionA);
+      assert.equal(store.getWorkspace(workspaceB)?.sessionId, sessionB);
+    } finally {
+      store.close();
+    }
+  } finally {
+    await firstA.close();
+    await firstB.close();
+  }
+
+  const now = Date.now();
+  const leaseAId = 'lease_connector_lane_a';
+  const leaseBId = 'lease_connector_lane_b';
+  const bindingsA: GoalLeaseBindings = {
+    workspaceRoots: [rootA],
+    allowedTools: ['command.run'],
+    pathPatterns: ['**'],
+    maxFiles: 4,
+    maxBytes: 10_000,
+    maxDiffBytes: 4_000,
+    admittedSessions: [sessionA],
+    admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
+    commitSemantics: 'none',
+  };
+  const bindingsB: GoalLeaseBindings = {
+    ...bindingsA,
+    workspaceRoots: [rootB],
+    admittedSessions: [sessionB],
+  };
+  const shared = new SqliteDurableStore(statePath);
+  try {
+    shared.insertGoalLease({
+      leaseId: leaseAId,
+      createdAt: now,
+      notBefore: now - 1_000,
+      expiresAt: now + 60_000,
+      bindings: JSON.stringify(bindingsA),
+    });
+    shared.insertGoalLease({
+      leaseId: leaseBId,
+      createdAt: now,
+      notBefore: now - 1_000,
+      expiresAt: now + 60_000,
+      bindings: JSON.stringify(bindingsB),
+    });
+  } finally {
+    shared.close();
+  }
+
+  const secondA = await startRepositoryEngineeringRuntime(laneConfig(rootA, CORRELATION, leaseAId));
+  const secondB = await startRepositoryEngineeringRuntime(laneConfig(rootB, OTHER_CORRELATION, leaseBId));
+  try {
+    assert.equal(secondA.profile.stableSessionId, sessionA, 'lane A identity must survive reconnect');
+    assert.equal(secondB.profile.stableSessionId, sessionB, 'lane B identity must survive reconnect');
+
+    const leaseA: GoalLeaseRecord = {
+      leaseId: leaseAId, createdAt: now, notBefore: now - 1_000, expiresAt: now + 60_000,
+      bindings: bindingsA,
+    };
+    const leaseB: GoalLeaseRecord = {
+      leaseId: leaseBId, createdAt: now, notBefore: now - 1_000, expiresAt: now + 60_000,
+      bindings: bindingsB,
+    };
+    const ask = (lease: GoalLeaseRecord, sessionId: string, workspaceRoot: string) => evaluateGoalLease({
+      lease,
+      now,
+      request: {
+        tool: 'command.run',
+        sessionId,
+        adapterId: PRIVATE_STDIO_ADAPTER_ID,
+        workspaceRoot,
+        path: '.',
+        diffBytes: 0,
+      },
+      spend: { filesChanged: 0, bytesWritten: 0 },
+      killSwitch: false,
+    });
+
+    assert.deepEqual(ask(leaseA, sessionA, rootA), { admitted: true });
+    assert.deepEqual(ask(leaseB, sessionB, rootB), { admitted: true });
+
+    const aUsingB = ask(leaseB, sessionA, rootB);
+    const bUsingA = ask(leaseA, sessionB, rootA);
+    assert.equal((aUsingB as { code: string }).code, 'SESSION_NOT_ADMITTED');
+    assert.equal((bUsingA as { code: string }).code, 'SESSION_NOT_ADMITTED');
+
+    const aCrossRoot = ask(leaseA, sessionA, rootB);
+    const bCrossRoot = ask(leaseB, sessionB, rootA);
+    assert.equal((aCrossRoot as { code: string }).code, 'WORKSPACE_NOT_GRANTED');
+    assert.equal((bCrossRoot as { code: string }).code, 'WORKSPACE_NOT_GRANTED');
+  } finally {
+    await secondA.close();
+    await secondB.close();
+  }
 });

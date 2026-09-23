@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import { createInterface } from 'node:readline/promises';
 import {
   cpSync,
   existsSync,
@@ -11,9 +14,17 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
+import {
+  rolloverCommitBindingHeads,
+  type GoalLeaseBindings,
+  type LeaseSpend,
+  type WorkspaceCommitObservation,
+} from '../src/goal-lease.js';
 
 const APPROVAL = '--approve-multi-workspace';
+const ROLLOVER_PREVIEW = '--preview-rollover';
+const ROLLOVER_APPLY = '--apply-rollover';
 const Repo = 'E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1';
 const ExpectedHead = 'd8fd901d3a16cfa587a4211aadece255be99d11a';
 const Short = ExpectedHead.slice(0, 12);
@@ -31,13 +42,22 @@ const BranchA = 'wag/acceptance-lane-a-' + ExpectedHead.slice(0, 8);
 const BranchB = 'wag/acceptance-lane-b-' + ExpectedHead.slice(0, 8);
 const Adapter = 'private.stdio.v1';
 
-if (!process.argv.includes(APPROVAL)) {
+const promotionRequested = process.argv.includes(APPROVAL);
+const rolloverPreviewRequested = process.argv.includes(ROLLOVER_PREVIEW);
+const rolloverApplyIndex = process.argv.indexOf(ROLLOVER_APPLY);
+const rolloverApplyRequested = rolloverApplyIndex !== -1;
+const rolloverApplyDigest = rolloverApplyRequested ? process.argv[rolloverApplyIndex + 1] : undefined;
+if (Number(promotionRequested) + Number(rolloverPreviewRequested) + Number(rolloverApplyRequested) !== 1) {
   throw new Error(
-    'Refusing: rerun with ' + APPROVAL
-    + ' to promote d8fd and issue the bounded multi-workspace Goal Lease.',
+    'Refusing: choose exactly one mode: ' + APPROVAL + ', ' + ROLLOVER_PREVIEW
+    + ', or ' + ROLLOVER_APPLY + ' <reviewed-plan-sha256>.',
   );
 }
-if (!process.env.LOCALAPPDATA || !existsSync(Launcher)) {
+if (rolloverApplyRequested && !/^[a-f0-9]{64}$/.test(rolloverApplyDigest ?? '')) {
+  throw new Error(ROLLOVER_APPLY + ' requires the exact reviewed 64-hex plan digest');
+}
+if ((promotionRequested || rolloverApplyRequested)
+  && (!process.env.LOCALAPPDATA || !existsSync(Launcher))) {
   throw new Error('WAG launcher missing: ' + Launcher);
 }
 
@@ -297,6 +317,264 @@ async function waitForWag(
   );
 }
 
+interface RolloverPlan {
+  version: 'wag.goal-lease-rollover.v1';
+  sourceConfigSha256: string;
+  sourceLeaseId: string;
+  sourceLeaseExpiresAt: number;
+  sourceSpend: LeaseSpend;
+  observations: readonly WorkspaceCommitObservation[];
+  successorBindings: GoalLeaseBindings;
+}
+
+function sha256Text(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function buildRolloverPlan(): { plan: RolloverPlan; digest: string } {
+  const configText = readFileSync(Config, 'utf8');
+  const config = JSON.parse(configText) as {
+    repositoryEngineering?: {
+      mutation?: {
+        statePath?: unknown;
+        goalLeaseId?: unknown;
+      };
+    };
+  };
+  const mutation = config.repositoryEngineering?.mutation;
+  if (typeof mutation?.statePath !== 'string' || mutation.statePath.length === 0) {
+    throw new Error('Live config has no mutation statePath; rollover preview is unavailable');
+  }
+  if (typeof mutation.goalLeaseId !== 'string' || mutation.goalLeaseId.length === 0) {
+    throw new Error('Live config names no Goal Lease; there is nothing to roll over');
+  }
+  if (!existsSync(mutation.statePath)) {
+    throw new Error('Goal Lease state database is missing: ' + mutation.statePath);
+  }
+
+  const db = new DatabaseSync(mutation.statePath, { readOnly: true });
+  let source: {
+    lease_id: string;
+    created_at: number;
+    not_before: number;
+    expires_at: number;
+    revoked_at: number | null;
+    bindings: string;
+  };
+  let spend: LeaseSpend;
+  try {
+    const row = db.prepare(
+      'SELECT lease_id, created_at, not_before, expires_at, revoked_at, bindings '
+      + 'FROM goal_leases WHERE lease_id = ?',
+    ).get(mutation.goalLeaseId) as typeof source | undefined;
+    if (!row) throw new Error('Configured Goal Lease row is missing: ' + mutation.goalLeaseId);
+    source = row;
+
+    const spent = db.prepare(
+      'SELECT COUNT(DISTINCT workspace_id || char(10) || path) AS files, '
+      + 'COALESCE(SUM(diff_bytes), 0) AS bytes '
+      + 'FROM mutation_authority WHERE lease_id = ?',
+    ).get(mutation.goalLeaseId) as { files: number; bytes: number };
+    spend = { filesChanged: Number(spent.files), bytesWritten: Number(spent.bytes) };
+  } finally {
+    db.close();
+  }
+
+  const now = Date.now();
+  if (source.revoked_at !== null) throw new Error('Configured Goal Lease is already revoked');
+  if (now < source.not_before) throw new Error('Configured Goal Lease is not yet valid');
+  if (now >= source.expires_at) {
+    throw new Error('Configured Goal Lease has expired; rollover cannot renew its time window');
+  }
+
+  let bindings: GoalLeaseBindings;
+  try {
+    bindings = JSON.parse(source.bindings) as GoalLeaseBindings;
+  } catch {
+    throw new Error('Configured Goal Lease bindings are not valid JSON');
+  }
+  if (!Array.isArray(bindings.commitBindings) || bindings.commitBindings.length === 0) {
+    throw new Error('Rollover v1 requires a multi-workspace Goal Lease with commitBindings');
+  }
+
+  const observations = bindings.commitBindings.map((binding): WorkspaceCommitObservation => {
+    const root = realpathSync.native(binding.workspaceRoot);
+    return {
+      workspaceRoot: binding.workspaceRoot,
+      branch: git(['branch', '--show-current'], root),
+      headSha: git(['rev-parse', 'HEAD'], root),
+    };
+  });
+  const successorBindings = rolloverCommitBindingHeads(bindings, observations, spend);
+  const plan: RolloverPlan = {
+    version: 'wag.goal-lease-rollover.v1',
+    sourceConfigSha256: sha256Text(configText),
+    sourceLeaseId: source.lease_id,
+    sourceLeaseExpiresAt: source.expires_at,
+    sourceSpend: spend,
+    observations,
+    successorBindings,
+  };
+  return { plan, digest: sha256Text(JSON.stringify(plan)) };
+}
+
+if (rolloverPreviewRequested) {
+  const measured = buildRolloverPlan();
+  console.log('=== GOAL LEASE ROLLOVER V1 PREVIEW ===');
+  console.log(JSON.stringify(measured.plan, null, 2));
+  console.log('ROLLOVER_PLAN_SHA256=' + measured.digest);
+  console.log('ROLLOVER_PREVIEW_ONLY=True');
+  console.log('Human action required: rerun in an interactive terminal with '
+    + ROLLOVER_APPLY + ' ' + measured.digest + '.');
+  console.log('A successor cannot extend sourceLeaseExpiresAt; a longer window is a new grant.');
+  process.exit(0);
+}
+
+async function applyRollover(reviewedDigest: string): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      'Rollover apply requires an interactive TTY human confirmation; automation and command.run are refused.',
+    );
+  }
+
+  const measured = buildRolloverPlan();
+  if (measured.digest !== reviewedDigest) {
+    throw new Error(
+      'Reviewed rollover digest no longer matches live state: expected '
+      + reviewedDigest + ', current ' + measured.digest,
+    );
+  }
+
+  console.log('=== GOAL LEASE ROLLOVER V1 APPLY ===');
+  console.log(JSON.stringify(measured.plan, null, 2));
+  console.log('REVIEWED_ROLLOVER_PLAN_SHA256=' + reviewedDigest);
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let answer = '';
+  try {
+    answer = await rl.question('Type APPLY ' + reviewedDigest + ' to issue and activate this successor: ');
+  } finally {
+    rl.close();
+  }
+  if (answer.trim() !== 'APPLY ' + reviewedDigest) {
+    throw new Error('Human confirmation did not match the reviewed rollover digest');
+  }
+
+  // The human may spend time reviewing. Re-measure everything after the gesture so the digest is
+  // also a CAS over config, durable spend, branches and HEADs at the instant authority is changed.
+  const fresh = buildRolloverPlan();
+  if (fresh.digest !== reviewedDigest) {
+    throw new Error(
+      'Rollover state changed while awaiting confirmation: reviewed '
+      + reviewedDigest + ', current ' + fresh.digest,
+    );
+  }
+
+  const originalConfigText = readFileSync(Config, 'utf8');
+  if (sha256Text(originalConfigText) !== fresh.plan.sourceConfigSha256) {
+    throw new Error('Live config changed after rollover revalidation');
+  }
+  const config = JSON.parse(originalConfigText) as {
+    repositoryEngineering?: {
+      mutation?: {
+        statePath?: unknown;
+        goalLeaseId?: unknown;
+      };
+    };
+  };
+  const mutation = config.repositoryEngineering?.mutation;
+  if (typeof mutation?.statePath !== 'string'
+    || mutation.goalLeaseId !== fresh.plan.sourceLeaseId) {
+    throw new Error('Live config no longer names the reviewed source lease');
+  }
+
+  const now = Date.now();
+  if (now >= fresh.plan.sourceLeaseExpiresAt) {
+    throw new Error('Source lease expired before rollover activation');
+  }
+  const successorId = 'lease_' + now.toString(36) + '_' + randomBytes(4).toString('hex');
+
+  const db = new DatabaseSync(mutation.statePath);
+  let successorInserted = false;
+  let configChanged = false;
+  let tunnelStopped = false;
+  try {
+    db.prepare(
+      'INSERT INTO goal_leases (lease_id, created_at, not_before, expires_at, bindings) '
+      + 'VALUES (?, ?, ?, ?, ?)',
+    ).run(
+      successorId,
+      now,
+      now - 1_000,
+      fresh.plan.sourceLeaseExpiresAt,
+      JSON.stringify(fresh.plan.successorBindings),
+    );
+    successorInserted = true;
+
+    mutation.goalLeaseId = successorId;
+    writeAtomic(Config, JSON.stringify(config, null, 2) + '\n');
+    configChanged = true;
+
+    const reread = JSON.parse(readFileSync(Config, 'utf8')) as {
+      repositoryEngineering?: { mutation?: { goalLeaseId?: unknown } };
+    };
+    if (reread.repositoryEngineering?.mutation?.goalLeaseId !== successorId) {
+      throw new Error('Live config did not persist the successor lease id');
+    }
+
+    await stopWagTunnel();
+    tunnelStopped = true;
+    rmSync(UrlFile, { force: true });
+    const started = startWagTunnel('rollover-' + successorId.slice(-8));
+    await waitForWag(started, 'Rollover WAG runtime');
+
+    const revoked = db.prepare(
+      'UPDATE goal_leases SET revoked_at = ? WHERE lease_id = ? AND revoked_at IS NULL',
+    ).run(Date.now(), fresh.plan.sourceLeaseId);
+    if (Number(revoked.changes) !== 1) {
+      throw new Error('Source lease was not revoked after successor activation');
+    }
+
+    console.log('ROLLOVER_APPLY_OK=True');
+    console.log('SOURCE_LEASE_ID=' + fresh.plan.sourceLeaseId);
+    console.log('SUCCESSOR_LEASE_ID=' + successorId);
+    console.log('SUCCESSOR_EXPIRES_AT=' + String(fresh.plan.sourceLeaseExpiresAt));
+    console.log('ROLLOVER_PLAN_SHA256=' + reviewedDigest);
+  } catch (error) {
+    if (configChanged) {
+      try { writeAtomic(Config, originalConfigText); } catch {}
+    }
+    if (successorInserted) {
+      try {
+        db.prepare(
+          'UPDATE goal_leases SET revoked_at = ? WHERE lease_id = ? AND revoked_at IS NULL',
+        ).run(Date.now(), successorId);
+      } catch {}
+    }
+    if (tunnelStopped) {
+      try {
+        await stopWagTunnel();
+        rmSync(UrlFile, { force: true });
+        const rollback = startWagTunnel('rollback-rollover');
+        await waitForWag(rollback, 'Rollback rollover WAG runtime');
+      } catch (rollbackError) {
+        console.warn(
+          'ROLLOVER ROLLBACK FAILED: '
+          + (rollbackError instanceof Error ? rollbackError.message : String(rollbackError)),
+        );
+      }
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+}
+
+if (rolloverApplyRequested) {
+  await applyRollover(rolloverApplyDigest!);
+  process.exit(0);
+}
+
 const head = git(['rev-parse', 'HEAD']);
 const branch = git(['branch', '--show-current']);
 if (head !== ExpectedHead) {
@@ -465,8 +743,6 @@ try {
   rmSync(UrlFile, { force: true });
   const promotedStart = startWagTunnel('d8fd');
   await waitForWag(promotedStart, 'Promoted WAG runtime');
-
-  rmSync(fileURLToPath(import.meta.url), { force: true });
 
   console.log('');
   console.log('MULTI_WORKSPACE_PROMOTION_OK=True');
