@@ -106,3 +106,41 @@ Production readiness still requires:
    attempt is denied.
 
 PFP is not an acceptance write target and receives no autonomous write or command grant.
+
+## Live production acceptance receipt
+
+The production gate above was exercised through the live d8fd stdio runtime and ChatGPT custom
+connector after a manual tool-metadata refresh exposed the newly registered `command.run` tool.
+
+Measured live result:
+
+```text
+ChatGPT-discovered WAG tools   14
+command.run                    present
+Lane A start HEAD              d8fd901d3a16cfa587a4211aadece255be99d11a
+Lane A committed HEAD          e222e27beab2fab7d90ec31daa7dafb41f47e5bc
+Lane B start HEAD              d8fd901d3a16cfa587a4211aadece255be99d11a
+Lane B committed HEAD          517aac66921baae2f37558c1e08d90f5fc19bc19
+focused multi-workspace test   4 pass, 0 fail
+```
+
+Both lanes independently completed mutation -> `command.run` -> commit under the same human-issued
+successor Goal Lease. Each commit proposal was bound to its own workspace root, branch and original
+d8fd HEAD, and both durable commit records reached `SUCCEEDED` with different trees and commit
+SHAs.
+
+A second live commit proposal on lane A after its HEAD advanced remained `PENDING_APPROVAL` rather
+than being auto-admitted by the lease. This is the expected stale-HEAD CAS refusal signal: the lease
+remained bound to d8fd and did not authorize a second commit from the advanced lane.
+
+The focused `test/goal-lease-multi-workspace.test.ts` run passed all four tests, including rejection
+of cross-root branch/HEAD borrowing and malformed/ambiguous multi-workspace bindings.
+
+After the stale-CAS probe was reverted, `git diff HEAD --name-only` was empty and
+`git diff HEAD --check` exited zero in both acceptance worktrees. `repo.snapshot` may still report
+`MM` for the committed benchmark file because WAG's commit backend uses a private index and does
+not reset the operator's index; no index reset was performed to manufacture a clean status.
+
+No DevSpace restart or second promotion was required for acceptance. PFP was not opened as an
+acceptance workspace and received no mutation, command or commit authority.
+
