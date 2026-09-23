@@ -429,7 +429,7 @@ export interface GitCommitMcpContext {
 
 export interface MutationMcpContext {
   callerContext: GatewayCallerContext;
-  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
+  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'replace' | 'result'>;
 }
 
 /**
@@ -579,11 +579,31 @@ export function createGatewayMcpServer(
       description: 'Persist an immutable preview of one bounded existing-file update for local human review.',
       inputSchema: previewInput,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    }, async ({ workspace_id, path, base_sha256, before, after }) => toolResult(await mutationContext.coordinator.preview(
-      mutationContext.callerContext,
-      workspace_id,
-      { path, baseSha256: base_sha256, before, after },
-    )));
+    }, async ({ workspace_id, path, base_sha256, before, after }) => directMutationToolResult(
+      await mutationContext.coordinator.preview(
+        mutationContext.callerContext,
+        workspace_id,
+        { path, baseSha256: base_sha256, before, after },
+      ),
+    ));
+
+    server.registerTool('file.replace', {
+      description: 'Propose replacing one existing text file by exact base SHA-256; no raw patch text is accepted.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        base_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, base_sha256, content }) => directMutationToolResult(
+      await mutationContext.coordinator.replace(
+        mutationContext.callerContext,
+        workspace_id,
+        { path, baseSha256: base_sha256, content },
+      ),
+    ));
+
     server.registerTool('file.create', {
       description: 'Propose creating one new file for local human review; nothing is written until approved.',
       inputSchema: z.object({
@@ -592,19 +612,23 @@ export function createGatewayMcpServer(
         content: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    }, async ({ workspace_id, path, content }) => toolResult(await mutationContext.coordinator.preview(
-      mutationContext.callerContext,
-      workspace_id,
-      // A creation is an empty-base mutation (ADR-0022): the base is the empty file, so the
-      // stored plan, fingerprint, approval and restart semantics are the accepted ones.
-      { path, baseSha256: EMPTY_FILE_SHA256, before: '', after: content },
-    )));
+    }, async ({ workspace_id, path, content }) => directMutationToolResult(
+      await mutationContext.coordinator.preview(
+        mutationContext.callerContext,
+        workspace_id,
+        // A creation is an empty-base mutation (ADR-0022): the base is the empty file, so the
+        // stored plan, fingerprint, approval and restart semantics are the accepted ones.
+        { path, baseSha256: EMPTY_FILE_SHA256, before: '', after: content },
+      ),
+    ));
 
     server.registerTool('mutation.result', {
       description: 'Read the durable state and bounded result metadata for one mutation.',
       inputSchema: z.object({ mutation_id: z.string().min(1) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, async ({ mutation_id }) => toolResult(mutationContext.coordinator.result(mutationContext.callerContext, mutation_id)));
+    }, async ({ mutation_id }) => directMutationToolResult(
+      mutationContext.coordinator.result(mutationContext.callerContext, mutation_id),
+    ));
   }
 
   if (gitCommitContext) {
@@ -628,6 +652,14 @@ export function createGatewayMcpServer(
   }
 
   return server;
+}
+
+function directMutationToolResult<T extends object & { baseSha256: string; resultSha256: string }>(value: T) {
+  return toolResult({
+    ...value,
+    before_sha256: value.baseSha256,
+    after_sha256: value.resultSha256,
+  });
 }
 
 function toolResult(value: object) {

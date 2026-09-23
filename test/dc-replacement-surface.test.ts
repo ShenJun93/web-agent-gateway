@@ -11,9 +11,9 @@ import type { GatewayTelemetryEvent } from '../src/telemetry.js';
 
 const DEFAULT_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run'];
 const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run'];
-const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.create', 'mutation.result'];
-const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.create', 'mutation.result'];
-const COMMIT_TOOLS = [...INSPECT_TOOLS, 'command.run', 'mutation.preview', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result'];
+const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.replace', 'file.create', 'mutation.result'];
+const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.replace', 'file.create', 'mutation.result'];
+const COMMIT_TOOLS = [...INSPECT_TOOLS, 'command.run', 'mutation.preview', 'file.replace', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result'];
 
 /**
  * DC-class authority stays unavailable unless WAG defines a narrower accepted contract.

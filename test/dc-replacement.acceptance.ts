@@ -31,7 +31,7 @@ const builtCli = join(repoRoot, 'dist', 'cli.js');
 const EXTENDED_TOOLS = [
   'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
   'file.read', 'verify.run', 'command.run',
-  'mutation.preview', 'file.create', 'mutation.result',
+  'mutation.preview', 'file.replace', 'file.create', 'mutation.result',
   'git.commit', 'git.commit.result',
 ];
 

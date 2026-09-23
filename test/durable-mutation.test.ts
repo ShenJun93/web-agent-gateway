@@ -138,6 +138,43 @@ test('preview retains existing path, content, size and match safety checks', asy
   }), /base SHA-256 mismatch/);
 });
 
+test('replace proposes a full-file exact-hash mutation without substring matching', async (t) => {
+  const { root, store, workspace, coordinator, backend } = await setup(t);
+  const original = 'beta\nbeta\n';
+  const candidate = 'alpha\nomega\n';
+  await writeFile(join(root, 'note.txt'), original);
+
+  const preview = await coordinator.replace(caller, workspace.workspaceId, {
+    path: 'note.txt',
+    baseSha256: sha256(original),
+    content: candidate,
+  });
+
+  assert.equal(preview.baseSha256, sha256(original));
+  assert.equal(preview.resultSha256, sha256(candidate));
+  assert.equal(store.getMutation(preview.mutationId)?.before, original);
+  assert.equal(store.getMutation(preview.mutationId)?.after, candidate);
+  assert.equal(await readFile(join(root, 'note.txt'), 'utf8'), original);
+
+  assert.equal(await coordinator.approveLocal(preview.mutationId), true);
+  assert.equal(coordinator.result(caller, preview.mutationId).state, 'SUCCEEDED');
+  assert.equal(await readFile(join(root, 'note.txt'), 'utf8'), candidate);
+  assert.equal(backend.writes, 1);
+
+  await assert.rejects(coordinator.replace(caller, workspace.workspaceId, {
+    path: 'note.txt',
+    baseSha256: sha256(original),
+    content: 'stale\n',
+  }), /base SHA-256 mismatch/);
+
+  await writeFile(join(root, 'empty.txt'), '');
+  await assert.rejects(coordinator.replace(caller, workspace.workspaceId, {
+    path: 'empty.txt',
+    baseSha256: sha256(''),
+    content: 'not-a-create\n',
+  }), /empty existing file/);
+});
+
 class FsTestBackend implements FileMutationBackend {
   readonly kind = 'test-fs';
   writes = 0;

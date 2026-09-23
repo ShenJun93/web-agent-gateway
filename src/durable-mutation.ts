@@ -45,6 +45,12 @@ export interface DurableMutationInput {
   before: string;
   after: string;
 }
+
+export interface DurableReplaceInput {
+  path: string;
+  baseSha256: string;
+  content: string;
+}
 export interface MutationPreview {
   status: 'approval_required';
   mutationId: string;
@@ -162,6 +168,75 @@ export class DurableMutationCoordinator {
       baseSha256: prepared.baseSha256,
       before: input.before,
       after: input.after,
+      resultSha256: prepared.resultSha256,
+      fingerprint: prepared.fingerprint,
+      additions: prepared.additions,
+      removals: prepared.removals,
+      createdAt,
+      reviewDeadline: createdAt + this.reviewTtlMs,
+    });
+    return toPreview(record);
+  }
+
+  /**
+   * Propose replacing the complete contents of one existing text file, guarded by the exact
+   * pre-read SHA-256. This is a compatibility wrapper over the durable mutation record: it stores
+   * the exact original text as `before`, so execution, Goal Lease admission, restart recovery and
+   * post-write verification all remain the same accepted mechanism.
+   *
+   * Existing empty files are refused because the durable mutation format reserves
+   * empty-before + empty-base SHA-256 as the unambiguous file.create sentinel (ADR-0022).
+   */
+  async replace(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    input: DurableReplaceInput,
+  ): Promise<MutationPreview> {
+    const workspace = this.options.store.getWorkspace(workspaceId);
+    if (!workspace) throw new Error('Unknown workspace_id');
+    assertIdentity(caller, workspace);
+    const backend = this.backend(workspace.backendKind);
+    const path = validateReadPath(input.path);
+
+    if (!SHA256_RE.test(input.baseSha256)) {
+      throw new Error('Gateway rejected invalid base SHA-256');
+    }
+    rejectUnsafeText(input.content, 'replacement');
+    if (Buffer.byteLength(input.content, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected replacement exceeds 32 KiB');
+    }
+
+    const chargedAt = this.now();
+    if (this.options.store.countPendingMutations(authorityOf(caller), chargedAt) >= MAX_PENDING_PER_CALLER) {
+      throw new Error('Gateway denied mutation: too many proposals awaiting review');
+    }
+    this.rateLimit.charge(authorityOf(caller), chargedAt);
+
+    await assertReadTarget(workspace.canonicalRoot, path);
+    const original = await backend.readExact(workspace.canonicalRoot, path);
+    if (original === '') {
+      throw new Error('Gateway rejected replacement of an empty existing file');
+    }
+    if (Buffer.byteLength(original, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected replacement target exceeds 32 KiB');
+    }
+
+    const mutation: DurableMutationInput = {
+      path,
+      baseSha256: input.baseSha256,
+      before: original,
+      after: input.content,
+    };
+    const prepared = prepareMutation(workspaceId, path, original, mutation);
+    const createdAt = this.now();
+    const record = this.options.store.createMutation({
+      ...caller,
+      workspaceId,
+      backendKind: workspace.backendKind,
+      path,
+      baseSha256: prepared.baseSha256,
+      before: original,
+      after: input.content,
       resultSha256: prepared.resultSha256,
       fingerprint: prepared.fingerprint,
       additions: prepared.additions,

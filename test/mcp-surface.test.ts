@@ -74,7 +74,7 @@ test('opt-in durable mutation MCP exposes preview/result without remote approval
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
     'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
-    'mutation.preview', 'file.create', 'mutation.result',
+    'mutation.preview', 'file.replace', 'file.create', 'mutation.result',
   ]);
   const previewTool = tools.tools.find((tool) => tool.name === 'mutation.preview');
   const resultTool = tools.tools.find((tool) => tool.name === 'mutation.result');

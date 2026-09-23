@@ -58,6 +58,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['verify.run', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['command.run', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['mutation.preview', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['file.replace', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['mutation.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['git.commit', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
@@ -162,7 +163,7 @@ test('no direct tool claims read-only while creating durable state', async (t) =
   // The regression this pins: `workspace.open` mints a durable caller-owned workspace record,
   // and previously claimed `readOnlyHint: true` — the one annotation class ADR-0020 warns can
   // cause a provider-side write confirmation to be skipped.
-  for (const name of ['workspace.open', 'verify.run', 'command.run', 'mutation.preview', 'file.create', 'git.commit']) {
+  for (const name of ['workspace.open', 'verify.run', 'command.run', 'mutation.preview', 'file.replace', 'file.create', 'git.commit']) {
     const tool = tools.tools.find((candidate) => candidate.name === name);
     assert.equal(
       tool?.annotations?.readOnlyHint, false,
