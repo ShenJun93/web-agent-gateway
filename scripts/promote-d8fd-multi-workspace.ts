@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { createInterface } from 'node:readline/promises';
@@ -25,6 +25,9 @@ import {
 const APPROVAL = '--approve-multi-workspace';
 const ROLLOVER_PREVIEW = '--preview-rollover';
 const ROLLOVER_APPLY = '--apply-rollover';
+const PREPARE_RUNTIME = '--prepare-runtime';
+const ACTIVATE_RUNTIME = '--activate-prepared-runtime';
+const ACTIVATE_WORKER = '--activate-prepared-runtime-worker';
 const Repo = 'E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1';
 const ExpectedHead = 'd8fd901d3a16cfa587a4211aadece255be99d11a';
 const Short = ExpectedHead.slice(0, 12);
@@ -47,16 +50,35 @@ const rolloverPreviewRequested = process.argv.includes(ROLLOVER_PREVIEW);
 const rolloverApplyIndex = process.argv.indexOf(ROLLOVER_APPLY);
 const rolloverApplyRequested = rolloverApplyIndex !== -1;
 const rolloverApplyDigest = rolloverApplyRequested ? process.argv[rolloverApplyIndex + 1] : undefined;
-if (Number(promotionRequested) + Number(rolloverPreviewRequested) + Number(rolloverApplyRequested) !== 1) {
+const prepareIndex = process.argv.indexOf(PREPARE_RUNTIME);
+const prepareRequested = prepareIndex !== -1;
+const prepareHead = prepareRequested ? process.argv[prepareIndex + 1] : undefined;
+const activateIndex = process.argv.indexOf(ACTIVATE_RUNTIME);
+const activateRequested = activateIndex !== -1;
+const activateHead = activateRequested ? process.argv[activateIndex + 1] : undefined;
+const workerIndex = process.argv.indexOf(ACTIVATE_WORKER);
+const workerRequested = workerIndex !== -1;
+const workerHead = workerRequested ? process.argv[workerIndex + 1] : undefined;
+const selectedModes = Number(promotionRequested)
+  + Number(rolloverPreviewRequested)
+  + Number(rolloverApplyRequested)
+  + Number(prepareRequested)
+  + Number(activateRequested)
+  + Number(workerRequested);
+if (selectedModes !== 1) {
   throw new Error(
-    'Refusing: choose exactly one mode: ' + APPROVAL + ', ' + ROLLOVER_PREVIEW
-    + ', or ' + ROLLOVER_APPLY + ' <reviewed-plan-sha256>.',
+    'Refusing: choose exactly one supported promotion/rollover/runtime mode.',
   );
 }
 if (rolloverApplyRequested && !/^[a-f0-9]{64}$/.test(rolloverApplyDigest ?? '')) {
   throw new Error(ROLLOVER_APPLY + ' requires the exact reviewed 64-hex plan digest');
 }
-if ((promotionRequested || rolloverApplyRequested)
+const runtimeHead = prepareRequested ? prepareHead : activateRequested ? activateHead : workerHead;
+if ((prepareRequested || activateRequested || workerRequested)
+  && !/^[a-f0-9]{40}$/.test(runtimeHead ?? '')) {
+  throw new Error('Runtime mode requires the exact 40-hex source HEAD');
+}
+if ((promotionRequested || rolloverApplyRequested || activateRequested || workerRequested)
   && (!process.env.LOCALAPPDATA || !existsSync(Launcher))) {
   throw new Error('WAG launcher missing: ' + Launcher);
 }
@@ -76,7 +98,8 @@ function run(
   if (result.status !== 0 && !options.allowFailure) {
     throw new Error(
       'Command failed (' + String(result.status) + '): ' + file + ' ' + args.join(' ')
-      + '\n' + (result.stderr ?? '').trim(),
+      + '\nSTDOUT:\n' + (result.stdout ?? '').trim()
+      + '\nSTDERR:\n' + (result.stderr ?? '').trim(),
     );
   }
   return {
@@ -315,6 +338,204 @@ async function waitForWag(
     + '; stdoutLog=' + started.stdout
     + '; stderrLog=' + started.stderr,
   );
+}
+
+interface PreparedRuntime {
+  readonly root: string;
+  readonly cli: string;
+  readonly receipt: string;
+}
+
+function preparedRuntime(head: string): PreparedRuntime {
+  if (git(['rev-parse', 'HEAD']) !== head) {
+    throw new Error('Runtime source HEAD must equal the current committed development HEAD');
+  }
+  const short = head.slice(0, 12);
+  const root = 'E:\\WAG-Runtime\\' + short;
+  const markerPath = join(root, 'RUNTIME.json');
+  const cli = wrapperCli(root);
+  const receipt = join(LogDir, 'activate-' + short + '.json');
+  if (!existsSync(markerPath) || !existsSync(join(root, 'dist', 'cli.js'))) {
+    throw new Error('Prepared runtime is incomplete: ' + root);
+  }
+  const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as {
+    sourceHead?: unknown;
+    capability?: unknown;
+  };
+  if (marker.sourceHead !== head) {
+    throw new Error('Prepared runtime sourceHead mismatch: ' + String(marker.sourceHead));
+  }
+  if (marker.capability !== 'development-executor-unblock-v1') {
+    throw new Error('Prepared runtime capability mismatch: ' + String(marker.capability));
+  }
+  return { root, cli, receipt };
+}
+
+function prepareRuntime(head: string): PreparedRuntime {
+  if (git(['rev-parse', 'HEAD']) !== head) {
+    throw new Error('Refusing to prepare a runtime that is not the current committed HEAD');
+  }
+  const branch = git(['branch', '--show-current']);
+  if (!branch || /^(main|master|release)$/.test(branch)) {
+    throw new Error('Unsafe development branch: ' + branch);
+  }
+
+  const short = head.slice(0, 12);
+  const root = 'E:\\WAG-Runtime\\' + short;
+  const staging = join(LaneBase, 'runtime-build-' + short);
+  const commonDir = git(['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  const mainRepo = dirname(commonDir);
+  const mainNodeModules = join(mainRepo, 'node_modules');
+  const buildNodeModules = join(Repo, 'node_modules');
+  if (!existsSync(buildNodeModules)) throw new Error('build node_modules missing: ' + buildNodeModules);
+  if (!existsSync(mainNodeModules)) throw new Error('runtime node_modules missing: ' + mainNodeModules);
+
+  if (existsSync(staging)) {
+    run('git.exe', ['-C', Repo, 'worktree', 'remove', '--force', staging], { allowFailure: true });
+    rmSync(staging, { recursive: true, force: true });
+  }
+
+  run('git.exe', ['-C', Repo, 'worktree', 'add', '--detach', staging, head]);
+  try {
+    ensureJunction(join(staging, 'node_modules'), buildNodeModules);
+    const cmdExe = process.env.ComSpec ?? 'cmd.exe';
+    run(cmdExe, ['/d', '/s', '/c', 'npm.cmd run typecheck'], { cwd: staging });
+    run(cmdExe, ['/d', '/s', '/c', 'npm.cmd run build'], { cwd: staging });
+
+    mkdirSync(root, { recursive: true });
+    rmSync(join(root, 'dist'), { recursive: true, force: true });
+    cpSync(join(staging, 'dist'), join(root, 'dist'), { recursive: true });
+    cpSync(join(staging, 'package.json'), join(root, 'package.json'));
+    ensureJunction(join(root, 'node_modules'), mainNodeModules);
+    writeFileSync(
+      join(root, 'RUNTIME.json'),
+      JSON.stringify({
+        sourceHead: head,
+        sourceWorktree: Repo,
+        preparedAtUtc: new Date().toISOString(),
+        capability: 'development-executor-unblock-v1',
+      }, null, 2) + '\n',
+      'utf8',
+    );
+  } finally {
+    run('git.exe', ['-C', Repo, 'worktree', 'remove', '--force', staging], { allowFailure: true });
+    rmSync(staging, { recursive: true, force: true });
+  }
+
+  const prepared = preparedRuntime(head);
+  console.log('WAG_RUNTIME_PREPARED=True');
+  console.log('SOURCE_HEAD=' + head);
+  console.log('RUNTIME=' + prepared.root);
+  return prepared;
+}
+
+function currentWrapperCli(): string {
+  const text = run('wsl.exe', ['-e', 'cat', Wrapper]).stdout;
+  const matches = [...text.matchAll(/E:\/WAG-Runtime\/[A-Za-z0-9._-]+\/dist\/cli\.js/g)]
+    .map((match) => match[0]);
+  if (matches.length !== 1) {
+    throw new Error('Expected exactly one pinned WAG CLI in wrapper; found ' + String(matches.length));
+  }
+  return matches[0]!;
+}
+
+function writeActivationReceipt(path: string, value: Record<string, unknown>): void {
+  mkdirSync(LogDir, { recursive: true });
+  writeFileSync(path, JSON.stringify(value, null, 2) + '\n', 'utf8');
+}
+
+async function activatePreparedRuntimeWorker(head: string): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  const prepared = preparedRuntime(head);
+  const previousCli = currentWrapperCli();
+  if (previousCli === prepared.cli) {
+    writeActivationReceipt(prepared.receipt, {
+      state: 'ALREADY_ACTIVE',
+      sourceHead: head,
+      cli: prepared.cli,
+      completedAtUtc: new Date().toISOString(),
+    });
+    return;
+  }
+
+  let wrapperChanged = false;
+  let oldTunnelStopped = false;
+  try {
+    switchWrapper(previousCli, prepared.cli);
+    wrapperChanged = true;
+    await stopWagTunnel();
+    oldTunnelStopped = true;
+    rmSync(UrlFile, { force: true });
+
+    const started = startWagTunnel('activate-' + head.slice(0, 12));
+    await waitForWag(started, 'Activated WAG runtime');
+    writeActivationReceipt(prepared.receipt, {
+      state: 'SUCCEEDED',
+      sourceHead: head,
+      previousCli,
+      cli: prepared.cli,
+      launcherPid: started.hostPid,
+      stdoutLog: started.stdout,
+      stderrLog: started.stderr,
+      completedAtUtc: new Date().toISOString(),
+    });
+  } catch (error) {
+    let rollback = 'not-required';
+    if (wrapperChanged) {
+      try {
+        switchWrapper(prepared.cli, previousCli);
+        if (oldTunnelStopped) {
+          await stopWagTunnel();
+          rmSync(UrlFile, { force: true });
+          const restored = startWagTunnel('rollback-activate-' + head.slice(0, 12));
+          await waitForWag(restored, 'Rollback WAG runtime');
+        }
+        rollback = 'succeeded';
+      } catch (rollbackError) {
+        rollback = 'failed:' + (rollbackError instanceof Error ? rollbackError.message : String(rollbackError));
+      }
+    }
+    writeActivationReceipt(prepared.receipt, {
+      state: 'FAILED',
+      sourceHead: head,
+      previousCli,
+      cli: prepared.cli,
+      error: error instanceof Error ? error.message : String(error),
+      rollback,
+      completedAtUtc: new Date().toISOString(),
+    });
+    throw error;
+  }
+}
+
+function schedulePreparedRuntimeActivation(head: string): void {
+  const prepared = preparedRuntime(head);
+  const script = process.argv[1];
+  if (!script) throw new Error('Activation script path is unavailable');
+  rmSync(prepared.receipt, { force: true });
+
+  const child = spawn(
+    process.execPath,
+    ['--import', 'tsx', script, ACTIVATE_WORKER, head],
+    { cwd: Repo, detached: true, stdio: 'ignore', windowsHide: true },
+  );
+  child.unref();
+  console.log('WAG_RUNTIME_ACTIVATION_SCHEDULED=True');
+  console.log('SOURCE_HEAD=' + head);
+  console.log('RECEIPT=' + prepared.receipt);
+}
+
+if (prepareRequested) {
+  prepareRuntime(prepareHead!);
+  process.exit(0);
+}
+if (workerRequested) {
+  await activatePreparedRuntimeWorker(workerHead!);
+  process.exit(0);
+}
+if (activateRequested) {
+  schedulePreparedRuntimeActivation(activateHead!);
+  process.exit(0);
 }
 
 interface RolloverPlan {

@@ -72,6 +72,7 @@ const allowed = (verdict: Verdict, what: string): void => {
  * runnable, and is itself an honest demonstration of residual 2 at the bottom of this file.
  */
 const CONTROL_CLI = 'scripts/delegation-control.ts';
+const LEASE_CONTROL_CLI = 'scripts/goal-lease-delegation-control.ts';
 const ISSUE = ['--is', 'sue'].join('');
 const RENEW = ['--re', 'new'].join('');
 const INSERT_LEASE = ['insert', 'GoalLease'].join('');
@@ -106,6 +107,16 @@ test('the delegation control CLI is refused when it issues or renews', () => {
   denied(bash(`npx tsx ${CONTROL_CLI} ${RENEW} uidel_abc --ttl-minutes 60`), 'renewing');
   denied(bash(`node ${CONTROL_CLI} ${ISSUE}`), 'issuing via node');
   denied(bash(`npm exec -- tsx ${CONTROL_CLI} ${ISSUE} --goal g`), 'issuing through npm exec');
+});
+
+test('the Goal Lease control CLI is refused when it issues authority', () => {
+  const reason = denied(
+    bash(`npx tsx ${LEASE_CONTROL_CLI} ${ISSUE} --state E:/wag.sqlite `
+      + '--bindings E:/reviewed-bindings.json --ttl-minutes 240'),
+    'issuing a Goal Lease',
+  );
+  assert.match(reason, /human-presence-boundary\.md/);
+  denied(bash(`node ${LEASE_CONTROL_CLI} ${ISSUE}`), 'issuing a Goal Lease via node');
 });
 
 test('a one-liner that calls issuance directly is refused, on either shell', () => {
@@ -195,6 +206,10 @@ test('the session-correlation refusal does not spill onto reads or non-grant con
 
 test('revocation and the local stop are never refused', () => {
   allowed(bash(`npx tsx ${CONTROL_CLI} --revoke uidel_abc`), 'revoking a delegation');
+  allowed(
+    bash(`npx tsx ${LEASE_CONTROL_CLI} --revoke lease_abc --state E:/wag.sqlite`),
+    'revoking a Goal Lease',
+  );
   allowed(bash('npm run lease:stop'), 'engaging the kill switch');
   allowed(bash('npx tsx scripts/lease-stop.ts'), 'engaging the kill switch by path');
 });
@@ -204,6 +219,15 @@ test('read-only inspection of the issuance surfaces is never refused', () => {
   allowed(bash(`npx tsx ${CONTROL_CLI} --workspaces`), 'listing workspaces');
   allowed(bash(`npx tsx ${CONTROL_CLI} --show uidel_abc`), 'showing a delegation');
   allowed(bash(`npx tsx ${CONTROL_CLI} --help`), 'reading the usage');
+  allowed(
+    bash(`npx tsx ${LEASE_CONTROL_CLI} --list --state E:/wag.sqlite`),
+    'listing Goal Leases',
+  );
+  allowed(
+    bash(`npx tsx ${LEASE_CONTROL_CLI} --show lease_abc --state E:/wag.sqlite`),
+    'showing a Goal Lease',
+  );
+  allowed(bash(`npx tsx ${LEASE_CONTROL_CLI} --help`), 'reading Goal Lease usage');
 });
 
 test('reading and analysing issuance is not performing it', () => {
