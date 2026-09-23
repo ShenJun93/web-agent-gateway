@@ -128,6 +128,7 @@ export async function main(
       inspect: engineering.profile.inspect,
       mutationContext: engineering.mutationContext,
       gitCommitContext: engineering.gitCommitContext,
+      commandContext: engineering.commandContext,
     });
   } catch (error) {
     await closeQuietly(engineering);

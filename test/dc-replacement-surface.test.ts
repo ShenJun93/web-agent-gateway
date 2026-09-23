@@ -13,12 +13,13 @@ const DEFAULT_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read',
 const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run'];
 const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.create', 'mutation.result'];
 const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.create', 'mutation.result'];
-const COMMIT_TOOLS = [...FULL_TOOLS, 'git.commit', 'git.commit.result'];
+const COMMIT_TOOLS = [...INSPECT_TOOLS, 'command.run', 'mutation.preview', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result'];
 
 /**
- * Every capability DC exposes that WAG must keep unavailable on every stdio profile.
- * git.commit and git.commit.result are the only accepted Git tools (ADR-0023); every other
- * Git verb, and every shell/process/directory verb, must stay absent.
+ * DC-class authority stays unavailable unless WAG defines a narrower accepted contract.
+ * command.run is the one accepted process capability: argv-only, Goal-Lease-authorized and
+ * bounded by WAG's sanitized runner. Raw shell/terminal/PTY and broad Git/filesystem verbs remain
+ * absent. git.commit and git.commit.result are the only accepted Git tools (ADR-0023).
  */
 const ACCEPTED_GIT_TOOLS = new Set(['git.commit', 'git.commit.result']);
 const FORBIDDEN_TOOL_FRAGMENTS = [
@@ -28,13 +29,18 @@ const FORBIDDEN_TOOL_FRAGMENTS = [
   'directory', 'config.set', 'set_config', 'forward',
 ];
 
-interface StubCall { workspaceId: string; command: string; }
+interface StubCall {
+  workspaceId: string;
+  command: string;
+  maxOutputTokens: number;
+  timeoutMs: number;
+}
 
 function stubExecutor(result: ExecResult, calls: StubCall[] = []) {
   const executor = {
     openWorkspace: async (root: string) => `devspace_${root.length}`,
-    execCommand: async (workspaceId: string, command: string) => {
-      calls.push({ workspaceId, command });
+    execCommand: async (workspaceId: string, command: string, maxOutputTokens: number, timeoutMs: number) => {
+      calls.push({ workspaceId, command, maxOutputTokens, timeoutMs });
       return result;
     },
     interruptCommand: async () => {},
@@ -128,6 +134,33 @@ test('gateway repo.search rejects an unknown workspace id and emits telemetry ou
   assert.deepEqual(searchEvents.map((event) => event.success), [false, true]);
 });
 
+test('gateway command.run reuses the sanitized bounded argv runner', async () => {
+  const { executor, calls } = stubExecutor({ output: 'ok\n', exitCode: 0, running: false });
+  const gateway = gatewayWith(executor);
+  const { workspaceId } = await gateway.openWorkspace(process.cwd());
+
+  const result = await gateway.commandRun(
+    workspaceId,
+    ['node', '--version'],
+    { timeoutMs: 2_345, maxOutputTokens: 678 },
+  );
+
+  assert.deepEqual(result, { exitCode: 0, output: 'ok' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.workspaceId, `devspace_${process.cwd().length}`);
+  assert.equal(calls[0]!.timeoutMs, 2_345);
+  assert.equal(calls[0]!.maxOutputTokens, 678);
+  assert.match(calls[0]!.command, /^node -e /, 'argv must travel through the WAG-owned helper');
+
+  for (const argv of [['node', 'hello world'], ['node', '&&'], ['node', 'x'.repeat(513)]]) {
+    await assert.rejects(
+      () => gateway.commandRun(workspaceId, argv),
+      /Invalid verify profile argv/,
+    );
+  }
+  assert.equal(calls.length, 1, 'unsafe argv must be refused before executor invocation');
+});
+
 // --------------------------------------------------------------------------
 // Gate 3 — capability profile
 // --------------------------------------------------------------------------
@@ -212,6 +245,7 @@ test('private stdio profiles compose independently and never expose DC-class aut
       inspect: true,
       mutationContext: { callerContext, coordinator },
       gitCommitContext: { callerContext, coordinator: commitCoordinator },
+      commandContext: { authorize: async () => undefined },
     }, COMMIT_TOOLS],
   ] as const) {
     const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });

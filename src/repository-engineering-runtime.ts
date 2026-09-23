@@ -1,21 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { adapterCorrelationDigest } from './adapter-admission.js';
+import { sameAuthorityTuple } from './authority-tuple.js';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { SqliteDurableStore } from './durable-store.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
 import { DurableCommitCoordinator } from './git-commit.js';
+import { evaluateGoalLease, type GoalLeaseBindings } from './goal-lease.js';
 import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
-import type { GitCommitMcpContext, MutationMcpContext } from './server.js';
+import type { CommandMcpContext, GitCommitMcpContext, MutationMcpContext } from './server.js';
 
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
+
+/** Checkout/runtime this authority implementation was loaded from; never caller-selected. */
+const GATEWAY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 export interface RepositoryEngineeringProfile {
   inspect: boolean;
@@ -44,6 +50,11 @@ export interface RepositoryEngineeringRuntime {
   mutationContext?: MutationMcpContext;
   /** Present only after a successful attach with git commit enabled. */
   gitCommitContext?: GitCommitMcpContext;
+  /**
+   * Present only when the full local-development profile also names a Goal Lease.
+   * Each command call still re-evaluates that lease against its exact workspace.
+   */
+  commandContext?: CommandMcpContext;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
@@ -217,6 +228,56 @@ export async function startRepositoryEngineeringRuntime(
             ...(goalLease === undefined ? {} : { goalLease }),
           });
           await commitCoordinator.reconcile();
+        }
+
+        // Model-chosen argv is stronger than a configured verify profile, so merely having mutation
+        // and commit capability is not enough. The command surface exists only on the full profile
+        // with a named Goal Lease, and every call re-reads that lease plus the durable workspace.
+        if (goalLease && inspect && commitCoordinator) {
+          runtime.commandContext = {
+            authorize(workspaceId) {
+              const workspace = store.getWorkspace(workspaceId);
+              if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
+                throw new Error('Gateway denied command workspace');
+              }
+
+              const stored = store.getGoalLeaseRow(goalLease.leaseId);
+              if (!stored) throw new Error('Gateway denied command: NO_LEASE');
+
+              let bindings: GoalLeaseBindings;
+              try {
+                bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
+              } catch {
+                throw new Error('Gateway denied command: LEASE_MALFORMED');
+              }
+
+              const decision = evaluateGoalLease({
+                lease: {
+                  leaseId: stored.leaseId,
+                  createdAt: stored.createdAt,
+                  notBefore: stored.notBefore,
+                  expiresAt: stored.expiresAt,
+                  ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
+                  bindings,
+                },
+                now: Date.now(),
+                request: {
+                  tool: 'command.run',
+                  sessionId: callerContext.sessionId,
+                  adapterId: callerContext.adapterId,
+                  workspaceRoot: workspace.canonicalRoot,
+                  path: '.',
+                  diffBytes: 0,
+                },
+                spend: store.goalLeaseSpend(stored.leaseId),
+                killSwitch: goalLease.killSwitch(),
+                gatewayRoot: GATEWAY_ROOT,
+              });
+              if (!decision.admitted) {
+                throw new Error(`Gateway denied command: ${decision.code}`);
+              }
+            },
+          };
         }
 
         // No `onDeny` here, deliberately. The browser-operator runtime sends refusals to stderr so

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
+import { adapterCorrelationDigest } from '../src/adapter-admission.js';
 import { main, type CliDependencies } from '../src/cli.js';
+import { SqliteDurableStore } from '../src/durable-store.js';
 import type { DevspaceExecutor } from '../src/executor/devspace.js';
 import type { PrivateGatewayConfig } from '../src/private-config.js';
 import {
@@ -326,5 +328,94 @@ test('stdio git commit inherits the configured mutation review TTL', async () =>
     await runtime.close();
     await rm(statePath, { force: true });
     await rm(`${statePath}.operator-url`, { force: true });
+  }
+});
+
+test('command authority requires a Goal Lease and stays bound to its exact workspace', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-command-authority-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ownerId = 'local.private.stdio';
+  const operator = async () => ({
+    origin: 'http://127.0.0.1:1',
+    bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+    close: async () => {},
+  });
+
+  const noLease = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: { statePath: join(root, 'no-lease.sqlite'), ownerId },
+      gitCommit: {},
+    }),
+    { startOperatorServer: operator },
+  );
+  try {
+    await noLease.attach(fakeExecutor);
+    assert.equal(noLease.commandContext, undefined, 'full capabilities alone must not expose command.run');
+  } finally {
+    await noLease.close();
+  }
+
+  const statePath = join(root, 'leased.sqlite');
+  const correlation = 'session_11111111-2222-3333-4444-555555555555';
+  const leaseId = 'lease_command_runtime';
+  const workspaceRoot = await realpath(root);
+  const now = Date.now();
+  const store = new SqliteDurableStore(statePath);
+  try {
+    const session = store.getOrCreateAdapterSession({
+      ownerId,
+      adapterId: PRIVATE_STDIO_ADAPTER_ID,
+      correlationSha256: adapterCorrelationDigest(ownerId, PRIVATE_STDIO_ADAPTER_ID, correlation),
+      createdAt: now,
+    });
+    store.insertGoalLease({
+      leaseId,
+      createdAt: now,
+      notBefore: now - 1_000,
+      expiresAt: now + 60_000,
+      bindings: JSON.stringify({
+        workspaceRoots: [workspaceRoot],
+        allowedTools: ['command.run'],
+        pathPatterns: ['src/**'],
+        maxFiles: 1,
+        maxBytes: 1,
+        maxDiffBytes: 1,
+        admittedSessions: [session.sessionId],
+        admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
+        commitSemantics: 'none',
+      }),
+    });
+  } finally {
+    store.close();
+  }
+
+  const leased = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: {
+        statePath,
+        ownerId,
+        sessionCorrelation: correlation,
+        goalLeaseId: leaseId,
+      },
+      gitCommit: {},
+    }),
+    { startOperatorServer: operator },
+  );
+  try {
+    const grantedWorkspace = leased.openWorkspaceId!(workspaceRoot);
+    const otherWorkspace = leased.openWorkspaceId!(join(workspaceRoot, 'other'));
+    await leased.attach(fakeExecutor);
+
+    assert.ok(leased.commandContext, 'a full profile with a named lease gets the command authority hook');
+    await leased.commandContext!.authorize(grantedWorkspace);
+    await assert.rejects(
+      async () => leased.commandContext!.authorize(otherWorkspace),
+      /WORKSPACE_NOT_GRANTED/,
+      'opening another trusted workspace must not inherit command authority from this lease',
+    );
+  } finally {
+    await leased.close();
   }
 });

@@ -76,6 +76,7 @@ test('the extended private stdio profile completes the DC repository-engineering
     inspect: true,
     mutationContext: { callerContext, coordinator },
     gitCommitContext: { callerContext, coordinator: commitCoordinator },
+    commandContext: { authorize: async () => undefined },
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'dc-replacement-integration', version: '1.0.0' }, { capabilities: {} });
@@ -85,7 +86,7 @@ test('the extended private stdio profile completes the DC repository-engineering
 
   assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), [
     'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
-    'file.read', 'verify.run',
+    'file.read', 'verify.run', 'command.run',
     'mutation.preview', 'file.create', 'mutation.result',
     'git.commit', 'git.commit.result',
   ]);
@@ -121,6 +122,27 @@ test('the extended private stdio profile completes the DC repository-engineering
   assert.match(baseline.output, /tests 2/);
   assert.match(baseline.output, /pass 1/);
   assert.match(baseline.output, /fail 1/);
+
+  // X1 — bounded argv execution through the same workspace-bound DevSpace session.
+  const command = parse<{ exitCode: number; output: string }>(
+    await client.callTool({
+      name: 'command.run',
+      arguments: {
+        workspace_id: workspaceId,
+        argv: ['node', '--version'],
+        timeout_ms: 5_000,
+        max_output_tokens: 500,
+      },
+    }));
+  assert.equal(command.exitCode, 0);
+  assert.match(command.output, /^v\d+\./);
+
+  const unsafeCommand = await client.callTool({
+    name: 'command.run',
+    arguments: { workspace_id: workspaceId, argv: ['node', 'hello world'] },
+  });
+  assert.equal((unsafeCommand as { isError?: boolean }).isError, true,
+    'shell-like or whitespace-bearing argv must be refused before execution');
 
   // C1 — reviewed change. The preview alone must not touch the repository.
   const original = await readFile(join(fixture.workspaceRoot, DC_FIXTURE_IMPLEMENTATION), 'utf8');

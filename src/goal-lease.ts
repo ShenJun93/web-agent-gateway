@@ -439,6 +439,18 @@ export function evaluateGoalLease(input: {
       'the workspace is inside the running gateway checkout, so a lease cannot act on it');
   }
 
+  // Workspace-scoped command execution is intentionally not disguised as a file mutation.
+  // Its authority comes from the same human-issued lease, but there is no honest file path or
+  // byte budget that bounds what repository code may do once executed. The command runner adds
+  // separate argv/env/time/output/process-tree bounds; the lease supplies identity, workspace,
+  // lifetime, kill-switch, tool-grant and self-modification bounds.
+  if (request.tool === 'command.run') {
+    if (request.path !== '.' || request.diffBytes !== 0 || request.wantsCommit === true) {
+      return deny('LEASE_MALFORMED', 'command.run must be represented as one workspace-scoped execution action');
+    }
+    return { admitted: true };
+  }
+
   // The path arrives relative and is required to stay that way. This is belt and braces over the
   // path policy that already ran; a lease must not be the thing that widens it.
   const relative = request.path.replace(/\\/g, '/');

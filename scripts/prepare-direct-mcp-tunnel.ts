@@ -94,7 +94,13 @@ export async function projectedTools(
     ...(engineering?.mutation === undefined ? {} : {
       mutationContext: { callerContext, coordinator: refusing() },
       ...(engineering.gitCommit === undefined
-        ? {} : { gitCommitContext: { callerContext, coordinator: refusing() } }),
+        ? {}
+        : {
+          gitCommitContext: { callerContext, coordinator: refusing() },
+          ...(engineering.inspect === true && engineering.mutation.goalLeaseId !== undefined
+            ? { commandContext: { authorize: async () => undefined } }
+            : {}),
+        }),
     }),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -113,6 +119,11 @@ export async function projectedTools(
   if (Object.keys(config.verifyProfiles).length === 0) missing.push('verify');
   if (!engineering?.mutation) missing.push('mutation');
   if (!engineering?.gitCommit) missing.push('commit');
+  if (!(engineering?.inspect === true
+    && engineering?.mutation?.goalLeaseId !== undefined
+    && engineering?.gitCommit !== undefined)) {
+    missing.push('command');
+  }
   return { tools, missing };
 }
 

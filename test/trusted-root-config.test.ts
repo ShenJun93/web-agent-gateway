@@ -29,6 +29,12 @@ test('a Windows drive root may be trusted without becoming a workspace', async (
   const loaded = await loadPrivateGatewayConfig(configPath);
   assert.deepEqual(loaded.allowedRoots, [driveRoot]);
 
+  assert.equal(
+    await canonicalWorkspace(temp, loaded.allowedRoots),
+    await realpath(temp),
+    'a descendant of the trusted drive root remains an admissible workspace',
+  );
+
   await assert.rejects(
     () => canonicalWorkspace(driveRoot, loaded.allowedRoots),
     /drive-root workspace/,

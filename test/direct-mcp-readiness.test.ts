@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { adapterCorrelationDigest } from '../src/adapter-admission.js';
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DurableMutationCoordinator } from '../src/durable-mutation.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
@@ -11,6 +12,10 @@ import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { DurableCommitCoordinator } from '../src/git-commit.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
 import type { PrivateGatewayConfig } from '../src/private-config.js';
+import {
+  PRIVATE_STDIO_ADAPTER_ID,
+  startRepositoryEngineeringRuntime,
+} from '../src/repository-engineering-runtime.js';
 import { projectedTools } from '../scripts/prepare-direct-mcp-tunnel.js';
 
 /**
@@ -48,6 +53,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['repo.diff', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['file.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['verify.run', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['command.run', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['mutation.preview', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['mutation.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
@@ -101,6 +107,7 @@ async function openDirectSurface(t: TestContext) {
       callerContext,
       coordinator: new DurableCommitCoordinator({ store, backend: commitBackend as never }),
     },
+    commandContext: { authorize: async () => undefined },
   });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -152,7 +159,7 @@ test('no direct tool claims read-only while creating durable state', async (t) =
   // The regression this pins: `workspace.open` mints a durable caller-owned workspace record,
   // and previously claimed `readOnlyHint: true` — the one annotation class ADR-0020 warns can
   // cause a provider-side write confirmation to be skipped.
-  for (const name of ['workspace.open', 'verify.run', 'mutation.preview', 'file.create', 'git.commit']) {
+  for (const name of ['workspace.open', 'verify.run', 'command.run', 'mutation.preview', 'file.create', 'git.commit']) {
     const tool = tools.tools.find((candidate) => candidate.name === name);
     assert.equal(
       tool?.annotations?.readOnlyHint, false,
@@ -194,6 +201,101 @@ test('every direct tool refuses unknown arguments instead of silently dropping t
  * this pins — is that its config-to-options mapping opts in to the same capabilities the runtime
  * does, and that an unconfigured gateway still projects exactly the accepted five.
  */
+test('runtime command authority requires a lease and stays bound to its exact workspace', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-direct-command-authority-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ownerId = 'local.private.stdio';
+  const correlation = 'session_11111111-2222-3333-4444-555555555555';
+  const operator = async () => ({
+    origin: 'http://127.0.0.1:1',
+    bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+    close: async () => {},
+  });
+  const fakeExecutor = {} as unknown as DevspaceExecutor;
+
+  const noLease = await startRepositoryEngineeringRuntime({
+    allowedRoots: [root],
+    devspace: { baseUrl: 'http://127.0.0.1:1', resourceUrl: 'http://127.0.0.1:1/mcp' },
+    verifyProfiles: {},
+    repositoryEngineering: {
+      inspect: true,
+      mutation: { statePath: join(root, 'no-lease.sqlite'), ownerId },
+      gitCommit: {},
+    },
+  }, { startOperatorServer: operator });
+  try {
+    await noLease.attach(fakeExecutor);
+    assert.equal(noLease.commandContext, undefined);
+  } finally {
+    await noLease.close();
+  }
+
+  const statePath = join(root, 'leased.sqlite');
+  const leaseId = 'lease_direct_command';
+  const workspaceRoot = await realpath(root);
+  const store = new SqliteDurableStore(statePath);
+  try {
+    const now = Date.now();
+    const session = store.getOrCreateAdapterSession({
+      ownerId,
+      adapterId: PRIVATE_STDIO_ADAPTER_ID,
+      correlationSha256: adapterCorrelationDigest(ownerId, PRIVATE_STDIO_ADAPTER_ID, correlation),
+      createdAt: now,
+    });
+    store.insertGoalLease({
+      leaseId,
+      createdAt: now,
+      notBefore: now - 1_000,
+      expiresAt: now + 60_000,
+      bindings: JSON.stringify({
+        workspaceRoots: [workspaceRoot],
+        allowedTools: ['command.run'],
+        pathPatterns: ['src/**'],
+        maxFiles: 1,
+        maxBytes: 1,
+        maxDiffBytes: 1,
+        admittedSessions: [session.sessionId],
+        admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
+        commitSemantics: 'none',
+      }),
+    });
+  } finally {
+    store.close();
+  }
+
+  const leased = await startRepositoryEngineeringRuntime({
+    allowedRoots: [root],
+    devspace: { baseUrl: 'http://127.0.0.1:1', resourceUrl: 'http://127.0.0.1:1/mcp' },
+    verifyProfiles: {},
+    repositoryEngineering: {
+      inspect: true,
+      mutation: {
+        statePath,
+        ownerId,
+        sessionCorrelation: correlation,
+        goalLeaseId: leaseId,
+      },
+      gitCommit: {},
+    },
+  }, { startOperatorServer: operator });
+
+  try {
+    const granted = leased.openWorkspaceId!(workspaceRoot);
+    const other = leased.openWorkspaceId!(join(workspaceRoot, 'other'));
+    await leased.attach(fakeExecutor);
+
+    assert.ok(leased.commandContext);
+    await leased.commandContext!.authorize(granted);
+    await assert.rejects(
+      async () => leased.commandContext!.authorize(other),
+      /WORKSPACE_NOT_GRANTED/,
+      'a different opened workspace must not inherit this lease\'s command authority',
+    );
+  } finally {
+    await leased.close();
+  }
+});
+
 test('the tunnel instrument projects the surface the server really registers', async (t) => {
   const base: PrivateGatewayConfig = {
     allowedRoots: ['E:/nowhere'],
@@ -215,13 +317,18 @@ test('the tunnel instrument projects the surface the server really registers', a
     (await defaultClient.listTools()).tools.map((tool) => tool.name),
     'the instrument must project the accepted five when nothing is opted in',
   );
-  assert.deepEqual((await projectedTools(base)).missing, ["mutation", "commit"]);
+  assert.deepEqual((await projectedTools(base)).missing, ["mutation", "commit", "command"]);
 
   const full: PrivateGatewayConfig = {
     ...base,
     repositoryEngineering: {
       inspect: true,
-      mutation: { statePath: 'E:/nowhere/state.sqlite', ownerId: 'owner_direct' },
+      mutation: {
+        statePath: 'E:/nowhere/state.sqlite',
+        ownerId: 'owner_direct',
+        sessionCorrelation: 'session_11111111-2222-3333-4444-555555555555',
+        goalLeaseId: 'lease_projection',
+      },
       gitCommit: {},
     },
   };

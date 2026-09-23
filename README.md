@@ -101,12 +101,14 @@ A local operator may opt in to the repository-engineering profile that carries W
 
 The operator review server's **origin** is announced on stderr; its single-use bootstrap token is not. A stdio gateway's stderr belongs to whichever process spawned it — in the supported deployment that is the remote-facing tunnel client — so the token is written to `<statePath>.operator-url` instead and removed on shutdown. Open that URL locally to review and approve.
 
-With both enabled the surface is exactly:
+With inspect, mutation and git commit enabled, but no Goal Lease named, the surface is exactly:
 
 ```text
 health  workspace.open  repo.list  repo.search  repo.snapshot  repo.diff  file.read  verify.run
 mutation.preview  file.create  mutation.result  git.commit  git.commit.result
 ```
+
+If the operator also names a durable Goal Lease in `repositoryEngineering.mutation.goalLeaseId`, the direct stdio surface registers `command.run` immediately after `verify.run`. Naming a lease only makes the capability discoverable; it does **not** authorize a command. Every call re-reads the durable lease and must find `command.run` in `allowedTools` for the exact caller session, adapter and workspace root, with an unexpired lease and the kill switch disengaged. A lease for one development worktree therefore does not grant command execution in another opened workspace.
 
 `gitCommit` adds reviewed committing, and requires `mutation` because it shares the same durable store and operator review server — asking for it alone is a config error, not a quiet half-capability. `git.commit` proposes one commit of an exact path set; the operator sees the repository, the branch, the parent HEAD, the resulting tree, the author, every selected path, the resulting change set and the full message before approving.
 
@@ -122,7 +124,15 @@ WAG binds the resulting **tree delta**, not just the paths you named, and refuse
 
 The argv reaches the process directly rather than through a shell, and the environment is built upwards from an allowlist (ADR-0025). Nothing the operator's shell exported and nothing the execution backend added reaches the verification unless WAG names it or the profile declares it — `NODE_OPTIONS` is excluded by construction, because it can inject `--require` into every Node-based run. Cancellation and abandonment reap the whole process tree; unrelated processes are untouched.
 
-What WAG does **not** do is isolate a verification from the network. Enforcing that would mean changing machine-wide firewall or security policy, which WAG will not do. The narrower guarantee it does give is that a verification reaches the network with no credential, token or proxy setting WAG passed it: profile environment keys matching `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `PRIVATE_KEY` or `CREDENTIAL` are rejected at config load, and nothing else is inherited. The supported repository-engineering workflow does not need network-capable execution.
+What WAG does **not** do is isolate a verification from the network. Enforcing that would mean changing machine-wide firewall or security policy, which WAG will not do. The narrower guarantee it does give is that a verification reaches the network with no credential, token or proxy setting WAG passed it: profile environment keys matching `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `PRIVATE_KEY` or `CREDENTIAL` are rejected at config load, and nothing else is inherited.
+
+### How WAG runs a Goal-Lease command
+
+`command.run` accepts an opened `workspace_id`, a bounded argv array and optional timeout/output limits. It reuses the same WAG-owned runner as `verify.run`: argv is data rather than shell text, caller-supplied environment is not accepted, executable resolution is controlled, timeout/output budgets are bounded, and timeout cleanup reaps the whole spawned process tree. The initial contract intentionally rejects whitespace-bearing or shell-like arguments rather than attempting to emulate an interactive shell.
+
+Before every command, WAG re-reads the durable Goal Lease and workspace record. The exact owner/session/adapter tuple, exact workspace root, `command.run` tool grant, lease lifetime, kill switch and running-gateway self-modification boundary must all pass. Opening another workspace under the same trusted outer root does not inherit command authority.
+
+This is **not an OS sandbox**. A granted process runs as the local user with the workspace as its working directory; repository code can have filesystem side effects outside that directory and can use the network if the OS permits it. WAG therefore declares `command.run` destructive/open-world and exposes no raw shell, PTY, interactive terminal, caller environment or implicit credentials. A Goal Lease command grant is consequential authority, not a convenience alias for `verify.run`.
 
 ### How WAG runs git
 
@@ -138,7 +148,7 @@ Not available in v1: amend, merge commits, empty commits, signing, force, reset,
 
 `repo.list` returns the immediate tracked and untracked-not-ignored entries of one directory. `repo.diff` returns the bounded working-tree diff against `HEAD`, with the bodies of path-policy-sensitive files (`.env`, `.npmrc`, `.git-credentials` and the rest of the denylist) withheld. Every response is capped at 64 KiB and reports whether it was truncated. A caller-supplied path is never interpolated into a shell command: it reaches git as a single literal argv pathspec.
 
-WAG stays deliberately narrower than Desktop Commander on every profile. It exposes no shell, process control, PTY, arbitrary argv, file move or delete, directory tools, Git writes, or runtime configuration mutation, and `allowedRoots` is enforced rather than advisory.
+WAG stays deliberately narrower than Desktop Commander on every profile. Even the Goal-Lease command capability exposes bounded argv rather than a shell: there is no raw shell, PTY, interactive terminal, caller-supplied environment, file move/delete API, directory mutation API, unrestricted Git surface or runtime-configuration mutation. Git writes remain limited to WAG's exact reviewed/leased commit contract, and `allowedRoots` is enforced rather than advisory.
 
 Authority: `docs/adr/0020-make-private-stdio-the-dc-replacement-surface.md`, `docs/adr/0021-complete-the-bounded-repository-inspection-set.md` , `docs/adr/0024-isolate-the-git-execution-surface.md` and `docs/adr/0025-run-verifications-through-an-argv-runner.md`. Design: `docs/superpowers/specs/2026-09-19-wag-dc-replacement-v1-design.md`. Acceptance: `docs/superpowers/plans/2026-09-19-wag-dc-replacement-v1-acceptance.md`.
 

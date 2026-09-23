@@ -74,6 +74,44 @@ test('a request strictly inside the lease is admitted', () => {
   assert.deepEqual(decide(), { admitted: true });
 });
 
+test('command.run is a separate workspace-scoped grant, not a file-pattern shortcut', () => {
+  const commandLease: GoalLeaseRecord = {
+    ...LEASE,
+    bindings: { ...BINDINGS, allowedTools: ['mutation.preview', 'command.run'] },
+  };
+  const ask = (request: Partial<LeaseRequest> = {}) => evaluateGoalLease({
+    lease: commandLease,
+    now: NOW,
+    request: {
+      ...REQUEST,
+      tool: 'command.run',
+      path: '.',
+      diffBytes: 0,
+      ...request,
+    },
+    spend: { filesChanged: BINDINGS.maxFiles, bytesWritten: BINDINGS.maxBytes },
+    killSwitch: false,
+  });
+
+  assert.deepEqual(ask(), { admitted: true }, 'file/byte spend is irrelevant to an execution grant');
+  assert.equal((ask({ workspaceRoot: 'E:/somewhere/else' }) as { code: string }).code, 'WORKSPACE_NOT_GRANTED');
+  assert.equal((ask({ sessionId: 'session_other' }) as { code: string }).code, 'SESSION_NOT_ADMITTED');
+  assert.equal((ask({ adapterId: 'browser.chatgpt.native.verify.v3' }) as { code: string }).code, 'ADAPTER_NOT_ADMITTED');
+
+  const noCommand = evaluateGoalLease({
+    lease: LEASE,
+    now: NOW,
+    request: { ...REQUEST, tool: 'command.run', path: '.', diffBytes: 0 },
+    spend: NO_SPEND,
+    killSwitch: false,
+  });
+  assert.equal((noCommand as { code: string }).code, 'TOOL_NOT_GRANTED');
+
+  for (const malformed of [{ path: 'src/a.ts' }, { diffBytes: 1 }, { wantsCommit: true }] as const) {
+    assert.equal((ask(malformed) as { code: string }).code, 'LEASE_MALFORMED');
+  }
+});
+
 test('every binding is load-bearing: change one thing and it is denied', () => {
   // Each row is a single deviation from a request that is otherwise admitted above, so a guard
   // that stopped being consulted would show up here as an admission rather than a denial.

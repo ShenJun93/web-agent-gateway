@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,9 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { adapterCorrelationDigest } from '../src/adapter-admission.js';
+import { SqliteDurableStore } from '../src/durable-store.js';
+import { PRIVATE_STDIO_ADAPTER_ID } from '../src/repository-engineering-runtime.js';
 import {
   DC_FIXTURE_BASELINE_HEAD,
   DC_FIXTURE_BASELINE_TREE,
@@ -27,7 +30,7 @@ const builtCli = join(repoRoot, 'dist', 'cli.js');
 
 const EXTENDED_TOOLS = [
   'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
-  'file.read', 'verify.run',
+  'file.read', 'verify.run', 'command.run',
   'mutation.preview', 'file.create', 'mutation.result',
   'git.commit', 'git.commit.result',
 ];
@@ -132,13 +135,52 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
 
   const statePath = join(temp, 'control-plane.sqlite');
   const configPath = join(temp, 'private.json');
+  const ownerId = 'local.private.stdio';
+  const sessionCorrelation = 'session_11111111-2222-3333-4444-555555555555';
+  const commandLeaseId = 'lease_acceptance_command';
+  const commandLeaseStore = new SqliteDurableStore(statePath);
+  try {
+    const now = Date.now();
+    const workspaceRoot = await realpath(fixture.workspaceRoot);
+    const session = commandLeaseStore.getOrCreateAdapterSession({
+      ownerId,
+      adapterId: PRIVATE_STDIO_ADAPTER_ID,
+      correlationSha256: adapterCorrelationDigest(ownerId, PRIVATE_STDIO_ADAPTER_ID, sessionCorrelation),
+      createdAt: now,
+    });
+    commandLeaseStore.insertGoalLease({
+      leaseId: commandLeaseId,
+      createdAt: now,
+      notBefore: now - 1_000,
+      expiresAt: now + 10 * 60_000,
+      bindings: JSON.stringify({
+        workspaceRoots: [workspaceRoot],
+        allowedTools: ['command.run'],
+        pathPatterns: ['src/**'],
+        maxFiles: 1,
+        maxBytes: 1,
+        maxDiffBytes: 1,
+        admittedSessions: [session.sessionId],
+        admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
+        commitSemantics: 'none',
+      }),
+    });
+  } finally {
+    commandLeaseStore.close();
+  }
+
   await writeFile(configPath, JSON.stringify({
     allowedRoots: [fixture.workspaceRoot],
     devspace: { baseUrl: devspace.baseUrl, resourceUrl: devspace.resourceUrl },
     verifyProfiles: { unit: { argv: ['npm', 'test'], timeoutMs: 30_000, maxOutputTokens: 4_000 } },
     repositoryEngineering: {
       inspect: true,
-      mutation: { statePath, ownerId: 'local.private.stdio' },
+      mutation: {
+        statePath,
+        ownerId,
+        sessionCorrelation,
+        goalLeaseId: commandLeaseId,
+      },
       gitCommit: {},
     },
   }), 'utf8');
@@ -206,7 +248,29 @@ test('WAG DC Replacement v1 production-local acceptance', async (t) => {
   assert.match(baseline.output, /pass 1/);
   assert.match(baseline.output, /fail 1/);
 
-  // C1 — propose, then approve through the real loopback operator server.
+  // X1 — command execution is autonomous only because this fixture's lease grants command.run.
+  const command = parse<{ exitCode: number; output: string }>(await client.callTool({
+    name: 'command.run',
+    arguments: {
+      workspace_id: workspaceId,
+      argv: ['node', '--version'],
+      timeout_ms: 5_000,
+      max_output_tokens: 500,
+    },
+  }));
+  assert.equal(command.exitCode, 0);
+  assert.match(command.output, /^v\d+\./);
+
+  const unsafeCommand = await client.callTool({
+    name: 'command.run',
+    arguments: { workspace_id: workspaceId, argv: ['node', 'hello world'] },
+  });
+  assert.equal((unsafeCommand as { isError?: boolean }).isError, true,
+    'unsafe argv must fail before executor invocation');
+
+  // C1 — propose, then approve through the real loopback operator server. The lease intentionally
+  // does NOT grant mutation.preview or git.commit, so these steps must still require the operator.
+
   const original = await readFile(join(fixture.workspaceRoot, DC_FIXTURE_IMPLEMENTATION), 'utf8');
   const preview = parse<{ status: string; mutationId: string; fingerprint: string }>(await client.callTool({
     name: 'mutation.preview',

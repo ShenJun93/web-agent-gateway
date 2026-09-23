@@ -116,6 +116,47 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
       } catch (error) { trace.finish(false, error); throw error; }
     },
 
+    async commandRun(
+      workspaceId: string,
+      argv: readonly string[],
+      options: { timeoutMs?: number; maxOutputTokens?: number } = {},
+    ) {
+      const trace = startTrace('command.run', telemetry); trace.markIngress();
+      try {
+        const scoped = await trace.phase('policyMs', () => {
+          const workspace = binding(workspaceId);
+          const profile = resolveVerifyProfile({
+            argv,
+            ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+            ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
+          });
+          return { profile, devspaceWorkspaceId: workspace.devspaceWorkspaceId };
+        });
+        const result = await trace.phase('executorMs', () => executor.execCommand(
+          scoped.devspaceWorkspaceId,
+          scoped.profile.command,
+          scoped.profile.maxOutputTokens,
+          scoped.profile.timeoutMs,
+        ));
+        if (result.running) {
+          const sessionId = result.sessionId;
+          if (sessionId !== undefined) {
+            await trace.phase('executorMs', () => executor.interruptCommand(
+              scoped.devspaceWorkspaceId,
+              sessionId,
+              scoped.profile.maxOutputTokens,
+            ));
+          }
+          throw new Error('Gateway command timed out');
+        }
+        const value = await trace.phase('aggregationMs', () => ({
+          exitCode: result.exitCode ?? -1,
+          output: result.output.trimEnd(),
+        }));
+        trace.finish(true); return value;
+      } catch (error) { trace.finish(false, error); throw error; }
+    },
+
     async repoSnapshot(workspaceId: string, options: RepoSnapshotOptions = {}) {
       const trace = startTrace('repo.snapshot', telemetry); trace.markIngress();
       try {
@@ -352,9 +393,25 @@ export interface MutationMcpContext {
   coordinator: Pick<DurableMutationCoordinator, 'preview' | 'result'>;
 }
 
+/**
+ * Runtime-owned authority for model-chosen argv execution.
+ *
+ * The server never derives this from mutation/commit presence: a runtime with a named Goal Lease
+ * may expose the tool, but this context must explicitly authorize the caller's exact workspace
+ * before any argv reaches the executor.
+ */
+export interface CommandMcpContext {
+  authorize(workspaceId: string): void | Promise<void>;
+}
+
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext }: { inspect?: boolean; mutationContext?: MutationMcpContext; gitCommitContext?: GitCommitMcpContext } = {},
+  { inspect, mutationContext, gitCommitContext, commandContext }: {
+    inspect?: boolean;
+    mutationContext?: MutationMcpContext;
+    gitCommitContext?: GitCommitMcpContext;
+    commandContext?: CommandMcpContext;
+  } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   server.registerTool('health', {
@@ -430,6 +487,26 @@ export function createGatewayMcpServer(
     inputSchema: z.object({ workspace_id: z.string().min(1), profile: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async ({ workspace_id, profile }) => toolResult(await gateway.verifyRun(workspace_id, profile)));
+
+  if (commandContext) {
+    server.registerTool('command.run', {
+      description: 'Run one Goal-Lease-authorized bounded argv command in the opened workspace; shell strings and caller-supplied environment are not accepted.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        argv: z.array(z.string().min(1).max(512)).min(1).max(16),
+        timeout_ms: z.number().int().min(100).max(30_000).optional(),
+        max_output_tokens: z.number().int().min(100).max(10_000).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ workspace_id, argv, timeout_ms, max_output_tokens }) => {
+      await commandContext.authorize(workspace_id);
+      return toolResult(await gateway.commandRun(workspace_id, argv, {
+        ...(timeout_ms === undefined ? {} : { timeoutMs: timeout_ms }),
+        ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+      }));
+    });
+  }
+
   if (mutationContext) {
     const previewInput = z.object({
       workspace_id: z.string().min(1),
