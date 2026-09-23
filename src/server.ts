@@ -23,6 +23,8 @@ const EMPTY_FILE_SHA256 = createHash('sha256').update('', 'utf8').digest('hex');
 interface WorkspaceBinding { devspaceWorkspaceId: string; canonicalRoot: string; }
 import { DevspaceRepositoryInspectionBackend, type RepoDiffOptions, type RepoListOptions, type RepoSearchOptions, type RepoSnapshotOptions } from './repository-inspection.js';
 import { readDevspaceText } from './executor/devspace-read.js';
+import { readDevspaceRawFileIdentity } from './executor/devspace-file-identity.js';
+import { describeReadableUtf8Text } from './file-read-metadata.js';
 
 export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, openWorkspaceId }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string> }) {
   const workspaces = new Map<string, WorkspaceBinding>();
@@ -74,7 +76,13 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
           return { safePath, devspaceWorkspaceId: workspace.devspaceWorkspaceId };
         });
         let content: string;
+        let rawIdentity: Awaited<ReturnType<typeof readDevspaceRawFileIdentity>>;
         try {
+          rawIdentity = await trace.phase('executorMs', () => readDevspaceRawFileIdentity(
+            executor,
+            scoped.devspaceWorkspaceId,
+            scoped.safePath,
+          ));
           content = await trace.phase('executorMs', () => readDevspaceText(
             executor,
             scoped.devspaceWorkspaceId,
@@ -84,10 +92,22 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
         }
         catch (error) { if (error instanceof DevspaceReadLimitError) throw new Error('Gateway rejected oversized content'); throw error; }
         const result = await trace.phase('aggregationMs', () => {
-          const normalized = content.replace(/\r\n/g, '\n').replace(/\n$/, '');
-          if (normalized.includes('\0')) throw new Error('Gateway rejected binary content');
-          if (Buffer.byteLength(normalized, 'utf8') > 64 * 1024) throw new Error('Gateway rejected oversized content');
-          return { content: normalized };
+          const decoded = describeReadableUtf8Text(content);
+          if (
+            decoded.raw_sha256 !== rawIdentity.rawSha256
+            || decoded.size_bytes !== rawIdentity.sizeBytes
+            || decoded.bom !== rawIdentity.bom
+            || decoded.newline_mode !== rawIdentity.newlineMode
+          ) {
+            throw new Error('Gateway rejected raw/text identity mismatch');
+          }
+          return {
+            ...decoded,
+            raw_sha256: rawIdentity.rawSha256,
+            size_bytes: rawIdentity.sizeBytes,
+            bom: rawIdentity.bom,
+            newline_mode: rawIdentity.newlineMode,
+          };
         });
         trace.finish(true); return result;
       } catch (error) { trace.finish(false, error); throw error; }
@@ -119,17 +139,26 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
     async commandRun(
       workspaceId: string,
       argv: readonly string[],
-      options: { timeoutMs?: number; maxOutputTokens?: number } = {},
+      options: { cwd?: string; timeoutMs?: number; maxOutputTokens?: number } = {},
     ) {
       const trace = startTrace('command.run', telemetry); trace.markIngress();
+      const startedAt = Date.now();
       try {
-        const scoped = await trace.phase('policyMs', () => {
+        const scoped = await trace.phase('policyMs', async () => {
           const workspace = binding(workspaceId);
+          const requestedCwd = (options.cwd ?? '.')
+            .replace(/\\/g, '/')
+            .replace(/^\.\/+/, '')
+            .replace(/\/+$/, '');
+          const cwd = requestedCwd === '' || requestedCwd === '.'
+            ? '.'
+            : validateReadPath(requestedCwd);
+          if (cwd !== '.') await assertReadTarget(workspace.canonicalRoot, cwd);
           const profile = resolveVerifyProfile({
             argv,
             ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
             ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
-          });
+          }, cwd);
           return { profile, devspaceWorkspaceId: workspace.devspaceWorkspaceId };
         });
         const result = await trace.phase('executorMs', () => executor.execCommand(
@@ -147,11 +176,21 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
               scoped.profile.maxOutputTokens,
             ));
           }
-          throw new Error('Gateway command timed out');
+          const value = await trace.phase('aggregationMs', () => ({
+            exitCode: -1,
+            output: result.output.trimEnd(),
+            timedOut: true,
+            durationMs: Date.now() - startedAt,
+            cwd: scoped.profile.cwd,
+          }));
+          trace.finish(true); return value;
         }
         const value = await trace.phase('aggregationMs', () => ({
           exitCode: result.exitCode ?? -1,
           output: result.output.trimEnd(),
+          timedOut: false,
+          durationMs: Date.now() - startedAt,
+          cwd: scoped.profile.cwd,
         }));
         trace.finish(true); return value;
       } catch (error) { trace.finish(false, error); throw error; }
@@ -404,13 +443,18 @@ export interface CommandMcpContext {
   authorize(workspaceId: string): void | Promise<void>;
 }
 
+export interface CapabilityMcpContext {
+  describe(workspaceId: string): object | Promise<object>;
+}
+
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext, commandContext }: {
+  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     gitCommitContext?: GitCommitMcpContext;
     commandContext?: CommandMcpContext;
+    capabilityContext?: CapabilityMcpContext;
   } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
@@ -427,7 +471,21 @@ export function createGatewayMcpServer(
     description: 'Open one approved local workspace and return an opaque workspace id.',
     inputSchema: z.object({ path: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, async ({ path }) => toolResult(await gateway.openWorkspace(path)));
+  }, async ({ path }) => {
+    const opened = await gateway.openWorkspace(path);
+    return toolResult(capabilityContext
+      ? { ...opened, authority: await capabilityContext.describe(opened.workspaceId) }
+      : opened);
+  });
+
+  if (capabilityContext) {
+    server.registerTool('capabilities.describe', {
+      description: 'Describe the effective bounded authority for one opened workspace before attempting consequential tools.',
+      inputSchema: z.object({ workspace_id: z.string().min(1).max(256) }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id }) => toolResult(await capabilityContext.describe(workspace_id)));
+  }
+
   if (inspect === true) {
     server.registerTool('repo.list', {
       description: 'List the immediate tracked and untracked entries of one workspace directory.',
@@ -494,13 +552,15 @@ export function createGatewayMcpServer(
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         argv: z.array(z.string().min(1).max(512)).min(1).max(16),
+        cwd: z.string().min(1).max(1024).optional(),
         timeout_ms: z.number().int().min(100).max(30_000).optional(),
         max_output_tokens: z.number().int().min(100).max(10_000).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    }, async ({ workspace_id, argv, timeout_ms, max_output_tokens }) => {
+    }, async ({ workspace_id, argv, cwd, timeout_ms, max_output_tokens }) => {
       await commandContext.authorize(workspace_id);
       return toolResult(await gateway.commandRun(workspace_id, argv, {
+        ...(cwd === undefined ? {} : { cwd }),
         ...(timeout_ms === undefined ? {} : { timeoutMs: timeout_ms }),
         ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
       }));

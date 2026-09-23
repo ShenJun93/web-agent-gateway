@@ -2,6 +2,7 @@ import type { Readable, Writable } from 'node:stream';
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import {
   createGatewayMcpServer,
+  type CapabilityMcpContext,
   type CommandMcpContext,
   type GatewayApi,
   type GitCommitMcpContext,
@@ -16,6 +17,7 @@ export interface GatewayStdioServerOptions {
   mutationContext?: MutationMcpContext;
   gitCommitContext?: GitCommitMcpContext;
   commandContext?: CommandMcpContext;
+  capabilityContext?: CapabilityMcpContext;
 }
 
 export interface GatewayStdioServer {
@@ -30,6 +32,7 @@ export async function startGatewayStdioServer(
     mutationContext: options.mutationContext,
     gitCommitContext: options.gitCommitContext,
     commandContext: options.commandContext,
+    capabilityContext: options.capabilityContext,
   });
   const transport = new StdioServerTransport(options.input, options.output);
   await server.connect(transport);

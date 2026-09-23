@@ -56,10 +56,18 @@ test('fresh Git fixture completes preview -> local review -> result -> read-back
   const opened = await client.callTool({ name: 'workspace.open', arguments: { path: fixture.workspaceRoot } });
   const workspaceId = (opened.structuredContent as { workspaceId?: string } | undefined)?.workspaceId;
   assert.match(workspaceId ?? '', /^ws_/);
+
+  const initialRead = await client.callTool({
+    name: 'file.read',
+    arguments: { workspace_id: workspaceId, path: 'note.txt' },
+  });
+  const rawBaseSha256 = (initialRead.structuredContent as { raw_sha256?: string } | undefined)?.raw_sha256;
+  assert.equal(rawBaseSha256, sha256(original), 'file.read must expose the exact mutation base digest');
+
   const preview = await client.callTool({ name: 'mutation.preview', arguments: {
     workspace_id: workspaceId,
     path: 'note.txt',
-    base_sha256: sha256(original),
+    base_sha256: rawBaseSha256,
     before: 'beta',
     after: 'beta-browser',
   } });

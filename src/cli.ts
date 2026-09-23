@@ -129,6 +129,7 @@ export async function main(
       mutationContext: engineering.mutationContext,
       gitCommitContext: engineering.gitCommitContext,
       commandContext: engineering.commandContext,
+      capabilityContext: engineering.capabilityContext,
     });
   } catch (error) {
     await closeQuietly(engineering);

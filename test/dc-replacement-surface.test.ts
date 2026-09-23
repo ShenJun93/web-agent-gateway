@@ -145,7 +145,11 @@ test('gateway command.run reuses the sanitized bounded argv runner', async () =>
     { timeoutMs: 2_345, maxOutputTokens: 678 },
   );
 
-  assert.deepEqual(result, { exitCode: 0, output: 'ok' });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.output, 'ok');
+  assert.equal(result.timedOut, false);
+  assert.equal(result.cwd, '.');
+  assert.ok(result.durationMs >= 0);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.workspaceId, `devspace_${process.cwd().length}`);
   assert.equal(calls[0]!.timeoutMs, 2_345);
@@ -159,6 +163,64 @@ test('gateway command.run reuses the sanitized bounded argv runner', async () =>
     );
   }
   assert.equal(calls.length, 1, 'unsafe argv must be refused before executor invocation');
+});
+
+test('gateway command.run accepts only a workspace-contained cwd and passes it as runner data', async () => {
+  const { executor, calls } = stubExecutor({ output: 'cwd-ok\n', exitCode: 0, running: false });
+  const gateway = gatewayWith(executor);
+  const { workspaceId } = await gateway.openWorkspace(process.cwd());
+
+  const result = await gateway.commandRun(workspaceId, ['node', '--version'], { cwd: 'src' });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.cwd, 'src');
+  assert.equal(result.timedOut, false);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!.command, /^node -e /);
+
+  for (const cwd of ['../escape', '/absolute', 'C:/absolute', 'src/../test']) {
+    await assert.rejects(
+      () => gateway.commandRun(workspaceId, ['node', '--version'], { cwd }),
+      /Gateway denied|Invalid command cwd/,
+    );
+  }
+  assert.equal(calls.length, 1, 'unsafe cwd must be refused before executor invocation');
+});
+
+test('workspace.open embeds capability preflight and capabilities.describe returns the same authority snapshot', async (t) => {
+  const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
+  const gateway = gatewayWith(executor);
+  const authority = {
+    workspace_id: 'dynamic',
+    lease: { state: 'ACTIVE', lease_id: 'lease_fixture', expires_at: 12345 },
+    capabilities: {
+      FILE_READ: { granted: true, denied: false, grantable: true, requires_human: false, reason: 'WORKSPACE_OWNED' },
+      LOCAL_COMMAND: { granted: false, denied: true, grantable: true, requires_human: true, reason: 'WORKSPACE_NOT_GRANTED' },
+      GIT_PUSH: { granted: false, denied: true, grantable: false, requires_human: true, reason: 'REMOTE_EFFECT_NOT_GRANTED' },
+    },
+  };
+  const capabilityContext = {
+    describe(workspaceId: string) {
+      return { ...authority, workspace_id: workspaceId };
+    },
+  };
+  const client = await connect(t, createGatewayMcpServer(gateway, { capabilityContext }));
+  const tools = await client.listTools();
+  assert.ok(tools.tools.some((tool) => tool.name === 'capabilities.describe'));
+
+  const openedRaw = await client.callTool({ name: 'workspace.open', arguments: { path: process.cwd() } });
+  const opened = JSON.parse(String((openedRaw as { content: { text: string }[] }).content[0]!.text)) as {
+    workspaceId: string;
+    authority: typeof authority;
+  };
+  assert.equal(opened.authority.workspace_id, opened.workspaceId);
+  assert.equal(opened.authority.capabilities.LOCAL_COMMAND.reason, 'WORKSPACE_NOT_GRANTED');
+
+  const describedRaw = await client.callTool({
+    name: 'capabilities.describe',
+    arguments: { workspace_id: opened.workspaceId },
+  });
+  const described = JSON.parse(String((describedRaw as { content: { text: string }[] }).content[0]!.text)) as typeof authority;
+  assert.deepEqual(described, opened.authority);
 });
 
 // --------------------------------------------------------------------------

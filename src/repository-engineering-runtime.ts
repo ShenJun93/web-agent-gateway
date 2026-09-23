@@ -15,7 +15,7 @@ import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
-import type { CommandMcpContext, GitCommitMcpContext, MutationMcpContext } from './server.js';
+import type { CapabilityMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext } from './server.js';
 
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
@@ -55,6 +55,8 @@ export interface RepositoryEngineeringRuntime {
    * Each command call still re-evaluates that lease against its exact workspace.
    */
   commandContext?: CommandMcpContext;
+  /** Effective preflight authority for an opened workspace. */
+  capabilityContext?: CapabilityMcpContext;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
@@ -164,6 +166,67 @@ export async function startRepositoryEngineeringRuntime(
     killSwitch: () => isKillSwitchEngaged(dirname(mutationSettings.statePath)),
   };
 
+  function effectiveCommandGrant(workspaceId: string) {
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
+      return { granted: false as const, reason: 'WORKSPACE_NOT_GRANTED' };
+    }
+    if (!goalLease) {
+      return { granted: false as const, reason: 'CAPABILITY_NOT_LEASED', workspace };
+    }
+
+    const stored = store.getGoalLeaseRow(goalLease.leaseId);
+    if (!stored) return { granted: false as const, reason: 'NO_LEASE', workspace };
+
+    let bindings: GoalLeaseBindings;
+    try {
+      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
+    } catch {
+      return { granted: false as const, reason: 'LEASE_MALFORMED', workspace };
+    }
+
+    const decision = evaluateGoalLease({
+      lease: {
+        leaseId: stored.leaseId,
+        createdAt: stored.createdAt,
+        notBefore: stored.notBefore,
+        expiresAt: stored.expiresAt,
+        ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
+        bindings,
+      },
+      now: Date.now(),
+      request: {
+        tool: 'command.run',
+        sessionId: callerContext.sessionId,
+        adapterId: callerContext.adapterId,
+        workspaceRoot: workspace.canonicalRoot,
+        path: '.',
+        diffBytes: 0,
+      },
+      spend: store.goalLeaseSpend(stored.leaseId),
+      killSwitch: goalLease.killSwitch(),
+      gatewayRoot: GATEWAY_ROOT,
+    });
+    if (!decision.admitted) {
+      return {
+        granted: false as const,
+        reason: decision.code,
+        workspace,
+        leaseId: stored.leaseId,
+        expiresAt: stored.expiresAt,
+        bindings,
+      };
+    }
+    return {
+      granted: true as const,
+      reason: 'GRANTED',
+      workspace,
+      leaseId: stored.leaseId,
+      expiresAt: stored.expiresAt,
+      bindings,
+    };
+  }
+
   let operator: OperatorServer | undefined;
   let mutationCoordinator: DurableMutationCoordinator | undefined;
   let leaseTimer: ReturnType<typeof setInterval> | undefined;
@@ -184,6 +247,91 @@ export async function startRepositoryEngineeringRuntime(
       backendKind: 'devspace',
       createdAt: Date.now(),
     }).workspaceId,
+    capabilityContext: {
+      describe(workspaceId) {
+        const command = effectiveCommandGrant(workspaceId);
+        const workspace = command.workspace ?? store.getWorkspace(workspaceId);
+        if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
+          throw new Error('Gateway denied capability workspace');
+        }
+
+        const bindings = command.bindings;
+        const leaseAllows = (tool: string) => command.leaseId !== undefined
+          && bindings !== undefined
+          && Array.isArray(bindings.workspaceRoots)
+          && bindings.workspaceRoots.includes(workspace.canonicalRoot)
+          && Array.isArray(bindings.admittedSessions)
+          && bindings.admittedSessions.includes(callerContext.sessionId)
+          && Array.isArray(bindings.admittedAdapters)
+          && bindings.admittedAdapters.includes(callerContext.adapterId)
+          && Array.isArray(bindings.allowedTools)
+          && bindings.allowedTools.includes(tool);
+
+        const leaseState = goalLease === undefined
+          ? 'NONE'
+          : command.reason === 'LEASE_EXPIRED'
+            ? 'EXPIRED'
+            : command.reason === 'LEASE_REVOKED'
+              ? 'REVOKED'
+              : command.reason === 'LEASE_NOT_YET_VALID'
+                ? 'NOT_YET_VALID'
+                : command.reason === 'LEASE_MALFORMED' || command.reason === 'NO_LEASE'
+                  ? 'INVALID'
+                  : 'ACTIVE';
+
+        const mutationAutonomous = leaseAllows('mutation.preview');
+        const commitAutonomous = gitCommitSettings !== undefined && leaseAllows('git.commit');
+        return {
+          workspace_id: workspaceId,
+          root: workspace.canonicalRoot,
+          lease: {
+            state: leaseState,
+            ...(command.leaseId === undefined ? {} : { lease_id: command.leaseId }),
+            ...(command.expiresAt === undefined ? {} : { expires_at: command.expiresAt }),
+          },
+          capabilities: {
+            REPOSITORY_READ: {
+              granted: true, denied: false, grantable: true, requires_human: false, reason: 'WORKSPACE_OWNED',
+            },
+            FILE_READ: {
+              granted: true, denied: false, grantable: true, requires_human: false, reason: 'WORKSPACE_OWNED',
+            },
+            VERIFY: {
+              granted: true, denied: false, grantable: true, requires_human: false, reason: 'PROFILE_SCOPED',
+            },
+            FILE_WRITE: {
+              granted: true,
+              denied: false,
+              grantable: true,
+              requires_human: !mutationAutonomous,
+              reason: mutationAutonomous ? 'GOAL_LEASE_GRANTED' : 'HUMAN_REVIEW_REQUIRED',
+              ...(bindings?.pathPatterns === undefined ? {} : { path_patterns: bindings.pathPatterns }),
+            },
+            GIT_COMMIT: {
+              granted: gitCommitSettings !== undefined,
+              denied: gitCommitSettings === undefined,
+              grantable: gitCommitSettings !== undefined,
+              requires_human: gitCommitSettings !== undefined && !commitAutonomous,
+              reason: gitCommitSettings === undefined
+                ? 'CAPABILITY_UNAVAILABLE'
+                : commitAutonomous ? 'GOAL_LEASE_GRANTED' : 'HUMAN_REVIEW_REQUIRED',
+            },
+            LOCAL_COMMAND: {
+              granted: command.granted,
+              denied: !command.granted,
+              grantable: true,
+              requires_human: !command.granted,
+              reason: command.reason,
+              ...(command.leaseId === undefined ? {} : { lease_id: command.leaseId }),
+              ...(command.expiresAt === undefined ? {} : { expires_at: command.expiresAt }),
+            },
+            GIT_PUSH: {
+              granted: false, denied: true, grantable: false, requires_human: true, reason: 'REMOTE_EFFECT_NOT_GRANTED',
+            },
+          },
+        };
+      },
+    },
     async attach(executor) {
       if (attached) throw new Error('Repository engineering runtime is already attached');
       attached = true;
@@ -236,46 +384,8 @@ export async function startRepositoryEngineeringRuntime(
         if (goalLease && inspect && commitCoordinator) {
           runtime.commandContext = {
             authorize(workspaceId) {
-              const workspace = store.getWorkspace(workspaceId);
-              if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
-                throw new Error('Gateway denied command workspace');
-              }
-
-              const stored = store.getGoalLeaseRow(goalLease.leaseId);
-              if (!stored) throw new Error('Gateway denied command: NO_LEASE');
-
-              let bindings: GoalLeaseBindings;
-              try {
-                bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
-              } catch {
-                throw new Error('Gateway denied command: LEASE_MALFORMED');
-              }
-
-              const decision = evaluateGoalLease({
-                lease: {
-                  leaseId: stored.leaseId,
-                  createdAt: stored.createdAt,
-                  notBefore: stored.notBefore,
-                  expiresAt: stored.expiresAt,
-                  ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
-                  bindings,
-                },
-                now: Date.now(),
-                request: {
-                  tool: 'command.run',
-                  sessionId: callerContext.sessionId,
-                  adapterId: callerContext.adapterId,
-                  workspaceRoot: workspace.canonicalRoot,
-                  path: '.',
-                  diffBytes: 0,
-                },
-                spend: store.goalLeaseSpend(stored.leaseId),
-                killSwitch: goalLease.killSwitch(),
-                gatewayRoot: GATEWAY_ROOT,
-              });
-              if (!decision.admitted) {
-                throw new Error(`Gateway denied command: ${decision.code}`);
-              }
+              const grant = effectiveCommandGrant(workspaceId);
+              if (!grant.granted) throw new Error(`Gateway denied command: ${grant.reason}`);
             },
           };
         }

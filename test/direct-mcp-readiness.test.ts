@@ -288,6 +288,20 @@ test('runtime command authority requires a lease and stays bound to its exact wo
     await leased.attach(fakeExecutor);
 
     assert.ok(leased.commandContext);
+    assert.ok(leased.capabilityContext);
+
+    const grantedAuthority = await leased.capabilityContext!.describe(granted) as {
+      capabilities: { LOCAL_COMMAND: { granted: boolean; reason: string } };
+    };
+    assert.equal(grantedAuthority.capabilities.LOCAL_COMMAND.granted, true);
+    assert.equal(grantedAuthority.capabilities.LOCAL_COMMAND.reason, 'GRANTED');
+
+    const otherAuthority = await leased.capabilityContext!.describe(other) as {
+      capabilities: { LOCAL_COMMAND: { granted: boolean; reason: string } };
+    };
+    assert.equal(otherAuthority.capabilities.LOCAL_COMMAND.granted, false);
+    assert.equal(otherAuthority.capabilities.LOCAL_COMMAND.reason, 'WORKSPACE_NOT_GRANTED');
+
     await leased.commandContext!.authorize(granted);
     await assert.rejects(
       async () => leased.commandContext!.authorize(other),

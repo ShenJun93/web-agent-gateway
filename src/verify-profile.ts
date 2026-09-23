@@ -15,6 +15,7 @@ export interface ResolvedVerifyProfile {
   timeoutMs: number;
   maxOutputTokens: number;
   resumeQueuedAfterRestart: boolean;
+  cwd: string;
   command: string;
   planSha256: string;
 }
@@ -22,7 +23,7 @@ export interface ResolvedVerifyProfile {
 const SAFE_ARG = /^[A-Za-z0-9_./:\\+=@-]{1,512}$/;
 const SAFE_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SECRET_ENV_KEY = /(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY|CREDENTIAL)/i;
-export function resolveVerifyProfile(profile: VerifyProfile): ResolvedVerifyProfile {
+export function resolveVerifyProfile(profile: VerifyProfile, cwd = '.'): ResolvedVerifyProfile {
   if (profile.argv.length < 1 || profile.argv.length > 16) throw new Error('Invalid verify profile argv');
   if (!profile.argv.every((arg) => SAFE_ARG.test(arg))) throw new Error('Invalid verify profile argv');
 
@@ -32,15 +33,37 @@ export function resolveVerifyProfile(profile: VerifyProfile): ResolvedVerifyProf
     throw new Error('Invalid verify profile env');
   }
 
+  const normalizedCwd = normalizeRunnerCwd(cwd);
   const timeoutMs = Math.min(Math.max(profile.timeoutMs ?? 10_000, 100), 30_000);
   const maxOutputTokens = Math.min(Math.max(profile.maxOutputTokens ?? 4_000, 100), 10_000);
   const resumeQueuedAfterRestart = profile.resumeQueuedAfterRestart === true;
   const env = Object.fromEntries(envEntries);
-  const command = buildVerifyCommand(profile.argv, envEntries, timeoutMs);
+  const command = buildVerifyCommand(profile.argv, envEntries, timeoutMs, normalizedCwd);
   const canonical = JSON.stringify({
-    argv: [...profile.argv], timeoutMs, maxOutputTokens, env: envEntries, resumeQueuedAfterRestart,
+    argv: [...profile.argv], cwd: normalizedCwd, timeoutMs, maxOutputTokens, env: envEntries, resumeQueuedAfterRestart,
   });
   const planSha256 = createHash('sha256').update(canonical, 'utf8').digest('hex');
 
-  return { argv: [...profile.argv], env, timeoutMs, maxOutputTokens, resumeQueuedAfterRestart, command, planSha256 };
+  return {
+    argv: [...profile.argv],
+    env,
+    cwd: normalizedCwd,
+    timeoutMs,
+    maxOutputTokens,
+    resumeQueuedAfterRestart,
+    command,
+    planSha256,
+  };
+}
+
+function normalizeRunnerCwd(value: string): string {
+  const normalized = value.replace(/\\/g, '/');
+  if (normalized === '.') return '.';
+  if (normalized.length < 1 || normalized.length > 1024) throw new Error('Invalid command cwd');
+  if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) throw new Error('Invalid command cwd');
+  const parts = normalized.split('/');
+  if (parts.some((part) => part === '' || part === '.' || part === '..' || part.includes('\0'))) {
+    throw new Error('Invalid command cwd');
+  }
+  return normalized;
 }

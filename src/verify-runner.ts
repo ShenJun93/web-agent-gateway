@@ -99,6 +99,7 @@ const args = isScript
 
 const child = spawn(file, args, {
   env: env,
+  cwd: input.cwd,
   stdio: 'inherit',
   windowsHide: true,
   windowsVerbatimArguments: isScript,
@@ -147,10 +148,12 @@ export function buildVerifyCommand(
   argv: readonly string[],
   envEntries: readonly (readonly [string, string])[],
   timeoutMs: number,
+  cwd = '.',
 ): string {
   const payload = {
     argv: [...argv],
     env: Object.fromEntries(envEntries),
+    cwd,
     treeKillAfterMs: timeoutMs + VERIFY_TREE_KILL_GRACE_MS,
   };
   return [
