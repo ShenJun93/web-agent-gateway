@@ -294,7 +294,13 @@ function renderList(
   const mutationItems = mutations.map((review) => renderMutationReview(review, csrf)).join('');
   const verifyItems = verifications.map((review) => renderVerifyReview(review, csrf)).join('');
   const commitItems = commits.map((review) => renderCommitReview(review, csrf)).join('');
-  return '<!doctype html><meta charset="utf-8"><title>WAG Review</title><h1>Pending reviews</h1>'
+  const hasPending = mutations.length > 0 || verifications.length > 0 || commits.length > 0;
+  // When the queue is empty, keep the already-authenticated operator page alive as a passive
+  // waiter. As soon as a proposal appears the next response omits Refresh, so the page stops
+  // moving while the operator is reviewing it. No script is added and the CSP stays unchanged.
+  const refresh = hasPending ? '' : '<meta http-equiv="refresh" content="2">';
+  return '<!doctype html><meta charset="utf-8">' + refresh
+    + '<title>WAG Review</title><h1>Pending reviews</h1>'
     + '<h2>Mutations</h2>' + (mutationItems || '<p>None</p>')
     + '<h2>Verifications</h2>' + (verifyItems || '<p>None</p>')
     + '<h2>Commits</h2>' + (commitItems || '<p>None</p>');

@@ -138,7 +138,11 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
   for (const configuredRoot of parsed.allowedRoots) {
     if (!isAbsolute(configuredRoot)) throw new Error('Private gateway allowed root must be absolute');
     const canonicalRoot = await realpath(configuredRoot);
-    await canonicalWorkspace(canonicalRoot, [canonicalRoot]);
+    // A drive root is allowed as an operator-approved trust envelope, but it is never itself
+    // an admissible workspace. canonicalWorkspace() keeps that separate invariant.
+    if (!/^[A-Za-z]:[\\/]*$/.test(canonicalRoot)) {
+      await canonicalWorkspace(canonicalRoot, [canonicalRoot]);
+    }
     allowedRoots.push(canonicalRoot);
   }
 
