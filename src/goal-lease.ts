@@ -30,6 +30,7 @@
 /** Every reason an action can fail to be admitted. Exhaustive, and every one is a denial. */
 export type LeaseDenialCode =
   | 'NO_LEASE'
+  | 'AMBIGUOUS_LEASE'
   | 'LEASE_MALFORMED'
   | 'LEASE_NOT_YET_VALID'
   | 'LEASE_EXPIRED'

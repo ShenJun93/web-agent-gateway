@@ -1,70 +1,123 @@
-# Current handoff
+# Current handoff — WAG Multi-Session Goal Lease Resolution v1
 
-Read `NEW_CHAT_HANDOFF_2026-09-19_AI_NATIVE_BROWSER_COMMUNITY_SCAN.md` first.
+Date: 2026-09-23
 
-Do not use prior chat as canonical authority. Fresh-check `main`, remote HEAD, `README.md`, ADR-0018, ADR-0019, and current research receipts before any decision or mutation.
+## Canonical rule
 
-Current research now reaches:
-- `docs/research/2026-09-20-ai-native-browser-research-pass-14.md`
-- `docs/research/2026-09-20-ai-native-browser-research-pass-15.md`
-plus all earlier receipts referenced by the detailed handoff.
+Do not reconstruct project state from chat history.
 
-The user explicitly requested more research. **Do not run local benchmarks yet.**
+Fresh-check, in this order:
 
-Pass 10 materially adds:
-- MCP OAuth/EMA/machine auth can replace more WAG custom identity ingress;
-- DPoP is the preferred standard bearer-theft hardening when supported;
-- MCP WIF/SPIFFE are workload-identity donors, but not default solo-Windows infrastructure;
-- MCP first-class agent-instance identity/delegation remains an evolving gap;
-- UserConsentVerifier is lightweight local re-verification;
-- Win32 WebAuthn can bind a signed assertion to a proposal challenge, but plain WebAuthn does not prove the human saw exact arbitrary effect text;
-- exact-effect display therefore stays in an independent WAG-owned local UI;
-- OAuth RAR/PAR are structured authorization prior art, not ADR-0019 replacements;
-- Secure MCP Tunnel is explicitly reachability/data transport: MCP payloads/results and some auth artifacts can traverse OpenAI, so Tunnel is not strict-local-auth or consequential authority.
+1. Git branch/HEAD and worktree snapshot.
+2. `AGENTS.md`.
+3. `README.md` plus the latest approved spec and relevant ADRs.
+4. `docs/benchmarks/2026-09-23-multi-workspace-development-lanes.md`, especially the latest
+   **Multi-Session Goal Lease Resolution v1** section.
+5. Current source/tests and live WAG capability state.
 
-Current direction:
-- standardize identity ingress;
-- reduce WAG custom auth;
-- keep WAG semantic capability/ownership/approval/effect core;
-- keep Guardian continuity and SessionCommander exact-owned lifecycle;
-- keep generic browser mechanics frozen.
+For the current Goal Lease slice, the benchmark receipt above is the operational handoff. If it
+conflicts with live Git/source/test evidence, live evidence wins and the receipt must be updated.
 
-Next action: **Pass 16 loopback-operator security + browser-localhost evolution research, still no local benchmark.**
+## Current source baseline
 
+```text
+workspace:
+E:/Projects/web-agent-gateway/.worktrees/claude-autonomous-wag-harness-v1
 
-Pass 11 adds:
-- MCP connection/process is not application ownership under 2026 stateless semantics.
-- Delegated/agentic access, tool scopes and RAR remain active MCP standardization work.
-- Biscuit is a strong future capability-token donor but not an adoption decision.
-- Windows Hello KeyCredential is a lightweight local-only exact-challenge signing donor; WebAuthn remains the portable/FIDO path.
-- DPoP over Secure MCP Tunnel is unproven because of target-URI binding versus tunnel URL rewriting.
+branch:
+feat/goal-ui-delegation-v1
 
+HEAD:
+b05ec91dbc93cb772e8d1d2b73ea4ff4ff4426d5
+```
 
-Pass 12 adds:
-- stable MCP OAuth/EMA can replace more custom ingress;
-- WIMSE is the primary future delegation/evidence standards watch;
-- Biscuit stays prior-art/watch rather than trust core;
-- KeyCredential remains promising but unpackaged/native-host support needs proof;
-- DPoP over Secure MCP Tunnel remains unproven and must not be claimed.
+The worktree is intentionally dirty/private-index-like. Never use broad reset/clean/restore to make
+status look clean.
 
+## Current target
 
-Pass 13 adds:
-- WIMSE delegation/evidence drafts are high-fit but still individual drafts;
-- KeyCredential is not a reliable full-trust same-user app/process boundary and is downgraded to an optional verification/signing factor;
-- independent WAG-owned exact-effect UI/authority remains necessary;
-- Win32 WebAuthn same-user isolation is now the next security question.
+Goal Lease is a multi-active durable authority plane, not a singleton runtime selector.
 
+Required resolution invariant:
 
-Pass 14 adds:
-- native Win32 WebAuthn is not a documented process/app identity boundary;
-- AppContainer is real isolation but Win32 App Isolation remains preview;
-- current ADR-0019 threat model does not require hostile-same-user containment;
-- short-lived native child broker + inherited anonymous handles is now the primary minimal approval research direction;
-- AppContainer/service broker stays a future stronger-isolation gate.
+```text
+0 eligible leases  -> deny
+1 eligible lease   -> authorize exact lease
+>1 eligible leases -> deny ambiguous
+```
 
+No heuristic precedence. Human-only issuance remains. `git.push` remains denied. Proposal/approval
+is separate from lease authority.
 
-Pass 15 corrects Pass 14:
-- existing hardened WAG loopback operator server remains the default approval transport;
-- native child broker is fallback only if a measured loopback gap appears;
-- UIInspect.MCP is strong Windows approval prior art, not a reason to copy a persistent broker;
-- standard Windows Job Object/handle-list primitives are enough if a future broker is justified.
+`repositoryEngineering.mutation.goalLeaseId` is legacy parsing only for this successor path; it
+must not activate or prioritize a lease.
+
+## Current implementation candidate
+
+Key files:
+
+```text
+src/goal-lease-resolver.ts
+src/goal-lease.ts
+src/durable-mutation.ts
+src/git-commit.ts
+src/repository-engineering-runtime.ts
+src/browser-operator-runtime.ts
+src/private-config.ts
+src/cli.ts
+scripts/prepare-direct-mcp-tunnel.ts
+scripts/goal-lease-delegation-control.ts
+
+test/goal-lease-resolver.test.ts
+test/repository-engineering-runtime.test.ts
+test/direct-mcp-readiness.test.ts
+test/direct-mcp-session-binding.test.ts
+```
+
+Fresh gate on 2026-09-23:
+
+```text
+goal-lease resolver + repository runtime = 15 pass, 0 fail
+direct MCP readiness + session binding   = 48 pass, 0 fail
+typecheck                                = pass
+build                                    = pass
+```
+
+Do not claim the entire repository test suite passed.
+
+## Live runtime
+
+The currently connected WAG is healthy and still uses the existing promoted runtime. The new
+multi-active resolver source candidate has not been committed/promoted in this handoff.
+
+Live authority currently reports Goal Lease ACTIVE with FILE_WRITE, GIT_COMMIT and LOCAL_COMMAND
+granted for the current WAG development workspace, while GIT_PUSH is denied/non-grantable.
+
+## Do not mutate
+
+- UAF
+- PFP
+- DevSpace configuration merely for this deployment
+- Goal Lease human-only issuance boundary
+- provider/account/tunnel credentials
+
+Do not restart DevSpace unless fresh evidence proves it is required.
+
+## Next action
+
+Establish the exact safe runtime deployment / tunnel reconnect procedure from local source and
+historical receipts. Then deploy only the WAG runtime layer needed for live acceptance.
+
+Live acceptance must prove at least:
+
+- independent A/B session/workspace leases;
+- cross-session and cross-workspace denial;
+- zero-match denial;
+- duplicate-match ambiguous denial;
+- revoke A without affecting B;
+- issue C and successor C2 usable without WAG restart;
+- branch/HEAD commit CAS;
+- path/argv/budget/kill constraints;
+- `git.push` remains impossible.
+
+After live multi-session acceptance, return to UAF Task4 runtime verification.

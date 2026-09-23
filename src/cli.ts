@@ -211,13 +211,13 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
     origin: runtime.operatorOrigin,
     urlFile: runtime.operatorUrlFile,
   })}\n`);
-  // Announced loudly when on, and silent when off. An autonomous-admission mode that is only
-  // visible by reading a config file is one an operator can be running without knowing.
+  // Legacy selector visibility only. Multi-active Goal Lease authority is resolved from durable
+  // rows per consequential request; this configured id neither activates nor prioritizes a lease.
   if (runtime.goalLeaseId !== undefined) {
     deps.stderr.write(`${JSON.stringify({
-      type: 'gateway.goalLease',
+      type: 'gateway.goalLeaseLegacySelector',
       leaseId: runtime.goalLeaseId,
-      note: 'autonomous admission is ENABLED for actions inside this lease; npm run lease:stop halts it',
+      note: 'legacy goalLeaseId is ignored for activation; durable matching resolves authority per request',
     })}\n`);
   }
   // Announced for the same reason, and phrased to keep the two authorities apart. A delegation

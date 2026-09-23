@@ -169,20 +169,13 @@ export async function startBrowserOperatorRuntime(options: {
     const reviewTtlMs = engineering.mutation.reviewTtlMs;
 
     /**
-     * The Autonomous Goal Lease, if this runtime was configured with one (ADR-0028).
-     *
-     * Absent unless the config names a lease, so autonomous admission is off by default and the
-     * only route to an effect stays the operator's Approve button. Naming one grants nothing on
-     * its own: the lease's bindings, expiry and revocation still decide every action, and an id
-     * that is not in the store is refused rather than read as unrestricted.
-     *
-     * The kill switch is read from disk on every admission rather than captured here, so
-     * engaging it stops this already-running process without restarting it.
+     * Multi-active Goal Lease authority is resolved from durable rows per consequential request.
+     * The legacy config id is retained only for local diagnostics/backward compatibility; it is
+     * not an activation pointer and does not participate in authorization.
      */
-    const leaseId = engineering.mutation.goalLeaseId;
+    const legacyGoalLeaseId = engineering.mutation.goalLeaseId;
     const killSwitchDir = dirname(options.statePath);
-    const goalLease = leaseId === undefined ? undefined : {
-      leaseId,
+    const goalLeaseResolver = {
       killSwitch: () => isKillSwitchEngaged(killSwitchDir),
     };
 
@@ -207,7 +200,7 @@ export async function startBrowserOperatorRuntime(options: {
       store,
       backends: [new DevspaceFileMutationBackend(privateRuntime.executor)],
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
-      ...(goalLease === undefined ? {} : { goalLease }),
+      goalLeaseResolver,
       ...(uiDelegation === undefined ? {} : { uiDelegation }),
     });
     await mutation.reconcile();
@@ -219,7 +212,7 @@ export async function startBrowserOperatorRuntime(options: {
         ? {}
         : { protectedBranches: engineering.gitCommit.protectedBranches }),
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
-      ...(goalLease === undefined ? {} : { goalLease }),
+      goalLeaseResolver,
       ...(uiDelegation === undefined ? {} : { uiDelegation }),
     });
     await commit.reconcile();
@@ -235,7 +228,7 @@ export async function startBrowserOperatorRuntime(options: {
      * `unref` so it never holds the process open, and errors are swallowed per tick: a failing
      * admission must not take down a runtime whose human review path is working fine.
      */
-    if (goalLease) {
+    {
       leaseTimer = setInterval(() => {
         void mutation.admitPendingUnderLease().catch(() => undefined);
         // Commits too. Driving only mutations here meant a lease that granted `git.commit`, bound
@@ -382,7 +375,7 @@ export async function startBrowserOperatorRuntime(options: {
       operatorOrigin: operator.origin,
       operatorBootstrapUrl: operator.bootstrapUrl,
       operatorUrlFile,
-      ...(leaseId === undefined ? {} : { goalLeaseId: leaseId }),
+      ...(legacyGoalLeaseId === undefined ? {} : { goalLeaseId: legacyGoalLeaseId }),
       ...(engineering.mutation.goalUiDelegationId === undefined
         ? {}
         : { goalUiDelegationId: engineering.mutation.goalUiDelegationId }),

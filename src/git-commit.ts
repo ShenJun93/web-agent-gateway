@@ -7,6 +7,7 @@ import type { GitCommitBackend, GitCommitChange, GitCommitPlan } from './git-com
 import { assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
+import { resolveGoalLease } from './goal-lease-resolver.js';
 import { resolveDelegatedGoal } from './delegated-run-provenance.js';
 
 /** As in the mutation coordinator: a constant, so a proposal cannot nominate its own grant. */
@@ -115,6 +116,8 @@ export class DurableCommitCoordinator {
     reviewTtlMs?: number;
     /** Absent by default, so autonomous commit admission is off unless deliberately wired. */
     goalLease?: { leaseId: string; killSwitch: () => boolean };
+    /** Multi-active resolver; the configured goalLease above is retained only as a compatibility fallback. */
+    goalLeaseResolver?: { killSwitch: () => boolean };
     /**
      * The Goal UI Delegation named in local configuration, if any (ADR-0029).
      *
@@ -258,7 +261,7 @@ export class DurableCommitCoordinator {
    * Returns the ids it admitted, so a caller can log what autonomy actually did.
    */
   async admitPendingUnderLease(limit = 20): Promise<string[]> {
-    if (!this.options.goalLease) return [];
+    if (!this.options.goalLease && !this.options.goalLeaseResolver) return [];
     const admitted: string[] = [];
     // Snapshot first: admitting mutates the pending set underneath an iterator.
     const pending = this.options.store.listPendingCommits(
@@ -272,9 +275,6 @@ export class DurableCommitCoordinator {
   }
 
   async admitByPolicy(commitId: string): Promise<LeaseDecision> {
-    const lease = this.options.goalLease;
-    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
-
     const record = this.options.store.getCommit(commitId);
     if (!record) return { admitted: false, code: 'NO_LEASE', detail: 'no such commit' };
     if (record.state !== 'PENDING_APPROVAL') {
@@ -282,6 +282,56 @@ export class DurableCommitCoordinator {
     }
     const workspace = this.options.store.getWorkspace(record.workspaceId);
     if (!workspace) return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
+
+    const delegatedGoalId = resolveDelegatedGoal({
+      port: this.options.store,
+      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      now: this.now(),
+    });
+    const head = record.oldHead;
+    const requests = record.paths.map((path) => ({
+      tool: COMMIT_TOOL,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      workspaceRoot: workspace.canonicalRoot,
+      path,
+      diffBytes: 0,
+      wantsCommit: true,
+      ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
+      ...(record.branch === undefined ? {} : { branch: record.branch }),
+      ...(head === undefined ? {} : { headSha: head }),
+    }));
+
+    if (this.options.goalLeaseResolver) {
+      const resolution = resolveGoalLease(this.options.store, {
+        now: this.now(),
+        requests,
+        killSwitch: this.options.goalLeaseResolver.killSwitch(),
+        gatewayRoot: GATEWAY_ROOT,
+      });
+      if (!resolution.admitted) return resolution;
+
+      this.options.store.recordCommitAuthority({
+        commitId,
+        authority: 'POLICY_APPROVED',
+        leaseId: resolution.resolved.lease.leaseId,
+        admittedAt: this.now(),
+        fingerprint: record.fingerprint,
+        workspaceId: record.workspaceId,
+        branch: record.branch,
+        oldHead: record.oldHead,
+        pathCount: record.paths.length,
+      });
+      const approved = await this.approveLocal(commitId);
+      return approved
+        ? { admitted: true }
+        : { admitted: false, code: 'LEASE_EXPIRED', detail: 'the commit was no longer awaiting review' };
+    }
+
+    const lease = this.options.goalLease;
+    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
 
     const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
     if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
@@ -302,48 +352,12 @@ export class DurableCommitCoordinator {
     };
     const spend = this.options.store.goalLeaseSpend(stored.leaseId);
     const killSwitch = lease.killSwitch();
-    // Resolved once for the whole commit: every path in it came from the same browser context, so
-    // the delegated goal in force cannot differ between them. Re-reading per path would only give
-    // a commit that could be half-admitted by a delegation revoked mid-loop.
-    const delegatedGoalId = resolveDelegatedGoal({
-      port: this.options.store,
-      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      now: this.now(),
-    });
 
-    // The HEAD compared here is the one the *proposal* was planned against, which is sound
-    // because it closes a chain rather than standing alone:
-    //
-    //   lease.headSha === record.oldHead      asserted below — the lease was written against the
-    //                                         same base this proposal was planned against
-    //   record.oldHead === HEAD at execution  asserted by the backend, which re-observes and
-    //                                         refuses on any drift, then moves the branch by CAS
-    //   ⟹ lease.headSha === HEAD at execution
-    //
-    // Re-planning here to read HEAD directly would be the obvious alternative; it computes a
-    // whole tree, and it would still not be the value at execution time, because execution
-    // happens after it. The chain gives the stronger property at no cost.
-    const head = record.oldHead;
-
-    // Every path, not just the first: one out-of-scope file must sink the whole commit.
-    for (const path of record.paths) {
+    for (const request of requests) {
       const decision = evaluateGoalLease({
         lease: leaseRecord,
         now: this.now(),
-        request: {
-          tool: COMMIT_TOOL,
-          sessionId: record.sessionId,
-          adapterId: record.adapterId,
-          workspaceRoot: workspace.canonicalRoot,
-          path,
-          diffBytes: 0,
-          wantsCommit: true,
-          ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
-          ...(record.branch === undefined ? {} : { branch: record.branch }),
-          ...(head === undefined ? {} : { headSha: head }),
-        },
+        request,
         spend,
         killSwitch,
         gatewayRoot: GATEWAY_ROOT,
@@ -351,9 +365,6 @@ export class DurableCommitCoordinator {
       if (!decision.admitted) return decision;
     }
 
-    // Recorded before execution and attributed to the lease, so that a commit admitted with no
-    // human gesture is distinguishable afterwards from one the operator approved. Without this
-    // row the two were byte-identical in the durable record.
     this.options.store.recordCommitAuthority({
       commitId,
       authority: 'POLICY_APPROVED',

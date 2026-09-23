@@ -3,8 +3,8 @@
  *
  * The file name deliberately contains "delegation-control": the applied human-presence guard
  * refuses running this script with --issue from an agent. Read-only inspection and revocation
- * remain available. Issuance inserts one immutable lease row only; naming goalLeaseId in local
- * configuration remains a separate human act.
+ * remain available. Issuance inserts one immutable lease row only; matching runtimes resolve
+ * durable leases per consequential request without a config activation pointer.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -204,7 +204,7 @@ async function main(): Promise<number> {
     out('          [--ttl-minutes <n>]');
     out('');
     out('Issuance requires an interactive TTY and exact ISSUE <sha256> confirmation.');
-    out('It inserts a lease row only; activating goalLeaseId remains a separate human edit.');
+    out('It inserts a lease row only; matching runtimes resolve it without config edits or restart.');
     return 0;
   }
 
@@ -277,7 +277,7 @@ async function main(): Promise<number> {
     out('ISSUED_GOAL_LEASE_ID=' + leaseId);
     out('EXPIRES_AT=' + String(row.expiresAt));
     out('PLAN_SHA256=' + fresh.digest);
-    out('INERT_UNTIL_NAMED_IN_CONFIG=True');
+    out('ACTIVE_WHEN_REQUEST_MATCHES=True');
     return 0;
   } finally {
     store.close();

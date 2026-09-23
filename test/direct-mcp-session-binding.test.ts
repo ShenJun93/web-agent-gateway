@@ -228,13 +228,14 @@ test('a lease issued for one stable session refuses every other one', async (t) 
   assert.equal((wrongAdapter as { code: string }).code, 'ADAPTER_NOT_ADMITTED');
 });
 
-test('naming a lease without a stable session fails at startup rather than denying in silence', async (t) => {
+test('legacy goalLeaseId does not activate authority or require a stable session at startup', async (t) => {
   const dir = await scratch(t);
-  await assert.rejects(
-    () => startRepositoryEngineeringRuntime(configFor(dir, { goalLeaseId: 'lease_direct' })),
-    /sessionCorrelation/,
-    'a lease that could never admit must not start and report autonomous admission as enabled',
-  );
+  const runtime = await startRepositoryEngineeringRuntime(configFor(dir, { goalLeaseId: 'lease_direct' }));
+  try {
+    assert.equal(runtime.profile.stableSessionId, undefined);
+  } finally {
+    await runtime.close();
+  }
 });
 
 test('a guessable correlation is refused by configuration', async (t) => {
@@ -351,8 +352,8 @@ test('two direct connector lanes keep distinct stable sessions, roots and leases
     shared.close();
   }
 
-  const secondA = await startRepositoryEngineeringRuntime(laneConfig(rootA, CORRELATION, leaseAId));
-  const secondB = await startRepositoryEngineeringRuntime(laneConfig(rootB, OTHER_CORRELATION, leaseBId));
+  const secondA = await startRepositoryEngineeringRuntime(laneConfig(rootA, CORRELATION));
+  const secondB = await startRepositoryEngineeringRuntime(laneConfig(rootB, OTHER_CORRELATION));
   try {
     assert.equal(secondA.profile.stableSessionId, sessionA, 'lane A identity must survive reconnect');
     assert.equal(secondB.profile.stableSessionId, sessionB, 'lane B identity must survive reconnect');

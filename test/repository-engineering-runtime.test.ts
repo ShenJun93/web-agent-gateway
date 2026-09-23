@@ -350,8 +350,14 @@ test('command authority requires a Goal Lease and stays bound to its exact works
     { startOperatorServer: operator },
   );
   try {
+    const workspace = noLease.openWorkspaceId!(await realpath(root));
     await noLease.attach(fakeExecutor);
-    assert.equal(noLease.commandContext, undefined, 'full capabilities alone must not expose command.run');
+    assert.ok(noLease.commandContext, 'full profile publishes command.run independently of current lease matches');
+    await assert.rejects(
+      async () => noLease.commandContext!.authorize(workspace),
+      /NO_LEASE/,
+      'publishing command.run must not grant authority when no durable lease matches',
+    );
   } finally {
     await noLease.close();
   }
@@ -397,7 +403,6 @@ test('command authority requires a Goal Lease and stays bound to its exact works
         statePath,
         ownerId,
         sessionCorrelation: correlation,
-        goalLeaseId: leaseId,
       },
       gitCommit: {},
     }),
@@ -408,14 +413,101 @@ test('command authority requires a Goal Lease and stays bound to its exact works
     const otherWorkspace = leased.openWorkspaceId!(join(workspaceRoot, 'other'));
     await leased.attach(fakeExecutor);
 
-    assert.ok(leased.commandContext, 'a full profile with a named lease gets the command authority hook');
+    assert.ok(leased.commandContext, 'a full profile resolves command authority without a configured lease selector');
     await leased.commandContext!.authorize(grantedWorkspace);
     await assert.rejects(
       async () => leased.commandContext!.authorize(otherWorkspace),
-      /WORKSPACE_NOT_GRANTED/,
-      'opening another trusted workspace must not inherit command authority from this lease',
+      /NO_LEASE/,
+      'opening another trusted workspace must produce zero matching leases',
     );
   } finally {
     await leased.close();
+  }
+});
+
+test('a running direct runtime observes issue, ambiguity and revoke without restart', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-live-lease-resolution-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ownerId = 'local.private.stdio';
+  const correlation = 'session_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const statePath = join(root, 'state.sqlite');
+  const workspaceRoot = await realpath(root);
+  const operator = async () => ({
+    origin: 'http://127.0.0.1:1',
+    bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+    close: async () => {},
+  });
+
+  const runtime = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: { statePath, ownerId, sessionCorrelation: correlation },
+      gitCommit: {},
+    }),
+    { startOperatorServer: operator },
+  );
+  try {
+    const workspaceId = runtime.openWorkspaceId!(workspaceRoot);
+    await runtime.attach(fakeExecutor);
+    assert.ok(runtime.commandContext);
+    assert.ok(runtime.capabilityContext);
+
+    await assert.rejects(async () => runtime.commandContext!.authorize(workspaceId), /NO_LEASE/);
+
+    const sessionId = runtime.profile.stableSessionId!;
+    const bindings = {
+      workspaceRoots: [workspaceRoot],
+      allowedTools: ['command.run'],
+      pathPatterns: ['**'],
+      maxFiles: 4,
+      maxBytes: 10_000,
+      maxDiffBytes: 4_000,
+      admittedSessions: [sessionId],
+      admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
+      commitSemantics: 'none' as const,
+    };
+    const now = Date.now();
+    const store = new SqliteDurableStore(statePath);
+    try {
+      store.insertGoalLease({
+        leaseId: 'lease_runtime_dynamic_a',
+        createdAt: now,
+        notBefore: now - 1_000,
+        expiresAt: now + 60_000,
+        bindings: JSON.stringify(bindings),
+      });
+
+      await runtime.commandContext!.authorize(workspaceId);
+
+      const authority = await runtime.capabilityContext!.describe(workspaceId) as {
+        capabilities: { GIT_PUSH: { granted: boolean; denied: boolean; grantable: boolean } };
+      };
+      assert.deepEqual(authority.capabilities.GIT_PUSH, {
+        granted: false,
+        denied: true,
+        grantable: false,
+        requires_human: true,
+        reason: 'REMOTE_EFFECT_NOT_GRANTED',
+      });
+
+      store.insertGoalLease({
+        leaseId: 'lease_runtime_dynamic_duplicate',
+        createdAt: now + 1,
+        notBefore: now - 1_000,
+        expiresAt: now + 60_000,
+        bindings: JSON.stringify(bindings),
+      });
+      await assert.rejects(async () => runtime.commandContext!.authorize(workspaceId), /AMBIGUOUS_LEASE/);
+
+      assert.equal(store.revokeGoalLease('lease_runtime_dynamic_duplicate', now + 2), true);
+      await runtime.commandContext!.authorize(workspaceId);
+
+      assert.equal(store.revokeGoalLease('lease_runtime_dynamic_a', now + 3), true);
+      await assert.rejects(async () => runtime.commandContext!.authorize(workspaceId), /NO_LEASE/);
+    } finally {
+      store.close();
+    }
+  } finally {
+    await runtime.close();
   }
 });

@@ -27,13 +27,11 @@ const repositoryEngineeringSchema = z.object({
      */
     reviewTtlMs: z.number().int().min(1_000).max(5 * 60_000).optional(),
     /**
-     * The Autonomous Goal Lease this runtime will honour (ADR-0028).
+     * Legacy Goal Lease selector retained for backward-compatible configuration parsing.
      *
-     * Absent means autonomous admission is off and every effect needs a human on the operator's
-     * Approve route, which is the default and the only behaviour before this field existed.
-     * Naming a lease here does not create one or grant anything: the lease's own bindings,
-     * expiry and revocation still decide, and a lease id that is not in the durable store is
-     * refused rather than treated as unrestricted.
+     * Multi-active authority no longer consults this field: every consequential request resolves
+     * the durable lease store by session, adapter, workspace, tool and request-specific bounds.
+     * Naming an id here neither activates nor prioritizes a lease.
      */
     goalLeaseId: z.string().min(1).max(128).regex(/^lease_[A-Za-z0-9._:-]+$/).optional(),
     /**

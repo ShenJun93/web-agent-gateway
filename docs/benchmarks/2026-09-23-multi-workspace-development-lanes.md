@@ -220,3 +220,149 @@ rollover preview and issues/names any successor out of band. Live multi-session 
 two connector/runtime lanes and proves independent command/mutation/commit behavior plus independent
 revocation/recovery.
 
+## Multi-Session Goal Lease Resolution v1 — current source acceptance candidate
+
+Date refreshed: 2026-09-23
+
+This section records the current source/runtime truth for the successor Goal Lease architecture.
+Chat history is not an authority source for this slice.
+
+### Frozen target
+
+Goal Lease is the authority plane, not a runtime mode selector.
+
+Consequential requests resolve against the durable lease store at request time:
+
+```text
+0 matching eligible leases  -> deny NO_LEASE
+1 matching eligible lease   -> authorize that exact lease
+>1 matching eligible leases -> deny AMBIGUOUS_LEASE
+```
+
+No newest-lease, longest-TTL, configured-selector or other precedence heuristic is allowed.
+Human-only issuance/revocation boundaries remain. `git.push` remains outside the grantable
+surface. Proposal/approval is a separate plane and may not widen a lease.
+
+The old `repositoryEngineering.mutation.goalLeaseId` field is accepted only as a legacy
+configuration field. It is not an activation selector for the new resolver path.
+
+### Implemented in the worktree
+
+Current implementation candidate includes:
+
+- `src/goal-lease-resolver.ts`: durable multi-active resolver with exact 0/1/>1 behavior;
+- `src/durable-mutation.ts`: request-time resolution for mutation admission, with resolved lease id
+  written to durable authority audit;
+- `src/git-commit.ts`: one exact lease must cover every commit path plus session/adapter/workspace,
+  branch and HEAD bindings;
+- `src/repository-engineering-runtime.ts`: `command.run`, mutation and commit authority no longer
+  depend on a singleton configured lease id;
+- `src/browser-operator-runtime.ts`: mutation/commit coordinators use resolver mode;
+- `src/private-config.ts`, `src/cli.ts`, `scripts/prepare-direct-mcp-tunnel.ts` and
+  `scripts/goal-lease-delegation-control.ts`: legacy-selector and no-restart issuance semantics;
+- `test/goal-lease-resolver.test.ts` plus runtime hot-change coverage.
+
+The runtime-level hot-change test proves a running direct runtime observes issue, ambiguity,
+revocation and recovery without restart.
+
+### Fresh measured source gates
+
+Executed from:
+
+```text
+E:/Projects/web-agent-gateway/.worktrees/claude-autonomous-wag-harness-v1
+branch = feat/goal-ui-delegation-v1
+HEAD   = b05ec91dbc93cb772e8d1d2b73ea4ff4ff4426d5
+```
+
+Commands and results:
+
+```text
+npx.cmd tsx --test --test-concurrency=1 \
+  test/goal-lease-resolver.test.ts \
+  test/repository-engineering-runtime.test.ts
+=> 15 pass, 0 fail
+
+npx.cmd tsx --test --test-concurrency=1 \
+  test/direct-mcp-readiness.test.ts \
+  test/direct-mcp-session-binding.test.ts
+=> 48 pass, 0 fail
+
+npm.cmd run typecheck
+=> pass
+
+npm.cmd run build
+=> pass
+```
+
+Focused primary total: 63 pass, 0 fail.
+
+Additional independent regression gates:
+
+```text
+npx.cmd tsx --test --test-concurrency=1 \
+  test/cli.test.ts \
+  test/dc-replacement-config.test.ts \
+  test/authority-issuance-guard.test.ts
+=> 30 pass, 0 fail
+
+npx.cmd tsx --test --test-concurrency=1 test/dc-replacement-surface.test.ts
+=> 12 pass, 0 fail
+
+npx.cmd tsx --test --test-concurrency=1 test/browser-operator-runtime.test.ts
+=> 4 pass, 0 fail
+```
+
+Focused measured total for this slice: 109 pass, 0 fail.
+
+A larger mixed regression command hit the WAG `command.run` 30-second ceiling after many passes and
+before completion; it is recorded as a runner timeout, not as a pass or a test failure. The
+repository-wide test profile is not claimed here.
+
+### Live runtime status
+
+The live connector is still serving the previously promoted runtime based on
+`b05ec91dbc93cb772e8d1d2b73ea4ff4ff4426d5`. The source changes above are present in the dirty
+development worktree but have not been committed or promoted by this slice.
+
+Current live authority check on 2026-09-23:
+
+```text
+WAG health       = ok
+executor         = devspace
+protocolVersion  = 2026-07-28
+Goal Lease       = ACTIVE
+FILE_WRITE       = granted
+GIT_COMMIT       = granted
+LOCAL_COMMAND    = granted
+GIT_PUSH         = denied / non-grantable
+```
+
+Do not use the worktree's dirty status as a reason to reset or clean it. The private-index workflow
+intentionally leaves mixed index/worktree state.
+
+### Remaining gaps before claiming final architecture
+
+Not yet closed by this source candidate:
+
+1. stable workspace identity stronger than canonical root / current durable workspace binding;
+2. cleaner architectural separation between authority resolution and capability evaluation;
+3. atomic concurrent budget reservation/settlement for the last available budget slot;
+4. dedicated pre-side-effect lease/revocation/budget revalidation at every effect boundary;
+5. live multi-session A/B/C acceptance of issue/revoke/successor without runtime restart;
+6. final durable receipt lineage for every consequential effect;
+7. later interactive process-session capability, still bounded by the same authority plane.
+
+### Next production gate
+
+Before any promotion:
+
+1. establish the exact safe runtime-copy/tunnel-reconnect procedure from local source/evidence;
+2. do not run `git reset`, `git clean`, `checkout -- .` or `restore .`;
+3. do not restart DevSpace merely to deploy this slice;
+4. do not mutate UAF or PFP;
+5. deploy only the built WAG runtime/tunnel layer required for acceptance;
+6. run concurrent A/B workspace/session acceptance proving isolation, ambiguity denial, hot
+   issue/revoke/successor, commit CAS and continued `git.push` denial.
+
+Only after that gate may this slice be described as live production acceptance.

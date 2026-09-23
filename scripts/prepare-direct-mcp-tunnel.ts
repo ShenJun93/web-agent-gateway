@@ -97,7 +97,7 @@ export async function projectedTools(
         ? {}
         : {
           gitCommitContext: { callerContext, coordinator: refusing() },
-          ...(engineering.inspect === true && engineering.mutation.goalLeaseId !== undefined
+          ...(engineering.inspect === true
             ? { commandContext: { authorize: async () => undefined } }
             : {}),
         }),
@@ -120,7 +120,7 @@ export async function projectedTools(
   if (!engineering?.mutation) missing.push('mutation');
   if (!engineering?.gitCommit) missing.push('commit');
   if (!(engineering?.inspect === true
-    && engineering?.mutation?.goalLeaseId !== undefined
+    && engineering?.mutation !== undefined
     && engineering?.gitCommit !== undefined)) {
     missing.push('command');
   }
@@ -187,28 +187,13 @@ function report(readiness: Readiness, allowPartial: boolean): number {
   // step that turns an untrusted page's text into a proposal — and the direct path has no page
   // and no Run gesture, because the MCP call is itself the proposal. It is reported below for
   // completeness and is not part of this surface's authority.
-  if (readiness.leaseNamed && !readiness.stableSession) {
-    // The gateway refuses this at startup; say so here rather than let it look workable.
-    console.log(`\n  !! MISCONFIGURED      goalLeaseId ${readiness.leaseNamed} with no sessionCorrelation`);
-    console.log('     A lease admits only the sessions its row lists, and without a correlation');
-    console.log('     this surface mints a new session every start — so the lease could never');
-    console.log('     admit. `serve-stdio` will refuse to start until one is set or the lease is');
-    console.log('     removed.');
-  } else if (readiness.leaseNamed) {
-    console.log(`\n  !! GOAL LEASE NAMED   goalLeaseId ${readiness.leaseNamed}`);
-    console.log('     Autonomous admission is reachable here: the session is stable across');
-    console.log('     restarts, so if the lease is live, names that session, and admits the');
-    console.log('     action, a mutation or commit reaches a durable effect with no human');
-    console.log('     approval — and over a tunnel the party proposing it is ChatGPT.');
-    console.log('     Whether it is live is decided per admission from the durable row, not here.');
-    console.log('     Unname it to require local operator approval again.');
-  } else if (readiness.stableSession) {
-    console.log('\n  approval         local operator approval required for every effect');
-    console.log('                   (session is stable, but no goalLeaseId named)');
-  } else {
-    console.log('\n  approval         local operator approval required for every effect');
-    console.log('                   (no goalLeaseId named, so ADR-0026 holds in full)');
+  if (readiness.leaseNamed) {
+    console.log(`\n  legacy selector   goalLeaseId ${readiness.leaseNamed}`);
+    console.log('                   retained for backward-compatible configuration only; it');
+    console.log('                   neither activates nor prioritizes a durable Goal Lease.');
   }
+  console.log('\n  approval         resolved per consequential request from durable Goal Leases');
+  console.log('                   (0 matches deny, 1 match authorizes, >1 matches deny ambiguous).');
   if (readiness.stableSession) {
     console.log('  session          stable, resolved from the configured correlation.');
     console.log('                   Start the gateway once and read `stableSessionId` from its');

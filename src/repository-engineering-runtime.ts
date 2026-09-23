@@ -10,7 +10,8 @@ import { SqliteDurableStore } from './durable-store.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
 import { DurableCommitCoordinator } from './git-commit.js';
-import { evaluateGoalLease, type GoalLeaseBindings } from './goal-lease.js';
+import type { GoalLeaseBindings } from './goal-lease.js';
+import { resolveGoalLease } from './goal-lease-resolver.js';
 import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
@@ -97,24 +98,11 @@ export async function startRepositoryEngineeringRuntime(
     };
   }
 
-  /**
-   * A lease admits only the sessions its own row lists, so a session that changes on every start
-   * can never be one of them. Naming a lease without a stable session is therefore not a working
-   * configuration that happens to be strict — it is one that can never admit anything, while the
-   * profile reports autonomous admission as enabled.
-   *
-   * This project has shipped that shape twice now (a coordinator nothing called; a rule nothing
-   * could satisfy), so it fails at startup rather than at the first silent denial.
-   *
-   * Checked before the store is opened, so a refused configuration leaves no handle behind.
+  /*
+   * Lease activation is resolved from durable rows per consequential request. A stable
+   * sessionCorrelation remains the supported way for a human to issue a lease for this direct
+   * surface, but no configured lease id is required or consulted as an activation selector.
    */
-  if (mutationSettings.goalLeaseId !== undefined && mutationSettings.sessionCorrelation === undefined) {
-    throw new Error(
-      'Private gateway names a goalLeaseId without a sessionCorrelation: this surface mints a new '
-      + 'session every start, so the lease could never admit. Add repositoryEngineering.mutation'
-      + '.sessionCorrelation, or remove the lease and use local operator approval.',
-    );
-  }
 
   const store = new SqliteDurableStore(mutationSettings.statePath);
   const urlFile = `${mutationSettings.statePath}.operator-url`;
@@ -150,79 +138,44 @@ export async function startRepositoryEngineeringRuntime(
     adapterId: PRIVATE_STDIO_ADAPTER_ID,
   });
 
-  /**
-   * The Autonomous Goal Lease this surface honours, if the config names one (ADR-0028).
-   *
-   * This is the surface where a lease actually removes *both* gestures. There is no Run here —
-   * Run is a browser-adapter concept, the act of turning an untrusted page's text into a
-   * proposal — so a caller on this stdio surface proposes directly, and a lease admits. On the
-   * browser operator runtime a lease removes only Approve, because a human pressing Run is what
-   * creates the proposal in the first place.
-   *
-   * Absent unless configured, which is every existing deployment.
-   */
-  const goalLease = mutationSettings.goalLeaseId === undefined ? undefined : {
-    leaseId: mutationSettings.goalLeaseId,
-    killSwitch: () => isKillSwitchEngaged(dirname(mutationSettings.statePath)),
-  };
+  /** Read on every consequential decision so the kill switch remains immediate. */
+  const killSwitch = () => isKillSwitchEngaged(dirname(mutationSettings.statePath));
 
   function effectiveCommandGrant(workspaceId: string) {
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
       return { granted: false as const, reason: 'WORKSPACE_NOT_GRANTED' };
     }
-    if (!goalLease) {
-      return { granted: false as const, reason: 'CAPABILITY_NOT_LEASED', workspace };
-    }
 
-    const stored = store.getGoalLeaseRow(goalLease.leaseId);
-    if (!stored) return { granted: false as const, reason: 'NO_LEASE', workspace };
-
-    let bindings: GoalLeaseBindings;
-    try {
-      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
-    } catch {
-      return { granted: false as const, reason: 'LEASE_MALFORMED', workspace };
-    }
-
-    const decision = evaluateGoalLease({
-      lease: {
-        leaseId: stored.leaseId,
-        createdAt: stored.createdAt,
-        notBefore: stored.notBefore,
-        expiresAt: stored.expiresAt,
-        ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
-        bindings,
-      },
+    const resolution = resolveGoalLease(store, {
       now: Date.now(),
-      request: {
+      requests: [{
         tool: 'command.run',
         sessionId: callerContext.sessionId,
         adapterId: callerContext.adapterId,
         workspaceRoot: workspace.canonicalRoot,
         path: '.',
         diffBytes: 0,
-      },
-      spend: store.goalLeaseSpend(stored.leaseId),
-      killSwitch: goalLease.killSwitch(),
+      }],
+      killSwitch: killSwitch(),
       gatewayRoot: GATEWAY_ROOT,
     });
-    if (!decision.admitted) {
+    if (!resolution.admitted) {
       return {
         granted: false as const,
-        reason: decision.code,
+        reason: resolution.code,
         workspace,
-        leaseId: stored.leaseId,
-        expiresAt: stored.expiresAt,
-        bindings,
       };
     }
+
+    const lease = resolution.resolved.lease;
+    const bindings: GoalLeaseBindings = lease.bindings;
     return {
       granted: true as const,
       reason: 'GRANTED',
       workspace,
-      leaseId: stored.leaseId,
-      expiresAt: stored.expiresAt,
+      leaseId: lease.leaseId,
+      expiresAt: lease.expiresAt,
       bindings,
     };
   }
@@ -267,17 +220,11 @@ export async function startRepositoryEngineeringRuntime(
           && Array.isArray(bindings.allowedTools)
           && bindings.allowedTools.includes(tool);
 
-        const leaseState = goalLease === undefined
-          ? 'NONE'
-          : command.reason === 'LEASE_EXPIRED'
-            ? 'EXPIRED'
-            : command.reason === 'LEASE_REVOKED'
-              ? 'REVOKED'
-              : command.reason === 'LEASE_NOT_YET_VALID'
-                ? 'NOT_YET_VALID'
-                : command.reason === 'LEASE_MALFORMED' || command.reason === 'NO_LEASE'
-                  ? 'INVALID'
-                  : 'ACTIVE';
+        const leaseState = command.granted
+          ? 'ACTIVE'
+          : command.reason === 'AMBIGUOUS_LEASE'
+            ? 'AMBIGUOUS'
+            : 'NONE';
 
         const mutationAutonomous = leaseAllows('mutation.preview');
         const commitAutonomous = gitCommitSettings !== undefined && leaseAllows('git.commit');
@@ -336,33 +283,25 @@ export async function startRepositoryEngineeringRuntime(
       if (attached) throw new Error('Repository engineering runtime is already attached');
       attached = true;
       try {
+        const goalLeaseResolver = { killSwitch };
         const coordinator = new DurableMutationCoordinator({
           store,
           backends: [new DevspaceFileMutationBackend(executor)],
-          ...(goalLease === undefined ? {} : { goalLease }),
+          goalLeaseResolver,
         });
         await coordinator.reconcile();
         mutationCoordinator = coordinator;
 
-        // The admission pass. Without a caller, configuring a lease attaches an option nothing
-        // consults — which is exactly the gap a review found on the browser runtime, so it is
-        // not repeated here. Interval-driven rather than fired from the proposal path, so the
-        // tool's contract is unchanged and records left pending across a restart are picked up.
-        // `unref` so it never holds the process open; errors swallowed per tick so a failing
-        // admission cannot take down a gateway whose human review path is working.
-        // Declared before the timer so the same pass can drive it. Commits were missing from this
-        // pass entirely — a lease granting `git.commit` left its records at PENDING_APPROVAL while
-        // the runtime reported autonomous admission as enabled, which is the same gap this comment
-        // says was "not repeated here", repeated here for the other record kind.
         let commitCoordinator: DurableCommitCoordinator | undefined;
 
-        if (goalLease) {
-          leaseTimer = setInterval(() => {
-            void coordinator.admitPendingUnderLease().catch(() => undefined);
-            void commitCoordinator?.admitPendingUnderLease().catch(() => undefined);
-          }, LEASE_ADMISSION_INTERVAL_MS);
-          leaseTimer.unref?.();
-        }
+        // Always drive the bounded pending queues. With no matching durable lease each record stays
+        // pending for human review; issuing or revoking a lease therefore takes effect without a
+        // config edit or gateway restart.
+        leaseTimer = setInterval(() => {
+          void coordinator.admitPendingUnderLease().catch(() => undefined);
+          void commitCoordinator?.admitPendingUnderLease().catch(() => undefined);
+        }, LEASE_ADMISSION_INTERVAL_MS);
+        leaseTimer.unref?.();
 
         if (gitCommitSettings) {
           commitCoordinator = new DurableCommitCoordinator({
@@ -373,15 +312,14 @@ export async function startRepositoryEngineeringRuntime(
               : { protectedBranches: gitCommitSettings.protectedBranches }),
             ...(mutationSettings.reviewTtlMs === undefined
               ? {} : { reviewTtlMs: mutationSettings.reviewTtlMs }),
-            ...(goalLease === undefined ? {} : { goalLease }),
+            goalLeaseResolver,
           });
           await commitCoordinator.reconcile();
         }
 
-        // Model-chosen argv is stronger than a configured verify profile, so merely having mutation
-        // and commit capability is not enough. The command surface exists only on the full profile
-        // with a named Goal Lease, and every call re-reads that lease plus the durable workspace.
-        if (goalLease && inspect && commitCoordinator) {
+        // The command surface is a capability of the full local-development profile. Authority is
+        // resolved for every call, so publishing the tool does not activate any lease.
+        if (inspect && commitCoordinator) {
           runtime.commandContext = {
             authorize(workspaceId) {
               const grant = effectiveCommandGrant(workspaceId);

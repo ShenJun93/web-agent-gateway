@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
 import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
+import { resolveGoalLease } from './goal-lease-resolver.js';
 import { resolveDelegatedGoal } from './delegated-run-provenance.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
@@ -111,6 +112,13 @@ export class DurableMutationCoordinator {
     goalLease?: {
       leaseId: string;
       /** Consulted on every admission, so engaging it takes effect immediately. */
+      killSwitch: () => boolean;
+    };
+    /**
+     * Multi-active resolver mode. When present, durable leases are selected per request from the
+     * store; the legacy configured goalLease remains a compatibility fallback only.
+     */
+    goalLeaseResolver?: {
       killSwitch: () => boolean;
     };
     /**
@@ -322,9 +330,6 @@ export class DurableMutationCoordinator {
    * Returns the decision so a caller can log precisely why something was refused.
    */
   async admitByPolicy(mutationId: string): Promise<LeaseDecision> {
-    const lease = this.options.goalLease;
-    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
-
     const record = this.options.store.getMutation(mutationId);
     if (!record) return { admitted: false, code: 'NO_LEASE', detail: 'no such mutation' };
     if (record.state !== 'PENDING_APPROVAL') {
@@ -333,17 +338,6 @@ export class DurableMutationCoordinator {
     const workspace = this.options.store.getWorkspace(record.workspaceId);
     if (!workspace) return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
 
-    const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
-    if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
-
-    let bindings: GoalLeaseBindings;
-    try {
-      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
-    } catch {
-      // A lease whose bindings will not parse is refused, never treated as absent restrictions.
-      return { admitted: false, code: 'LEASE_MALFORMED', detail: 'the stored bindings are not JSON' };
-    }
-
     const delegatedGoalId = resolveDelegatedGoal({
       port: this.options.store,
       configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
@@ -351,6 +345,50 @@ export class DurableMutationCoordinator {
       adapterId: record.adapterId,
       now: this.now(),
     });
+    const request = {
+      tool: MUTATION_TOOL,
+      sessionId: record.sessionId,
+      adapterId: record.adapterId,
+      workspaceRoot: workspace.canonicalRoot,
+      path: record.path,
+      diffBytes: affectedBytes(record),
+      ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
+    };
+
+    if (this.options.goalLeaseResolver) {
+      const resolution = resolveGoalLease(this.options.store, {
+        now: this.now(),
+        requests: [request],
+        killSwitch: this.options.goalLeaseResolver.killSwitch(),
+        gatewayRoot: GATEWAY_ROOT,
+      });
+      if (!resolution.admitted) return resolution;
+
+      const admitted = this.options.store.policyAdmitMutation({
+        mutationId,
+        leaseId: resolution.resolved.lease.leaseId,
+        now: this.now(),
+        admissionTtlMs: this.admissionTtlMs,
+      });
+      if (!admitted) {
+        return { admitted: false, code: 'LEASE_EXPIRED', detail: 'the record was no longer awaiting review' };
+      }
+      await this.executeQueued(mutationId);
+      return { admitted: true };
+    }
+
+    const lease = this.options.goalLease;
+    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
+
+    const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
+    if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
+
+    let bindings: GoalLeaseBindings;
+    try {
+      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
+    } catch {
+      return { admitted: false, code: 'LEASE_MALFORMED', detail: 'the stored bindings are not JSON' };
+    }
 
     const decision = evaluateGoalLease({
       lease: {
@@ -362,18 +400,7 @@ export class DurableMutationCoordinator {
         bindings,
       },
       now: this.now(),
-      request: {
-        tool: MUTATION_TOOL,
-        sessionId: record.sessionId,
-        adapterId: record.adapterId,
-        workspaceRoot: workspace.canonicalRoot,
-        path: record.path,
-        diffBytes: affectedBytes(record),
-        // Resolved from durable rows here, at the moment of the consequence, and never taken from
-        // the record or from anything the browser said. On a delegated adapter an unresolved goal
-        // is a denial, not a pass — the lease policy makes that call, not this line.
-        ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
-      },
+      request,
       spend: this.options.store.goalLeaseSpend(stored.leaseId),
       killSwitch: lease.killSwitch(),
       gatewayRoot: GATEWAY_ROOT,
@@ -387,7 +414,6 @@ export class DurableMutationCoordinator {
       admissionTtlMs: this.admissionTtlMs,
     });
     if (!admitted) {
-      // Lost the CAS: something else moved the record between the decision and the transition.
       return { admitted: false, code: 'LEASE_EXPIRED', detail: 'the record was no longer awaiting review' };
     }
     await this.executeQueued(mutationId);
@@ -408,7 +434,7 @@ export class DurableMutationCoordinator {
    * Returns the ids it admitted, so a caller can log what autonomy actually did.
    */
   async admitPendingUnderLease(limit = 20): Promise<string[]> {
-    if (!this.options.goalLease) return [];
+    if (!this.options.goalLease && !this.options.goalLeaseResolver) return [];
     const admitted: string[] = [];
     // Snapshot first: admitting mutates the pending set underneath an iterator.
     const pending = this.options.store.listPendingMutations(Math.min(Math.max(limit, 1), PENDING_SCAN_LIMIT));

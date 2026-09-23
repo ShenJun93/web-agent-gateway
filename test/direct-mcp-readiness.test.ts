@@ -228,8 +228,10 @@ test('runtime command authority requires a lease and stays bound to its exact wo
     },
   }, { startOperatorServer: operator });
   try {
+    const workspace = noLease.openWorkspaceId!(await realpath(root));
     await noLease.attach(fakeExecutor);
-    assert.equal(noLease.commandContext, undefined);
+    assert.ok(noLease.commandContext);
+    await assert.rejects(async () => noLease.commandContext!.authorize(workspace), /NO_LEASE/);
   } finally {
     await noLease.close();
   }
@@ -277,7 +279,6 @@ test('runtime command authority requires a lease and stays bound to its exact wo
         statePath,
         ownerId,
         sessionCorrelation: correlation,
-        goalLeaseId: leaseId,
       },
       gitCommit: {},
     },
@@ -301,12 +302,12 @@ test('runtime command authority requires a lease and stays bound to its exact wo
       capabilities: { LOCAL_COMMAND: { granted: boolean; reason: string } };
     };
     assert.equal(otherAuthority.capabilities.LOCAL_COMMAND.granted, false);
-    assert.equal(otherAuthority.capabilities.LOCAL_COMMAND.reason, 'WORKSPACE_NOT_GRANTED');
+    assert.equal(otherAuthority.capabilities.LOCAL_COMMAND.reason, 'NO_LEASE');
 
     await leased.commandContext!.authorize(granted);
     await assert.rejects(
       async () => leased.commandContext!.authorize(other),
-      /WORKSPACE_NOT_GRANTED/,
+      /NO_LEASE/,
       'a different opened workspace must not inherit this lease\'s command authority',
     );
   } finally {
