@@ -9,7 +9,7 @@
  *
  *   ChatGPT connector -> OpenAI tunnel endpoint -> tunnel-client (this machine)
  *     -> node dist/cli.js serve-stdio --config <local config>   [stdio, no listening port]
- *     -> DevSpace / durable store / local approval or Goal Lease
+ *     -> DevSpace / durable store / autonomous-local policy
  *
  * This script verifies the local half and prints the exact invocation for the remote half. It
  * deliberately stops at every boundary that needs a person:
@@ -40,7 +40,6 @@ interface Readiness {
   cliPath: string;
   tools: string[];
   missing: string[];
-  leaseNamed?: string;
   stableSession: boolean;
   delegationNamed?: string;
 }
@@ -145,8 +144,6 @@ export async function prepare(configPath: string): Promise<Readiness> {
     tools,
     missing,
     stableSession: config.repositoryEngineering?.mutation?.sessionCorrelation !== undefined,
-    ...(config.repositoryEngineering?.mutation?.goalLeaseId === undefined
-      ? {} : { leaseNamed: config.repositoryEngineering.mutation.goalLeaseId }),
     ...(config.repositoryEngineering?.mutation?.goalUiDelegationId === undefined
       ? {} : { delegationNamed: config.repositoryEngineering.mutation.goalUiDelegationId }),
   };
@@ -180,26 +177,12 @@ function report(readiness: Readiness, allowPartial: boolean): number {
     console.log('  --allow-partial to emit a read-only tunnel profile deliberately.');
   }
 
-  // The single most consequential thing an operator can get wrong here. A tunnel creates no
-  // authority, but it does widen *who can propose*, and a named lease is what decides whether a
-  // proposal becomes an effect with nobody present.
-  //
-  // Only the lease matters on this surface. A Goal UI Delegation (ADR-0029) lifts *Run* — the
-  // step that turns an untrusted page's text into a proposal — and the direct path has no page
-  // and no Run gesture, because the MCP call is itself the proposal. It is reported below for
-  // completeness and is not part of this surface's authority.
-  if (readiness.leaseNamed) {
-    console.log(`\n  legacy selector   goalLeaseId ${readiness.leaseNamed}`);
-    console.log('                   retained for backward-compatible configuration only; it');
-    console.log('                   neither activates nor prioritizes a durable Goal Lease.');
-  }
-  console.log('\n  approval         resolved per consequential request from durable Goal Leases');
-  console.log('                   (0 matches deny, 1 match authorizes, >1 matches deny ambiguous).');
+  console.log('\n  authority        trusted private-local profile + caller-owned workspace identity');
+  console.log('                   + immediate kill-switch revalidation; no Goal Lease is required.');
   if (readiness.stableSession) {
     console.log('  session          stable, resolved from the configured correlation.');
-    console.log('                   Start the gateway once and read `stableSessionId` from its');
-    console.log('                   gateway.profile line on stderr: that is the id a Goal Lease');
-    console.log('                   must be issued for, out of band, by a person.');
+    console.log('                   stableSessionId is reconnect/audit identity only; it grants no');
+    console.log('                   execution authority and needs no out-of-band issuance.');
   }
   if (readiness.delegationNamed) {
     console.log(`  delegation       ${readiness.delegationNamed}`);

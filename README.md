@@ -97,18 +97,13 @@ A local operator may opt in to the repository-engineering profile that carries W
 }
 ```
 
-`inspect` adds the read-only set `repo.list`, `repo.search` and `repo.diff`. `mutation` adds `mutation.preview`, `file.create` and `mutation.result`, and starts the loopback operator review server. Neither proposal tool writes anything: a separate, locally authenticated operator must approve the exact record before any file changes, approval is single-use and TTL-bounded, and reject or expiry leaves the repository byte-identical. `file.create` only creates — it refuses a path that already exists, both when proposed and again at execution.
+`inspect` adds the read-only set `repo.list`, `repo.search` and `repo.diff`. On the private stdio/WAG Local surface, `mutation` adds autonomous bounded mutation tools and `gitCommit` adds exact-path CAS commits. Those effects execute under the trusted `AUTONOMOUS_LOCAL` profile with caller-owned workspace identity and immediate kill-switch revalidation; no Goal Lease or per-change human approval is required. The browser operator is a separate proposal/review surface and remains human-approved for filesystem and Git effects. `file.create` only creates — it refuses a path that already exists, both when planned and again at execution.
 
 The operator review server's **origin** is announced on stderr; its single-use bootstrap token is not. A stdio gateway's stderr belongs to whichever process spawned it — in the supported deployment that is the remote-facing tunnel client — so the token is written to `<statePath>.operator-url` instead and removed on shutdown. Open that URL locally to review and approve.
 
-With inspect, mutation and git commit enabled, but no Goal Lease named, the surface is exactly:
+With inspect, mutation and git commit enabled, the private stdio runtime exposes the full autonomous repository loop, including `command.run`, bounded mutations and exact-path commit. The current server assembly also publishes the local-machine tools `machine.open`, `machine.describe`, `machine.list`, `machine.read`, `machine.command.run` and `machine.process.start`.
 
-```text
-health  workspace.open  repo.list  repo.search  repo.snapshot  repo.diff  file.read  verify.run
-mutation.preview  file.create  mutation.result  git.commit  git.commit.result
-```
-
-If the operator also names a durable Goal Lease in `repositoryEngineering.mutation.goalLeaseId`, the direct stdio surface registers `command.run` immediately after `verify.run`. Naming a lease only makes the capability discoverable; it does **not** authorize a command. Every call re-reads the durable lease and must find `command.run` in `allowedTools` for the exact caller session, adapter and workspace root, with an unexpired lease and the kill switch disengaged. A lease for one development worktree therefore does not grant command execution in another opened workspace.
+ChatGPT may keep a frozen tool snapshot for an already-published connector. WAG therefore keeps a compatibility route through the existing tool names: `workspace.open` can fall back to an autonomous local-machine workspace when DevSpace cannot admit the root, and `repo.list`, `file.read` and `command.run` dispatch by the durable workspace backend. This lets an older 16-tool connector reach local-machine work without a manual connector refresh.
 
 `gitCommit` adds reviewed committing, and requires `mutation` because it shares the same durable store and operator review server — asking for it alone is a config error, not a quiet half-capability. `git.commit` proposes one commit of an exact path set; the operator sees the repository, the branch, the parent HEAD, the resulting tree, the author, every selected path, the resulting change set and the full message before approving.
 
@@ -126,13 +121,13 @@ The argv reaches the process directly rather than through a shell, and the envir
 
 What WAG does **not** do is isolate a verification from the network. Enforcing that would mean changing machine-wide firewall or security policy, which WAG will not do. The narrower guarantee it does give is that a verification reaches the network with no credential, token or proxy setting WAG passed it: profile environment keys matching `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `PRIVATE_KEY` or `CREDENTIAL` are rejected at config load, and nothing else is inherited.
 
-### How WAG runs a Goal-Lease command
+### How WAG runs an autonomous-local command
 
-`command.run` accepts an opened `workspace_id`, a bounded argv array and optional timeout/output limits. It reuses the same WAG-owned runner as `verify.run`: argv is data rather than shell text, caller-supplied environment is not accepted, executable resolution is controlled, timeout/output budgets are bounded, and timeout cleanup reaps the whole spawned process tree. The initial contract intentionally rejects whitespace-bearing or shell-like arguments rather than attempting to emulate an interactive shell.
+`command.run` accepts an opened `workspace_id`, a bounded argv array and optional timeout/output limits. It reuses the same WAG-owned runner as `verify.run`: argv is data rather than shell text, caller-supplied environment is not accepted, executable resolution is controlled, timeout/output budgets are bounded, and timeout cleanup reaps the whole spawned process tree. The contract intentionally rejects raw shell strings rather than attempting to emulate an interactive terminal.
 
-Before every command, WAG re-reads the durable Goal Lease and workspace record. The exact owner/session/adapter tuple, exact workspace root, `command.run` tool grant, lease lifetime, kill switch and running-gateway self-modification boundary must all pass. Opening another workspace under the same trusted outer root does not inherit command authority.
+Before every command, WAG revalidates the caller-owned workspace record and its live workspace identity, then checks the emergency kill switch again immediately before process creation. Local-machine workspaces use the same existing `command.run` schema through the compatibility bridge, so a frozen connector snapshot does not require a separate machine tool to run bounded argv.
 
-This is **not an OS sandbox**. A granted process runs as the local user with the workspace as its working directory; repository code can have filesystem side effects outside that directory and can use the network if the OS permits it. WAG therefore declares `command.run` destructive/open-world and exposes no raw shell, PTY, interactive terminal, caller environment or implicit credentials. A Goal Lease command grant is consequential authority, not a convenience alias for `verify.run`.
+This is **not an OS sandbox**. An authorized process runs as the local user with the workspace as its working directory; repository code can have filesystem side effects outside that directory and can use the network if the OS permits it. WAG therefore declares `command.run` destructive/open-world and exposes no raw shell, PTY, interactive terminal, caller environment or implicit credentials.
 
 ### How WAG runs git
 

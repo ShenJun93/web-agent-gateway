@@ -6,6 +6,7 @@ import { DurableMutationCoordinator } from '../src/durable-mutation.js';
 import { DurableCommitCoordinator } from '../src/git-commit.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import type { DevspaceExecutor, ExecResult } from '../src/executor/devspace.js';
+import type { LocalMachineContext } from '../src/local-machine-runtime.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
 import type { GatewayTelemetryEvent } from '../src/telemetry.js';
 
@@ -476,4 +477,120 @@ test('private stdio repo.search rejects control characters and oversized queries
     const response = await client.callTool({ name: 'repo.search', arguments: { workspace_id: workspaceId, query } });
     assert.equal((response as { isError?: boolean }).isError, true, `query ${JSON.stringify(query.slice(0, 12))} must be denied`);
   }
+});
+
+test('frozen 16-tool snapshots reach local-machine work through existing tool names', async (t) => {
+  const { executor, calls } = stubExecutor({ output: '', exitCode: 0, running: false });
+  const gateway = gatewayWith(executor);
+  const machineCalls: string[] = [];
+  const machineWorkspaceId = 'ws_machine_compat';
+  const machineContext: LocalMachineContext = {
+    async open(path) {
+      machineCalls.push('open:' + path);
+      return {
+        workspace_id: machineWorkspaceId,
+        root: path,
+        authority: { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' },
+      };
+    },
+    async describe(workspaceId) {
+      if (workspaceId !== machineWorkspaceId) throw new Error('not a machine workspace');
+      machineCalls.push('describe');
+      return {
+        workspace_id: workspaceId,
+        root: 'machine-root',
+        backend: 'local-machine',
+        authority: { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' },
+      };
+    },
+    async list(workspaceId) {
+      assert.equal(workspaceId, machineWorkspaceId);
+      machineCalls.push('list');
+      return { path: '.', entries: [{ name: 'note.txt', type: 'file' }], truncated: false };
+    },
+    async read(workspaceId, path) {
+      assert.equal(workspaceId, machineWorkspaceId);
+      assert.equal(path, 'note.txt');
+      machineCalls.push('read');
+      return { content: 'machine-read\n', raw_sha256: 'a'.repeat(64), size_bytes: 13, encoding: 'utf-8' };
+    },
+    async commandRun(workspaceId, argv) {
+      assert.equal(workspaceId, machineWorkspaceId);
+      assert.deepEqual(argv, ['node', '--version']);
+      machineCalls.push('command');
+      return {
+        exitCode: 0,
+        output: 'machine-command',
+        timedOut: false,
+        truncated: false,
+        durationMs: 1,
+        cwd: 'machine-root',
+      };
+    },
+    async processStart() {
+      throw new Error('not used');
+    },
+  };
+  const capabilityContext = {
+    describe(workspaceId: string) {
+      return {
+        workspace_id: workspaceId,
+        authority: { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' },
+        capabilities: {
+          LOCAL_COMMAND: {
+            granted: true, denied: false, grantable: true, requires_human: false,
+            reason: 'AUTONOMOUS_LOCAL_PROFILE',
+          },
+        },
+      };
+    },
+  };
+  const commandContext = {
+    async authorize(workspaceId: string) {
+      assert.equal(workspaceId, machineWorkspaceId);
+      machineCalls.push('authorize');
+    },
+  };
+
+  const client = await connect(t, createGatewayMcpServer(gateway, {
+    inspect: true,
+    machineContext,
+    capabilityContext,
+    commandContext,
+  }));
+
+  // This path intentionally does not exist, so DevSpace/canonical workspace open fails first and
+  // the compatibility bridge opens it through the machine backend without changing the tool schema.
+  const target = process.cwd() + '/__wag_machine_compat_missing__';
+  const opened = await client.callTool({ name: 'workspace.open', arguments: { path: target } });
+  assert.notEqual(opened.isError, true);
+  assert.equal((opened.structuredContent as { workspaceId?: string }).workspaceId, machineWorkspaceId);
+
+  const listed = await client.callTool({
+    name: 'repo.list',
+    arguments: { workspace_id: machineWorkspaceId },
+  });
+  assert.notEqual(listed.isError, true);
+  assert.deepEqual(
+    (listed.structuredContent as { entries?: unknown[] }).entries,
+    [{ name: 'note.txt', type: 'file' }],
+  );
+
+  const read = await client.callTool({
+    name: 'file.read',
+    arguments: { workspace_id: machineWorkspaceId, path: 'note.txt' },
+  });
+  assert.equal((read.structuredContent as { content?: string }).content, 'machine-read\n');
+
+  const command = await client.callTool({
+    name: 'command.run',
+    arguments: { workspace_id: machineWorkspaceId, argv: ['node', '--version'] },
+  });
+  assert.equal((command.structuredContent as { output?: string }).output, 'machine-command');
+
+  assert.equal(calls.length, 0, 'local-machine compatibility calls must not reach DevSpace exec');
+  assert.ok(machineCalls.some((entry) => entry.startsWith('open:')));
+  assert.ok(machineCalls.includes('list'));
+  assert.ok(machineCalls.includes('read'));
+  assert.ok(machineCalls.includes('command'));
 });

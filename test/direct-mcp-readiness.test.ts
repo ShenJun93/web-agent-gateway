@@ -302,7 +302,6 @@ test('the tunnel instrument projects the surface the server really registers', a
         statePath: 'E:/nowhere/state.sqlite',
         ownerId: 'owner_direct',
         sessionCorrelation: 'session_11111111-2222-3333-4444-555555555555',
-        goalLeaseId: 'lease_projection',
       },
       gitCommit: {},
     },

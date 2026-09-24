@@ -470,6 +470,23 @@ export function createGatewayMcpServer(
   } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
+
+  // Compatibility bridge for ChatGPT workspaces that still hold a frozen 16-tool snapshot.
+  // The live server also exposes machine.* tools, but published/custom-app metadata is not
+  // refreshed automatically. Reusing the existing workspace.open/repo.list/file.read/command.run
+  // schemas lets those older snapshots reach the same autonomous-local backend without a manual
+  // connector refresh. A workspace id is never client-selected authority: machine.describe
+  // revalidates that it belongs to this caller and is a local-machine record.
+  async function isLocalMachineWorkspace(workspaceId: string): Promise<boolean> {
+    if (!machineContext) return false;
+    try {
+      await machineContext.describe(workspaceId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   server.registerTool('health', {
     description: 'Check gateway and executor compatibility.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -484,10 +501,22 @@ export function createGatewayMcpServer(
     inputSchema: z.object({ path: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async ({ path }) => {
-    const opened = await gateway.openWorkspace(path);
-    return toolResult(capabilityContext
-      ? { ...opened, authority: await capabilityContext.describe(opened.workspaceId) }
-      : opened);
+    try {
+      const opened = await gateway.openWorkspace(path);
+      return toolResult(capabilityContext
+        ? { ...opened, authority: await capabilityContext.describe(opened.workspaceId) }
+        : opened);
+    } catch (error) {
+      if (!machineContext) throw error;
+      const local = await machineContext.open(path) as { workspace_id?: unknown };
+      if (typeof local.workspace_id !== 'string' || local.workspace_id.length === 0) {
+        throw new Error('Gateway local-machine workspace did not return an id');
+      }
+      const opened = { workspaceId: local.workspace_id };
+      return toolResult(capabilityContext
+        ? { ...opened, authority: await capabilityContext.describe(opened.workspaceId) }
+        : opened);
+    }
   });
 
   if (capabilityContext) {
@@ -574,9 +603,12 @@ export function createGatewayMcpServer(
         max_entries: z.number().int().min(1).max(1_000).optional(),
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, async ({ workspace_id, path, max_entries }) => toolResult(
-      await gateway.repoList(workspace_id, { path, maxEntries: max_entries }),
-    ));
+    }, async ({ workspace_id, path, max_entries }) => {
+      if (await isLocalMachineWorkspace(workspace_id)) {
+        return toolResult(await machineContext!.list(workspace_id, path, max_entries));
+      }
+      return toolResult(await gateway.repoList(workspace_id, { path, maxEntries: max_entries }));
+    });
 
     server.registerTool('repo.search', {
       description: 'Search tracked repository files for a literal string.',
@@ -614,7 +646,12 @@ export function createGatewayMcpServer(
     description: 'Read bounded text from an opened workspace.',
     inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async ({ workspace_id, path }) => toolResult(await gateway.readFile(workspace_id, path)));
+  }, async ({ workspace_id, path }) => {
+    if (await isLocalMachineWorkspace(workspace_id)) {
+      return toolResult(await machineContext!.read(workspace_id, path));
+    }
+    return toolResult(await gateway.readFile(workspace_id, path));
+  });
   // `openWorldHint: false` is a claim about the *tool*, not about any one profile's argv: the
   // profile set is local configuration and the model cannot choose or extend it (ADR-0025), so
   // the domain of interaction is closed even though a profile may run a substantial command.
@@ -638,6 +675,13 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     }, async ({ workspace_id, argv, cwd, timeout_ms, max_output_tokens }) => {
       await commandContext.authorize(workspace_id);
+      if (await isLocalMachineWorkspace(workspace_id)) {
+        return toolResult(await machineContext!.commandRun(workspace_id, argv, {
+          ...(cwd === undefined ? {} : { cwd }),
+          ...(timeout_ms === undefined ? {} : { timeoutMs: timeout_ms }),
+          ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+        }));
+      }
       return toolResult(await gateway.commandRun(workspace_id, argv, {
         ...(cwd === undefined ? {} : { cwd }),
         ...(timeout_ms === undefined ? {} : { timeoutMs: timeout_ms }),

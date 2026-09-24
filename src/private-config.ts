@@ -27,16 +27,9 @@ const repositoryEngineeringSchema = z.object({
      */
     reviewTtlMs: z.number().int().min(1_000).max(5 * 60_000).optional(),
     /**
-     * Deprecated Goal Lease selector retained only so existing private configs continue to parse.
-     *
-     * The autonomous-local private stdio runtime never consults this field. Naming or changing it
-     * grants nothing and changes no execution decision.
-     */
-    goalLeaseId: z.string().min(1).max(128).regex(/^lease_[A-Za-z0-9._:-]+$/).optional(),
-    /**
      * The Goal UI Delegation this runtime will honour (ADR-0029).
      *
-     * Same shape as `goalLeaseId` above, and for the same reason. Absent means delegated Run is
+     * Absent means delegated Run is
      * off and every proposal stays on the human path, which is the default and the only behaviour
      * before this field existed. Naming a delegation here does not create one or grant anything:
      * its own bindings, window, supersession and revocation still decide, and an id that is not in
@@ -79,7 +72,6 @@ export interface PrivateRepositoryEngineeringMutation {
   statePath: string;
   ownerId: string;
   reviewTtlMs?: number;
-  goalLeaseId?: string;
   goalUiDelegationId?: string;
   sessionCorrelation?: string;
 }
@@ -152,7 +144,6 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
             statePath: mutation.statePath,
             ownerId: mutation.ownerId,
             ...(mutation.reviewTtlMs === undefined ? {} : { reviewTtlMs: mutation.reviewTtlMs }),
-            ...(mutation.goalLeaseId === undefined ? {} : { goalLeaseId: mutation.goalLeaseId }),
             ...(mutation.goalUiDelegationId === undefined
               ? {} : { goalUiDelegationId: mutation.goalUiDelegationId }),
             ...(mutation.sessionCorrelation === undefined

@@ -213,24 +213,15 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
     origin: runtime.operatorOrigin,
     urlFile: runtime.operatorUrlFile,
   })}\n`);
-  // Legacy selector visibility only. Multi-active Goal Lease authority is resolved from durable
-  // rows per consequential request; this configured id neither activates nor prioritizes a lease.
-  if (runtime.goalLeaseId !== undefined) {
-    deps.stderr.write(`${JSON.stringify({
-      type: 'gateway.goalLeaseLegacySelector',
-      leaseId: runtime.goalLeaseId,
-      note: 'legacy goalLeaseId is ignored for activation; durable matching resolves authority per request',
-    })}\n`);
-  }
-  // Announced for the same reason, and phrased to keep the two authorities apart. A delegation
-  // lifts Run and never Approve: an effect still needs the operator, or a lease that admits it.
+  // A delegation lifts browser Run only. Goal Lease is retired from the live authority plane, so
+  // every browser filesystem or Git effect still reaches the operator review path.
   if (runtime.goalUiDelegationId !== undefined) {
     deps.stderr.write(`${JSON.stringify({
       type: 'gateway.goalUiDelegation',
       delegationId: runtime.goalUiDelegationId,
       discoveryPath: runtime.delegationDiscoveryPath,
-      note: 'delegated Run is ENABLED for proposals inside this delegation; APPROVAL is unchanged '
-        + 'and still requires the operator or an active lease. npm run lease:stop halts it',
+      note: 'delegated Run is ENABLED for proposals inside this delegation; effects still require '
+        + 'the operator review path. npm run lease:stop halts delegated dispatch',
     })}\n`);
   }
 
@@ -269,7 +260,7 @@ function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime
     mutation,
     gitCommit,
     // Only when a correlation makes it stable, so the default profile line is byte-identical to
-    // what it was. This is how a human finds the session id a Goal Lease has to be bound to.
+    // what it was. The id is reconnect/audit continuity, not an authority grant.
     ...(stableSessionId === undefined ? {} : { stableSessionId }),
   })}\n`);
   if (engineering.operator) {

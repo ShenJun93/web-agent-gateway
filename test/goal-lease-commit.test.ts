@@ -299,19 +299,21 @@ test('with no lease configured the driver admits nothing and reports nothing', a
   assert.equal(h.backend.committed.length, 0);
 });
 
-test('legacy browser lease admission stays isolated from private stdio autonomous execution', async () => {
+test('no production runtime drives Goal Lease admission after autonomous-local cutover', async () => {
   const { readFile } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');
   const root = fileURLToPath(new URL('..', import.meta.url));
 
   const browser = await readFile(`${root}src/browser-operator-runtime.ts`, 'utf8');
-  const interval = /setInterval\(\(\) => \{([\s\S]*?)\}, LEASE_ADMISSION_INTERVAL_MS\)/.exec(browser);
-  assert.ok(interval, 'browser operator runtime may continue driving legacy lease admission');
-  assert.match(interval[1] ?? '', /commit(Coordinator)?\??\.admitPendingUnderLease/);
+  assert.doesNotMatch(browser, /LEASE_ADMISSION_INTERVAL_MS/);
+  assert.doesNotMatch(browser, /admitPendingUnderLease/);
+  assert.doesNotMatch(browser, /goalLeaseResolver/);
+  assert.doesNotMatch(browser, /goalLeaseId/);
 
   const direct = await readFile(`${root}src/repository-engineering-runtime.ts`, 'utf8');
   assert.doesNotMatch(direct, /LEASE_ADMISSION_INTERVAL_MS/);
   assert.doesNotMatch(direct, /admitPendingUnderLease/);
+  assert.doesNotMatch(direct, /goalLeaseResolver/);
   assert.match(direct, /autonomous: \{ killSwitch \}/,
     'private stdio must wire autonomous-local execution instead of Goal Lease admission');
 });
