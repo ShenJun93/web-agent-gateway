@@ -135,3 +135,28 @@ Private-local WAG execution has no Goal Lease boundary.
 
 Browser Goal UI Delegation remains a separate browser-facing authority mechanism. It is not required
 for WAG Local/DC-replacement automation.
+
+## Independent lane B after cutover
+
+The long-running B machine runtime was upgraded in place from the earlier lease-era runtime to the
+autonomous runtime:
+
+```text
+PID            = 3436
+runtimeRoot    = E:/WAG-Runtime/7a6e266ac392
+config         = E:/AI-BROWSER/wag-acceptance/wag-live-b.config.json
+stableSession  = session_e2dad5f3-4961-4134-b5f9-3a35b58d3248
+state          = READY
+```
+
+A fresh independent B MCP assembly then proved:
+
+```text
+goalLeaseRequired = false
+authority.mode    = AUTONOMOUS_LOCAL
+kill_switch       = CLEAR
+command.run       = exit 0
+toolCount         = 22
+```
+
+This proves the A, B and C private-local lanes no longer depend on Goal Lease issuance.
