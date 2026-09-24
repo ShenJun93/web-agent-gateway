@@ -180,3 +180,32 @@ The following remain intentionally separate:
 
 These boundaries do not require Desktop Commander and do not reintroduce per-task Goal Lease
 issuance.
+
+## Native file-write proof through the frozen connector
+
+The same cached connector also used its existing `file.create` and `file.replace` names directly
+against the local-machine WAG-Local workspace.
+
+```text
+workspace:
+C:/Users/PACMAP/AppData/Local/WAG-Local
+
+created:
+logs/frozen-file-create-probe.txt
+mutation = mut_83680c71-692c-4b8c-9f71-28957b57d118
+state    = SUCCEEDED
+sha256   = c89ffd5ec00234604d7595c2aafe95dfe3fbfcd239b7a6bd3affc41d0cb6b933
+
+replaced:
+mutation = mut_dbd79ef1-d038-4a0f-a2fc-9bf084efdfdb
+state    = SUCCEEDED
+sha256   = ac837d4b4e07d8d2451b9187f39ba2c8b588eba031d5dc7c888163a1c53d691
+readback = WAG_LOCAL_FILE_REPLACE_V2
+```
+
+The probe was then deleted through WAG `command.run`; the cleanup returned
+`WAG_PROBE_CLEANED`.
+
+This closes the practical stale-catalog gap for local inspect/search/read/write/command work:
+ChatGPT can use the currently visible 16-tool catalog while the dedicated 33-tool machine catalog
+remains cached out of the client UI.
