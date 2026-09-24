@@ -4,23 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { SqliteDurableStore } from '../src/durable-store.js';
 import type { DevspaceExecutor, ExecResult } from '../src/executor/devspace.js';
 import type { PrivateGatewayConfig } from '../src/private-config.js';
-import {
-  PRIVATE_STDIO_ADAPTER_ID,
-  startRepositoryEngineeringRuntime,
-} from '../src/repository-engineering-runtime.js';
-import {
-  workspaceIdentityFingerprint,
-  type WorkspaceIdentityObservation,
-} from '../src/workspace-identity.js';
+import { startRepositoryEngineeringRuntime } from '../src/repository-engineering-runtime.js';
+import type { WorkspaceIdentityObservation } from '../src/workspace-identity.js';
 
-test('direct command authority re-observes workspace identity after workspace.open', async (t) => {
+test('autonomous command authority re-observes workspace identity after workspace.open', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'wag-workspace-runtime-revalidation-'));
   const root = await realpath(dir);
   const statePath = join(root, 'state.sqlite');
-  const ownerId = 'local.private.stdio';
   const correlation = 'session_12345678-1234-4234-8234-123456789abc';
 
   let observation: WorkspaceIdentityObservation = {
@@ -55,7 +47,7 @@ test('direct command authority re-observes workspace identity after workspace.op
       inspect: true,
       mutation: {
         statePath,
-        ownerId,
+        ownerId: 'local.private.stdio',
         sessionCorrelation: correlation,
       },
       gitCommit: {},
@@ -78,42 +70,13 @@ test('direct command authority re-observes workspace identity after workspace.op
   const workspaceId = runtime.openWorkspaceId!(root);
   await runtime.bindWorkspaceIdentity!(workspaceId, root, 'devspace_identity_runtime');
 
-  const originalFingerprint = workspaceIdentityFingerprint(observation);
-  const store = new SqliteDurableStore(statePath);
-  try {
-    const now = Date.now();
-    store.insertGoalLease({
-      leaseId: 'lease_workspace_identity_runtime',
-      createdAt: now,
-      notBefore: now - 1_000,
-      expiresAt: now + 60_000,
-      bindings: JSON.stringify({
-        workspaceRoots: [root],
-        workspaceIdentities: [{ workspaceRoot: root, fingerprint: originalFingerprint }],
-        allowedTools: ['command.run'],
-        pathPatterns: ['**'],
-        maxFiles: 4,
-        maxBytes: 10_000,
-        maxDiffBytes: 4_000,
-        admittedSessions: [runtime.profile.stableSessionId!],
-        admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
-        commitSemantics: 'none',
-      }),
-    });
+  await runtime.commandContext!.authorize(workspaceId);
 
-    await runtime.commandContext!.authorize(workspaceId);
+  observation = { ...observation, fsInode: '201' };
 
-    observation = {
-      ...observation,
-      fsInode: '201',
-    };
-
-    await assert.rejects(
-      async () => runtime.commandContext!.authorize(workspaceId),
-      /workspace identity|WORKSPACE_IDENTITY/i,
-      'replacing the filesystem object at the same canonical root must invalidate command authority',
-    );
-  } finally {
-    store.close();
-  }
+  await assert.rejects(
+    async () => runtime.commandContext!.authorize(workspaceId),
+    /workspace identity|drift/i,
+    'replacing the filesystem object at the same canonical root must invalidate command authority',
+  );
 });

@@ -11,7 +11,7 @@ import { LocalMachineFileMutationBackend } from './executor/local-machine-file-m
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
 import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
 import { DurableCommitCoordinator } from './git-commit.js';
-import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
+import { isKillSwitchEngaged } from './autonomy-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
@@ -306,6 +306,11 @@ export async function startRepositoryEngineeringRuntime(
             new LocalMachineFileMutationBackend(),
           ],
           autonomous: { killSwitch },
+          effectBoundary: {
+            async revalidateWorkspace(workspaceId) {
+              await freshWorkspaceFingerprint(workspaceId);
+            },
+          },
         });
         await coordinator.reconcile();
         mutationCoordinator = coordinator;
@@ -323,6 +328,11 @@ export async function startRepositoryEngineeringRuntime(
             ...(mutationSettings.reviewTtlMs === undefined
               ? {} : { reviewTtlMs: mutationSettings.reviewTtlMs }),
             autonomous: { killSwitch },
+            effectBoundary: {
+              async revalidateWorkspace(workspaceId) {
+                await freshWorkspaceFingerprint(workspaceId);
+              },
+            },
           });
           await commitCoordinator.reconcile();
         }

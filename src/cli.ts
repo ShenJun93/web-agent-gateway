@@ -221,7 +221,7 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
       delegationId: runtime.goalUiDelegationId,
       discoveryPath: runtime.delegationDiscoveryPath,
       note: 'delegated Run is ENABLED for proposals inside this delegation; effects still require '
-        + 'the operator review path. npm run lease:stop halts delegated dispatch',
+        + 'the operator review path. npm run autonomy:stop halts delegated dispatch',
     })}\n`);
   }
 

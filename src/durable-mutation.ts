@@ -1,37 +1,11 @@
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
-import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
-import { resolveGoalLease } from './goal-lease-resolver.js';
-import { goalLeaseAtomicBudgetDenial } from './goal-lease-atomic-budget.js';
-import { resolveDelegatedGoal } from './delegated-run-provenance.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
-import { affectedBytes } from './durable-store.js';
 import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
+import type { PolicyDecision } from './policy-decision.js';
 
-/**
- * The tool name this coordinator's records are judged as under a lease.
- *
- * A constant rather than anything the proposal carries: the lease grants tools, and a proposal
- * must not be able to nominate which grant it is checked against.
- */
-const MUTATION_TOOL = 'mutation.preview';
-
-/**
- * The checkout this gateway was loaded from.
- *
- * Derived from this module's own location, never from a caller: a lease must not be able to
- * nominate which repository counts as "not mine to edit". A lease whose workspace resolves
- * inside this is refused outright, because it could otherwise rewrite the approver, the kill
- * switch or the extension manifest, and a bound that can rewrite itself is not a bound.
- */
-const GATEWAY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
-
-
-/** Outstanding proposals one caller may have awaiting review, as for commits. */
 const MAX_PENDING_PER_CALLER = 8;
 /** The store's own ceiling for a pending query, so the overdue sweep sees everything it lists. */
 const PENDING_SCAN_LIMIT = 100;
@@ -110,41 +84,10 @@ export class DurableMutationCoordinator {
      * The emergency stop is re-read at admission and immediately before the filesystem effect.
      */
     autonomous?: { killSwitch: () => boolean };
-    /**
-     * Legacy Goal Lease compatibility. Private stdio no longer wires this path.
-     *
-     * Absent by default, which makes lease admission off by default: with no lease
-     * configured, `admitByPolicy` refuses and the only way to an effect is a human on the
-     * operator's Approve route, exactly as before.
-     */
-    goalLease?: {
-      leaseId: string;
-      /** Consulted on every admission, so engaging it takes effect immediately. */
-      killSwitch: () => boolean;
+    /** Re-observe the durable workspace object immediately before any filesystem effect. */
+    effectBoundary?: {
+      revalidateWorkspace: (workspaceId: string, canonicalRoot: string) => Promise<void>;
     };
-    /**
-     * Multi-active resolver mode. When present, durable leases are selected per request from the
-     * store; the legacy configured goalLease remains a compatibility fallback only.
-     */
-    goalLeaseResolver?: {
-      killSwitch: () => boolean;
-      workspaceFingerprint?: (workspaceId: string) => string | undefined;
-      liveWorkspaceFingerprint?: (workspaceId: string, canonicalRoot: string) => Promise<string | undefined>;
-    };
-    /**
-     * The Goal UI Delegation named in local configuration, if any (ADR-0029).
-     *
-     * Carried here *only* so that the lease policy can be told which goal is currently allowed to
-     * Run without a click on the browser context that produced a record. It grants nothing: this
-     * coordinator cannot issue, renew or widen a delegation, and the id is a reference the plane
-     * re-reads every binding behind.
-     *
-     * Absent means delegated Run is off, in which case nothing reaches the effect path from a
-     * delegated adapter and the resolution never matters. Present but stale, revoked, superseded or
-     * bound elsewhere resolves to `undefined`, which the policy denies on a delegated adapter —
-     * see `delegated-run-provenance.ts`.
-     */
-    uiDelegation?: { configuredDelegationId: string };
   }) {
     this.backends = new Map(options.backends.map((backend) => [backend.kind, backend]));
     if (this.backends.size !== options.backends.length) throw new Error('Duplicate file mutation backend kind');
@@ -339,153 +282,50 @@ export class DurableMutationCoordinator {
    *
    * Returns the decision so a caller can log precisely why something was refused.
    */
-  async admitByPolicy(mutationId: string): Promise<LeaseDecision> {
+  async admitByPolicy(mutationId: string): Promise<PolicyDecision> {
     const record = this.options.store.getMutation(mutationId);
-    if (!record) return { admitted: false, code: 'NO_LEASE', detail: 'no such mutation' };
+    if (!record) {
+      return { admitted: false, code: 'RECORD_NOT_FOUND', detail: 'no such mutation' };
+    }
     if (record.state !== 'PENDING_APPROVAL') {
-      return { admitted: false, code: 'NO_LEASE', detail: `record is ${record.state}, not awaiting review` };
+      return {
+        admitted: false,
+        code: 'RECORD_NOT_PENDING',
+        detail: `record is ${record.state}, not awaiting execution`,
+      };
     }
-    const workspace = this.options.store.getWorkspace(record.workspaceId);
-    if (!workspace) return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
+    if (!this.options.store.getWorkspace(record.workspaceId)) {
+      return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
+    }
+    if (!this.options.autonomous) {
+      return {
+        admitted: false,
+        code: 'AUTONOMOUS_DISABLED',
+        detail: 'autonomous local execution is not enabled on this coordinator',
+      };
+    }
+    if (this.options.autonomous.killSwitch()) {
+      return {
+        admitted: false,
+        code: 'KILL_SWITCH_ENGAGED',
+        detail: 'the local autonomous kill switch is engaged',
+      };
+    }
 
-    const delegatedGoalId = resolveDelegatedGoal({
-      port: this.options.store,
-      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
+    const admitted = this.options.store.policyAdmitMutation({
+      mutationId,
       now: this.now(),
+      admissionTtlMs: this.admissionTtlMs,
     });
-    const workspaceFingerprint = this.options.goalLeaseResolver?.workspaceFingerprint?.(record.workspaceId);
-    const request = {
-      tool: MUTATION_TOOL,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      workspaceRoot: workspace.canonicalRoot,
-      ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
-      path: record.path,
-      diffBytes: affectedBytes(record),
-      ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
-    };
-
-    if (this.options.goalLeaseResolver) {
-      const resolution = resolveGoalLease(this.options.store, {
-        now: this.now(),
-        requests: [request],
-        killSwitch: this.options.goalLeaseResolver.killSwitch(),
-        gatewayRoot: GATEWAY_ROOT,
-      });
-      if (!resolution.admitted) return resolution;
-
-      let admitted: MutationRecord | undefined;
-      try {
-        admitted = this.options.store.policyAdmitMutation({
-          mutationId,
-          leaseId: resolution.resolved.lease.leaseId,
-          now: this.now(),
-          admissionTtlMs: this.admissionTtlMs,
-        });
-      } catch (error) {
-        const denial = goalLeaseAtomicBudgetDenial(error);
-        if (denial) return denial;
-        throw error;
-      }
-      if (!admitted) {
-        return { admitted: false, code: 'LEASE_EXPIRED', detail: 'the record was no longer awaiting review' };
-      }
-      await this.executeQueued(mutationId);
-      return { admitted: true };
-    }
-
-    const lease = this.options.goalLease;
-    if (!lease) {
-      if (!this.options.autonomous) {
-        return { admitted: false, code: 'NO_LEASE', detail: 'autonomous local execution is not enabled on this coordinator' };
-      }
-      if (this.options.autonomous.killSwitch()) {
-        return { admitted: false, code: 'KILL_SWITCH_ENGAGED', detail: 'the local autonomous kill switch is engaged' };
-      }
-      const admitted = this.options.store.policyAdmitMutation({
-        mutationId,
-        now: this.now(),
-        admissionTtlMs: this.admissionTtlMs,
-      });
-      if (!admitted) {
-        return { admitted: false, code: 'NO_LEASE', detail: 'the record was no longer awaiting execution' };
-      }
-      await this.executeQueued(mutationId);
-      return { admitted: true };
-    }
-
-    const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
-    if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
-
-    let bindings: GoalLeaseBindings;
-    try {
-      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
-    } catch {
-      return { admitted: false, code: 'LEASE_MALFORMED', detail: 'the stored bindings are not JSON' };
-    }
-
-    const decision = evaluateGoalLease({
-      lease: {
-        leaseId: stored.leaseId,
-        createdAt: stored.createdAt,
-        notBefore: stored.notBefore,
-        expiresAt: stored.expiresAt,
-        ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
-        bindings,
-      },
-      now: this.now(),
-      request,
-      spend: this.options.store.goalLeaseSpend(stored.leaseId),
-      killSwitch: lease.killSwitch(),
-      gatewayRoot: GATEWAY_ROOT,
-    });
-    if (!decision.admitted) return decision;
-
-    let admitted: MutationRecord | undefined;
-    try {
-      admitted = this.options.store.policyAdmitMutation({
-        mutationId,
-        leaseId: stored.leaseId,
-        now: this.now(),
-        admissionTtlMs: this.admissionTtlMs,
-      });
-    } catch (error) {
-      const denial = goalLeaseAtomicBudgetDenial(error);
-      if (denial) return denial;
-      throw error;
-    }
     if (!admitted) {
-      return { admitted: false, code: 'LEASE_EXPIRED', detail: 'the record was no longer awaiting review' };
+      return {
+        admitted: false,
+        code: 'RECORD_NOT_PENDING',
+        detail: 'the record was no longer awaiting execution',
+      };
     }
     await this.executeQueued(mutationId);
     return { admitted: true };
-  }
-
-  /**
-   * Offer every record currently awaiting review to the lease policy.
-   *
-   * This is what makes a lease do anything in production. `admitByPolicy` decides one record;
-   * without a caller, configuring a lease changed nothing at all while the CLI announced that
-   * autonomous admission was enabled — a review caught exactly that gap.
-   *
-   * Bounded and driven rather than continuous: the runtime calls it, it walks at most one page
-   * of pending records, and each one goes through the identical policy. A record the lease does
-   * not cover is simply left pending for a human, which is the correct outcome and not an error.
-   *
-   * Returns the ids it admitted, so a caller can log what autonomy actually did.
-   */
-  async admitPendingUnderLease(limit = 20): Promise<string[]> {
-    if (!this.options.goalLease && !this.options.goalLeaseResolver) return [];
-    const admitted: string[] = [];
-    // Snapshot first: admitting mutates the pending set underneath an iterator.
-    const pending = this.options.store.listPendingMutations(Math.min(Math.max(limit, 1), PENDING_SCAN_LIMIT));
-    for (const record of pending) {
-      const decision = await this.admitByPolicy(record.mutationId);
-      if (decision.admitted) admitted.push(record.mutationId);
-    }
-    return admitted;
   }
 
   async approveLocal(mutationId: string): Promise<boolean> {
@@ -545,7 +385,7 @@ export class DurableMutationCoordinator {
       await this.revalidateStoredPlan(workspace.canonicalRoot, claimed, backend);
       const original = await readBase(backend, workspace.canonicalRoot, claimed.path, claimed);
       const candidate = original.replace(claimed.before, claimed.after);
-      const authorityDecision = await this.revalidatePolicyAuthority(workspace.canonicalRoot, claimed);
+      const authorityDecision = await this.revalidatePolicyAuthority(claimed, workspace.canonicalRoot);
       if (!authorityDecision.admitted) {
         this.options.store.finishMutation(
           mutationId, 'FAILED', this.now(), undefined, `ExecutionPolicy_${authorityDecision.code}`,
@@ -599,62 +439,44 @@ export class DurableMutationCoordinator {
    * deliberately overrides spend only for the lease that already admitted this exact mutation.
    * Cross-process atomic reservation is a separate store-level gate; this method does not claim it.
    */
-  private async revalidatePolicyAuthority(root: string, record: MutationRecord): Promise<LeaseDecision> {
+  private async revalidatePolicyAuthority(
+    record: MutationRecord,
+    canonicalRoot: string,
+  ): Promise<PolicyDecision> {
     const authority = this.options.store.getMutationAuthority(record.mutationId);
     if (!authority) {
-      return { admitted: false, code: 'NO_LEASE', detail: 'queued mutation has no durable authority row' };
-    }
-    if (authority.authority !== 'POLICY_APPROVED') return { admitted: true };
-
-    // POLICY_APPROVED with no lease id is the trusted private-local autonomous path.
-    if (!authority.leaseId) {
-      if (!this.options.autonomous) {
-        return { admitted: false, code: 'NO_LEASE', detail: 'autonomous execution provenance is not enabled here' };
-      }
-      if (this.options.autonomous.killSwitch()) {
-        return { admitted: false, code: 'KILL_SWITCH_ENGAGED', detail: 'the local autonomous kill switch is engaged' };
-      }
-      return { admitted: true };
-    }
-
-    // Historical leased records remain recoverable, but new private-stdio effects never enter here.
-    if (!this.options.goalLeaseResolver) return { admitted: true };
-
-    const delegatedGoalId = resolveDelegatedGoal({
-      port: this.options.store,
-      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      now: this.now(),
-    });
-    const workspaceFingerprint = this.options.goalLeaseResolver.liveWorkspaceFingerprint === undefined
-      ? this.options.goalLeaseResolver.workspaceFingerprint?.(record.workspaceId)
-      : await this.options.goalLeaseResolver.liveWorkspaceFingerprint(record.workspaceId, root);
-    const request = {
-      tool: MUTATION_TOOL,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      workspaceRoot: root,
-      ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
-      path: record.path,
-      diffBytes: affectedBytes(record),
-      ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
-    };
-    const resolution = resolveGoalLease(this.options.store, {
-      now: this.now(),
-      requests: [request],
-      killSwitch: this.options.goalLeaseResolver.killSwitch(),
-      gatewayRoot: GATEWAY_ROOT,
-      spendOverrides: new Map([[authority.leaseId, { filesChanged: 0, bytesWritten: 0 }]]),
-    });
-    if (!resolution.admitted) return resolution;
-    if (resolution.resolved.lease.leaseId !== authority.leaseId) {
       return {
         admitted: false,
-        code: 'NO_LEASE',
-        detail: `execution authority changed from ${authority.leaseId} to ${resolution.resolved.lease.leaseId}`,
+        code: 'AUTHORITY_MISSING',
+        detail: 'queued mutation has no durable authority row',
       };
     }
+    if (authority.authority !== 'POLICY_APPROVED') {
+      await this.options.effectBoundary?.revalidateWorkspace(record.workspaceId, canonicalRoot);
+      return { admitted: true };
+    }
+    if (authority.retiredPolicyAuthority) {
+      return {
+        admitted: false,
+        code: 'LEGACY_AUTHORITY_RETIRED',
+        detail: 'Goal Lease authority is retired; legacy policy-approved records cannot execute',
+      };
+    }
+    if (!this.options.autonomous) {
+      return {
+        admitted: false,
+        code: 'AUTONOMOUS_DISABLED',
+        detail: 'autonomous execution provenance is not enabled here',
+      };
+    }
+    if (this.options.autonomous.killSwitch()) {
+      return {
+        admitted: false,
+        code: 'KILL_SWITCH_ENGAGED',
+        detail: 'the local autonomous kill switch is engaged',
+      };
+    }
+    await this.options.effectBoundary?.revalidateWorkspace(record.workspaceId, canonicalRoot);
     return { admitted: true };
   }
 

@@ -243,8 +243,8 @@ function main(): number {
       out('under repositoryEngineering.mutation, then restart WAG. That edit is the second');
       out('human act, and it is what makes issuance and activation two separate decisions.');
       out('');
-      out('It lifts Run only. Approve is unchanged: an effect still needs the operator, or a');
-      out('Goal Lease that admits it. `npm run lease:stop` halts it without revoking it.');
+      out('It lifts Run only. Browser-originated effects still require operator review.');
+      out('`npm run autonomy:stop` halts delegated automation without revoking it.');
       return 0;
     }
 

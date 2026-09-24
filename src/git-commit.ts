@@ -1,20 +1,10 @@
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { CommitRecord, SqliteDurableStore } from './durable-store.js';
+import type { PolicyDecision } from './policy-decision.js';
 import type { GitCommitBackend, GitCommitChange, GitCommitPlan } from './git-commit-backend.js';
 import { assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
-import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
-import { resolveGoalLease } from './goal-lease-resolver.js';
-import { resolveDelegatedGoal } from './delegated-run-provenance.js';
-
-/** As in the mutation coordinator: a constant, so a proposal cannot nominate its own grant. */
-const COMMIT_TOOL = 'git.commit';
-
-/** As in the mutation coordinator: this gateway's own checkout, which a lease may never act on. */
-const GATEWAY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 const MAX_MESSAGE_BYTES = 8 * 1024;
 const MAX_PATHS = 64;
@@ -116,28 +106,10 @@ export class DurableCommitCoordinator {
     reviewTtlMs?: number;
     /** Trusted private-local execution mode; browser proposal coordinators leave this absent. */
     autonomous?: { killSwitch: () => boolean };
-    /** Legacy Goal Lease compatibility; private stdio no longer wires it. */
-    goalLease?: { leaseId: string; killSwitch: () => boolean };
-    /** Multi-active resolver; the configured goalLease above is retained only as a compatibility fallback. */
-    goalLeaseResolver?: {
-      killSwitch: () => boolean;
-      workspaceFingerprint?: (workspaceId: string) => string | undefined;
-      liveWorkspaceFingerprint?: (workspaceId: string, canonicalRoot: string) => Promise<string | undefined>;
+    /** Re-observe the durable workspace object immediately before the Git ref-moving effect. */
+    effectBoundary?: {
+      revalidateWorkspace: (workspaceId: string, canonicalRoot: string) => Promise<void>;
     };
-    /**
-     * The Goal UI Delegation named in local configuration, if any (ADR-0029).
-     *
-     * Carried here *only* so that the lease policy can be told which goal is currently allowed to
-     * Run without a click on the browser context that produced a record. It grants nothing: this
-     * coordinator cannot issue, renew or widen a delegation, and the id is a reference the plane
-     * re-reads every binding behind.
-     *
-     * Absent means delegated Run is off, in which case nothing reaches the effect path from a
-     * delegated adapter and the resolution never matters. Present but stale, revoked, superseded or
-     * bound elsewhere resolves to `undefined`, which the policy denies on a delegated adapter —
-     * see `delegated-run-provenance.ts`.
-     */
-    uiDelegation?: { configuredDelegationId: string };
   }) {
     this.now = options.now ?? Date.now;
     this.reviewTtlMs = Math.min(Math.max(options.reviewTtlMs ?? DEFAULT_REVIEW_TTL_MS, 1_000), MAX_TTL_MS);
@@ -266,138 +238,39 @@ export class DurableCommitCoordinator {
    *
    * Returns the ids it admitted, so a caller can log what autonomy actually did.
    */
-  async admitPendingUnderLease(limit = 20): Promise<string[]> {
-    if (!this.options.goalLease && !this.options.goalLeaseResolver) return [];
-    const admitted: string[] = [];
-    // Snapshot first: admitting mutates the pending set underneath an iterator.
-    const pending = this.options.store.listPendingCommits(
-      Math.min(Math.max(limit, 1), COMMIT_PENDING_SCAN_LIMIT),
-    );
-    for (const record of pending) {
-      const decision = await this.admitByPolicy(record.commitId);
-      if (decision.admitted) admitted.push(record.commitId);
-    }
-    return admitted;
-  }
-
-  async admitByPolicy(commitId: string): Promise<LeaseDecision> {
+  async admitByPolicy(commitId: string): Promise<PolicyDecision> {
     const record = this.options.store.getCommit(commitId);
-    if (!record) return { admitted: false, code: 'NO_LEASE', detail: 'no such commit' };
+    if (!record) {
+      return { admitted: false, code: 'RECORD_NOT_FOUND', detail: 'no such commit' };
+    }
     if (record.state !== 'PENDING_APPROVAL') {
-      return { admitted: false, code: 'NO_LEASE', detail: `commit is ${record.state}, not awaiting review` };
+      return {
+        admitted: false,
+        code: 'RECORD_NOT_PENDING',
+        detail: `commit is ${record.state}, not awaiting execution`,
+      };
     }
-    const workspace = this.options.store.getWorkspace(record.workspaceId);
-    if (!workspace) return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
-
-    const delegatedGoalId = resolveDelegatedGoal({
-      port: this.options.store,
-      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      now: this.now(),
-    });
-    const head = record.oldHead;
-    const workspaceFingerprint = this.options.goalLeaseResolver?.workspaceFingerprint?.(record.workspaceId);
-    const requests = record.paths.map((path) => ({
-      tool: COMMIT_TOOL,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      workspaceRoot: workspace.canonicalRoot,
-      ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
-      path,
-      diffBytes: 0,
-      wantsCommit: true,
-      ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
-      ...(record.branch === undefined ? {} : { branch: record.branch }),
-      ...(head === undefined ? {} : { headSha: head }),
-    }));
-
-    if (this.options.goalLeaseResolver) {
-      const resolution = resolveGoalLease(this.options.store, {
-        now: this.now(),
-        requests,
-        killSwitch: this.options.goalLeaseResolver.killSwitch(),
-        gatewayRoot: GATEWAY_ROOT,
-      });
-      if (!resolution.admitted) return resolution;
-
-      this.options.store.recordCommitAuthority({
-        commitId,
-        authority: 'POLICY_APPROVED',
-        leaseId: resolution.resolved.lease.leaseId,
-        admittedAt: this.now(),
-        fingerprint: record.fingerprint,
-        workspaceId: record.workspaceId,
-        branch: record.branch,
-        oldHead: record.oldHead,
-        pathCount: record.paths.length,
-      });
-      const approved = await this.approveLocal(commitId);
-      return approved
-        ? { admitted: true }
-        : { admitted: false, code: 'LEASE_EXPIRED', detail: 'the commit was no longer awaiting review' };
+    if (!this.options.store.getWorkspace(record.workspaceId)) {
+      return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
     }
-
-    const lease = this.options.goalLease;
-    if (!lease) {
-      if (!this.options.autonomous) {
-        return { admitted: false, code: 'NO_LEASE', detail: 'autonomous local commit execution is not enabled' };
-      }
-      if (this.options.autonomous.killSwitch()) {
-        return { admitted: false, code: 'KILL_SWITCH_ENGAGED', detail: 'the local autonomous kill switch is engaged' };
-      }
-      this.options.store.recordCommitAuthority({
-        commitId,
-        authority: 'POLICY_APPROVED',
-        admittedAt: this.now(),
-        fingerprint: record.fingerprint,
-        workspaceId: record.workspaceId,
-        branch: record.branch,
-        oldHead: record.oldHead,
-        pathCount: record.paths.length,
-      });
-      const approved = await this.approveLocal(commitId);
-      return approved
-        ? { admitted: true }
-        : { admitted: false, code: 'NO_LEASE', detail: 'the commit was no longer awaiting execution' };
+    if (!this.options.autonomous) {
+      return {
+        admitted: false,
+        code: 'AUTONOMOUS_DISABLED',
+        detail: 'autonomous local commit execution is not enabled',
+      };
     }
-
-    const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
-    if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
-    let bindings: GoalLeaseBindings;
-    try {
-      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
-    } catch {
-      return { admitted: false, code: 'LEASE_MALFORMED', detail: 'the stored bindings are not JSON' };
-    }
-
-    const leaseRecord = {
-      leaseId: stored.leaseId,
-      createdAt: stored.createdAt,
-      notBefore: stored.notBefore,
-      expiresAt: stored.expiresAt,
-      ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
-      bindings,
-    };
-    const spend = this.options.store.goalLeaseSpend(stored.leaseId);
-    const killSwitch = lease.killSwitch();
-
-    for (const request of requests) {
-      const decision = evaluateGoalLease({
-        lease: leaseRecord,
-        now: this.now(),
-        request,
-        spend,
-        killSwitch,
-        gatewayRoot: GATEWAY_ROOT,
-      });
-      if (!decision.admitted) return decision;
+    if (this.options.autonomous.killSwitch()) {
+      return {
+        admitted: false,
+        code: 'KILL_SWITCH_ENGAGED',
+        detail: 'the local autonomous kill switch is engaged',
+      };
     }
 
     this.options.store.recordCommitAuthority({
       commitId,
       authority: 'POLICY_APPROVED',
-      leaseId: stored.leaseId,
       admittedAt: this.now(),
       fingerprint: record.fingerprint,
       workspaceId: record.workspaceId,
@@ -408,71 +281,51 @@ export class DurableCommitCoordinator {
     const approved = await this.approveLocal(commitId);
     return approved
       ? { admitted: true }
-      : { admitted: false, code: 'LEASE_EXPIRED', detail: 'the commit was no longer awaiting review' };
+      : {
+          admitted: false,
+          code: 'RECORD_NOT_PENDING',
+          detail: 'the commit was no longer awaiting execution',
+        };
   }
 
-  /**
-   * Re-resolve a policy-approved commit immediately before the backend may move a ref.
-   * Human-approved commits do not depend on a Goal Lease and keep their existing path.
-   */
-  private async revalidatePolicyAuthority(record: CommitRecord, root: string): Promise<LeaseDecision> {
+  private async revalidatePolicyAuthority(
+    record: CommitRecord,
+    canonicalRoot: string,
+  ): Promise<PolicyDecision> {
     const authority = this.options.store.getCommitAuthority(record.commitId);
     if (!authority) {
-      return { admitted: false, code: 'NO_LEASE', detail: 'claimed commit has no durable authority row' };
-    }
-    if (authority.authority !== 'POLICY_APPROVED') return { admitted: true };
-
-    // POLICY_APPROVED with no lease id is the trusted private-local autonomous path.
-    if (!authority.leaseId) {
-      if (!this.options.autonomous) {
-        return { admitted: false, code: 'NO_LEASE', detail: 'autonomous commit provenance is not enabled here' };
-      }
-      if (this.options.autonomous.killSwitch()) {
-        return { admitted: false, code: 'KILL_SWITCH_ENGAGED', detail: 'the local autonomous kill switch is engaged' };
-      }
-      return { admitted: true };
-    }
-
-    // Historical leased records remain recoverable, but new private-stdio commits never enter here.
-    if (!this.options.goalLeaseResolver) return { admitted: true };
-
-    const delegatedGoalId = resolveDelegatedGoal({
-      port: this.options.store,
-      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      now: this.now(),
-    });
-    const workspaceFingerprint = this.options.goalLeaseResolver.liveWorkspaceFingerprint === undefined
-      ? this.options.goalLeaseResolver.workspaceFingerprint?.(record.workspaceId)
-      : await this.options.goalLeaseResolver.liveWorkspaceFingerprint(record.workspaceId, root);
-    const requests = record.paths.map((path) => ({
-      tool: COMMIT_TOOL,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      workspaceRoot: root,
-      ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
-      path,
-      diffBytes: 0,
-      wantsCommit: true,
-      ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
-      branch: record.branch,
-      headSha: record.oldHead,
-    }));
-    const resolution = resolveGoalLease(this.options.store, {
-      now: this.now(),
-      requests,
-      killSwitch: this.options.goalLeaseResolver.killSwitch(),
-      gatewayRoot: GATEWAY_ROOT,
-    });
-    if (!resolution.admitted) return resolution;
-    if (resolution.resolved.lease.leaseId !== authority.leaseId) {
       return {
         admitted: false,
-        code: 'NO_LEASE',
-        detail: `execution authority changed from ${authority.leaseId} to ${resolution.resolved.lease.leaseId}`,
+        code: 'AUTHORITY_MISSING',
+        detail: 'claimed commit has no durable authority row',
       };
     }
+    if (authority.authority !== 'POLICY_APPROVED') {
+      await this.options.effectBoundary?.revalidateWorkspace(record.workspaceId, canonicalRoot);
+      return { admitted: true };
+    }
+    if (authority.retiredPolicyAuthority) {
+      return {
+        admitted: false,
+        code: 'LEGACY_AUTHORITY_RETIRED',
+        detail: 'Goal Lease authority is retired; legacy policy-approved commits cannot execute',
+      };
+    }
+    if (!this.options.autonomous) {
+      return {
+        admitted: false,
+        code: 'AUTONOMOUS_DISABLED',
+        detail: 'autonomous commit provenance is not enabled here',
+      };
+    }
+    if (this.options.autonomous.killSwitch()) {
+      return {
+        admitted: false,
+        code: 'KILL_SWITCH_ENGAGED',
+        detail: 'the local autonomous kill switch is engaged',
+      };
+    }
+    await this.options.effectBoundary?.revalidateWorkspace(record.workspaceId, canonicalRoot);
     return { admitted: true };
   }
 

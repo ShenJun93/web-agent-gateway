@@ -1,12 +1,12 @@
 /**
  * Engage or clear the local emergency stop for autonomous admission (ADR-0028).
  *
- *   npm run lease:stop            engage, with a default reason
- *   npm run lease:stop -- "why"   engage, recording why
- *   npm run lease:stop -- --clear clear it
- *   npm run lease:stop -- --status report without changing anything
+ *   npm run autonomy:stop            engage, with a default reason
+ *   npm run autonomy:stop -- "why"   engage, recording why
+ *   npm run autonomy:stop -- --clear clear it
+ *   npm run autonomy:stop -- --status report without changing anything
  *
- * Engaging stops every Goal Lease admission **and every delegated Run** on the next call, in every
+ * Engaging stops every autonomous-local admission **and every delegated Run** on the next call, in every
  * WAG process on this machine, without needing any of them to cooperate. One switch covers both
  * because someone reaching for the stop wants autonomy halted, not a quiz about which of the two
  * authorities is running — and ADR-0029 reuses this file rather than adding a second one nobody
@@ -19,7 +19,7 @@
  */
 import {
   clearKillSwitch, engageKillSwitch, isKillSwitchEngaged, KILL_SWITCH_FILE, stateDirectory,
-} from '../src/goal-lease-kill-switch.js';
+} from '../src/autonomy-kill-switch.js';
 
 function main(): number {
   const args = process.argv.slice(2);
@@ -27,7 +27,7 @@ function main(): number {
 
   if (args.includes('--status')) {
     const engaged = isKillSwitchEngaged(directory);
-    console.log(`autonomous admission : ${engaged ? 'STOPPED' : 'allowed'}  (Goal Lease approval and delegated Run)`);
+    console.log(`autonomous admission : ${engaged ? 'STOPPED' : 'allowed'}  (autonomous-local approval and delegated Run)`);
     console.log(`switch file          : ${directory}\\${KILL_SWITCH_FILE}`);
     return engaged ? 1 : 0;
   }
@@ -42,7 +42,7 @@ function main(): number {
 
   const reason = args.find((a) => !a.startsWith('--')) ?? 'engaged from the command line';
   const path = engageKillSwitch(directory, reason);
-  console.log('STOPPED : every Goal Lease admission and every delegated Run will now be refused,');
+  console.log('STOPPED : every autonomous-local admission and every delegated Run will now be refused,');
   console.log('          on the next call. The human Run and Approve routes are untouched.');
   console.log(`switch  : ${path}`);
   console.log('note    : this pauses; it does not revoke. Clear it with --clear.');

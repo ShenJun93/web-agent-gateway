@@ -122,27 +122,19 @@ const FILE_READ_VERB =
   /\b(?:cat|type|more|less|head|tail|Get-Content|gc|Copy-Item|copy|cp|mv|Move-Item|xargs|base64|od|xxd|strings)\b|[<>|]/;
 
 /**
- * Browser Goal UI Delegation remains a human-issued authority because it lifts the browser Run
- * gesture. Goal Lease is deprecated for private/local execution, and sessionCorrelation is only
- * stable identity/audit continuity.
+ * Browser Goal UI Delegation remains human-issued because it lifts the browser Run gesture.
+ * Private/local execution is autonomous and uses no per-goal authority object. sessionCorrelation
+ * is identity/audit continuity only and may be minted by WAG for a new autonomous lane.
  *
- * Legacy Goal Lease issuance calls remain refused here so old automation cannot silently
- * reintroduce the retired authority plane. The JSON-write guard, however, protects only
- * goalUiDelegationId: writing goalLeaseId is inert compatibility data and writing
- * sessionCorrelation is allowed so WAG can mint autonomous local lanes.
- *
- * Deliberately not refused: inspection, revocation, the emergency kill switch, stable-identity
- * bootstrap, or ordinary private configuration writes.
+ * Deliberately not refused: private-local execution, inspection, stable-identity bootstrap,
+ * revocation, the emergency kill switch, or ordinary private configuration writes.
  */
 const GRANT_CLI = /\bdelegation-control(?:\.[cm]?[jt]s)?\b/i;
 const GRANT_CLI_FLAG = /--(?:issue|renew)\b/;
 /** A *call*, not a mention: the open bracket is what separates invoking from describing. */
 const GRANT_CALL =
-  /\b(?:insertUiDelegation|renewUiDelegation|insertGoalLease)\s*\(|\bnew\s+UiDelegationControlPlane\s*\(/;
-/**
- * The one private-config field that still activates human-issued browser authority.
- * goalLeaseId is deprecated/inert and sessionCorrelation is identity only.
- */
+  /\b(?:insertUiDelegation|renewUiDelegation)\s*\(|\bnew\s+UiDelegationControlPlane\s*\(/;
+/** The one private-config field that activates human-issued browser authority. */
 const GRANT_CONFIG_FIELD = /\bgoalUiDelegationId\b/;
 /** Something that *runs* a script, as opposed to reading, grepping or quoting one. */
 const SCRIPT_RUNNER = /\b(?:node|npx|npm|pnpm|yarn|bun|deno|tsx|ts-node)\b/i;
@@ -201,7 +193,7 @@ function matchAuthorityIssuance(text) {
   if (GRANT_CLI.test(text) && GRANT_CLI_FLAG.test(text)) {
     return 'issues or renews a Goal UI Delegation';
   }
-  if (GRANT_CALL.test(text)) return 'calls delegation or lease issuance directly';
+  if (GRANT_CALL.test(text)) return 'calls Goal UI Delegation issuance directly';
   return undefined;
 }
 
@@ -253,7 +245,7 @@ export function decide(event) {
     if (why) {
       return {
         deny: true,
-        reason: `wag-human-gate-guard: this write ${why}. A delegation or lease that is not named in local configuration is inert, so writing the name is what turns a row into live authority — and issuance is human-only and out of band. ${BOUNDARY_RULE}`,
+        reason: `wag-human-gate-guard: this write ${why}. A Goal UI Delegation not named in local configuration is inert, so writing the name is what turns browser Run delegation into live authority — and issuance is human-only and out of band. ${BOUNDARY_RULE}`,
       };
     }
   }
@@ -304,7 +296,7 @@ export function decide(event) {
     if (issuing) {
       return {
         deny: true,
-        reason: `wag-human-gate-guard: this command ${issuing}. Claude may use a Goal Lease or a Goal UI Delegation and must report on one; it may not create, widen or renew one. Revocation and \`npm run lease:stop\` are not refused. ${BOUNDARY_RULE}`,
+        reason: `wag-human-gate-guard: this command ${issuing}. Goal UI Delegation issuance, widening and renewal remain human-only. Private-local WAG execution needs no grant. Revocation and \`npm run autonomy:stop\` are not refused. ${BOUNDARY_RULE}`,
       };
     }
     // Naming a route or a credential is not reaching for one: an analysis script may quote both,

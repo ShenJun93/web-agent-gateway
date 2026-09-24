@@ -15,7 +15,8 @@ import { DurableVerifyJobCoordinator } from './durable-verify-job.js';
 import { DurableCommitCoordinator } from './git-commit.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
-import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
+import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
+import { isKillSwitchEngaged } from './autonomy-kill-switch.js';
 import { DevspaceVerifyExecutionPort } from './executor/devspace-verify.js';
 import { startBrowserAdmissionHttpServer } from './http-server.js';
 import { operatorDenialsToStderr, startOperatorServer } from './operator-server.js';
@@ -167,6 +168,33 @@ export async function startBrowserOperatorRuntime(options: {
     // authority plane; a browser effect requires the operator review path. The kill switch is
     // still shared with delegated Run so one emergency stop halts autonomous browser dispatch.
     const killSwitchDir = dirname(options.statePath);
+    const identityStore = store;
+    const identityRegistry = workspaceIdentities;
+    const identityRuntime = privateRuntime;
+
+    async function revalidateWorkspaceIdentity(
+      workspaceId: string,
+      canonicalRoot: string,
+    ): Promise<void> {
+      const workspace = identityStore.getWorkspace(workspaceId);
+      if (!workspace || workspace.backendKind !== 'devspace') {
+        throw new Error('Gateway denied workspace identity backend');
+      }
+      const expectedRoot = process.platform === 'win32'
+        ? canonicalRoot.toLowerCase() : canonicalRoot;
+      const storedRoot = process.platform === 'win32'
+        ? workspace.canonicalRoot.toLowerCase() : workspace.canonicalRoot;
+      if (storedRoot !== expectedRoot) throw new Error('Gateway denied workspace identity drift');
+
+      const devspaceWorkspaceId = await identityRuntime.executor.openWorkspace(canonicalRoot);
+      const observation = await observeDevspaceWorkspaceIdentity(
+        identityRuntime.executor, devspaceWorkspaceId, canonicalRoot,
+      );
+      const observedRoot = process.platform === 'win32'
+        ? observation.canonicalRoot.toLowerCase() : observation.canonicalRoot;
+      if (observedRoot !== expectedRoot) throw new Error('Gateway denied workspace identity drift');
+      identityRegistry.record(workspaceId, observation);
+    }
 
     // Goal UI Delegation controls browser Run/dispatch only. It never approves filesystem or Git
     // effects; those stay on the operator-review path.
@@ -176,6 +204,7 @@ export async function startBrowserOperatorRuntime(options: {
       store,
       backends: [new DevspaceFileMutationBackend(privateRuntime.executor)],
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
+      effectBoundary: { revalidateWorkspace: revalidateWorkspaceIdentity },
     });
     await mutation.reconcile();
 
@@ -186,6 +215,7 @@ export async function startBrowserOperatorRuntime(options: {
         ? {}
         : { protectedBranches: engineering.gitCommit.protectedBranches }),
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
+      effectBoundary: { revalidateWorkspace: revalidateWorkspaceIdentity },
     });
     await commit.reconcile();
 

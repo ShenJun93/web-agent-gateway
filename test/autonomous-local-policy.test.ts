@@ -79,7 +79,7 @@ test('autonomous mutation executes with POLICY_APPROVED and no lease id', async 
 
   const authority = store.getMutationAuthority(preview.mutationId);
   assert.equal(authority?.authority, 'POLICY_APPROVED');
-  assert.equal(authority?.leaseId, undefined);
+  assert.equal(authority?.retiredPolicyAuthority, undefined);
   assert.equal(coordinator.result(caller, preview.mutationId).state, 'SUCCEEDED');
   assert.equal(await readFile(join(root, 'note.txt'), 'utf8'), 'beta\n');
 
@@ -179,7 +179,7 @@ test('autonomous commit executes with POLICY_APPROVED/no lease and kill switch r
   assert.deepEqual(await coordinator.admitByPolicy(first.commitId), { admitted: true });
   const authority = store.getCommitAuthority(first.commitId);
   assert.equal(authority?.authority, 'POLICY_APPROVED');
-  assert.equal(authority?.leaseId, undefined);
+  assert.equal(authority?.retiredPolicyAuthority, undefined);
   assert.equal(coordinator.result(caller, first.commitId).state, 'SUCCEEDED');
   assert.equal(backend.committed.length, 1);
 
