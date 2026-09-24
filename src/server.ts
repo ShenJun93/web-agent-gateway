@@ -756,6 +756,13 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id, query, ignore_case, max_results, context_lines }) => {
       if (!validSearchQuery(query)) throw new Error('Gateway denied search query');
+      if (await isLocalMachineWorkspace(workspace_id)) {
+        return toolResult(await machineContext!.search(workspace_id, query, {
+          ...(ignore_case === undefined ? {} : { ignoreCase: ignore_case }),
+          ...(max_results === undefined ? {} : { maxResults: max_results }),
+          ...(context_lines === undefined ? {} : { contextLines: context_lines }),
+        }));
+      }
       return toolResult(await gateway.repoSearch(workspace_id, query, {
         ignoreCase: ignore_case, maxResults: max_results, contextLines: context_lines,
       }));
@@ -810,18 +817,13 @@ export function createGatewayMcpServer(
     }, async ({ workspace_id, argv, cwd, timeout_ms, max_output_tokens }) => {
       await commandContext.authorize(workspace_id);
       if (await isLocalMachineWorkspace(workspace_id)) {
-        // Preserve the original command.run contract on the compatibility path. machine.command.run
-        // intentionally accepts a wider argv vocabulary, but a frozen connector that only knows
-        // command.run must not silently gain shell-string semantics.
-        const resolved = resolveVerifyProfile({
-          argv,
+        // Frozen connector schemas may still know only command.run. Preserve its bounded argv,
+        // timeout and output schema, but route it directly to the trusted local-machine backend
+        // so local automation does not depend on a client-side tool-catalog refresh.
+        return toolResult(await machineContext!.commandRun(workspace_id, argv, {
+          ...(cwd === undefined ? {} : { cwd }),
           ...(timeout_ms === undefined ? {} : { timeoutMs: timeout_ms }),
           ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
-        }, cwd ?? '.');
-        return toolResult(await machineContext!.commandRun(workspace_id, resolved.argv, {
-          cwd: resolved.cwd,
-          timeoutMs: resolved.timeoutMs,
-          maxOutputTokens: resolved.maxOutputTokens,
         }));
       }
       return toolResult(await gateway.commandRun(workspace_id, argv, {

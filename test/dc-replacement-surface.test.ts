@@ -516,18 +516,22 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
     },
     async commandRun(workspaceId, argv) {
       assert.equal(workspaceId, machineWorkspaceId);
-      assert.deepEqual(argv, ['node', '--version']);
-      machineCalls.push('command');
+      machineCalls.push('command:' + JSON.stringify(argv));
       return {
         exitCode: 0,
-        output: 'machine-command',
+        output: argv[1] === '--version' ? 'machine-command' : 'machine-command-wide',
         timedOut: false,
         truncated: false,
         durationMs: 1,
         cwd: 'machine-root',
       };
     },
-    async search() { throw new Error('not used'); },
+    async search(workspaceId, query) {
+      assert.equal(workspaceId, machineWorkspaceId);
+      assert.equal(query, 'needle');
+      machineCalls.push('search');
+      return { matches: [{ path: 'note.txt', line: 1, text: 'needle' }], truncated: false, visited_files: 1 };
+    },
     async info() { throw new Error('not used'); },
     async mkdir() { throw new Error('not used'); },
     async move() { throw new Error('not used'); },
@@ -592,22 +596,30 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
   });
   assert.equal((read.structuredContent as { content?: string }).content, 'machine-read\n');
 
+  const searched = await client.callTool({
+    name: 'repo.search',
+    arguments: { workspace_id: machineWorkspaceId, query: 'needle' },
+  });
+  assert.notEqual(searched.isError, true);
+  assert.equal((searched.structuredContent as { matches?: unknown[] }).matches?.length, 1);
+
   const command = await client.callTool({
     name: 'command.run',
     arguments: { workspace_id: machineWorkspaceId, argv: ['node', '--version'] },
   });
   assert.equal((command.structuredContent as { output?: string }).output, 'machine-command');
 
-  const shellLike = await client.callTool({
+  const widerArgv = await client.callTool({
     name: 'command.run',
     arguments: { workspace_id: machineWorkspaceId, argv: ['node', 'hello world'] },
   });
-  assert.equal(shellLike.isError, true);
-  assert.match(JSON.stringify(shellLike.content), /Invalid verify profile argv/);
+  assert.notEqual(widerArgv.isError, true);
+  assert.equal((widerArgv.structuredContent as { output?: string }).output, 'machine-command-wide');
 
   assert.equal(calls.length, 0, 'local-machine compatibility calls must not reach DevSpace exec');
   assert.ok(machineCalls.some((entry) => entry.startsWith('open:')));
   assert.ok(machineCalls.includes('list'));
   assert.ok(machineCalls.includes('read'));
-  assert.ok(machineCalls.includes('command'));
+  assert.ok(machineCalls.includes('search'));
+  assert.ok(machineCalls.some((entry) => entry.startsWith('command:')));
 });
