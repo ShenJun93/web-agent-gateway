@@ -78,6 +78,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['mutation.preview', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.replace', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.edit_block', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['file.append', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['mutation.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['git.commit', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
@@ -206,6 +207,7 @@ test('no direct tool claims read-only while creating durable state', async (t) =
     'mutation.preview',
     'file.replace',
     'file.edit_block',
+    'file.append',
     'file.create',
     'git.commit',
   ]) {

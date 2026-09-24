@@ -438,7 +438,7 @@ export interface GitCommitMcpContext {
 
 export interface MutationMcpContext {
   callerContext: GatewayCallerContext;
-  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'replace' | 'editBlock' | 'result' | 'admitByPolicy' | 'rejectLocal'>;
+  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'replace' | 'editBlock' | 'append' | 'result' | 'admitByPolicy' | 'rejectLocal'>;
   /** Same trusted autonomous-local boundary as GitCommitMcpContext. */
   autonomous?: boolean;
 }
@@ -929,6 +929,26 @@ export function createGatewayMcpServer(
         mutationContext.callerContext,
         workspace_id,
         { path, oldString: old_string, newString: new_string },
+      ),
+    ));
+
+    server.registerTool('file.append', {
+      description: mutationContext.autonomous
+        ? 'Append bounded text immediately after verifying one exact unique expected file suffix; unrelated file content is not exposed.'
+        : 'Propose a bounded suffix-guarded append for local human review.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        expected_suffix: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+        content: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, expected_suffix, content }) => directMutationExecution(
+      mutationContext,
+      () => mutationContext.coordinator.append(
+        mutationContext.callerContext,
+        workspace_id,
+        { path, expectedSuffix: expected_suffix, content },
       ),
     ));
 

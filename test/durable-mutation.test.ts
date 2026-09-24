@@ -209,6 +209,49 @@ test('editBlock mutates one exact block without exposing unrelated secret-bearin
   );
 });
 
+test('append verifies one exact unique suffix and never persists unrelated file content', async (t) => {
+  const { root, store, workspace, coordinator } = await setup(t);
+  const original = 'API_KEY=fixture-secret-value\nsection=ready\n';
+  await writeFile(join(root, 'append-secret.txt'), original, 'utf8');
+
+  const preview = await coordinator.append(caller, workspace.workspaceId, {
+    path: 'append-secret.txt',
+    expectedSuffix: 'section=ready\n',
+    content: 'next=value\n',
+  });
+
+  const record = store.getMutation(preview.mutationId);
+  assert.equal(record?.before, 'section=ready\n');
+  assert.equal(record?.after, 'section=ready\nnext=value\n');
+  assert.doesNotMatch(record?.before ?? '', /fixture-secret-value/);
+  assert.doesNotMatch(record?.after ?? '', /fixture-secret-value/);
+
+  assert.equal(await coordinator.approveLocal(preview.mutationId), true);
+  assert.equal(
+    await readFile(join(root, 'append-secret.txt'), 'utf8'),
+    'API_KEY=fixture-secret-value\nsection=ready\nnext=value\n',
+  );
+
+  await assert.rejects(
+    () => coordinator.append(caller, workspace.workspaceId, {
+      path: 'append-secret.txt',
+      expectedSuffix: 'not-the-tail',
+      content: 'x',
+    }),
+    /not the current file tail/,
+  );
+
+  await writeFile(join(root, 'duplicate-tail.txt'), 'tail\ntail\n', 'utf8');
+  await assert.rejects(
+    () => coordinator.append(caller, workspace.workspaceId, {
+      path: 'duplicate-tail.txt',
+      expectedSuffix: 'tail\n',
+      content: 'x\n',
+    }),
+    /exactly once/,
+  );
+});
+
 class FsTestBackend implements FileMutationBackend {
   readonly kind = 'test-fs';
   writes = 0;

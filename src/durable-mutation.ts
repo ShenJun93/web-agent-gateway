@@ -33,6 +33,12 @@ export interface DurableEditBlockInput {
   newString: string;
 }
 
+export interface DurableAppendInput {
+  path: string;
+  expectedSuffix: string;
+  content: string;
+}
+
 export interface MutationPreview {
   status: 'approval_required';
   mutationId: string;
@@ -253,6 +259,51 @@ export class DurableMutationCoordinator {
       baseSha256: sha256(original),
       before: input.oldString,
       after: input.newString,
+    });
+  }
+
+  /**
+   * Append bounded text without sending or persisting the rest of a potentially secret-bearing file.
+   *
+   * The caller names an exact expected suffix. WAG verifies that suffix is both the current tail
+   * and unique in the file, then reuses the durable exact-block mutation path to replace only that
+   * suffix with suffix+content. The internally derived base SHA preserves stale-write detection.
+   */
+  async append(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    input: DurableAppendInput,
+  ): Promise<MutationPreview> {
+    if (!input.expectedSuffix) throw new Error('Gateway rejected empty append suffix');
+    if (!input.content) throw new Error('Gateway rejected empty append content');
+    rejectUnsafeText(input.expectedSuffix, 'append suffix');
+    rejectUnsafeText(input.content, 'append content');
+    if (Buffer.byteLength(input.expectedSuffix, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected append suffix exceeds 32 KiB');
+    }
+    if (Buffer.byteLength(input.expectedSuffix + input.content, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected append replacement exceeds 32 KiB');
+    }
+
+    const workspace = this.options.store.getWorkspace(workspaceId);
+    if (!workspace) throw new Error('Unknown workspace_id');
+    assertIdentity(caller, workspace);
+    const backend = this.backend(workspace.backendKind);
+    const path = validateReadPath(input.path);
+    await assertReadTarget(workspace.canonicalRoot, path);
+    const original = await backend.readExact(workspace.canonicalRoot, path);
+    if (!original.endsWith(input.expectedSuffix)) {
+      throw new Error('Gateway rejected append suffix is not the current file tail');
+    }
+    if (countOccurrences(original, input.expectedSuffix) !== 1) {
+      throw new Error('Gateway rejected append suffix must occur exactly once');
+    }
+
+    return this.preview(caller, workspaceId, {
+      path,
+      baseSha256: sha256(original),
+      before: input.expectedSuffix,
+      after: input.expectedSuffix + input.content,
     });
   }
 
