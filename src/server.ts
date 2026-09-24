@@ -676,10 +676,18 @@ export function createGatewayMcpServer(
     }, async ({ workspace_id, argv, cwd, timeout_ms, max_output_tokens }) => {
       await commandContext.authorize(workspace_id);
       if (await isLocalMachineWorkspace(workspace_id)) {
-        return toolResult(await machineContext!.commandRun(workspace_id, argv, {
-          ...(cwd === undefined ? {} : { cwd }),
+        // Preserve the original command.run contract on the compatibility path. machine.command.run
+        // intentionally accepts a wider argv vocabulary, but a frozen connector that only knows
+        // command.run must not silently gain shell-string semantics.
+        const resolved = resolveVerifyProfile({
+          argv,
           ...(timeout_ms === undefined ? {} : { timeoutMs: timeout_ms }),
           ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+        }, cwd ?? '.');
+        return toolResult(await machineContext!.commandRun(workspace_id, resolved.argv, {
+          cwd: resolved.cwd,
+          timeoutMs: resolved.timeoutMs,
+          maxOutputTokens: resolved.maxOutputTokens,
         }));
       }
       return toolResult(await gateway.commandRun(workspace_id, argv, {

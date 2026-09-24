@@ -588,6 +588,13 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
   });
   assert.equal((command.structuredContent as { output?: string }).output, 'machine-command');
 
+  const shellLike = await client.callTool({
+    name: 'command.run',
+    arguments: { workspace_id: machineWorkspaceId, argv: ['node', 'hello world'] },
+  });
+  assert.equal(shellLike.isError, true);
+  assert.match(JSON.stringify(shellLike.content), /Invalid verify profile argv/);
+
   assert.equal(calls.length, 0, 'local-machine compatibility calls must not reach DevSpace exec');
   assert.ok(machineCalls.some((entry) => entry.startsWith('open:')));
   assert.ok(machineCalls.includes('list'));
