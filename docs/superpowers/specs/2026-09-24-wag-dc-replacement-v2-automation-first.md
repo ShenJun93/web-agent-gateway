@@ -142,11 +142,15 @@ SHA itself, and executes through the normal durable mutation path.
 
 These are improvements, not current human-relay blockers:
 
-- explicit append primitive for log/text workflows;
-- durable/recoverable process and terminal sessions across WAG restart;
 - asynchronous/search-continuation handles for very large trees;
 - WAG-native recent-tool-call / usage diagnostics;
 - richer binary/document/media operations where they materially improve over bounded local argv.
+
+Closed since this section was first written:
+
+- explicit suffix-guarded append;
+- durable/recoverable detached process registry;
+- restart-recoverable interactive terminal broker and registry.
 
 Any new capability must preserve caller/workspace ownership, output bounds, secret handling,
 kill-switch revalidation and durable effect evidence.
