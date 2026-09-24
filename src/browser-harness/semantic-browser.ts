@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import type { GatewayAuthority } from '../caller-context.js';
 import type { BrowserPort } from './browser-port.js';
 
@@ -25,6 +26,7 @@ export interface SemanticBrowser {
   navigate(owner: GatewayAuthority, browserSessionId: string, url: string): Promise<void>;
   click(owner: GatewayAuthority, browserSessionId: string, ref: string): Promise<void>;
   fill(owner: GatewayAuthority, browserSessionId: string, ref: string, text: string): Promise<void>;
+  setFiles(owner: GatewayAuthority, browserSessionId: string, ref: string, internalPaths: readonly string[]): Promise<void>;
   press(owner: GatewayAuthority, browserSessionId: string, key: string): Promise<void>;
 }
 
@@ -53,6 +55,8 @@ interface SnapshotBinding {
 
 const REF = /^node_[0-9a-f-]{36}_[0-9]+$/;
 const MAX_TEXT_BYTES = 64 * 1024;
+const MAX_UPLOAD_FILES = 20;
+const MAX_INTERNAL_PATH_BYTES = 4096;
 const PRESS_KEYS = new Map<string, { key: string; code: string }>([
   ['Enter', { key: 'Enter', code: 'Enter' }],
   ['Tab', { key: 'Tab', code: 'Tab' }],
@@ -219,6 +223,25 @@ export function createSemanticBrowser(options: {
       await options.port.exec(owner, browserSessionId, {
         method: 'Input.insertText',
         params: { text },
+      });
+    },
+
+    async setFiles(owner, browserSessionId, ref, internalPaths) {
+      const target = binding(browserSessionId, ref);
+      if (target.node.disabled) throw new Error('Browser semantic target is disabled');
+      if (!Array.isArray(internalPaths) || internalPaths.length < 1 || internalPaths.length > MAX_UPLOAD_FILES) {
+        throw new Error('Browser upload path set is invalid');
+      }
+      const files = internalPaths.map((path) => {
+        if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')
+            || Buffer.byteLength(path, 'utf8') > MAX_INTERNAL_PATH_BYTES) {
+          throw new Error('Browser upload internal path is invalid');
+        }
+        return path;
+      });
+      await options.port.exec(owner, browserSessionId, {
+        method: 'DOM.setFileInputFiles',
+        params: { files, backendNodeId: target.backendDOMNodeId },
       });
     },
 

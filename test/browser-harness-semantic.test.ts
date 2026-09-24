@@ -129,3 +129,33 @@ test('semantic navigation and key input reject unsupported schemes and keys', as
     { method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: 'Enter', code: 'Enter' } },
   ]);
 });
+
+test('semantic file selection accepts only bounded internal absolute paths and current refs', async () => {
+  const f = fixture();
+  const snapshot = await f.semantic.snapshot(OWNER, SESSION);
+  f.calls.length = 0;
+  await f.semantic.setFiles(OWNER, SESSION, snapshot.nodes[0]!.ref, [
+    'E:\\WAG-Artifacts\\artifact_a\\a.txt',
+    'E:\\WAG-Artifacts\\artifact_b\\b.txt',
+  ]);
+  assert.deepEqual(f.calls, [{
+    method: 'DOM.setFileInputFiles',
+    params: {
+      files: [
+        'E:\\WAG-Artifacts\\artifact_a\\a.txt',
+        'E:\\WAG-Artifacts\\artifact_b\\b.txt',
+      ],
+      backendNodeId: 42,
+    },
+  }]);
+
+  await assert.rejects(
+    () => f.semantic.setFiles(OWNER, SESSION, snapshot.nodes[0]!.ref, ['relative.txt']),
+    /internal path is invalid/,
+  );
+  await f.semantic.snapshot(OWNER, SESSION);
+  await assert.rejects(
+    () => f.semantic.setFiles(OWNER, SESSION, snapshot.nodes[0]!.ref, ['E:\\safe.txt']),
+    /stale or unknown/,
+  );
+});
