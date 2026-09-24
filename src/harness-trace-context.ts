@@ -37,6 +37,14 @@ function boundedPropagation(value: unknown, name: string, maxBytes: number): str
   return value;
 }
 
+function tolerantPropagation(value: unknown, name: string, maxBytes: number): string | undefined {
+  try {
+    return boundedPropagation(value, name, maxBytes);
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseTraceparent(value: string): ParsedTraceparent {
   const match = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/.exec(value);
   if (!match || match[1] === ZERO_TRACE || match[2] === ZERO_SPAN) {
@@ -97,6 +105,27 @@ export function extractMcpTraceContext(meta: Readonly<Record<string, unknown>> |
   const parsed = parseTraceparent(meta.traceparent);
   const tracestate = boundedPropagation(meta.tracestate, 'tracestate', 512);
   const baggage = boundedPropagation(meta.baggage, 'baggage', 4096);
+  return Object.freeze({
+    traceId: parsed.traceId,
+    spanId: parsed.parentId,
+    traceFlags: parsed.traceFlags,
+    ...(tracestate === undefined ? {} : { tracestate }),
+    ...(baggage === undefined ? {} : { baggage }),
+  });
+}
+
+export function tryExtractMcpTraceContext(
+  meta: Readonly<Record<string, unknown>> | undefined,
+): HarnessTraceContext | undefined {
+  if (!meta || typeof meta.traceparent !== 'string') return undefined;
+  let parsed: ParsedTraceparent;
+  try {
+    parsed = parseTraceparent(meta.traceparent);
+  } catch {
+    return undefined;
+  }
+  const tracestate = tolerantPropagation(meta.tracestate, 'tracestate', 512);
+  const baggage = tolerantPropagation(meta.baggage, 'baggage', 4096);
   return Object.freeze({
     traceId: parsed.traceId,
     spanId: parsed.parentId,
