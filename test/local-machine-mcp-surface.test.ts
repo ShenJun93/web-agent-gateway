@@ -31,6 +31,7 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     processStart: async (id, argv, options) => record('processStart', id, argv, options),
     processTerminate: async (id, processId) => record('processTerminate', id, processId),
     terminalOpen: async (id, shell, cwd) => record('terminalOpen', id, shell, cwd),
+    terminalList: async (id) => record('terminalList', id),
     terminalOutput: async (id, terminalId) => record('terminalOutput', id, terminalId),
     terminalInput: async (id, terminalId, base64) => record('terminalInput', id, terminalId, base64),
     terminalClose: async (id, terminalId) => record('terminalClose', id, terminalId),
@@ -134,6 +135,10 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     shell: 'powershell',
     cwd: '.',
   })).name, 'terminalOpen');
+
+  assert.equal((await invoke('machine.terminal.list', {
+    workspace_id: workspaceId,
+  })).name, 'terminalList');
 
   assert.equal((await invoke('machine.terminal.output', {
     workspace_id: workspaceId,

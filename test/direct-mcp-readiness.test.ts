@@ -64,6 +64,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['machine.process.inspect', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
   ['machine.process.terminate', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['machine.terminal.open', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
   ['machine.terminal.output', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
   ['machine.terminal.input', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['machine.terminal.close', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
@@ -76,6 +77,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['command.run', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['mutation.preview', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.replace', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['file.edit_block', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['mutation.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['git.commit', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
@@ -203,6 +205,7 @@ test('no direct tool claims read-only while creating durable state', async (t) =
     'command.run',
     'mutation.preview',
     'file.replace',
+    'file.edit_block',
     'file.create',
     'git.commit',
   ]) {

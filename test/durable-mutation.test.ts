@@ -175,6 +175,40 @@ test('replace proposes a full-file exact-hash mutation without substring matchin
   }), /empty existing file/);
 });
 
+test('editBlock mutates one exact block without exposing unrelated secret-bearing content', async (t) => {
+  const { root, store, workspace, coordinator } = await setup(t);
+  const original = 'API_KEY=fixture-secret-value\nmode=old\n';
+  await writeFile(join(root, 'secret-bearing.txt'), original, 'utf8');
+
+  const preview = await coordinator.editBlock(caller, workspace.workspaceId, {
+    path: 'secret-bearing.txt',
+    oldString: 'mode=old',
+    newString: 'mode=new',
+  });
+
+  const record = store.getMutation(preview.mutationId);
+  assert.equal(record?.before, 'mode=old');
+  assert.equal(record?.after, 'mode=new');
+  assert.doesNotMatch(record?.before ?? '', /fixture-secret-value/);
+  assert.doesNotMatch(record?.after ?? '', /fixture-secret-value/);
+
+  assert.equal(await coordinator.approveLocal(preview.mutationId), true);
+  assert.equal(
+    await readFile(join(root, 'secret-bearing.txt'), 'utf8'),
+    'API_KEY=fixture-secret-value\nmode=new\n',
+  );
+
+  await writeFile(join(root, 'duplicate.txt'), 'mode=old\nmode=old\n', 'utf8');
+  await assert.rejects(
+    () => coordinator.editBlock(caller, workspace.workspaceId, {
+      path: 'duplicate.txt',
+      oldString: 'mode=old',
+      newString: 'mode=new',
+    }),
+    /exactly once/,
+  );
+});
+
 class FsTestBackend implements FileMutationBackend {
   readonly kind = 'test-fs';
   writes = 0;

@@ -273,6 +273,12 @@ test('local-machine interactive terminal supports bounded input/output and close
   assert.match(opened.terminal_id, /^term_/);
   assert.equal(opened.state, 'RUNNING');
 
+  const listed = await context.terminalList(workspaceId) as {
+    terminals: Array<{ terminal_id: string; state: string }>;
+  };
+  assert.ok(listed.terminals.some((entry) =>
+    entry.terminal_id === opened.terminal_id && entry.state === 'RUNNING'));
+
   const command = process.platform === 'win32'
     ? "Write-Output 'terminal-ok'; exit\r\n"
     : "printf 'terminal-ok\\n'; exit\n";

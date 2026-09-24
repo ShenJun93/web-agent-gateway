@@ -27,6 +27,12 @@ export interface DurableReplaceInput {
   baseSha256: string;
   content: string;
 }
+export interface DurableEditBlockInput {
+  path: string;
+  oldString: string;
+  newString: string;
+}
+
 export interface MutationPreview {
   status: 'approval_required';
   mutationId: string;
@@ -206,6 +212,48 @@ export class DurableMutationCoordinator {
       reviewDeadline: createdAt + this.reviewTtlMs,
     });
     return toPreview(record);
+  }
+
+  /**
+   * Build an exact unique-substring edit without exposing the rest of the file to the caller.
+   *
+   * This is the safe editing primitive for secret-bearing files: WAG reads the raw target only
+   * inside the trusted backend, derives the exact base hash, and persists the same durable
+   * mutation record used by mutation.preview. A concurrent change between this pre-read and the
+   * preview re-read fails the base SHA check rather than being merged implicitly.
+   */
+  async editBlock(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    input: DurableEditBlockInput,
+  ): Promise<MutationPreview> {
+    if (!input.oldString) throw new Error('Gateway rejected empty edit block');
+    rejectUnsafeText(input.oldString, 'old string');
+    rejectUnsafeText(input.newString, 'new string');
+    if (Buffer.byteLength(input.oldString, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected old string exceeds 32 KiB');
+    }
+    if (Buffer.byteLength(input.newString, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected new string exceeds 32 KiB');
+    }
+
+    const workspace = this.options.store.getWorkspace(workspaceId);
+    if (!workspace) throw new Error('Unknown workspace_id');
+    assertIdentity(caller, workspace);
+    const backend = this.backend(workspace.backendKind);
+    const path = validateReadPath(input.path);
+    await assertReadTarget(workspace.canonicalRoot, path);
+    const original = await backend.readExact(workspace.canonicalRoot, path);
+    if (countOccurrences(original, input.oldString) !== 1) {
+      throw new Error('Gateway rejected old string must occur exactly once');
+    }
+
+    return this.preview(caller, workspaceId, {
+      path,
+      baseSha256: sha256(original),
+      before: input.oldString,
+      after: input.newString,
+    });
   }
 
   result(caller: GatewayCallerContext, mutationId: string): MutationResultView {

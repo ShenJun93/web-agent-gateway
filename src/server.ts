@@ -438,7 +438,7 @@ export interface GitCommitMcpContext {
 
 export interface MutationMcpContext {
   callerContext: GatewayCallerContext;
-  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'replace' | 'result' | 'admitByPolicy' | 'rejectLocal'>;
+  coordinator: Pick<DurableMutationCoordinator, 'preview' | 'replace' | 'editBlock' | 'result' | 'admitByPolicy' | 'rejectLocal'>;
   /** Same trusted autonomous-local boundary as GitCommitMcpContext. */
   autonomous?: boolean;
 }
@@ -717,6 +717,16 @@ export function createGatewayMcpServer(
       await machineContext.terminalOpen(workspace_id, shell, cwd),
     ));
 
+    server.registerTool('machine.terminal.list', {
+      description: 'List WAG-owned interactive terminal sessions for one caller-owned workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async ({ workspace_id }) => toolResult(
+      await machineContext.terminalList(workspace_id),
+    ));
+
     server.registerTool('machine.terminal.output', {
       description: 'Drain bounded redacted output from one WAG-owned interactive terminal session.',
       inputSchema: z.object({
@@ -899,6 +909,26 @@ export function createGatewayMcpServer(
         mutationContext.callerContext,
         workspace_id,
         { path, baseSha256: base_sha256, content },
+      ),
+    ));
+
+    server.registerTool('file.edit_block', {
+      description: mutationContext.autonomous
+        ? 'Replace one exact unique text block immediately without requiring a full-file read or exposing unrelated secret-bearing content.'
+        : 'Propose replacing one exact unique text block for local human review.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        old_string: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+        new_string: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, old_string, new_string }) => directMutationExecution(
+      mutationContext,
+      () => mutationContext.coordinator.editBlock(
+        mutationContext.callerContext,
+        workspace_id,
+        { path, oldString: old_string, newString: new_string },
       ),
     ));
 

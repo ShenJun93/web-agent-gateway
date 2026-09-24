@@ -122,6 +122,7 @@ export interface LocalMachineContext {
   processStart(workspaceId: string, argv: readonly string[], options?: Pick<LocalMachineCommandOptions, 'cwd'>): Promise<object>;
   processTerminate(workspaceId: string, processId: string): Promise<object>;
   terminalOpen(workspaceId: string, shell?: 'powershell' | 'cmd' | 'bash', cwd?: string): Promise<object>;
+  terminalList(workspaceId: string): Promise<object>;
   terminalOutput(workspaceId: string, terminalId: string): Promise<object>;
   terminalInput(workspaceId: string, terminalId: string, base64: string): Promise<object>;
   terminalClose(workspaceId: string, terminalId: string): Promise<object>;
@@ -761,6 +762,24 @@ export function createLocalMachineContext(options: {
       });
       terminals.set(terminalId, session);
       return { terminal_id: terminalId, pid: child.pid, shell, cwd, state: session.state };
+    },
+
+    async terminalList(workspaceId) {
+      await ownedWorkspace(workspaceId);
+      return {
+        terminals: [...terminals.values()]
+          .filter((session) => session.workspaceId === workspaceId)
+          .map((session) => ({
+            terminal_id: session.terminalId,
+            pid: session.child.pid,
+            cwd: session.cwd,
+            started_at: new Date(session.startedAt).toISOString(),
+            state: session.state,
+            exit_code: session.exitCode,
+            buffered_bytes: Buffer.byteLength(session.buffer, 'utf8'),
+            truncated: session.truncated,
+          })),
+      };
     },
 
     async terminalOutput(workspaceId, terminalId) {

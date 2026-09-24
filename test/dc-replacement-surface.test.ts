@@ -12,9 +12,9 @@ import type { GatewayTelemetryEvent } from '../src/telemetry.js';
 
 const DEFAULT_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run'];
 const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run'];
-const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.replace', 'file.create', 'mutation.result'];
-const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.replace', 'file.create', 'mutation.result'];
-const COMMIT_TOOLS = [...INSPECT_TOOLS, 'command.run', 'mutation.preview', 'file.replace', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result'];
+const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.replace', 'file.edit_block', 'file.create', 'mutation.result'];
+const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.replace', 'file.edit_block', 'file.create', 'mutation.result'];
+const COMMIT_TOOLS = [...INSPECT_TOOLS, 'command.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result'];
 
 /**
  * Repository-only profiles stay narrow. Full local-computer/DC-parity operations are exposed only
@@ -259,6 +259,7 @@ test('direct stdio autonomous mutation executes immediately and returns the term
   const coordinator = {
     async preview() { return preview; },
     async replace() { return preview; },
+    async editBlock() { return preview; },
     result() { return result; },
     async admitByPolicy() { admissions += 1; return { admitted: true as const }; },
     rejectLocal() { rejections += 1; return true; },
@@ -326,6 +327,7 @@ test('direct stdio autonomous policy denial has no human-review fallback for mut
       coordinator: {
         async preview() { return mutationPreview; },
         async replace() { return mutationPreview; },
+        async editBlock() { return mutationPreview; },
         result() { throw new Error('denied direct mutation must not read a success result'); },
         async admitByPolicy() { return denied; },
         rejectLocal() { mutationRejected += 1; return true; },
@@ -542,6 +544,7 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
     async processStart() { throw new Error('not used'); },
     async processTerminate() { throw new Error('not used'); },
     async terminalOpen() { throw new Error('not used'); },
+    async terminalList() { throw new Error('not used'); },
     async terminalOutput() { throw new Error('not used'); },
     async terminalInput() { throw new Error('not used'); },
     async terminalClose() { throw new Error('not used'); },
