@@ -33,3 +33,26 @@ test('local-machine file backend refuses creation over an existing path', async 
   await assert.rejects(() => backend.createNew(root, 'taken.txt', 'replacement\n'));
   assert.equal(await readFile(join(root, 'taken.txt'), 'utf8'), 'original\n');
 });
+
+test('local-machine file backend refuses a redacted full-content round-trip', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-local-file-redacted-roundtrip-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const backend = new LocalMachineFileMutationBackend();
+  const original = 'API_KEY=fixture-secret-value\nmode=one\n';
+  await writeFile(join(root, 'config.txt'), original, 'utf8');
+
+  await assert.rejects(
+    () => backend.updateExisting(
+      root,
+      'config.txt',
+      original,
+      'API_KEY=<REDACTED>\nmode=two\n',
+    ),
+    /redacted file\.replace round-trip/,
+  );
+  assert.equal(await readFile(join(root, 'config.txt'), 'utf8'), original);
+
+  const exactServerSideCandidate = original.replace('mode=one', 'mode=two');
+  await backend.updateExisting(root, 'config.txt', original, exactServerSideCandidate);
+  assert.equal(await readFile(join(root, 'config.txt'), 'utf8'), exactServerSideCandidate);
+});

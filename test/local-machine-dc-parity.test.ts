@@ -63,6 +63,22 @@ test('local-machine filesystem parity covers info/search/mkdir/move/delete insid
     ['nested/source.txt', 1, 'Alpha needle'],
   ]);
 
+  await writeFile(
+    join(root, 'nested', 'secret.txt'),
+    'API_KEY=fixture-secret-value\nneedle with secret context\n',
+    'utf8',
+  );
+  const redactedSearch = await context.search(workspaceId, 'needle with secret context', {
+    path: 'nested',
+    ignoreCase: false,
+    maxResults: 10,
+    contextLines: 1,
+  }) as {
+    matches: Array<{ text: string; before: string[]; after: string[] }>;
+  };
+  assert.deepEqual(redactedSearch.matches[0]?.before, ['API_KEY=<REDACTED>']);
+  assert.equal(redactedSearch.matches[0]?.text, 'needle with secret context');
+
   await context.move(workspaceId, 'nested/source.txt', 'nested/moved.txt');
   assert.equal(await readFile(join(root, 'nested', 'moved.txt'), 'utf8'), 'Alpha needle\nsecond line\n');
 
@@ -71,6 +87,7 @@ test('local-machine filesystem parity covers info/search/mkdir/move/delete insid
     /non-empty directory delete/,
   );
   await context.delete(workspaceId, 'nested/moved.txt');
+  await context.delete(workspaceId, 'nested/secret.txt');
   await context.delete(workspaceId, 'nested');
   await assert.rejects(() => readFile(join(root, 'nested', 'moved.txt'), 'utf8'));
 });

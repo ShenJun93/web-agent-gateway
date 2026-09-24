@@ -18,6 +18,7 @@ import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
 import { sanitizeLocalMachineEnvironment } from './environment-policy.js';
 import { describeReadableUtf8Text } from './file-read-metadata.js';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
+import { redactCommandLine, redactSecrets } from './secret-redaction.js';
 import {
   WorkspaceIdentityRegistry,
   type WorkspaceIdentityObservation,
@@ -307,9 +308,9 @@ export function createLocalMachineContext(options: {
             matches.push({
               path: rel,
               line: index + 1,
-              text: lines[index]!,
-              before: lines.slice(Math.max(0, index - contextLines), index),
-              after: lines.slice(index + 1, index + 1 + contextLines),
+              text: redactSecrets(lines[index]!),
+              before: lines.slice(Math.max(0, index - contextLines), index).map(redactSecrets),
+              after: lines.slice(index + 1, index + 1 + contextLines).map(redactSecrets),
             });
             if (matches.length >= maxResults) {
               truncated = true;
@@ -732,19 +733,4 @@ function validateArgv(argv: readonly string[]): void {
 function redactRead<T extends { content: string }>(value: T): T & { redacted: boolean } {
   const content = redactSecrets(value.content);
   return { ...value, content, redacted: content !== value.content };
-}
-
-function redactCommandLine(value: string): string {
-  return redactSecrets(value)
-    .replace(/((?:--|\/)(?:token|api[-_]?key|secret|password|credential)(?:=|\s+))[^\s"']+/gi, '$1<REDACTED>');
-}
-
-function redactSecrets(value: string): string {
-  return value
-    .replace(/(?i:bearer)\s+[A-Za-z0-9._~+\/-]{12,}/g, 'Bearer <REDACTED>')
-    .replace(/((?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|CREDENTIAL)\s*[=:]\s*)[^\s;,]+/gi, '$1<REDACTED>')
-    .replace(
-      /(^|\n)(\s*[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|CREDENTIAL)[A-Za-z0-9_]*\s*=\s*)([^\r\n]+)/gi,
-      (_m, prefix, key) => `${prefix}${key}<REDACTED>`,
-    );
 }

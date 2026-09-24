@@ -2,6 +2,7 @@ import { open, readFile, realpath, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { FileMutationBackend } from '../file-mutation-backend.js';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from '../path-policy.js';
+import { containsRedactableSecrets, REDACTED_SENTINEL } from '../secret-redaction.js';
 
 const MAX_FILE_BYTES = 64 * 1024;
 
@@ -50,6 +51,11 @@ export class LocalMachineFileMutationBackend implements FileMutationBackend {
       }
       const current = decodeUtf8(currentBytes);
       if (current !== original) throw new Error('Gateway rejected local-machine stale target');
+      if (containsRedactableSecrets(current) && candidate.includes(REDACTED_SENTINEL)) {
+        throw new Error(
+          'Gateway denied redacted file.replace round-trip; use mutation.preview exact before/after patch',
+        );
+      }
       await handle.truncate(0);
       await handle.write(candidate, 0, 'utf8');
       await handle.sync();
