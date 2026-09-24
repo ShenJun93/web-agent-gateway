@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -101,6 +102,73 @@ test('local-machine autonomous profile permits bounded read/list/argv execution 
     }
   }
   assert.equal(await readFile(marker, 'utf8'), 'started\n');
+});
+
+test('detached process registry survives context reconstruction without persisting argv secrets', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wag-local-process-registry-'));
+  const root = await realpath(dir);
+  const statePath = join(dir, 'authority.sqlite');
+  const registryPath = join(dir, 'processes.json');
+  const store = new SqliteDurableStore(statePath);
+  const identities = new WorkspaceIdentityRegistry(statePath);
+  const callerContext = createGatewayCallerContext({
+    ownerId: OWNER,
+    sessionId: SESSION,
+    adapterId: ADAPTER,
+  });
+  t.after(async () => {
+    identities.close();
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const first = createLocalMachineContext({
+    store,
+    callerContext,
+    workspaceIdentities: identities,
+    killSwitch: () => false,
+    processRegistryPath: registryPath,
+  });
+  const opened = await first.open(root) as { workspace_id: string };
+  const secretArgument = 'registry-secret-must-not-persist';
+  const started = await first.processStart(
+    opened.workspace_id,
+    [process.execPath, '-e', `const secret=${JSON.stringify(secretArgument)}; setInterval(()=>void secret,1000)`],
+  ) as { process_id: string; pid: number; registry_persisted: boolean };
+  assert.equal(started.registry_persisted, true);
+
+  const registry = await readFile(registryPath, 'utf8');
+  assert.match(registry, new RegExp(started.process_id));
+  assert.doesNotMatch(registry, new RegExp(secretArgument));
+
+  const second = createLocalMachineContext({
+    store,
+    callerContext,
+    workspaceIdentities: identities,
+    killSwitch: () => false,
+    processRegistryPath: registryPath,
+  });
+  const recovered = await second.processInspect(opened.workspace_id, started.process_id) as {
+    found: boolean;
+    owned?: boolean;
+    process_id?: string;
+    pid: number;
+  };
+  assert.equal(recovered.found, true);
+  assert.equal(recovered.owned, true);
+  assert.equal(recovered.process_id, started.process_id);
+  assert.equal(recovered.pid, started.pid);
+
+  if (process.platform === 'win32') {
+    await new Promise<void>((resolvePromise) => {
+      const child = spawn(
+        'taskkill.exe', ['/PID', String(started.pid), '/T', '/F'], { stdio: 'ignore' },
+      );
+      child.once('exit', () => resolvePromise());
+    });
+  } else {
+    process.kill(started.pid, 'SIGTERM');
+  }
 });
 
 test('local-machine kill switch blocks effects but leaves caller-owned inspection available', async (t) => {

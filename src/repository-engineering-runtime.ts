@@ -152,6 +152,7 @@ export async function startRepositoryEngineeringRuntime(
     callerContext,
     workspaceIdentities,
     killSwitch,
+    processRegistryPath: mutationSettings.statePath + '.machine-processes.' + sessionId + '.json',
   });
 
   async function freshWorkspaceFingerprint(workspaceId: string): Promise<string | undefined> {

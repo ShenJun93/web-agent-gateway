@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
@@ -75,9 +76,9 @@ export interface LocalMachineReadOptions {
 
 interface StartedProcess {
   readonly processId: string;
-  readonly workspaceId: string;
+  readonly workspaceRoot: string;
   readonly pid: number;
-  readonly argv: readonly string[];
+  readonly executable: string;
   readonly cwd: string;
   readonly startedAt: number;
   creationDate?: string;
@@ -133,11 +134,38 @@ export function createLocalMachineContext(options: {
   callerContext: GatewayCallerContext;
   workspaceIdentities: WorkspaceIdentityRegistry;
   killSwitch: () => boolean;
+  processRegistryPath?: string;
 }): LocalMachineContext {
   const { store, callerContext, workspaceIdentities } = options;
-  const startedProcesses = new Map<string, StartedProcess>();
+  const startedProcesses = loadStartedProcessRegistry(options.processRegistryPath);
   const observedProcesses = new Map<string, ObservedProcess>();
   const terminals = new Map<string, TerminalSession>();
+
+  function sameCanonicalRoot(left: string, right: string): boolean {
+    return process.platform === 'win32'
+      ? left.toLowerCase() === right.toLowerCase()
+      : left === right;
+  }
+
+  function persistStartedProcesses(): void {
+    if (!options.processRegistryPath) return;
+    const records = [...startedProcesses.values()]
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .slice(-200);
+    const payload = JSON.stringify({ version: 1, records }, null, 2) + '\n';
+    const temp = options.processRegistryPath + '.tmp';
+    writeFileSync(temp, payload, { encoding: 'utf8', mode: 0o600 });
+    renameSync(temp, options.processRegistryPath);
+  }
+
+  function ownedProcessForWorkspace(
+    record: StartedProcess | undefined,
+    workspace: WorkspaceRecord,
+  ): StartedProcess | undefined {
+    return record && sameCanonicalRoot(record.workspaceRoot, workspace.canonicalRoot)
+      ? record
+      : undefined;
+  }
 
   function assertEffectAllowed(): void {
     if (options.killSwitch()) {
@@ -512,12 +540,14 @@ export function createLocalMachineContext(options: {
     },
 
     async processList(workspaceId) {
-      await ownedWorkspace(workspaceId);
+      const { workspace } = await ownedWorkspace(workspaceId);
       if (process.platform !== 'win32') {
-        const owned = [...startedProcesses.values()].map((record) => ({
+        const owned = [...startedProcesses.values()]
+          .filter((record) => sameCanonicalRoot(record.workspaceRoot, workspace.canonicalRoot))
+          .map((record) => ({
           process_id: record.processId,
           pid: record.pid,
-          executable: record.argv[0],
+          executable: record.executable,
           cwd: record.cwd,
           state: record.state,
           started_at: new Date(record.startedAt).toISOString(),
@@ -546,7 +576,11 @@ export function createLocalMachineContext(options: {
           throw new Error('Gateway process list returned invalid data');
         }
       }
-      const ownedByPid = new Map([...startedProcesses.values()].map((record) => [record.pid, record]));
+      const ownedByPid = new Map(
+        [...startedProcesses.values()]
+          .filter((record) => sameCanonicalRoot(record.workspaceRoot, workspace.canonicalRoot))
+          .map((record) => [record.pid, record]),
+      );
       return {
         processes: values.map((value) => {
           const pid = Number(value.ProcessId);
@@ -569,9 +603,10 @@ export function createLocalMachineContext(options: {
     },
 
     async processInspect(workspaceId, idOrPid) {
-      await ownedWorkspace(workspaceId);
-      const owned = startedProcesses.get(idOrPid);
-      if (owned && owned.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const rawOwned = startedProcesses.get(idOrPid);
+      const owned = ownedProcessForWorkspace(rawOwned, workspace);
+      if (rawOwned && !owned) throw new Error('Gateway denied process record');
       const observed = observedProcesses.get(idOrPid);
       if (observed && observed.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
       if (!owned && !observed && /^(?:proc|obs)_/.test(idOrPid)) {
@@ -579,11 +614,28 @@ export function createLocalMachineContext(options: {
       }
       const pid = owned ? owned.pid : observed ? observed.pid : Number(idOrPid);
       const value = await inspectPid(pid);
-      if (!value) return { found: false, pid };
+      if (!value) {
+        if (owned && owned.state === 'RUNNING') {
+          owned.state = 'EXITED';
+          persistStartedProcesses();
+        }
+        return { found: false, pid, ...(owned === undefined ? {} : { process_id: owned.processId, state: owned.state }) };
+      }
 
       let processId = owned?.processId ?? observed?.processId;
       let observedExternal = observed;
       const creationDate = value.CreationDate == null ? undefined : String(value.CreationDate);
+      if (owned?.creationDate && creationDate && owned.creationDate !== creationDate) {
+        owned.state = 'EXITED';
+        persistStartedProcesses();
+        return {
+          found: false,
+          process_id: owned.processId,
+          pid,
+          state: owned.state,
+          pid_reused: true,
+        };
+      }
       if (!owned && !observed && creationDate) {
         processId = `obs_${randomUUID()}`;
         observedExternal = {
@@ -636,9 +688,9 @@ export function createLocalMachineContext(options: {
       const processId = `proc_${randomUUID()}`;
       const record: StartedProcess = {
         processId,
-        workspaceId,
+        workspaceRoot: workspace.canonicalRoot,
         pid,
-        argv: [...argv],
+        executable: argv[0]!,
         cwd,
         startedAt: Date.now(),
         state: 'RUNNING',
@@ -647,6 +699,7 @@ export function createLocalMachineContext(options: {
       child.once('exit', (code) => {
         record.state = record.state === 'TERMINATED' ? 'TERMINATED' : 'EXITED';
         record.exitCode = code ?? -1;
+        persistStartedProcesses();
       });
       child.unref();
       for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -657,14 +710,16 @@ export function createLocalMachineContext(options: {
         }
         await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
       }
-      return { process_id: processId, pid, cwd, started: true };
+      persistStartedProcesses();
+      return { process_id: processId, pid, cwd, started: true, registry_persisted: options.processRegistryPath !== undefined };
     },
 
     async processTerminate(workspaceId, processId) {
-      await ownedWorkspace(workspaceId);
-      const owned = startedProcesses.get(processId);
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const rawOwned = startedProcesses.get(processId);
+      const owned = ownedProcessForWorkspace(rawOwned, workspace);
       const observed = observedProcesses.get(processId);
-      if (owned && owned.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
+      if (rawOwned && !owned) throw new Error('Gateway denied process record');
       if (observed && observed.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
       if (!owned && !observed) throw new Error('Gateway denied process record');
       if (observed && Date.now() - observed.observedAt > MAX_PROCESS_OBSERVATION_MS) {
@@ -676,7 +731,10 @@ export function createLocalMachineContext(options: {
       const pid = owned?.pid ?? observed!.pid;
       const inspected = await inspectPid(pid);
       if (!inspected) {
-        if (owned) owned.state = 'EXITED';
+        if (owned) {
+          owned.state = 'EXITED';
+          persistStartedProcesses();
+        }
         observedProcesses.delete(processId);
         return { process_id: processId, pid, terminated: false, state: 'EXITED' };
       }
@@ -699,7 +757,10 @@ export function createLocalMachineContext(options: {
         if (observed) throw new Error('Gateway denied external process termination without creation identity');
         process.kill(pid, 'SIGTERM');
       }
-      if (owned) owned.state = 'TERMINATED';
+      if (owned) {
+        owned.state = 'TERMINATED';
+        persistStartedProcesses();
+      }
       observedProcesses.delete(processId);
       return {
         process_id: processId,
@@ -878,6 +939,47 @@ async function runBounded(
     durationMs: Date.now() - startedAt,
     cwd,
   };
+}
+
+function loadStartedProcessRegistry(path: string | undefined): Map<string, StartedProcess> {
+  const records = new Map<string, StartedProcess>();
+  if (!path) return records;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return records;
+    throw new Error('Gateway rejected invalid local process registry');
+  }
+  if (!parsed || typeof parsed !== 'object' || (parsed as { version?: unknown }).version !== 1
+    || !Array.isArray((parsed as { records?: unknown }).records)) {
+    throw new Error('Gateway rejected invalid local process registry');
+  }
+  for (const value of (parsed as { records: unknown[] }).records) {
+    if (!value || typeof value !== 'object') continue;
+    const record = value as Partial<StartedProcess>;
+    if (!/^proc_[A-Za-z0-9-]+$/.test(record.processId ?? '')
+      || !isAbsolute(record.workspaceRoot ?? '')
+      || !Number.isSafeInteger(record.pid) || (record.pid ?? 0) <= 0
+      || typeof record.executable !== 'string' || record.executable.length === 0
+      || !isAbsolute(record.cwd ?? '')
+      || !Number.isFinite(record.startedAt)
+      || !['RUNNING', 'EXITED', 'TERMINATED'].includes(record.state ?? '')) {
+      continue;
+    }
+    records.set(record.processId!, {
+      processId: record.processId!,
+      workspaceRoot: record.workspaceRoot!,
+      pid: record.pid!,
+      executable: record.executable!,
+      cwd: record.cwd!,
+      startedAt: record.startedAt!,
+      ...(typeof record.creationDate === 'string' ? { creationDate: record.creationDate } : {}),
+      state: record.state as StartedProcess['state'],
+      ...(Number.isInteger(record.exitCode) ? { exitCode: record.exitCode } : {}),
+    });
+  }
+  return records;
 }
 
 function validateArgv(argv: readonly string[]): void {
