@@ -205,7 +205,7 @@ test('serve-stdio forwards the resolved capability profile to the MCP surface', 
   assert.equal(h.stdioOptions[0]!.inspect, true);
   assert.ok(h.stdioOptions[0]!.mutationContext, 'mutation opt-in must reach the stdio surface');
   assert.ok(h.stdioOptions[0]!.machineContext,
-    'mutation opt-in must also wire the Goal-Lease local-machine backend to stdio');
+    'mutation opt-in must also wire the autonomous local-machine backend to stdio');
 
   h.requestShutdown();
   assert.equal(await running, 0);
@@ -389,91 +389,59 @@ test('command authority is autonomous-local and rejects a foreign session worksp
   }
 });
 
-test('historical Goal Lease rows do not alter running private-stdio authority', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'wag-autonomous-ignore-leases-'));
+test('private-stdio authority is autonomous-local without any per-goal authority row', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-autonomous-profile-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const ownerId = 'local.private.stdio';
-  const correlation = 'session_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const statePath = join(root, 'state.sqlite');
   const workspaceRoot = await realpath(root);
-  const operator = async () => ({
-    origin: 'http://127.0.0.1:1',
-    bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
-    close: async () => {},
-  });
-
   const runtime = await startRepositoryEngineeringRuntime(
     config({
       inspect: true,
-      mutation: { statePath, ownerId, sessionCorrelation: correlation },
+      mutation: {
+        statePath,
+        ownerId: 'local.private.stdio',
+        sessionCorrelation: 'session_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      },
       gitCommit: {},
     }),
-    { startOperatorServer: operator },
+    {
+      startOperatorServer: async () => ({
+        origin: 'http://127.0.0.1:1',
+        bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+        close: async () => {},
+      }),
+    },
   );
+
   try {
     const workspaceId = runtime.openWorkspaceId!(workspaceRoot);
     await runtime.attach(fakeExecutor);
-    assert.ok(runtime.commandContext);
-    assert.ok(runtime.capabilityContext);
 
     await runtime.commandContext!.authorize(workspaceId);
-    const baseline = await runtime.capabilityContext!.describe(workspaceId) as {
+    const authority = await runtime.capabilityContext!.describe(workspaceId) as {
       authority: { mode: string; kill_switch: string };
       capabilities: {
         FILE_WRITE: { granted: boolean; reason: string };
         GIT_COMMIT: { granted: boolean; reason: string };
+        LOCAL_COMMAND: { granted: boolean; reason: string };
+        GIT_PUSH: object;
       };
     };
-    assert.deepEqual(baseline.authority, { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' });
+
+    assert.deepEqual(authority.authority, { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' });
     assert.deepEqual(
-      [baseline.capabilities.FILE_WRITE.reason, baseline.capabilities.GIT_COMMIT.reason],
-      ['AUTONOMOUS_LOCAL_PROFILE', 'AUTONOMOUS_LOCAL_PROFILE'],
+      [
+        authority.capabilities.FILE_WRITE.reason,
+        authority.capabilities.GIT_COMMIT.reason,
+        authority.capabilities.LOCAL_COMMAND.reason,
+      ],
+      [
+        'AUTONOMOUS_LOCAL_PROFILE',
+        'AUTONOMOUS_LOCAL_PROFILE',
+        'AUTONOMOUS_LOCAL_PROFILE',
+      ],
     );
-
-    const sessionId = runtime.profile.stableSessionId!;
-    const bindings = {
-      workspaceRoots: [workspaceRoot],
-      allowedTools: ['command.run'],
-      pathPatterns: ['**'],
-      maxFiles: 4,
-      maxBytes: 10_000,
-      maxDiffBytes: 4_000,
-      admittedSessions: [sessionId],
-      admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
-      commitSemantics: 'none' as const,
-    };
-    const now = Date.now();
-    const store = new SqliteDurableStore(statePath);
-    try {
-      store.insertGoalLease({
-        leaseId: 'lease_historical_a',
-        createdAt: now,
-        notBefore: now - 1_000,
-        expiresAt: now + 60_000,
-        bindings: JSON.stringify(bindings),
-      });
-      store.insertGoalLease({
-        leaseId: 'lease_historical_duplicate',
-        createdAt: now + 1,
-        notBefore: now - 1_000,
-        expiresAt: now + 60_000,
-        bindings: JSON.stringify(bindings),
-      });
-
-      await runtime.commandContext!.authorize(workspaceId);
-      assert.equal(store.revokeGoalLease('lease_historical_duplicate', now + 2), true);
-      assert.equal(store.revokeGoalLease('lease_historical_a', now + 3), true);
-      await runtime.commandContext!.authorize(workspaceId);
-    } finally {
-      store.close();
-    }
-
-    const finalAuthority = await runtime.capabilityContext!.describe(workspaceId) as {
-      authority: { mode: string };
-      capabilities: { GIT_PUSH: object };
-    };
-    assert.equal(finalAuthority.authority.mode, 'AUTONOMOUS_LOCAL');
-    assert.deepEqual(finalAuthority.capabilities.GIT_PUSH, {
+    assert.deepEqual(authority.capabilities.GIT_PUSH, {
       granted: false,
       denied: true,
       grantable: false,

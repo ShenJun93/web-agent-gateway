@@ -11,11 +11,8 @@ import { SqliteDurableStore } from '../src/durable-store.js';
 import type { FileMutationBackend } from '../src/file-mutation-backend.js';
 import { DurableCommitCoordinator } from '../src/git-commit.js';
 import type { GitCommitBackend, GitCommitPlan, GitCommitResult } from '../src/git-commit-backend.js';
-import type { GoalLeaseBindings } from '../src/goal-lease.js';
 
 const NOW = 2_000_000;
-const IDENTITY_A = 'a'.repeat(64);
-const IDENTITY_B = 'b'.repeat(64);
 const BRANCH = 'feat/identity-effect';
 const HEAD = 'c'.repeat(40);
 const TREE = 'd'.repeat(40);
@@ -26,36 +23,6 @@ function caller() {
     ownerId: 'owner_workspace_identity_effect',
     sessionId: 'session_workspace_identity_effect',
     adapterId: 'adapter.workspace-identity-effect',
-  });
-}
-
-function insertLease(
-  store: SqliteDurableStore,
-  leaseId: string,
-  root: string,
-  tool: 'mutation.preview' | 'git.commit',
-): void {
-  const c = caller();
-  const commit = tool === 'git.commit';
-  const bindings: GoalLeaseBindings = {
-    workspaceRoots: [root],
-    workspaceIdentities: [{ workspaceRoot: root, fingerprint: IDENTITY_A }],
-    allowedTools: [tool],
-    pathPatterns: ['**'],
-    maxFiles: 8,
-    maxBytes: 64 * 1024,
-    maxDiffBytes: 8 * 1024,
-    admittedSessions: [c.sessionId],
-    admittedAdapters: [c.adapterId],
-    commitSemantics: commit ? 'commit-to-bound-branch' : 'none',
-    ...(commit ? { branch: BRANCH, headSha: HEAD } : {}),
-  };
-  store.insertGoalLease({
-    leaseId,
-    createdAt: NOW - 100,
-    notBefore: NOW - 100,
-    expiresAt: NOW + 60_000,
-    bindings: JSON.stringify(bindings),
   });
 }
 
@@ -117,7 +84,7 @@ function recordingGitBackend() {
   return { backend, commits };
 }
 
-test('mutation re-observes workspace identity immediately before filesystem effect', async (t) => {
+test('autonomous mutation re-observes workspace identity immediately before filesystem effect', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'wag-identity-effect-mutation-'));
   const root = join(dir, 'repo');
   await mkdir(root);
@@ -135,7 +102,6 @@ test('mutation re-observes workspace identity immediately before filesystem effe
     backendKind: 'identity-effect-fs',
     createdAt: NOW,
   });
-  insertLease(store, 'lease_identity_effect_mutation', root, 'mutation.preview');
 
   let liveCalls = 0;
   const backend = new RecordingFileBackend();
@@ -143,12 +109,13 @@ test('mutation re-observes workspace identity immediately before filesystem effe
     store,
     backends: [backend],
     now: () => NOW,
-    goalLeaseResolver: {
-      killSwitch: () => false,
-      workspaceFingerprint: () => IDENTITY_A,
-      liveWorkspaceFingerprint: async () => {
+    autonomous: { killSwitch: () => false },
+    effectBoundary: {
+      async revalidateWorkspace(workspaceId, canonicalRoot) {
         liveCalls += 1;
-        return IDENTITY_B;
+        assert.equal(workspaceId, workspace.workspaceId);
+        assert.equal(canonicalRoot, root);
+        throw new Error('Workspace identity drift for existing workspace id');
       },
     },
   });
@@ -167,7 +134,7 @@ test('mutation re-observes workspace identity immediately before filesystem effe
   assert.equal(store.getMutation(preview.mutationId)?.state, 'FAILED');
 });
 
-test('commit re-observes workspace identity immediately before ref-moving backend call', async (t) => {
+test('autonomous commit re-observes workspace identity immediately before ref-moving backend call', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'wag-identity-effect-commit-'));
   const root = join(dir, 'repo');
   await mkdir(join(root, 'src'), { recursive: true });
@@ -185,7 +152,6 @@ test('commit re-observes workspace identity immediately before ref-moving backen
     backendKind: 'identity-effect-git',
     createdAt: NOW,
   });
-  insertLease(store, 'lease_identity_effect_commit', root, 'git.commit');
 
   let liveCalls = 0;
   const { backend, commits } = recordingGitBackend();
@@ -194,12 +160,13 @@ test('commit re-observes workspace identity immediately before ref-moving backen
     backend,
     protectedBranches: ['main'],
     now: () => NOW,
-    goalLeaseResolver: {
-      killSwitch: () => false,
-      workspaceFingerprint: () => IDENTITY_A,
-      liveWorkspaceFingerprint: async () => {
+    autonomous: { killSwitch: () => false },
+    effectBoundary: {
+      async revalidateWorkspace(workspaceId, canonicalRoot) {
         liveCalls += 1;
-        return IDENTITY_B;
+        assert.equal(workspaceId, workspace.workspaceId);
+        assert.equal(canonicalRoot, root);
+        throw new Error('Workspace identity drift for existing workspace id');
       },
     },
   });
