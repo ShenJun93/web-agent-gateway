@@ -341,6 +341,8 @@ export class SqliteDurableStore {
       CREATE TABLE IF NOT EXISTS mutation_authority (
         mutation_id TEXT PRIMARY KEY,
         authority TEXT NOT NULL,
+        retired_policy_authority INTEGER NOT NULL DEFAULT 0
+          CHECK (retired_policy_authority IN (0, 1)),
         admitted_at INTEGER NOT NULL,
         fingerprint TEXT NOT NULL,
         workspace_id TEXT NOT NULL,
@@ -352,6 +354,8 @@ export class SqliteDurableStore {
       CREATE TABLE IF NOT EXISTS commit_authority (
         commit_id TEXT PRIMARY KEY,
         authority TEXT NOT NULL,
+        retired_policy_authority INTEGER NOT NULL DEFAULT 0
+          CHECK (retired_policy_authority IN (0, 1)),
         admitted_at INTEGER NOT NULL,
         fingerprint TEXT NOT NULL,
         workspace_id TEXT NOT NULL,
@@ -361,6 +365,7 @@ export class SqliteDurableStore {
         FOREIGN KEY(commit_id) REFERENCES commits(commit_id)
       );
     `);
+    this.migrateRetiredPolicyAuthoritySchema();
     // Goal UI Delegation v1 (ADR-0029). New tables, for the reason above: no migration framework.
     //
     // The lifecycle is explicit in the schema rather than implied by a nullable timestamp:
@@ -788,7 +793,7 @@ export class SqliteDurableStore {
     if (!row) return undefined;
     return {
       authority: row.authority as 'HUMAN_APPROVED' | 'POLICY_APPROVED',
-      ...(Object.hasOwn(row, 'lease_id') && row.lease_id !== null ? { retiredPolicyAuthority: true } : {}),
+      ...(Number(row.retired_policy_authority) === 1 ? { retiredPolicyAuthority: true } : {}),
       admittedAt: Number(row.admitted_at),
       fingerprint: String(row.fingerprint),
       path: String(row.path),
@@ -834,11 +839,94 @@ export class SqliteDurableStore {
     if (!row) return undefined;
     return {
       authority: row.authority as 'HUMAN_APPROVED' | 'POLICY_APPROVED',
-      ...(Object.hasOwn(row, 'lease_id') && row.lease_id !== null ? { retiredPolicyAuthority: true } : {}),
+      ...(Number(row.retired_policy_authority) === 1 ? { retiredPolicyAuthority: true } : {}),
       admittedAt: Number(row.admitted_at),
       branch: String(row.branch),
       pathCount: Number(row.path_count),
     };
+  }
+
+  /**
+   * One-time in-place removal of the retired per-goal authority column.
+   *
+   * Accepted stores created before autonomous-local cutover may still have a nullable authority
+   * selector column. Its identifier is deliberately not preserved: only the fact that the row came
+   * from retired policy is retained, so a queued historical effect is refused rather than silently
+   * reinterpreted as autonomous-local.
+   */
+  private migrateRetiredPolicyAuthoritySchema(): void {
+    const specs = [
+      {
+        table: 'mutation_authority',
+        next: 'mutation_authority_v2',
+        create: `CREATE TABLE mutation_authority_v2 (
+          mutation_id TEXT PRIMARY KEY,
+          authority TEXT NOT NULL,
+          retired_policy_authority INTEGER NOT NULL DEFAULT 0 CHECK (retired_policy_authority IN (0, 1)),
+          admitted_at INTEGER NOT NULL,
+          fingerprint TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          path TEXT NOT NULL,
+          result_sha256 TEXT NOT NULL,
+          diff_bytes INTEGER NOT NULL,
+          FOREIGN KEY(mutation_id) REFERENCES mutations(mutation_id)
+        )`,
+        insert: `INSERT INTO mutation_authority_v2
+          (mutation_id, authority, retired_policy_authority, admitted_at, fingerprint, workspace_id, path, result_sha256, diff_bytes)
+          SELECT mutation_id, authority, CASE WHEN lease_id IS NULL THEN 0 ELSE 1 END,
+            admitted_at, fingerprint, workspace_id, path, result_sha256, diff_bytes
+          FROM mutation_authority`,
+      },
+      {
+        table: 'commit_authority',
+        next: 'commit_authority_v2',
+        create: `CREATE TABLE commit_authority_v2 (
+          commit_id TEXT PRIMARY KEY,
+          authority TEXT NOT NULL,
+          retired_policy_authority INTEGER NOT NULL DEFAULT 0 CHECK (retired_policy_authority IN (0, 1)),
+          admitted_at INTEGER NOT NULL,
+          fingerprint TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          branch TEXT NOT NULL,
+          old_head TEXT NOT NULL,
+          path_count INTEGER NOT NULL,
+          FOREIGN KEY(commit_id) REFERENCES commits(commit_id)
+        )`,
+        insert: `INSERT INTO commit_authority_v2
+          (commit_id, authority, retired_policy_authority, admitted_at, fingerprint, workspace_id, branch, old_head, path_count)
+          SELECT commit_id, authority, CASE WHEN lease_id IS NULL THEN 0 ELSE 1 END,
+            admitted_at, fingerprint, workspace_id, branch, old_head, path_count
+          FROM commit_authority`,
+      },
+    ] as const;
+
+    const migrations = specs.filter((spec) => {
+      const ddl = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ).get(spec.table) as { sql?: string } | undefined;
+      if (!ddl?.sql) return false;
+      const columns = new Set(
+        (this.db.prepare(`PRAGMA table_info(${spec.table})`).all() as Array<{ name: string }>)
+          .map((row) => String(row.name)),
+      );
+      return columns.has('lease_id');
+    });
+    if (migrations.length === 0) return;
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const spec of migrations) {
+        this.db.exec(`DROP TABLE IF EXISTS ${spec.next}`);
+        this.db.exec(spec.create);
+        this.db.exec(spec.insert);
+        this.db.exec(`DROP TABLE ${spec.table}`);
+        this.db.exec(`ALTER TABLE ${spec.next} RENAME TO ${spec.table}`);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve migration failure */ }
+      throw error;
+    }
   }
 
   /**

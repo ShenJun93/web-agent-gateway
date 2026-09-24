@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { SqliteDurableStore } from '../src/durable-store.js';
 
@@ -75,4 +76,66 @@ test('audit events contain transition metadata but not stored file contents', as
   const events = store.listAuditEvents(mutation.mutationId);
   assert.deepEqual(events.map((event) => event.toState), ['PENDING_APPROVAL', 'QUEUED', 'EXECUTING', 'SUCCEEDED']);
   assert.doesNotMatch(JSON.stringify(events), /secret-before|secret-after/);
+});
+
+test('retired per-goal authority columns migrate away without reviving old policy', async (t) => {
+  const { dir, path, store } = await tempStore();
+  const workspace = store.openWorkspaceRecord({
+    ...identity, canonicalRoot: 'E:/fixture', backendKind: 'fake', createdAt: 100,
+  });
+  const mutation = store.createMutation({
+    ...identity,
+    workspaceId: workspace.workspaceId,
+    backendKind: 'fake',
+    path: 'note.txt',
+    baseSha256: 'a'.repeat(64),
+    before: 'before',
+    after: 'after',
+    resultSha256: 'b'.repeat(64),
+    fingerprint: 'c'.repeat(64),
+    additions: 1,
+    removals: 1,
+    createdAt: 100,
+    reviewDeadline: 1_000,
+  });
+  store.recordMutationAuthority({
+    mutationId: mutation.mutationId,
+    authority: 'POLICY_APPROVED',
+    admittedAt: 101,
+    fingerprint: mutation.fingerprint,
+    workspaceId: mutation.workspaceId,
+    path: mutation.path,
+    resultSha256: mutation.resultSha256,
+    diffBytes: 2,
+  });
+  store.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.exec('ALTER TABLE mutation_authority ADD COLUMN lease_id TEXT');
+  legacy.exec('ALTER TABLE commit_authority ADD COLUMN lease_id TEXT');
+  legacy.prepare('UPDATE mutation_authority SET lease_id = ? WHERE mutation_id = ?')
+    .run('retired-authority-row', mutation.mutationId);
+  legacy.close();
+
+  const migrated = new SqliteDurableStore(path);
+  t.after(async () => {
+    migrated.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const authority = migrated.getMutationAuthority(mutation.mutationId);
+  assert.equal(authority?.authority, 'POLICY_APPROVED');
+  assert.equal(authority?.retiredPolicyAuthority, true);
+
+  const inspect = new DatabaseSync(path, { readOnly: true });
+  const mutationColumns = inspect.prepare('PRAGMA table_info(mutation_authority)').all()
+    .map((row) => String((row as { name: string }).name));
+  const commitColumns = inspect.prepare('PRAGMA table_info(commit_authority)').all()
+    .map((row) => String((row as { name: string }).name));
+  inspect.close();
+
+  for (const columns of [mutationColumns, commitColumns]) {
+    assert.equal(columns.includes('lease_id'), false);
+    assert.equal(columns.includes('retired_policy_authority'), true);
+  }
 });
