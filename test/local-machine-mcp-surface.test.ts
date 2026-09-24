@@ -19,6 +19,7 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     describe: async (id) => record('describe', id),
     list: async (id, path, maxEntries, depth) => record('list', id, path, maxEntries, depth),
     search: async (id, query, options) => record('search', id, query, options),
+    searchContinue: async (id, cursor, maxResults) => record('searchContinue', id, cursor, maxResults),
     info: async (id, path) => record('info', id, path),
     read: async (id, path, options) => record('read', id, path, options),
     readMany: async (id, paths, options) => record('readMany', id, paths, options),
@@ -93,6 +94,12 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     max_results: 7,
     context_lines: 2,
   })).name, 'search');
+
+  assert.equal((await invoke('machine.search_continue', {
+    workspace_id: workspaceId,
+    cursor: 'cursor_opaque',
+    max_results: 9,
+  })).name, 'searchContinue');
 
   assert.equal((await invoke('machine.info', {
     workspace_id: workspaceId,
@@ -172,6 +179,9 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     'needle',
     { path: 'src', ignoreCase: true, maxResults: 7, contextLines: 2 },
   ]);
+
+  const continued = calls.find((call) => call.name === 'searchContinue');
+  assert.deepEqual(continued?.args, [workspaceId, 'cursor_opaque', 9]);
 
   const injected = await client.callTool({
     name: 'machine.process.terminate',
