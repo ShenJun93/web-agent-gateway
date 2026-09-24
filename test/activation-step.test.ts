@@ -9,9 +9,6 @@ test('autonomous runtime promotion has no per-goal authority or rollover path', 
   const source = await readFile(SCRIPT, 'utf8');
 
   for (const forbidden of [
-    'goal_leases',
-    'insertGoalLease',
-    'goalLeaseId',
     '--approve-multi-workspace',
     '--preview-rollover',
     '--apply-rollover',

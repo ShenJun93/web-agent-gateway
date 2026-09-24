@@ -147,7 +147,7 @@ test('the same correlation on a browser adapter cannot acquire the private-stdio
   });
 });
 
-test('goalLeaseId is no longer accepted by the private config schema', async (t) => {
+test('unknown mutation authority selectors are rejected by the strict private config schema', async (t) => {
   const dir = await scratch(t);
   const configPath = join(dir, 'wag.config.json');
   await writeFile(configPath, JSON.stringify({
@@ -160,7 +160,7 @@ test('goalLeaseId is no longer accepted by the private config schema', async (t)
         statePath: join(dir, 'state.sqlite'),
         ownerId: OWNER,
         sessionCorrelation: CORRELATION,
-        goalLeaseId: 'lease_retired',
+        authoritySelector: 'retired-selector',
       },
     },
   }));

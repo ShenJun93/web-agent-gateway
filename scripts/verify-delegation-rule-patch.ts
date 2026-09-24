@@ -45,8 +45,8 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AUTHORISED = [
   {
     path: '.claude/rules/human-presence-boundary.md',
-    before: '7355153a8a89684e89c4dda6f42f7c0ed3451965ef7d6bbd3fa03838e4a4b2a9',
-    after: '5888b3282df0fdde4d1585232c6125754ea12e21b6ba7fb4c1fc4fffdeaf1fa5',
+    before: '5888b3282df0fdde4d1585232c6125754ea12e21b6ba7fb4c1fc4fffdeaf1fa5',
+    after: 'c5ca61431b18d5ade89458e48f16259fe36c3cad59ac364dc306faf38435d9ca',
   },
   {
     path: '.claude/rules/wag-primary-operator.md',

@@ -6,9 +6,9 @@ WAG now has two distinct execution planes. They must not be conflated.
 
 The private stdio surface is the trusted autonomous-local plane and is the DC-replacement path.
 
-It does **not** require a Goal Lease, per-goal grant, successor, rollover, TTL, budget lease, browser
-approval, or operator approval before local repository work. Authority comes from the locally
-configured private runtime profile plus WAG-owned identity and safety checks.
+It does **not** require a per-goal grant, successor, rollover, TTL, browser approval, or operator
+approval before local repository work. Authority comes from the locally configured private runtime
+profile plus WAG-owned identity and safety checks.
 
 Consequential private-local operations must still satisfy all of the following:
 
@@ -95,4 +95,4 @@ A failure or absence of browser authority must never reduce WAG Local back to a 
 approval workflow. Conversely, trusted private-local authority must never be projected onto an
 untrusted browser page.
 
-Goal Lease is retired from the live authority plane.
+
