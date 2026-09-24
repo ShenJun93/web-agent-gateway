@@ -100,8 +100,8 @@ test('mutation opt-in binds workspace.open to durable records owned by a per-pro
 
   await first.attach(fakeExecutor);
   assert.ok(first.mutationContext);
-  assert.equal(first.mutationContext!.leaseOnly, true,
-    'direct stdio mutations must be Goal-Lease-only, with no per-change operator fallback');
+  assert.equal(first.mutationContext!.autonomous, true,
+    'direct stdio mutations must be autonomous-local, with no per-change operator fallback');
   assert.equal(first.mutationContext!.callerContext.adapterId, PRIVATE_STDIO_ADAPTER_ID);
   assert.equal(first.mutationContext!.callerContext.ownerId, 'local.private.stdio');
   assert.match(first.mutationContext!.callerContext.sessionId, /^sid_/);
@@ -318,8 +318,8 @@ test('stdio git commit inherits the configured mutation review TTL', async () =>
     await runtime.attach(fakeExecutor);
 
     assert.ok(runtime.gitCommitContext, 'git commit must be enabled after attach');
-    assert.equal(runtime.gitCommitContext!.leaseOnly, true,
-      'direct stdio commits must be Goal-Lease-only, with no per-change operator fallback');
+    assert.equal(runtime.gitCommitContext!.autonomous, true,
+      'direct stdio commits must be autonomous-local, with no per-change operator fallback');
 
     const coordinator = runtime.gitCommitContext!.coordinator as unknown as {
       reviewTtlMs: number;
@@ -337,102 +337,60 @@ test('stdio git commit inherits the configured mutation review TTL', async () =>
   }
 });
 
-test('command authority requires a Goal Lease and stays bound to its exact workspace', async (t) => {
+test('command authority is autonomous-local and rejects a foreign session workspace handle', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-command-authority-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const ownerId = 'local.private.stdio';
+  const statePath = join(root, 'autonomous.sqlite');
   const operator = async () => ({
     origin: 'http://127.0.0.1:1',
     bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
     close: async () => {},
   });
 
-  const noLease = await startRepositoryEngineeringRuntime(
+  const runtime = await startRepositoryEngineeringRuntime(
     config({
       inspect: true,
-      mutation: { statePath: join(root, 'no-lease.sqlite'), ownerId },
+      mutation: { statePath, ownerId },
       gitCommit: {},
     }),
     { startOperatorServer: operator },
   );
   try {
-    const workspace = noLease.openWorkspaceId!(await realpath(root));
-    await noLease.attach(fakeExecutor);
-    assert.ok(noLease.commandContext, 'full profile publishes command.run independently of current lease matches');
-    await assert.rejects(
-      async () => noLease.commandContext!.authorize(workspace),
-      /NO_LEASE/,
-      'publishing command.run must not grant authority when no durable lease matches',
-    );
-  } finally {
-    await noLease.close();
-  }
+    const workspaceRoot = await realpath(root);
+    const mine = runtime.openWorkspaceId!(workspaceRoot);
+    await runtime.attach(fakeExecutor);
 
-  const statePath = join(root, 'leased.sqlite');
-  const correlation = 'session_11111111-2222-3333-4444-555555555555';
-  const leaseId = 'lease_command_runtime';
-  const workspaceRoot = await realpath(root);
-  const now = Date.now();
-  const store = new SqliteDurableStore(statePath);
-  try {
-    const session = store.getOrCreateAdapterSession({
-      ownerId,
-      adapterId: PRIVATE_STDIO_ADAPTER_ID,
-      correlationSha256: adapterCorrelationDigest(ownerId, PRIVATE_STDIO_ADAPTER_ID, correlation),
-      createdAt: now,
-    });
-    store.insertGoalLease({
-      leaseId,
-      createdAt: now,
-      notBefore: now - 1_000,
-      expiresAt: now + 60_000,
-      bindings: JSON.stringify({
-        workspaceRoots: [workspaceRoot],
-        allowedTools: ['command.run'],
-        pathPatterns: ['src/**'],
-        maxFiles: 1,
-        maxBytes: 1,
-        maxDiffBytes: 1,
-        admittedSessions: [session.sessionId],
-        admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
-        commitSemantics: 'none',
-      }),
-    });
-  } finally {
-    store.close();
-  }
+    assert.ok(runtime.commandContext);
+    await runtime.commandContext!.authorize(mine);
 
-  const leased = await startRepositoryEngineeringRuntime(
-    config({
-      inspect: true,
-      mutation: {
-        statePath,
+    const store = new SqliteDurableStore(statePath);
+    let foreign = '';
+    try {
+      foreign = store.openWorkspaceRecord({
         ownerId,
-        sessionCorrelation: correlation,
-      },
-      gitCommit: {},
-    }),
-    { startOperatorServer: operator },
-  );
-  try {
-    const grantedWorkspace = leased.openWorkspaceId!(workspaceRoot);
-    const otherWorkspace = leased.openWorkspaceId!(join(workspaceRoot, 'other'));
-    await leased.attach(fakeExecutor);
+        sessionId: 'session_foreign',
+        adapterId: PRIVATE_STDIO_ADAPTER_ID,
+        canonicalRoot: workspaceRoot,
+        backendKind: 'devspace',
+        createdAt: Date.now(),
+      }).workspaceId;
+    } finally {
+      store.close();
+    }
 
-    assert.ok(leased.commandContext, 'a full profile resolves command authority without a configured lease selector');
-    await leased.commandContext!.authorize(grantedWorkspace);
     await assert.rejects(
-      async () => leased.commandContext!.authorize(otherWorkspace),
-      /NO_LEASE/,
-      'opening another trusted workspace must produce zero matching leases',
+      async () => runtime.commandContext!.authorize(foreign),
+      /WORKSPACE_NOT_GRANTED/,
+      'an opaque workspace owned by another session must not be inherited',
     );
   } finally {
-    await leased.close();
+    await runtime.close();
   }
 });
 
-test('a running direct runtime observes issue, ambiguity and revoke without restart', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'wag-live-lease-resolution-'));
+test('historical Goal Lease rows do not alter running private-stdio authority', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-autonomous-ignore-leases-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const ownerId = 'local.private.stdio';
   const correlation = 'session_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -458,24 +416,19 @@ test('a running direct runtime observes issue, ambiguity and revoke without rest
     assert.ok(runtime.commandContext);
     assert.ok(runtime.capabilityContext);
 
-    await assert.rejects(async () => runtime.commandContext!.authorize(workspaceId), /NO_LEASE/);
-
-    const noLeaseAuthority = await runtime.capabilityContext!.describe(workspaceId) as {
+    await runtime.commandContext!.authorize(workspaceId);
+    const baseline = await runtime.capabilityContext!.describe(workspaceId) as {
+      authority: { mode: string; kill_switch: string };
       capabilities: {
-        FILE_WRITE: { granted: boolean; denied: boolean; requires_human: boolean; reason: string };
-        GIT_COMMIT: { granted: boolean; denied: boolean; requires_human: boolean; reason: string };
+        FILE_WRITE: { granted: boolean; reason: string };
+        GIT_COMMIT: { granted: boolean; reason: string };
       };
     };
-    for (const capability of [
-      noLeaseAuthority.capabilities.FILE_WRITE,
-      noLeaseAuthority.capabilities.GIT_COMMIT,
-    ]) {
-      assert.equal(capability.granted, false);
-      assert.equal(capability.denied, true);
-      assert.equal(capability.requires_human, false,
-        'direct stdio has no per-change human-review fallback');
-      assert.equal(capability.reason, 'GOAL_LEASE_REQUIRED');
-    }
+    assert.deepEqual(baseline.authority, { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' });
+    assert.deepEqual(
+      [baseline.capabilities.FILE_WRITE.reason, baseline.capabilities.GIT_COMMIT.reason],
+      ['AUTONOMOUS_LOCAL_PROFILE', 'AUTONOMOUS_LOCAL_PROFILE'],
+    );
 
     const sessionId = runtime.profile.stableSessionId!;
     const bindings = {
@@ -493,43 +446,40 @@ test('a running direct runtime observes issue, ambiguity and revoke without rest
     const store = new SqliteDurableStore(statePath);
     try {
       store.insertGoalLease({
-        leaseId: 'lease_runtime_dynamic_a',
+        leaseId: 'lease_historical_a',
         createdAt: now,
         notBefore: now - 1_000,
         expiresAt: now + 60_000,
         bindings: JSON.stringify(bindings),
       });
-
-      await runtime.commandContext!.authorize(workspaceId);
-
-      const authority = await runtime.capabilityContext!.describe(workspaceId) as {
-        capabilities: { GIT_PUSH: { granted: boolean; denied: boolean; grantable: boolean } };
-      };
-      assert.deepEqual(authority.capabilities.GIT_PUSH, {
-        granted: false,
-        denied: true,
-        grantable: false,
-        requires_human: true,
-        reason: 'REMOTE_EFFECT_NOT_GRANTED',
-      });
-
       store.insertGoalLease({
-        leaseId: 'lease_runtime_dynamic_duplicate',
+        leaseId: 'lease_historical_duplicate',
         createdAt: now + 1,
         notBefore: now - 1_000,
         expiresAt: now + 60_000,
         bindings: JSON.stringify(bindings),
       });
-      await assert.rejects(async () => runtime.commandContext!.authorize(workspaceId), /AMBIGUOUS_LEASE/);
 
-      assert.equal(store.revokeGoalLease('lease_runtime_dynamic_duplicate', now + 2), true);
       await runtime.commandContext!.authorize(workspaceId);
-
-      assert.equal(store.revokeGoalLease('lease_runtime_dynamic_a', now + 3), true);
-      await assert.rejects(async () => runtime.commandContext!.authorize(workspaceId), /NO_LEASE/);
+      assert.equal(store.revokeGoalLease('lease_historical_duplicate', now + 2), true);
+      assert.equal(store.revokeGoalLease('lease_historical_a', now + 3), true);
+      await runtime.commandContext!.authorize(workspaceId);
     } finally {
       store.close();
     }
+
+    const finalAuthority = await runtime.capabilityContext!.describe(workspaceId) as {
+      authority: { mode: string };
+      capabilities: { GIT_PUSH: object };
+    };
+    assert.equal(finalAuthority.authority.mode, 'AUTONOMOUS_LOCAL');
+    assert.deepEqual(finalAuthority.capabilities.GIT_PUSH, {
+      granted: false,
+      denied: true,
+      grantable: false,
+      requires_human: true,
+      reason: 'REMOTE_EFFECT_NOT_GRANTED',
+    });
   } finally {
     await runtime.close();
   }

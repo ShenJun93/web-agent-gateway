@@ -72,8 +72,8 @@ const PATCH_PAYLOAD_SHA256 = 'bedf154361e8bd23dae8173cc8ce6594fa9c38cea097c17ec1
 export const GUARD_PATH_RELATIVE = '.claude/hooks/wag-human-gate-guard.mjs';
 
 /**
- * The guard as a human last installed it, out of band: the authority-issuance patterns of
- * 2026-09-21, plus the `sessionCorrelation` refusal of 2026-09-22 (ADR-0030).
+ * The active guard keeps human issuance for browser Goal UI Delegation while private-stdio
+ * sessionCorrelation is identity-only and deprecated goalLeaseId is inert compatibility data.
  *
  * Exported so `test/authority-issuance-guard.test.ts` reads it from one place rather than keeping a
  * second copy of the number. Each patch that produced a state, and its pending doc, were retired
@@ -83,7 +83,7 @@ export const GUARD_PATH_RELATIVE = '.claude/hooks/wag-human-gate-guard.mjs';
  * `sessionCorrelation`), so a revert of the latest patch is reported as a revert, not a mystery.
  */
 export const ISSUANCE_GUARD_SHA256 =
-  'd3218fd6d5f33fb8a68f57e48aca86261a9d9236b85eae26741fedebbe87bba9';
+  '50972b63d49bac14addb08b8f90ffcd3bb69a9bac6d6431ec8b57d6516409728';
 const GUARD_BEFORE_PATCH = '3f0787de4e0d8cf2a5df58e7f4a07a76738a82ec22097af071cd1d61a1273a61';
 
 const out = (line = ''): void => { process.stdout.write(`${line}\n`); };

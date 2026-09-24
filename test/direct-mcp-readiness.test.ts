@@ -225,11 +225,10 @@ test('every direct tool refuses unknown arguments instead of silently dropping t
  * this pins — is that its config-to-options mapping opts in to the same capabilities the runtime
  * does, and that an unconfigured gateway still projects exactly the accepted five.
  */
-test('runtime command authority requires a lease and stays bound to its exact workspace', async (t) => {
+test('runtime command authority needs no Goal Lease in the trusted private-local profile', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-direct-command-authority-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const ownerId = 'local.private.stdio';
-  const correlation = 'session_11111111-2222-3333-4444-555555555555';
   const operator = async () => ({
     origin: 'http://127.0.0.1:1',
     bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
@@ -237,101 +236,38 @@ test('runtime command authority requires a lease and stays bound to its exact wo
   });
   const fakeExecutor = {} as unknown as DevspaceExecutor;
 
-  const noLease = await startRepositoryEngineeringRuntime({
+  const runtime = await startRepositoryEngineeringRuntime({
     allowedRoots: [root],
     devspace: { baseUrl: 'http://127.0.0.1:1', resourceUrl: 'http://127.0.0.1:1/mcp' },
     verifyProfiles: {},
     repositoryEngineering: {
       inspect: true,
-      mutation: { statePath: join(root, 'no-lease.sqlite'), ownerId },
-      gitCommit: {},
-    },
-  }, { startOperatorServer: operator });
-  try {
-    const workspace = noLease.openWorkspaceId!(await realpath(root));
-    await noLease.attach(fakeExecutor);
-    assert.ok(noLease.commandContext);
-    await assert.rejects(async () => noLease.commandContext!.authorize(workspace), /NO_LEASE/);
-  } finally {
-    await noLease.close();
-  }
-
-  const statePath = join(root, 'leased.sqlite');
-  const leaseId = 'lease_direct_command';
-  const workspaceRoot = await realpath(root);
-  const store = new SqliteDurableStore(statePath);
-  try {
-    const now = Date.now();
-    const session = store.getOrCreateAdapterSession({
-      ownerId,
-      adapterId: PRIVATE_STDIO_ADAPTER_ID,
-      correlationSha256: adapterCorrelationDigest(ownerId, PRIVATE_STDIO_ADAPTER_ID, correlation),
-      createdAt: now,
-    });
-    store.insertGoalLease({
-      leaseId,
-      createdAt: now,
-      notBefore: now - 1_000,
-      expiresAt: now + 60_000,
-      bindings: JSON.stringify({
-        workspaceRoots: [workspaceRoot],
-        allowedTools: ['command.run'],
-        pathPatterns: ['src/**'],
-        maxFiles: 1,
-        maxBytes: 1,
-        maxDiffBytes: 1,
-        admittedSessions: [session.sessionId],
-        admittedAdapters: [PRIVATE_STDIO_ADAPTER_ID],
-        commitSemantics: 'none',
-      }),
-    });
-  } finally {
-    store.close();
-  }
-
-  const leased = await startRepositoryEngineeringRuntime({
-    allowedRoots: [root],
-    devspace: { baseUrl: 'http://127.0.0.1:1', resourceUrl: 'http://127.0.0.1:1/mcp' },
-    verifyProfiles: {},
-    repositoryEngineering: {
-      inspect: true,
-      mutation: {
-        statePath,
-        ownerId,
-        sessionCorrelation: correlation,
-      },
+      mutation: { statePath: join(root, 'autonomous.sqlite'), ownerId },
       gitCommit: {},
     },
   }, { startOperatorServer: operator });
 
   try {
-    const granted = leased.openWorkspaceId!(workspaceRoot);
-    const other = leased.openWorkspaceId!(join(workspaceRoot, 'other'));
-    await leased.attach(fakeExecutor);
+    const first = runtime.openWorkspaceId!(await realpath(root));
+    const second = runtime.openWorkspaceId!(join(await realpath(root), 'other'));
+    await runtime.attach(fakeExecutor);
 
-    assert.ok(leased.commandContext);
-    assert.ok(leased.capabilityContext);
+    assert.ok(runtime.commandContext);
+    assert.ok(runtime.capabilityContext);
+    await runtime.commandContext!.authorize(first);
+    await runtime.commandContext!.authorize(second);
 
-    const grantedAuthority = await leased.capabilityContext!.describe(granted) as {
-      capabilities: { LOCAL_COMMAND: { granted: boolean; reason: string } };
-    };
-    assert.equal(grantedAuthority.capabilities.LOCAL_COMMAND.granted, true);
-    assert.equal(grantedAuthority.capabilities.LOCAL_COMMAND.reason, 'GRANTED');
-
-    const otherAuthority = await leased.capabilityContext!.describe(other) as {
-      capabilities: { LOCAL_COMMAND: { granted: boolean; reason: string } };
-    };
-    assert.equal(otherAuthority.capabilities.LOCAL_COMMAND.granted, false);
-    assert.equal(otherAuthority.capabilities.LOCAL_COMMAND.reason, 'NO_LEASE');
-
-    await leased.commandContext!.authorize(granted);
-    await assert.rejects(
-      async () => leased.commandContext!.authorize(other),
-      /NO_LEASE/,
-      'a different opened workspace must not inherit this lease\'s command authority',
-    );
+    for (const workspaceId of [first, second]) {
+      const authority = await runtime.capabilityContext!.describe(workspaceId) as {
+        authority: { mode: string; kill_switch: string };
+        capabilities: { LOCAL_COMMAND: { granted: boolean; reason: string } };
+      };
+      assert.deepEqual(authority.authority, { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' });
+      assert.equal(authority.capabilities.LOCAL_COMMAND.granted, true);
+      assert.equal(authority.capabilities.LOCAL_COMMAND.reason, 'AUTONOMOUS_LOCAL_PROFILE');
+    }
   } finally {
-    await leased.close();
+    await runtime.close();
   }
 });
 

@@ -27,11 +27,10 @@ const repositoryEngineeringSchema = z.object({
      */
     reviewTtlMs: z.number().int().min(1_000).max(5 * 60_000).optional(),
     /**
-     * Legacy Goal Lease selector retained for backward-compatible configuration parsing.
+     * Deprecated Goal Lease selector retained only so existing private configs continue to parse.
      *
-     * Multi-active authority no longer consults this field: every consequential request resolves
-     * the durable lease store by session, adapter, workspace, tool and request-specific bounds.
-     * Naming an id here neither activates nor prioritizes a lease.
+     * The autonomous-local private stdio runtime never consults this field. Naming or changing it
+     * grants nothing and changes no execution decision.
      */
     goalLeaseId: z.string().min(1).max(128).regex(/^lease_[A-Za-z0-9._:-]+$/).optional(),
     /**
@@ -50,24 +49,13 @@ const repositoryEngineeringSchema = z.object({
     /**
      * The correlation that gives this surface a *stable* durable session (ADR-0017, ADR-0030).
      *
-     * Absent — the default, and every deployment before this field existed — the session id is
-     * minted fresh per process, exactly as ADR-0020 §5 describes. That is the right default for
-     * an interactive local caller: no MCP client can read, resume or replay a record proposed by
-     * a previous process.
+     * It is identity/audit continuity only. It does not grant filesystem, process, mutation or
+     * commit authority; those capabilities come from the trusted autonomous-local private runtime
+     * profile. A WAG bootstrap may therefore mint a fresh strong correlation for a new local lane.
      *
-     * It is the wrong default for a Goal Lease. A lease admits only the sessions listed in its own
-     * row, so a session that changes on every start can never be the session a lease was issued
-     * for — which made autonomous admission unreachable on this surface rather than merely unused.
-     * Naming a correlation here resolves the session through the same
-     * `getOrCreateAdapterSession` path a browser adapter uses: the same string returns the same
-     * durable session across restarts, so a lease issued for it keeps applying.
-     *
-     * Required shape is the strong one, for the reason `OPERATOR_CORRELATION_PATTERN` gives:
-     * whoever can choose the string joins the session, and this surface can propose changes. It
-     * is read from local configuration only — never from a tool argument, the transport, the
-     * client's environment or repository text — so it is a human act, like naming a lease.
-     * Because it selects which session a lease's bindings match, it must be treated as authority
-     * configuration: an agent may read and report it, and must never write it.
+     * The value still stays out of MCP tool arguments and repository text so one caller cannot
+     * deliberately acquire another caller's durable workspace handles. The strong correlation
+     * shape is retained for reconnect uniqueness and cross-adapter domain separation.
      */
     sessionCorrelation: z.string().regex(OPERATOR_CORRELATION_PATTERN).optional(),
   }).strict().optional(),

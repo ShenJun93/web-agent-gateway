@@ -106,7 +106,14 @@ export class DurableMutationCoordinator {
     admissionTtlMs?: number;
     rateLimit?: ProposalRateLimit;
     /**
-     * Absent by default, which is what makes autonomous admission off by default: with no lease
+     * Trusted private-local execution mode. Browser proposal coordinators leave this absent.
+     * The emergency stop is re-read at admission and immediately before the filesystem effect.
+     */
+    autonomous?: { killSwitch: () => boolean };
+    /**
+     * Legacy Goal Lease compatibility. Private stdio no longer wires this path.
+     *
+     * Absent by default, which makes lease admission off by default: with no lease
      * configured, `admitByPolicy` refuses and the only way to an effect is a human on the
      * operator's Approve route, exactly as before.
      */
@@ -390,7 +397,24 @@ export class DurableMutationCoordinator {
     }
 
     const lease = this.options.goalLease;
-    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
+    if (!lease) {
+      if (!this.options.autonomous) {
+        return { admitted: false, code: 'NO_LEASE', detail: 'autonomous local execution is not enabled on this coordinator' };
+      }
+      if (this.options.autonomous.killSwitch()) {
+        return { admitted: false, code: 'KILL_SWITCH_ENGAGED', detail: 'the local autonomous kill switch is engaged' };
+      }
+      const admitted = this.options.store.policyAdmitMutation({
+        mutationId,
+        now: this.now(),
+        admissionTtlMs: this.admissionTtlMs,
+      });
+      if (!admitted) {
+        return { admitted: false, code: 'NO_LEASE', detail: 'the record was no longer awaiting execution' };
+      }
+      await this.executeQueued(mutationId);
+      return { admitted: true };
+    }
 
     const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
     if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
@@ -524,7 +548,7 @@ export class DurableMutationCoordinator {
       const authorityDecision = await this.revalidatePolicyAuthority(workspace.canonicalRoot, claimed);
       if (!authorityDecision.admitted) {
         this.options.store.finishMutation(
-          mutationId, 'FAILED', this.now(), undefined, `GoalLease_${authorityDecision.code}`,
+          mutationId, 'FAILED', this.now(), undefined, `ExecutionPolicy_${authorityDecision.code}`,
         );
         return;
       }
@@ -582,12 +606,19 @@ export class DurableMutationCoordinator {
     }
     if (authority.authority !== 'POLICY_APPROVED') return { admitted: true };
 
-    // Legacy singleton mode is retained only for compatibility tests/config parsing. Production
-    // resolver runtimes take the branch below; removing legacy mode is a separate migration.
-    if (!this.options.goalLeaseResolver) return { admitted: true };
+    // POLICY_APPROVED with no lease id is the trusted private-local autonomous path.
     if (!authority.leaseId) {
-      return { admitted: false, code: 'NO_LEASE', detail: 'policy-approved mutation has no lease id' };
+      if (!this.options.autonomous) {
+        return { admitted: false, code: 'NO_LEASE', detail: 'autonomous execution provenance is not enabled here' };
+      }
+      if (this.options.autonomous.killSwitch()) {
+        return { admitted: false, code: 'KILL_SWITCH_ENGAGED', detail: 'the local autonomous kill switch is engaged' };
+      }
+      return { admitted: true };
     }
+
+    // Historical leased records remain recoverable, but new private-stdio effects never enter here.
+    if (!this.options.goalLeaseResolver) return { admitted: true };
 
     const delegatedGoalId = resolveDelegatedGoal({
       port: this.options.store,

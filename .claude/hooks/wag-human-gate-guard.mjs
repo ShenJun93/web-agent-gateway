@@ -122,25 +122,17 @@ const FILE_READ_VERB =
   /\b(?:cat|type|more|less|head|tail|Get-Content|gc|Copy-Item|copy|cp|mv|Move-Item|xargs|base64|od|xxd|strings)\b|[<>|]/;
 
 /**
- * Minting an authority that removes a human gesture, or naming one in local configuration.
+ * Browser Goal UI Delegation remains a human-issued authority because it lifts the browser Run
+ * gesture. Goal Lease is deprecated for private/local execution, and sessionCorrelation is only
+ * stable identity/audit continuity.
  *
- * A Goal Lease lifts Approve (ADR-0028); a Goal UI Delegation lifts Run (ADR-0029). Both rules say
- * the same thing in the same words — issuance is human-only and out of band, Claude may *use* a
- * grant and must *report* on one but may never create, widen or renew one — and until this block
- * that was the only rule in `human-presence-boundary.md` with no pattern behind it anywhere.
+ * Legacy Goal Lease issuance calls remain refused here so old automation cannot silently
+ * reintroduce the retired authority plane. The JSON-write guard, however, protects only
+ * goalUiDelegationId: writing goalLeaseId is inert compatibility data and writing
+ * sessionCorrelation is allowed so WAG can mint autonomous local lanes.
  *
- * Two acts are refused, because there are two ways a shell reaches authority:
- *
- *   1. **running** issuance — the control CLI with an issuing flag, or a one-liner that calls the
- *      store or the control plane directly;
- *   2. **naming** a grant in local configuration — which is the quieter half and the one that
- *      actually matters. A delegation not named in config is inert whatever its row says, so
- *      writing the name is the act that turns a row into live authority.
- *
- * Deliberately **not** refused: `--show`, `--sessions`, `--workspaces`, every read of any of
- * these files, `--revoke`, and `npm run lease:stop`. Narrowing a grant and stopping automation
- * are things a person may need help with in a hurry, and a guard that refused them is a guard
- * people learn to turn off.
+ * Deliberately not refused: inspection, revocation, the emergency kill switch, stable-identity
+ * bootstrap, or ordinary private configuration writes.
  */
 const GRANT_CLI = /\bdelegation-control(?:\.[cm]?[jt]s)?\b/i;
 const GRANT_CLI_FLAG = /--(?:issue|renew)\b/;
@@ -148,11 +140,10 @@ const GRANT_CLI_FLAG = /--(?:issue|renew)\b/;
 const GRANT_CALL =
   /\b(?:insertUiDelegation|renewUiDelegation|insertGoalLease)\s*\(|\bnew\s+UiDelegationControlPlane\s*\(/;
 /**
- * The configuration fields that bind Claude to durable authority this process will honour: a Goal
- * Lease, a Goal UI Delegation, and the session correlation that selects which durable session a
- * lease's bindings are matched against. Naming any of them is the operator's edit, not Claude's.
+ * The one private-config field that still activates human-issued browser authority.
+ * goalLeaseId is deprecated/inert and sessionCorrelation is identity only.
  */
-const GRANT_CONFIG_FIELD = /\b(?:goalUiDelegationId|goalLeaseId|sessionCorrelation)\b/;
+const GRANT_CONFIG_FIELD = /\bgoalUiDelegationId\b/;
 /** Something that *runs* a script, as opposed to reading, grepping or quoting one. */
 const SCRIPT_RUNNER = /\b(?:node|npx|npm|pnpm|yarn|bun|deno|tsx|ts-node)\b/i;
 
@@ -231,7 +222,7 @@ function matchAuthorityWrite(input) {
   if (typeof target !== 'string') return undefined;
   if (!/\.json$/i.test(target.split('\\').join('/'))) return undefined;
   return GRANT_CONFIG_FIELD.test(serialize(input))
-    ? 'names a Goal Lease, a Goal UI Delegation, or a session correlation in a configuration file'
+    ? 'names a Goal UI Delegation in a configuration file'
     : undefined;
 }
 

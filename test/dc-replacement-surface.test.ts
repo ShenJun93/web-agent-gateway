@@ -263,7 +263,7 @@ test('direct stdio lease-only mutation executes immediately and returns the term
     rejectLocal() { rejections += 1; return true; },
   };
   const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), {
-    mutationContext: { callerContext, coordinator, leaseOnly: true },
+    mutationContext: { callerContext, coordinator, autonomous: true },
   }));
 
   const response = await client.callTool({
@@ -284,7 +284,7 @@ test('direct stdio lease-only mutation executes immediately and returns the term
   assert.equal(rejections, 0);
 });
 
-test('direct stdio lease-only denial has no human-review fallback for mutations or commits', async (t) => {
+test('direct stdio autonomous policy denial has no human-review fallback for mutations or commits', async (t) => {
   const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
   const callerContext = createGatewayCallerContext({
     ownerId: 'owner_direct_deny',
@@ -317,11 +317,11 @@ test('direct stdio lease-only denial has no human-review fallback for mutations 
     fingerprint: 'e'.repeat(64),
     expiresAt: 2_000,
   };
-  const denied = { admitted: false as const, code: 'NO_LEASE' as const, detail: 'no matching lease' };
+  const denied = { admitted: false as const, code: 'KILL_SWITCH_ENGAGED' as const, detail: 'kill switch' };
   const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), {
     mutationContext: {
       callerContext,
-      leaseOnly: true,
+      autonomous: true,
       coordinator: {
         async preview() { return mutationPreview; },
         async replace() { return mutationPreview; },
@@ -332,7 +332,7 @@ test('direct stdio lease-only denial has no human-review fallback for mutations 
     },
     gitCommitContext: {
       callerContext,
-      leaseOnly: true,
+      autonomous: true,
       coordinator: {
         async preview() { return commitPreview; },
         result() { throw new Error('denied direct commit must not read a success result'); },
@@ -352,7 +352,7 @@ test('direct stdio lease-only denial has no human-review fallback for mutations 
     },
   });
   assert.equal(mutation.isError, true);
-  assert.match(JSON.stringify(mutation.content), /NO_LEASE/);
+  assert.match(JSON.stringify(mutation.content), /KILL_SWITCH_ENGAGED/);
   assert.equal(mutationRejected, 1);
 
   const commit = await client.callTool({
@@ -360,7 +360,7 @@ test('direct stdio lease-only denial has no human-review fallback for mutations 
     arguments: { workspace_id: 'ws_direct', paths: ['note.txt'], message: 'test: direct deny' },
   });
   assert.equal(commit.isError, true);
-  assert.match(JSON.stringify(commit.content), /NO_LEASE/);
+  assert.match(JSON.stringify(commit.content), /KILL_SWITCH_ENGAGED/);
   assert.equal(commitRejected, 1);
 });
 

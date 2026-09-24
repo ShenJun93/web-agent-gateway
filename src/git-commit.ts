@@ -114,7 +114,9 @@ export class DurableCommitCoordinator {
     rateLimit?: ProposalRateLimit;
     now?: () => number;
     reviewTtlMs?: number;
-    /** Absent by default, so autonomous commit admission is off unless deliberately wired. */
+    /** Trusted private-local execution mode; browser proposal coordinators leave this absent. */
+    autonomous?: { killSwitch: () => boolean };
+    /** Legacy Goal Lease compatibility; private stdio no longer wires it. */
     goalLease?: { leaseId: string; killSwitch: () => boolean };
     /** Multi-active resolver; the configured goalLease above is retained only as a compatibility fallback. */
     goalLeaseResolver?: {
@@ -337,7 +339,28 @@ export class DurableCommitCoordinator {
     }
 
     const lease = this.options.goalLease;
-    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
+    if (!lease) {
+      if (!this.options.autonomous) {
+        return { admitted: false, code: 'NO_LEASE', detail: 'autonomous local commit execution is not enabled' };
+      }
+      if (this.options.autonomous.killSwitch()) {
+        return { admitted: false, code: 'KILL_SWITCH_ENGAGED', detail: 'the local autonomous kill switch is engaged' };
+      }
+      this.options.store.recordCommitAuthority({
+        commitId,
+        authority: 'POLICY_APPROVED',
+        admittedAt: this.now(),
+        fingerprint: record.fingerprint,
+        workspaceId: record.workspaceId,
+        branch: record.branch,
+        oldHead: record.oldHead,
+        pathCount: record.paths.length,
+      });
+      const approved = await this.approveLocal(commitId);
+      return approved
+        ? { admitted: true }
+        : { admitted: false, code: 'NO_LEASE', detail: 'the commit was no longer awaiting execution' };
+    }
 
     const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
     if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
@@ -399,12 +422,19 @@ export class DurableCommitCoordinator {
     }
     if (authority.authority !== 'POLICY_APPROVED') return { admitted: true };
 
-    // Legacy singleton mode is compatibility-only. Current production runtimes always wire the
-    // multi-active resolver, which is the path this effect-boundary check hardens.
-    if (!this.options.goalLeaseResolver) return { admitted: true };
+    // POLICY_APPROVED with no lease id is the trusted private-local autonomous path.
     if (!authority.leaseId) {
-      return { admitted: false, code: 'NO_LEASE', detail: 'policy-approved commit has no lease id' };
+      if (!this.options.autonomous) {
+        return { admitted: false, code: 'NO_LEASE', detail: 'autonomous commit provenance is not enabled here' };
+      }
+      if (this.options.autonomous.killSwitch()) {
+        return { admitted: false, code: 'KILL_SWITCH_ENGAGED', detail: 'the local autonomous kill switch is engaged' };
+      }
+      return { admitted: true };
     }
+
+    // Historical leased records remain recoverable, but new private-stdio commits never enter here.
+    if (!this.options.goalLeaseResolver) return { admitted: true };
 
     const delegatedGoalId = resolveDelegatedGoal({
       port: this.options.store,
@@ -498,7 +528,7 @@ export class DurableCommitCoordinator {
       const authorityDecision = await this.revalidatePolicyAuthority(claimed, workspace.canonicalRoot);
       if (!authorityDecision.admitted) {
         this.options.store.finishCommit(
-          commitId, 'FAILED', this.now(), undefined, `GoalLease_${authorityDecision.code}`,
+          commitId, 'FAILED', this.now(), undefined, `ExecutionPolicy_${authorityDecision.code}`,
         );
         return true;
       }

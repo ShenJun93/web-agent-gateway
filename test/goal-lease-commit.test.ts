@@ -299,24 +299,19 @@ test('with no lease configured the driver admits nothing and reports nothing', a
   assert.equal(h.backend.committed.length, 0);
 });
 
-test('both runtimes drive the commit driver on the same pass as the mutation one', async () => {
-  // A source assertion, and labelled as one: it pins the *wiring*, not the behaviour. The driver's
-  // behaviour is covered by the three tests above; what this catches is the failure that actually
-  // happened — a coordinator with a working `admitByPolicy` that no pass ever called, so a
-  // configured lease admitted mutations and silently never admitted commits.
-  //
-  // Neither runtime's interval is reachable from a unit test today (both are created inside a live
-  // bootstrap), so this is the cheapest guard that fails if the call is removed.
+test('legacy browser lease admission stays isolated from private stdio autonomous execution', async () => {
   const { readFile } = await import('node:fs/promises');
   const { fileURLToPath } = await import('node:url');
   const root = fileURLToPath(new URL('..', import.meta.url));
-  for (const file of ['src/browser-operator-runtime.ts', 'src/repository-engineering-runtime.ts']) {
-    const source = await readFile(`${root}${file}`, 'utf8');
-    const interval = /setInterval\(\(\) => \{([\s\S]*?)\}, LEASE_ADMISSION_INTERVAL_MS\)/.exec(source);
-    assert.ok(interval, `${file} must drive lease admission on an interval`);
-    const body = interval[1] ?? '';
-    assert.match(body, /mutation|coordinator/, `${file}: the pass must drive mutations`);
-    assert.match(body, /commit(Coordinator)?\??\.admitPendingUnderLease/,
-      `${file}: the pass must drive commits too, or a leased git.commit waits for a human forever`);
-  }
+
+  const browser = await readFile(`${root}src/browser-operator-runtime.ts`, 'utf8');
+  const interval = /setInterval\(\(\) => \{([\s\S]*?)\}, LEASE_ADMISSION_INTERVAL_MS\)/.exec(browser);
+  assert.ok(interval, 'browser operator runtime may continue driving legacy lease admission');
+  assert.match(interval[1] ?? '', /commit(Coordinator)?\??\.admitPendingUnderLease/);
+
+  const direct = await readFile(`${root}src/repository-engineering-runtime.ts`, 'utf8');
+  assert.doesNotMatch(direct, /LEASE_ADMISSION_INTERVAL_MS/);
+  assert.doesNotMatch(direct, /admitPendingUnderLease/);
+  assert.match(direct, /autonomous: \{ killSwitch \}/,
+    'private stdio must wire autonomous-local execution instead of Goal Lease admission');
 });

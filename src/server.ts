@@ -432,26 +432,22 @@ export function createBrowserVerifyAdmittedMcpServer(
 export interface GitCommitMcpContext {
   callerContext: GatewayCallerContext;
   coordinator: Pick<DurableCommitCoordinator, 'preview' | 'result' | 'admitByPolicy' | 'rejectLocal'>;
-  /**
-   * Direct stdio development is lease-only: a commit either executes under one uniquely matching
-   * Goal Lease or is terminally refused. Browser proposal surfaces leave this false/absent and keep
-   * their human-review semantics.
-   */
-  leaseOnly?: boolean;
+  /** Direct private stdio executes immediately under the trusted autonomous-local profile. */
+  autonomous?: boolean;
 }
 
 export interface MutationMcpContext {
   callerContext: GatewayCallerContext;
   coordinator: Pick<DurableMutationCoordinator, 'preview' | 'replace' | 'result' | 'admitByPolicy' | 'rejectLocal'>;
-  /** Same direct-stdio lease-only boundary as GitCommitMcpContext. */
-  leaseOnly?: boolean;
+  /** Same trusted autonomous-local boundary as GitCommitMcpContext. */
+  autonomous?: boolean;
 }
 
 /**
  * Runtime-owned authority for model-chosen argv execution.
  *
- * The server never derives this from mutation/commit presence: a runtime with a named Goal Lease
- * may expose the tool, but this context must explicitly authorize the caller's exact workspace
+ * The server never derives this from mutation/commit presence: the trusted private runtime
+ * must explicitly authorize the caller's exact workspace
  * before any argv reaches the executor.
  */
 export interface CommandMcpContext {
@@ -504,19 +500,19 @@ export function createGatewayMcpServer(
 
   if (machineContext) {
     server.registerTool('machine.open', {
-      description: 'Open one Goal-Lease-authorized local-machine directory independent of DevSpace allowedRoots.',
+      description: 'Open one local-machine directory in the trusted autonomous-local profile, independent of DevSpace allowedRoots.',
       inputSchema: z.object({ path: z.string().min(1).max(4096) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     }, async ({ path }) => toolResult(await machineContext.open(path)));
 
     server.registerTool('machine.describe', {
-      description: 'Describe the effective Goal Lease for one opened local-machine workspace.',
+      description: 'Describe the autonomous-local authority state for one opened local-machine workspace.',
       inputSchema: z.object({ workspace_id: z.string().min(1).max(256) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id }) => toolResult(await machineContext.describe(workspace_id)));
 
     server.registerTool('machine.list', {
-      description: 'List bounded directory entries inside one Goal-Lease-authorized local-machine workspace.',
+      description: 'List bounded directory entries inside one caller-owned local-machine workspace.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         path: z.string().min(1).max(4096).optional(),
@@ -528,7 +524,7 @@ export function createGatewayMcpServer(
     ));
 
     server.registerTool('machine.read', {
-      description: 'Read bounded UTF-8 text inside one Goal-Lease-authorized local-machine workspace with secret redaction.',
+      description: 'Read bounded UTF-8 text inside one caller-owned local-machine workspace with secret redaction.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         path: z.string().min(1).max(4096),
@@ -537,7 +533,7 @@ export function createGatewayMcpServer(
     }, async ({ workspace_id, path }) => toolResult(await machineContext.read(workspace_id, path)));
 
     server.registerTool('machine.command.run', {
-      description: 'Run one bounded local-machine argv command under an explicit Goal Lease; no caller-supplied environment or shell string is accepted.',
+      description: 'Run one bounded local-machine argv command in the trusted autonomous-local profile; no caller-supplied environment or shell string is accepted.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         argv: z.array(z.string().min(1).max(4096)).min(1).max(32),
@@ -555,7 +551,7 @@ export function createGatewayMcpServer(
     ));
 
     server.registerTool('machine.process.start', {
-      description: 'Start one detached local-machine argv process under an explicit Goal Lease and sanitized environment.',
+      description: 'Start one detached local-machine argv process in the trusted autonomous-local profile and sanitized environment.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         argv: z.array(z.string().min(1).max(4096)).min(1).max(32),
@@ -631,7 +627,7 @@ export function createGatewayMcpServer(
 
   if (commandContext) {
     server.registerTool('command.run', {
-      description: 'Run one Goal-Lease-authorized bounded argv command in the opened workspace; shell strings and caller-supplied environment are not accepted.',
+      description: 'Run one bounded argv command in the caller-owned workspace under the trusted autonomous-local profile; shell strings and caller-supplied environment are not accepted.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         argv: z.array(z.string().min(1).max(512)).min(1).max(16),
@@ -660,8 +656,8 @@ export function createGatewayMcpServer(
       after: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
     }).strict();
     server.registerTool('mutation.preview', {
-      description: mutationContext.leaseOnly
-        ? 'Execute one bounded existing-file update under one uniquely matching Goal Lease; otherwise deny without pending review.'
+      description: mutationContext.autonomous
+        ? 'Execute one bounded existing-file update immediately under the trusted autonomous-local profile.'
         : 'Persist an immutable preview of one bounded existing-file update for local human review.',
       inputSchema: previewInput,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
@@ -675,8 +671,8 @@ export function createGatewayMcpServer(
     ));
 
     server.registerTool('file.replace', {
-      description: mutationContext.leaseOnly
-        ? 'Replace one existing text file under one uniquely matching Goal Lease and exact base SHA-256.'
+      description: mutationContext.autonomous
+        ? 'Replace one existing text file immediately under the trusted autonomous-local profile and exact base SHA-256.'
         : 'Propose replacing one existing text file by exact base SHA-256; no raw patch text is accepted.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -695,8 +691,8 @@ export function createGatewayMcpServer(
     ));
 
     server.registerTool('file.create', {
-      description: mutationContext.leaseOnly
-        ? 'Create one new file under one uniquely matching Goal Lease; otherwise deny without pending review.'
+      description: mutationContext.autonomous
+        ? 'Create one new file immediately under the trusted autonomous-local profile.'
         : 'Propose creating one new file for local human review; nothing is written until approved.',
       inputSchema: z.object({
         workspace_id: z.string().min(1),
@@ -705,7 +701,7 @@ export function createGatewayMcpServer(
       }).strict(),
       annotations: {
         readOnlyHint: false,
-        destructiveHint: mutationContext.leaseOnly === true,
+        destructiveHint: mutationContext.autonomous === true,
         idempotentHint: false,
         openWorldHint: false,
       },
@@ -731,8 +727,8 @@ export function createGatewayMcpServer(
 
   if (gitCommitContext) {
     server.registerTool('git.commit', {
-      description: gitCommitContext.leaseOnly
-        ? 'Create one exact-path commit under one uniquely matching Goal Lease and branch/HEAD CAS.'
+      description: gitCommitContext.autonomous
+        ? 'Create one exact-path commit immediately under the trusted autonomous-local profile and branch/HEAD CAS.'
         : 'Propose one commit of an exact path set for local human review; nothing is committed until approved.',
       inputSchema: z.object({
         workspace_id: z.string().min(1),
@@ -741,7 +737,7 @@ export function createGatewayMcpServer(
       }).strict(),
       annotations: {
         readOnlyHint: false,
-        destructiveHint: gitCommitContext.leaseOnly === true,
+        destructiveHint: gitCommitContext.autonomous === true,
         idempotentHint: false,
         openWorldHint: false,
       },
@@ -771,12 +767,12 @@ async function directMutationExecution<T extends object & {
   create: () => Promise<T>,
 ) {
   const preview = await create();
-  if (context.leaseOnly !== true) return directMutationToolResult(preview);
+  if (context.autonomous !== true) return directMutationToolResult(preview);
 
   const decision = await context.coordinator.admitByPolicy(preview.mutationId);
   if (!decision.admitted) {
-    // Direct stdio has no human-review fallback. Terminalize the just-created record so it never
-    // appears on the operator page, then report only the policy denial to the caller.
+    // Direct private stdio has no per-change human-review fallback. Terminalize a refused
+    // autonomous record so it never appears on the operator page.
     context.coordinator.rejectLocal(preview.mutationId);
     throw new Error(`Gateway denied mutation: ${decision.code}`);
   }
@@ -790,7 +786,7 @@ async function directCommitExecution<T extends object & { commitId: string }>(
   create: () => Promise<T>,
 ) {
   const preview = await create();
-  if (context.leaseOnly !== true) return toolResult(preview);
+  if (context.autonomous !== true) return toolResult(preview);
 
   const decision = await context.coordinator.admitByPolicy(preview.commitId);
   if (!decision.admitted) {

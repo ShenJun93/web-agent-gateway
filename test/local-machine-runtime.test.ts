@@ -1,20 +1,18 @@
 import assert from 'node:assert/strict';
 import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import {
-  createLocalMachineContext,
-} from '../src/local-machine-runtime.js';
+import { createLocalMachineContext } from '../src/local-machine-runtime.js';
 import { WorkspaceIdentityRegistry } from '../src/workspace-identity.js';
 
 const SESSION = 'session_machine_test';
 const ADAPTER = 'private.stdio.v1';
 const OWNER = 'owner_machine_test';
 
-async function fixture(t: test.TestContext, withLease: boolean) {
+async function fixture(t: test.TestContext, killSwitch = false) {
   const dir = await mkdtemp(join(tmpdir(), 'wag-local-machine-'));
   const root = await realpath(dir);
   const statePath = join(dir, 'authority.sqlite');
@@ -26,39 +24,11 @@ async function fixture(t: test.TestContext, withLease: boolean) {
     sessionId: SESSION,
     adapterId: ADAPTER,
   });
-  if (withLease) {
-    const now = Date.now();
-    store.insertGoalLease({
-      leaseId: 'lease_machine_test',
-      createdAt: now,
-      notBefore: now - 1_000,
-      expiresAt: now + 60_000,
-      bindings: JSON.stringify({
-        workspaceRoots: [root],
-        allowedTools: [
-          'machine.open',
-          'machine.list',
-          'machine.read',
-          'machine.command.run',
-          'machine.process.start',
-          'mutation.preview'
-        ],
-        pathPatterns: ['**'],
-        maxFiles: 8,
-        maxBytes: 128 * 1024,
-        maxDiffBytes: 64 * 1024,
-        admittedSessions: [SESSION],
-        admittedAdapters: [ADAPTER],
-        commitSemantics: 'none',
-      }),
-    });
-  }
   const context = createLocalMachineContext({
     store,
     callerContext,
     workspaceIdentities: identities,
-    killSwitch: () => false,
-    gatewayRoot: resolve(root, '..', 'not-the-running-gateway'),
+    killSwitch: () => killSwitch,
   });
   t.after(async () => {
     identities.close();
@@ -68,16 +38,24 @@ async function fixture(t: test.TestContext, withLease: boolean) {
   return { root, context };
 }
 
-test('local-machine open is fail-closed without a matching Goal Lease', async (t) => {
-  const { root, context } = await fixture(t, false);
-  await assert.rejects(() => context.open(root), /NO_LEASE/);
+test('local-machine opens without Goal Lease and reports autonomous-local authority', async (t) => {
+  const { root, context } = await fixture(t);
+  const opened = await context.open(root) as {
+    workspace_id: string;
+    authority: { mode: string; kill_switch: string };
+  };
+  assert.match(opened.workspace_id, /^ws_/);
+  assert.deepEqual(opened.authority, { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' });
+
+  const described = await context.describe(opened.workspace_id) as {
+    authority: { mode: string; kill_switch: string };
+  };
+  assert.deepEqual(described.authority, { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' });
 });
 
-test('local-machine lease authorizes bounded read/list/argv execution and detached start', async (t) => {
-  const { root, context } = await fixture(t, true);
-  const opened = await context.open(root) as { workspace_id: string; lease_id: string };
-  assert.match(opened.workspace_id, /^ws_/);
-  assert.equal(opened.lease_id, 'lease_machine_test');
+test('local-machine autonomous profile permits bounded read/list/argv execution and detached start', async (t) => {
+  const { root, context } = await fixture(t);
+  const opened = await context.open(root) as { workspace_id: string };
 
   const listed = await context.list(opened.workspace_id) as { entries: Array<{ name: string }> };
   assert.ok(listed.entries.some((entry) => entry.name === 'note.txt'));
@@ -124,13 +102,32 @@ test('local-machine lease authorizes bounded read/list/argv execution and detach
   assert.equal(await readFile(marker, 'utf8'), 'started\n');
 });
 
-test('local-machine workspace ownership prevents a second session from inheriting the handle', async (t) => {
+test('local-machine kill switch blocks effects but leaves caller-owned inspection available', async (t) => {
   const { root, context } = await fixture(t, true);
   const opened = await context.open(root) as { workspace_id: string };
 
+  assert.match(
+    (await context.read(opened.workspace_id, 'note.txt') as { content: string }).content,
+    /alpha/,
+  );
+  await assert.rejects(
+    () => context.commandRun(opened.workspace_id, [process.execPath, '--version']),
+    /KILL_SWITCH_ENGAGED/,
+  );
+  await assert.rejects(
+    () => context.processStart(opened.workspace_id, [process.execPath, '--version']),
+    /KILL_SWITCH_ENGAGED/,
+  );
+});
+
+test('local-machine workspace ownership prevents a second session from inheriting the handle', async (t) => {
+  const { root, context } = await fixture(t);
+  const opened = await context.open(root) as { workspace_id: string };
+
   const dir = await mkdtemp(join(tmpdir(), 'wag-local-machine-other-'));
-  const store = new SqliteDurableStore(join(dir, 'authority.sqlite'));
-  const identities = new WorkspaceIdentityRegistry(join(dir, 'authority.sqlite'));
+  const statePath = join(dir, 'authority.sqlite');
+  const store = new SqliteDurableStore(statePath);
+  const identities = new WorkspaceIdentityRegistry(statePath);
   const other = createLocalMachineContext({
     store,
     callerContext: createGatewayCallerContext({
@@ -140,7 +137,6 @@ test('local-machine workspace ownership prevents a second session from inheritin
     }),
     workspaceIdentities: identities,
     killSwitch: () => false,
-    gatewayRoot: resolve(root, '..', 'not-the-running-gateway'),
   });
   t.after(async () => {
     identities.close();

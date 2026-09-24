@@ -741,7 +741,7 @@ export class SqliteDurableStore {
    */
   policyAdmitMutation(input: {
     mutationId: string;
-    leaseId: string;
+    leaseId?: string;
     now: number;
     admissionTtlMs: number;
   }): MutationRecord | undefined {

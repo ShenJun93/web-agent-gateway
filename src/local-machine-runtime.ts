@@ -6,11 +6,9 @@ import type { GatewayCallerContext } from './caller-context.js';
 import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
 import { sanitizeLocalMachineEnvironment } from './environment-policy.js';
 import { describeReadableUtf8Text } from './file-read-metadata.js';
-import { resolveGoalLease } from './goal-lease-resolver.js';
 import { assertReadTarget, validateReadPath } from './path-policy.js';
 import {
   WorkspaceIdentityRegistry,
-  workspaceIdentityFingerprint,
   type WorkspaceIdentityObservation,
 } from './workspace-identity.js';
 
@@ -57,42 +55,23 @@ export function createLocalMachineContext(options: {
   callerContext: GatewayCallerContext;
   workspaceIdentities: WorkspaceIdentityRegistry;
   killSwitch: () => boolean;
-  gatewayRoot: string;
 }): LocalMachineContext {
   const { store, callerContext, workspaceIdentities } = options;
 
-  async function authorize(
-    tool: string,
-    root: string,
-    fingerprint: string,
-    path: string,
-  ) {
-    const resolution = resolveGoalLease(store, {
-      now: Date.now(),
-      requests: [{
-        tool,
-        sessionId: callerContext.sessionId,
-        adapterId: callerContext.adapterId,
-        workspaceRoot: root,
-        workspaceFingerprint: fingerprint,
-        path,
-        diffBytes: 0,
-      }],
-      killSwitch: options.killSwitch(),
-      gatewayRoot: options.gatewayRoot,
-    });
-    if (!resolution.admitted) throw new Error(`Gateway denied ${tool}: ${resolution.code}`);
-    return resolution.resolved.lease;
+  function assertEffectAllowed(): void {
+    if (options.killSwitch()) {
+      throw new Error('Gateway denied local-machine effect: KILL_SWITCH_ENGAGED');
+    }
   }
 
-  async function ownedWorkspace(workspaceId: string): Promise<{ workspace: WorkspaceRecord; fingerprint: string }> {
+  async function ownedWorkspace(workspaceId: string): Promise<{ workspace: WorkspaceRecord }> {
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace || workspace.backendKind !== BACKEND_KIND || !sameAuthorityTuple(workspace, callerContext)) {
       throw new Error('Gateway denied local-machine workspace');
     }
     const observation = await observeLocalMachineWorkspaceIdentity(workspace.canonicalRoot);
-    const record = workspaceIdentities.record(workspaceId, observation);
-    return { workspace, fingerprint: record.fingerprint };
+    workspaceIdentities.record(workspaceId, observation);
+    return { workspace };
   }
 
   async function resolveCwd(root: string, requested?: string): Promise<string> {
@@ -115,8 +94,6 @@ export function createLocalMachineContext(options: {
         throw new Error('Gateway denied unsafe local-machine namespace');
       }
       const observation = await observeLocalMachineWorkspaceIdentity(requested);
-      const fingerprint = workspaceIdentityFingerprint(observation);
-      const lease = await authorize('machine.open', observation.canonicalRoot, fingerprint, '.');
       const workspace = store.openWorkspaceRecord({
         ownerId: callerContext.ownerId,
         sessionId: callerContext.sessionId,
@@ -129,41 +106,26 @@ export function createLocalMachineContext(options: {
       return {
         workspace_id: workspace.workspaceId,
         root: observation.canonicalRoot,
-        lease_id: lease.leaseId,
-        expires_at: lease.expiresAt,
+        authority: { mode: 'AUTONOMOUS_LOCAL', kill_switch: options.killSwitch() ? 'ENGAGED' : 'CLEAR' },
       };
     },
 
     async describe(workspaceId) {
-      const { workspace, fingerprint } = await ownedWorkspace(workspaceId);
-      const resolution = resolveGoalLease(store, {
-        now: Date.now(),
-        requests: [{
-          tool: 'machine.open',
-          sessionId: callerContext.sessionId,
-          adapterId: callerContext.adapterId,
-          workspaceRoot: workspace.canonicalRoot,
-          workspaceFingerprint: fingerprint,
-          path: '.',
-          diffBytes: 0,
-        }],
-        killSwitch: options.killSwitch(),
-        gatewayRoot: options.gatewayRoot,
-      });
+      const { workspace } = await ownedWorkspace(workspaceId);
       return {
         workspace_id: workspaceId,
         root: workspace.canonicalRoot,
         backend: BACKEND_KIND,
-        lease: resolution.admitted
-          ? { state: 'ACTIVE', lease_id: resolution.resolved.lease.leaseId, expires_at: resolution.resolved.lease.expiresAt }
-          : { state: resolution.code === 'AMBIGUOUS_LEASE' ? 'AMBIGUOUS' : 'NONE', reason: resolution.code },
+        authority: {
+          mode: 'AUTONOMOUS_LOCAL',
+          kill_switch: options.killSwitch() ? 'ENGAGED' : 'CLEAR',
+        },
       };
     },
 
     async list(workspaceId, path = '.', maxEntries = 200) {
-      const { workspace, fingerprint } = await ownedWorkspace(workspaceId);
+      const { workspace } = await ownedWorkspace(workspaceId);
       const safePath = path === '.' ? '.' : validateReadPath(path);
-      await authorize('machine.list', workspace.canonicalRoot, fingerprint, safePath);
       const target = safePath === '.'
         ? workspace.canonicalRoot
         : await realpath(resolve(workspace.canonicalRoot, safePath));
@@ -184,9 +146,8 @@ export function createLocalMachineContext(options: {
     },
 
     async read(workspaceId, path) {
-      const { workspace, fingerprint } = await ownedWorkspace(workspaceId);
+      const { workspace } = await ownedWorkspace(workspaceId);
       const safePath = validateReadPath(path);
-      await authorize('machine.read', workspace.canonicalRoot, fingerprint, safePath);
       await assertReadTarget(workspace.canonicalRoot, safePath);
       const target = await realpath(resolve(workspace.canonicalRoot, safePath));
       const bytes = await readFile(target);
@@ -198,27 +159,27 @@ export function createLocalMachineContext(options: {
     },
 
     async commandRun(workspaceId, argv, commandOptions = {}) {
-      const { workspace, fingerprint } = await ownedWorkspace(workspaceId);
+      const { workspace } = await ownedWorkspace(workspaceId);
       validateArgv(argv);
-      await authorize('machine.command.run', workspace.canonicalRoot, fingerprint, '.');
+      assertEffectAllowed();
       const cwd = await resolveCwd(workspace.canonicalRoot, commandOptions.cwd);
       const timeoutMs = Math.min(Math.max(commandOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS, 100), MAX_TIMEOUT_MS);
       const maxOutputTokens = Math.min(
         Math.max(commandOptions.maxOutputTokens ?? DEFAULT_OUTPUT_TOKENS, 100),
         MAX_OUTPUT_TOKENS,
       );
-      // Revalidate immediately before process creation.
-      await authorize('machine.command.run', workspace.canonicalRoot, fingerprint, '.');
+      // Revalidate the emergency stop immediately before process creation.
+      assertEffectAllowed();
       return runBounded(argv, cwd, timeoutMs, maxOutputTokens);
     },
 
     async processStart(workspaceId, argv, commandOptions = {}) {
-      const { workspace, fingerprint } = await ownedWorkspace(workspaceId);
+      const { workspace } = await ownedWorkspace(workspaceId);
       validateArgv(argv);
-      await authorize('machine.process.start', workspace.canonicalRoot, fingerprint, '.');
+      assertEffectAllowed();
       const cwd = await resolveCwd(workspace.canonicalRoot, commandOptions.cwd);
-      // Revalidate immediately before process creation.
-      await authorize('machine.process.start', workspace.canonicalRoot, fingerprint, '.');
+      // Revalidate the emergency stop immediately before process creation.
+      assertEffectAllowed();
       const child = spawn(argv[0]!, argv.slice(1), {
         cwd,
         env: sanitizeLocalMachineEnvironment(process.env),

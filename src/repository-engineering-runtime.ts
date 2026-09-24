@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 import { adapterCorrelationDigest } from './adapter-admission.js';
 import { sameAuthorityTuple } from './authority-tuple.js';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
@@ -12,9 +11,6 @@ import { LocalMachineFileMutationBackend } from './executor/local-machine-file-m
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
 import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
 import { DurableCommitCoordinator } from './git-commit.js';
-import type { GoalLeaseBindings } from './goal-lease.js';
-import { resolveGoalLease } from './goal-lease-resolver.js';
-import { installGoalLeaseAtomicBudgetGuard } from './goal-lease-atomic-budget.js';
 import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
@@ -30,9 +26,6 @@ import {
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
 
-/** Checkout/runtime this authority implementation was loaded from; never caller-selected. */
-const GATEWAY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
-
 export interface RepositoryEngineeringProfile {
   inspect: boolean;
   mutation: boolean;
@@ -41,10 +34,9 @@ export interface RepositoryEngineeringProfile {
    * The durable session this surface will keep using, present only when a `sessionCorrelation`
    * makes it stable.
    *
-   * It is reported for one reason: a lease binds a session id, and a human issuing a lease out of
-   * band has to be able to find out which one to bind. The browser path solved the same bootstrap
-   * problem with `listAdapterSessions`; this is its stdio equivalent. A session id is an identity,
-   * not a credential — it grants nothing without a lease row a human wrote.
+   * It is reported for reconnect/audit continuity. A session id is an identity, not a credential:
+   * private-local authority comes from the trusted runtime profile, while browser-facing authority
+   * remains on its separate reviewed/delegated path.
    */
   stableSessionId?: string;
 }
@@ -62,14 +54,11 @@ export interface RepositoryEngineeringRuntime {
   mutationContext?: MutationMcpContext;
   /** Present only after a successful attach with git commit enabled. */
   gitCommitContext?: GitCommitMcpContext;
-  /**
-   * Present only when the full local-development profile also names a Goal Lease.
-   * Each command call still re-evaluates that lease against its exact workspace.
-   */
+  /** Trusted autonomous-local argv execution, bound to caller-owned workspace identity. */
   commandContext?: CommandMcpContext;
   /** Effective preflight authority for an opened workspace. */
   capabilityContext?: CapabilityMcpContext;
-  /** Goal-Lease-authorized Windows/local-machine operations independent of DevSpace roots. */
+  /** Trusted autonomous-local Windows operations independent of DevSpace roots. */
   machineContext?: LocalMachineContext;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
@@ -91,9 +80,6 @@ export interface RepositoryEngineeringRuntimeOptions {
  * mutation backend needs the executor that only exists after the gateway bootstraps.
  * `attach` is therefore a second phase rather than constructor work.
  */
-/** How often a configured lease is offered the pending queue. Idle when nothing is pending. */
-const LEASE_ADMISSION_INTERVAL_MS = 1_000;
-
 export async function startRepositoryEngineeringRuntime(
   config: PrivateGatewayConfig,
   options: RepositoryEngineeringRuntimeOptions = {},
@@ -112,15 +98,14 @@ export async function startRepositoryEngineeringRuntime(
   }
 
   /*
-   * Lease activation is resolved from durable rows per consequential request. A stable
-   * sessionCorrelation remains the supported way for a human to issue a lease for this direct
-   * surface, but no configured lease id is required or consulted as an activation selector.
+   * Private stdio is the trusted autonomous-local execution plane. sessionCorrelation is only
+   * stable identity/audit continuity; it grants no execution authority and no Goal Lease is
+   * consulted by this runtime.
    */
 
   const store = new SqliteDurableStore(mutationSettings.statePath);
   let workspaceIdentities: WorkspaceIdentityRegistry;
   try {
-    installGoalLeaseAtomicBudgetGuard(mutationSettings.statePath);
     workspaceIdentities = new WorkspaceIdentityRegistry(mutationSettings.statePath);
   } catch (error) {
     store.close();
@@ -167,7 +152,6 @@ export async function startRepositoryEngineeringRuntime(
     callerContext,
     workspaceIdentities,
     killSwitch,
-    gatewayRoot: GATEWAY_ROOT,
   });
 
   async function freshWorkspaceFingerprint(workspaceId: string): Promise<string | undefined> {
@@ -212,46 +196,20 @@ export async function startRepositoryEngineeringRuntime(
     if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
       return { granted: false as const, reason: 'WORKSPACE_NOT_GRANTED' };
     }
-
-    const workspaceFingerprint = await freshWorkspaceFingerprint(workspaceId);
-    const resolution = resolveGoalLease(store, {
-      now: Date.now(),
-      requests: [{
-        tool: 'command.run',
-        sessionId: callerContext.sessionId,
-        adapterId: callerContext.adapterId,
-        workspaceRoot: workspace.canonicalRoot,
-        ...(workspaceFingerprint === undefined ? {} : { workspaceFingerprint }),
-        path: '.',
-        diffBytes: 0,
-      }],
-      killSwitch: killSwitch(),
-      gatewayRoot: GATEWAY_ROOT,
-    });
-    if (!resolution.admitted) {
-      return {
-        granted: false as const,
-        reason: resolution.code,
-        workspace,
-      };
+    await freshWorkspaceFingerprint(workspaceId);
+    if (killSwitch()) {
+      return { granted: false as const, reason: 'KILL_SWITCH_ENGAGED', workspace };
     }
-
-    const lease = resolution.resolved.lease;
-    const bindings: GoalLeaseBindings = lease.bindings;
     return {
       granted: true as const,
-      reason: 'GRANTED',
+      reason: 'AUTONOMOUS_LOCAL_PROFILE',
       workspace,
-      leaseId: lease.leaseId,
-      expiresAt: lease.expiresAt,
-      bindings,
     };
   }
 
   let operator: OperatorServer | undefined;
   let mutationCoordinator: DurableMutationCoordinator | undefined;
   let attachedExecutor: DevspaceExecutor | undefined;
-  let leaseTimer: ReturnType<typeof setInterval> | undefined;
   let attached = false;
   let closed = false;
   const runtime: RepositoryEngineeringRuntime = {
@@ -288,34 +246,13 @@ export async function startRepositoryEngineeringRuntime(
         if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
           throw new Error('Gateway denied capability workspace');
         }
-
-        const bindings = command.bindings;
-        const leaseAllows = (tool: string) => command.leaseId !== undefined
-          && bindings !== undefined
-          && Array.isArray(bindings.workspaceRoots)
-          && bindings.workspaceRoots.includes(workspace.canonicalRoot)
-          && Array.isArray(bindings.admittedSessions)
-          && bindings.admittedSessions.includes(callerContext.sessionId)
-          && Array.isArray(bindings.admittedAdapters)
-          && bindings.admittedAdapters.includes(callerContext.adapterId)
-          && Array.isArray(bindings.allowedTools)
-          && bindings.allowedTools.includes(tool);
-
-        const leaseState = command.granted
-          ? 'ACTIVE'
-          : command.reason === 'AMBIGUOUS_LEASE'
-            ? 'AMBIGUOUS'
-            : 'NONE';
-
-        const mutationAutonomous = leaseAllows('mutation.preview');
-        const commitAutonomous = gitCommitSettings !== undefined && leaseAllows('git.commit');
+        const executionEnabled = !killSwitch();
         return {
           workspace_id: workspaceId,
           root: workspace.canonicalRoot,
-          lease: {
-            state: leaseState,
-            ...(command.leaseId === undefined ? {} : { lease_id: command.leaseId }),
-            ...(command.expiresAt === undefined ? {} : { expires_at: command.expiresAt }),
+          authority: {
+            mode: 'AUTONOMOUS_LOCAL',
+            kill_switch: executionEnabled ? 'CLEAR' : 'ENGAGED',
           },
           capabilities: {
             REPOSITORY_READ: {
@@ -328,30 +265,27 @@ export async function startRepositoryEngineeringRuntime(
               granted: true, denied: false, grantable: true, requires_human: false, reason: 'PROFILE_SCOPED',
             },
             FILE_WRITE: {
-              granted: mutationAutonomous,
-              denied: !mutationAutonomous,
+              granted: executionEnabled,
+              denied: !executionEnabled,
               grantable: true,
               requires_human: false,
-              reason: mutationAutonomous ? 'GOAL_LEASE_GRANTED' : 'GOAL_LEASE_REQUIRED',
-              ...(bindings?.pathPatterns === undefined ? {} : { path_patterns: bindings.pathPatterns }),
+              reason: executionEnabled ? 'AUTONOMOUS_LOCAL_PROFILE' : 'KILL_SWITCH_ENGAGED',
             },
             GIT_COMMIT: {
-              granted: gitCommitSettings !== undefined && commitAutonomous,
-              denied: gitCommitSettings === undefined || !commitAutonomous,
+              granted: gitCommitSettings !== undefined && executionEnabled,
+              denied: gitCommitSettings === undefined || !executionEnabled,
               grantable: gitCommitSettings !== undefined,
               requires_human: false,
               reason: gitCommitSettings === undefined
                 ? 'CAPABILITY_UNAVAILABLE'
-                : commitAutonomous ? 'GOAL_LEASE_GRANTED' : 'GOAL_LEASE_REQUIRED',
+                : executionEnabled ? 'AUTONOMOUS_LOCAL_PROFILE' : 'KILL_SWITCH_ENGAGED',
             },
             LOCAL_COMMAND: {
               granted: command.granted,
               denied: !command.granted,
               grantable: true,
-              requires_human: !command.granted,
+              requires_human: false,
               reason: command.reason,
-              ...(command.leaseId === undefined ? {} : { lease_id: command.leaseId }),
-              ...(command.expiresAt === undefined ? {} : { expires_at: command.expiresAt }),
             },
             GIT_PUSH: {
               granted: false, denied: true, grantable: false, requires_human: true, reason: 'REMOTE_EFFECT_NOT_GRANTED',
@@ -365,33 +299,19 @@ export async function startRepositoryEngineeringRuntime(
       attached = true;
       attachedExecutor = executor;
       try {
-        const goalLeaseResolver = {
-          killSwitch,
-          workspaceFingerprint: (workspaceId: string) => workspaceIdentities.fingerprint(workspaceId),
-          liveWorkspaceFingerprint: (workspaceId: string, _canonicalRoot: string) =>
-            freshWorkspaceFingerprint(workspaceId),
-        };
         const coordinator = new DurableMutationCoordinator({
           store,
           backends: [
             new DevspaceFileMutationBackend(executor),
             new LocalMachineFileMutationBackend(),
           ],
-          goalLeaseResolver,
+          autonomous: { killSwitch },
         });
         await coordinator.reconcile();
         mutationCoordinator = coordinator;
 
         let commitCoordinator: DurableCommitCoordinator | undefined;
 
-        // Always drive the bounded pending queues. With no matching durable lease each record stays
-        // pending for human review; issuing or revoking a lease therefore takes effect without a
-        // config edit or gateway restart.
-        leaseTimer = setInterval(() => {
-          void coordinator.admitPendingUnderLease().catch(() => undefined);
-          void commitCoordinator?.admitPendingUnderLease().catch(() => undefined);
-        }, LEASE_ADMISSION_INTERVAL_MS);
-        leaseTimer.unref?.();
 
         if (gitCommitSettings) {
           commitCoordinator = new DurableCommitCoordinator({
@@ -402,13 +322,13 @@ export async function startRepositoryEngineeringRuntime(
               : { protectedBranches: gitCommitSettings.protectedBranches }),
             ...(mutationSettings.reviewTtlMs === undefined
               ? {} : { reviewTtlMs: mutationSettings.reviewTtlMs }),
-            goalLeaseResolver,
+            autonomous: { killSwitch },
           });
           await commitCoordinator.reconcile();
         }
 
-        // The command surface is a capability of the full local-development profile. Authority is
-        // resolved for every call, so publishing the tool does not activate any lease.
+        // The command surface is part of the trusted private-local profile. Workspace ownership
+        // and the emergency kill switch are revalidated for every call.
         if (inspect && commitCoordinator) {
           runtime.commandContext = {
             async authorize(workspaceId) {
@@ -429,7 +349,7 @@ export async function startRepositoryEngineeringRuntime(
           ...(commitCoordinator === undefined ? {} : { commitCoordinator }),
         });
         if (commitCoordinator) {
-          runtime.gitCommitContext = { callerContext, coordinator: commitCoordinator, leaseOnly: true };
+          runtime.gitCommitContext = { callerContext, coordinator: commitCoordinator, autonomous: true };
         }
         // The single-use bootstrap token is written beside the state database rather than
         // printed, because a stdio gateway's stderr belongs to whatever spawned it — for the
@@ -437,7 +357,7 @@ export async function startRepositoryEngineeringRuntime(
         // log or forward child stderr. The file carries the same exposure as the state
         // database itself and is removed on shutdown.
         await writeFile(urlFile, `${operator.bootstrapUrl}\n`, { encoding: 'utf8', mode: 0o600 });
-        runtime.mutationContext = { callerContext, coordinator, leaseOnly: true };
+        runtime.mutationContext = { callerContext, coordinator, autonomous: true };
         runtime.operator = { origin: operator.origin, bootstrapUrl: operator.bootstrapUrl, urlFile };
       } catch (error) {
         await runtime.close();
@@ -447,9 +367,6 @@ export async function startRepositoryEngineeringRuntime(
     async close() {
       if (closed) return;
       closed = true;
-      // Before the store closes: an admission tick firing against a closed handle would throw
-      // inside a timer, where nothing is waiting to catch it.
-      if (leaseTimer) clearInterval(leaseTimer);
       try {
         await rm(urlFile, { force: true }).catch(() => undefined);
         await operator?.close();
