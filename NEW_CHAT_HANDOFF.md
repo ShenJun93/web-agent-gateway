@@ -1,65 +1,23 @@
 # Current handoff — WAG Autonomous Local / DC Replacement
 
-> **2026-09-24 superseding status:** the Goal Lease architecture documented below is historical.
-> It is no longer part of the live private-local or browser-effect authority path. Keep the older
-> sections as provenance only; do not use them to decide current execution authority.
+Date: 2026-09-24
+Status: LIVE / AUTOMATION-FIRST
 
-## 2026-09-24 live cutover
+## Canonical truth rule
 
-```text
-source migration commit:
-7a6e266ac39249320a5d0327950d5b89a7e03879
-refactor: remove Goal Lease from private local automation
-
-active runtime:
-E:/WAG-Runtime/7a6e266ac392
-
-authority:
-AUTONOMOUS_LOCAL
-kill switch = CLEAR
-```
-
-Private stdio/WAG Local now authorizes bounded command, mutation, exact-path commit and local-machine
-operations from its trusted profile plus caller-owned durable workspace identity. Goal Lease issue,
-TTL, rollover, successor and human confirmation are not required. `sessionCorrelation` is stable
-identity/audit continuity only.
-
-Browser filesystem/Git effects stay on the local operator-review path. Goal UI Delegation remains a
-separate Run/dispatch control and never approves those effects. Production browser runtime no longer
-drives Goal Lease admission.
-
-The live MCP server exposes 22 tools, but ChatGPT can retain a frozen 16-tool connector snapshot.
-Current source therefore includes a compatibility bridge: the existing `workspace.open` can fall
-back to a local-machine workspace, and existing `repo.list`, `file.read` and `command.run`
-dispatch by durable workspace backend. This removes connector Refresh from the DC-replacement
-execution path.
-
-Current source HEAD may be newer than the runtime because documentation/compatibility work continues.
-Always fresh-check Git and the activation receipt before promotion.
-
----
-
-## Historical Goal Lease handoff — retained for provenance
-
-Date: 2026-09-23
-
-## Canonical rule
-
-Do not reconstruct project state from chat history.
+Do not reconstruct state from chat history.
 
 Fresh-check, in this order:
 
-1. Git branch/HEAD and worktree snapshot.
-2. `AGENTS.md`.
-3. `README.md` plus the latest approved spec and relevant ADRs.
-4. `docs/benchmarks/2026-09-23-multi-workspace-development-lanes.md`.
-5. Current source/tests and live WAG capability state.
-6. Durable activation / mutation / commit receipts when they exist.
+1. Git branch/HEAD and the exact worktree snapshot.
+2. Current source/tests.
+3. Live runtime activation receipt.
+4. Live WAG capability projection.
+5. Durable mutation/commit/process receipts.
 
-If this file conflicts with live Git/source/test/runtime evidence, live evidence wins and this file
-must be updated. Chat history is not an authority source for this slice.
+If this file conflicts with fresh runtime/source evidence, fresh evidence wins and this file should be updated.
 
-## Current source baseline
+## Source and runtime
 
 ```text
 workspace:
@@ -69,346 +27,281 @@ branch:
 feat/goal-ui-delegation-v1
 
 HEAD:
-f1c8cc54cb47b23253992993ba9e583f9864ce60
+e8e846f9ea8c6d8873922a22d06b6393d4fb7d8a
 
-commit:
-feat: resolve goal leases per request
+latest commit:
+e8e846f fix: prevent redacted local file round-trip corruption
+
+runtime:
+E:/WAG-Runtime/e8e846f9ea8c/dist/cli.js
+
+activation receipt:
+E:/WAG-Acceptance/promotion-logs/activate-e8e846f9ea8c.json
+
+activation state:
+ALREADY_ACTIVE
 ```
 
-The worktree remains intentionally dirty/private-index-like. Never use broad reset/clean/restore to
-make status look clean.
+DevSpace was not restarted for this promotion.
 
-The resolver slice commit contains exactly the intended 16 paths. Unrelated pre-existing dirty
-paths were not swept into it.
+The worktree is intentionally private-index-like. Many paths may appear as staged deletion plus
+untracked replacement even when the worktree bytes are the intended current bytes. Never use broad
+`git reset`, `git clean`, `checkout -- .` or `restore .` to make status look clean.
 
-## Latest source-only hardening — read this before chat history
+Use exact paths for every commit and inspect the resulting commit receipt.
 
-The newest repository evidence is:
+## Authority model
+
+Private stdio / WAG Local is the trusted autonomous-local plane.
 
 ```text
-docs/benchmarks/2026-09-23-goal-lease-effect-boundary-revalidation.md
-docs/benchmarks/2026-09-23-goal-lease-atomic-budget.md
-docs/benchmarks/2026-09-24-goal-lease-stable-workspace-identity.md
-docs/benchmarks/2026-09-24-goal-lease-live-workspace-identity-revalidation.md
+authority.mode        = AUTONOMOUS_LOCAL
+authority.kill_switch = CLEAR
+
+FILE_WRITE    = granted / AUTONOMOUS_LOCAL_PROFILE
+GIT_COMMIT    = granted / AUTONOMOUS_LOCAL_PROFILE
+LOCAL_COMMAND = granted / AUTONOMOUS_LOCAL_PROFILE
+GIT_PUSH      = denied / non-grantable
 ```
 
-These slices are **not committed or deployed yet**. HEAD and the live runtime are still
-`f1c8cc54cb47b23253992993ba9e583f9864ce60`.
+Goal Lease is retired from live private-local execution.
 
-Current source adds:
+There is no per-goal issue, successor, TTL, budget lease, rollover or human confirmation step for
+normal private-local filesystem, command, process, terminal or exact-path commit work.
 
-- Goal Lease re-resolution immediately before filesystem write;
-- Goal Lease re-resolution immediately before the Git backend may move a ref;
-- exact admitted-lease continuity across that effect boundary;
-- persistent SQLite atomic budget reservation for `POLICY_APPROVED` mutation authority rows;
-- cross-connection last-slot protection for both file and byte budgets;
-- fail-closed startup installation in private stdio and browser operator runtimes.
+`sessionCorrelation` is reconnect/audit identity only. It grants no execution authority and WAG may
+mint one for a new autonomous lane.
 
-Measured on the current working-tree bytes:
+The emergency stop is:
 
 ```text
-effect-boundary focused tests       = 5/5 PASS
-atomic two-connection race tests    = 2/2 PASS
-runtime-composition focused gate    = 23/23 PASS
-Goal Lease focused regression       = 61/61 PASS
-npm run typecheck                   = PASS
-npm run build                       = PASS
+npm run autonomy:stop
+npm run autonomy:stop -- --status
+npm run autonomy:stop -- --clear
 ```
 
-Do not claim the entire repository suite passed. Exact source SHA values and commands are recorded
-in the two benchmark receipts above.
+It is re-read at consequential effect boundaries.
 
-The atomic budget slice does **not** edit `src/durable-store.ts`: WAG correctly rejects mutation
-targets over 64 KiB. The implementation installs a persistent trigger through a separate,
-short-lived connection to the same authority DB; it does not reach into the store's private DB
-handle and no shell-write bypass was used.
+## Browser boundary remains separate
 
-Because the existing human lease's Git commit binding does not authorize a new source HEAD, do not
-commit/promote these source-only changes until a human reviews/issues the next bounded authority.
-Human-only Goal Lease issuance and `sessionCorrelation` boundaries remain unchanged.
+Browser content is untrusted.
 
-### Stable workspace identity source candidate
+Browser filesystem/Git effects remain proposal-only and require local operator review.
 
-The Phase 4 precursor is now source-green and recorded in:
+Goal UI Delegation is browser Run/dispatch authority only. It never grants private-local filesystem,
+Git, process or terminal authority.
+
+Do not automate passwords, passkeys, MFA, auth consent, payments, signing, identity verification,
+operator Approve/Reject, browser Run, or Goal UI Delegation issuance/renewal.
+
+## Current private-MCP surface
+
+Fresh readiness projects 33 tools:
 
 ```text
-docs/benchmarks/2026-09-24-goal-lease-stable-workspace-identity.md
+health
+workspace.open
+machine.open
+machine.describe
+machine.list
+machine.read
+machine.search
+machine.info
+machine.mkdir
+machine.move
+machine.delete
+machine.command.run
+machine.process.start
+machine.process.list
+machine.process.inspect
+machine.process.terminate
+machine.terminal.open
+machine.terminal.output
+machine.terminal.input
+machine.terminal.close
+repo.list
+repo.search
+repo.snapshot
+repo.diff
+file.read
+verify.run
+command.run
+mutation.preview
+file.replace
+file.create
+mutation.result
+git.commit
+git.commit.result
 ```
 
-New workspace opens can persist a versioned fingerprint over the canonical root, backend identity,
-filesystem device/inode identity and Git top-level/git-dir/common-dir identity. New Goal Leases may
-optionally bind those fingerprints through `workspaceIdentities`; when present they must cover every
-workspace root exactly once and a missing/changed request fingerprint denies. Existing leases that
-omit the field retain their current root-only semantics until a human issues an identity-bound
-successor.
+ChatGPT can retain an older 16-tool connector snapshot. This is not an execution blocker.
 
-The fingerprint is propagated through command, mutation, commit and both pre-effect revalidation
-paths. `workspace.open` waits for its identity binder before returning the opaque workspace id, and
-the browser admitted-workspace service re-observes identity on durable reopen.
+The compatibility bridge lets the existing names operate on local-machine workspaces:
 
-Fresh measured gates for this slice:
+- `workspace.open` falls back to a local-machine workspace when DevSpace cannot admit the root;
+- `repo.list` dispatches to local directory listing;
+- `repo.search` dispatches to bounded recursive local search;
+- `file.read` dispatches to local UTF-8 read with secret redaction;
+- `file.create` / `file.replace` use the local-machine durable mutation backend;
+- `command.run` dispatches to bounded local argv execution.
+
+Therefore manual connector Refresh is not required for ordinary inspect/read/write/command work.
+
+## DC-replacement local-machine capabilities
+
+Current source/live behavior supports:
+
+### Filesystem
+
+- open/describe caller-owned local-machine workspace;
+- list;
+- bounded recursive search;
+- metadata/info;
+- UTF-8 read with secret redaction;
+- create/replace through durable mutation records;
+- mkdir;
+- move/rename;
+- exact delete and explicit recursive directory delete.
+
+### Commands and processes
+
+- bounded argv execution;
+- sanitized child environment;
+- no caller-supplied environment;
+- secret-redacted bounded output;
+- detached owned process start;
+- process list/inspect;
+- PID-identity checked termination.
+
+### Interactive terminal
+
+- WAG-owned PowerShell/cmd/bash sessions;
+- bounded base64 input;
+- bounded output buffer;
+- secret-redacted output;
+- caller/workspace ownership;
+- explicit close/termination;
+- emergency-stop checks before effects.
+
+### Git
+
+- exact-path commit only;
+- private index / Git plumbing;
+- repository identity, branch, HEAD and tree CAS;
+- safe Git environment and hooks/filter execution hardening;
+- `git.push` remains unavailable/non-grantable.
+
+## Frozen connector bridge live proof
+
+The currently visible ChatGPT WAG connector can autonomously open:
 
 ```text
-workspace identity + policy/resolver/admitted workspace = 26/26 PASS
-direct stdio/session runtime                            = 21/21 PASS
-browser + effect revalidation + atomic budget           = 11/11 PASS
-focused total                                            = 58/58 PASS
-npm run typecheck                                        = PASS
-npm run build                                            = PASS
+C:/Users/PACMAP/AppData/Local/WAG-Local
 ```
 
-This slice is not committed or promoted. Live runtime and HEAD remain `f1c8cc54...`; live
-identity-bound successor acceptance is still outstanding. Do not claim the entire repository test
-suite passed.
+and perform local list/read/write/command through the already-cached tool names.
 
-### Live workspace identity and process-spawn revalidation extension
-
-The latest source bytes are recorded in:
+Latest live redaction-roundtrip acceptance on runtime `e8e846f9ea8c`:
 
 ```text
-docs/benchmarks/2026-09-24-goal-lease-live-workspace-identity-revalidation.md
+created:
+logs/redacted-roundtrip-live-probe.txt
+mutation = mut_ee4dbbc1-1f6e-4cfe-9b28-844be08c8644
+state    = SUCCEEDED
+
+file.read returned:
+API_KEY=<REDACTED>
+
+attempted redacted full-content file.replace:
+mutation = mut_1cd4cdb3-f9f0-4e61-b46c-5ecbd34f7b38
+state    = FAILED
+
+cleanup:
+CLEAN=True
 ```
 
-A failing runtime regression proved that persisting fingerprint A at `workspace.open` was not
-sufficient: replacing the filesystem/repository object behind the same canonical root could leave a
-running command path using cached identity A. The source now re-observes live workspace identity
-for direct command authority and at mutation/commit effect boundaries, with the same live observer
-wired into the browser operator runtime.
+This proves a redacted read cannot be accidentally round-tripped back into a secret-bearing local
+file.
 
-`command.run` also performs a second runtime-owned authority check after bounded cwd/argv
-validation and immediately before `executor.execCommand`. That callback is not MCP input and
-cannot be supplied or removed by the client.
+## Independent sessions
 
-Fresh measured gates on the recorded bytes:
+Lane B:
 
 ```text
-identity/effect/resolver/direct runtime = 41/41 PASS
-browser/atomic/admitted workspace       = 12/12 PASS
-MCP surface                             = 15/15 PASS
-direct readiness/session                = 48/48 PASS
-npm run typecheck                       = PASS
-npm run build                           = PASS
+workspace:
+E:/WAG-Acceptance/multi-lane-b-d8fd901d
+
+branch:
+wag/acceptance-lane-b-d8fd901d
+
+HEAD:
+6a87dbe20cdbcdc04568b11cb7c1744fb66c5142
+
+stable session:
+session_e2dad5f3-4961-4134-b5f9-3a35b58d3248
+
+persistent B runtime:
+PID 35932
+E:/WAG-Runtime/e8e846f9ea8c
+state = READY
 ```
 
-These are separate measured batches; do not sum them as a unique whole-suite total. This extension
-is also source-only. Do not commit/promote it while the existing human Goal Lease Git-CAS binding
-is stale; a human-reviewed successor remains the next authority-changing step.
-
-## Frozen target
-
-Goal Lease is a multi-active durable authority plane, not a singleton runtime selector.
+Lane C:
 
 ```text
-0 eligible leases  -> deny NO_LEASE
-1 eligible lease   -> authorize exact lease
->1 eligible leases -> deny AMBIGUOUS_LEASE
+workspace:
+E:/WAG-Acceptance/multi-lane-c-d8fd901d
+
+branch:
+wag/acceptance-lane-c-d8fd901d
+
+HEAD:
+c38f39def9611e0ed681c8df4916730fa6f35f7d
 ```
 
-No heuristic precedence. Human-only issuance remains. `git.push` remains denied/non-grantable.
-Proposal/approval is separate from lease authority.
+A/B/C private-local execution no longer depends on any per-goal grant.
 
-`repositoryEngineering.mutation.goalLeaseId` is legacy parsing only for this successor path; it
-must not activate or prioritize a lease.
+## Verification at current source
 
-## Implemented and committed
-
-Key files:
+Fresh current checks:
 
 ```text
-src/goal-lease-resolver.ts
-src/goal-lease.ts
-src/durable-mutation.ts
-src/git-commit.ts
-src/repository-engineering-runtime.ts
-src/browser-operator-runtime.ts
-src/private-config.ts
-src/cli.ts
-scripts/prepare-direct-mcp-tunnel.ts
-scripts/goal-lease-delegation-control.ts
+typecheck = PASS
+build     = PASS
+diffcheck = PASS
+surface   = 24/24 PASS
 
-test/goal-lease-resolver.test.ts
-test/repository-engineering-runtime.test.ts
-test/direct-mcp-readiness.test.ts
-test/direct-mcp-session-binding.test.ts
+local-machine runtime/DC-parity/MCP/file backend = 12/12 PASS
+autonomous + browser authority separation        = 55/55 PASS
+durable mutation/store                           = 12/12 PASS
+harness + workspace identity                     = 26/26 PASS
 ```
 
-Fresh measured gates before promotion:
+Do not claim a whole-repository pass unless it is explicitly run and completes.
 
-```text
-goal-lease resolver + repository runtime = 15 pass, 0 fail
-direct MCP readiness + session binding   = 48 pass, 0 fail
-CLI/config/issuance guard                = 30 pass, 0 fail
-DC replacement surface                   = 12 pass, 0 fail
-browser operator runtime                 = 4 pass, 0 fail
+## Current automation rule
 
-focused measured total                   = 109 pass, 0 fail
-typecheck                                = pass
-build                                    = pass
-```
+Desktop Commander is not part of the normal workflow.
 
-A larger mixed regression batch hit the 30-second command ceiling after many passes and before
-completion. Do not report it as either a pass or a test failure. Do not claim the whole repository
-test suite passed.
+If WAG cannot perform a local-machine task that DC would normally perform, treat that as a WAG
+capability gap. Prefer adding a bounded WAG capability plus acceptance test over asking the user to
+relay shell commands or re-enabling DC.
 
-The runtime preparation helper independently typechecked and built a detached worktree of
-`f1c8cc54cb47b23253992993ba9e583f9864ce60`.
+A normal private-local task should not require the user to:
 
-## Live runtime — promoted
+- copy/paste PowerShell;
+- inspect process trees manually;
+- edit WAG launchers manually;
+- refresh connector tools before ordinary local work;
+- issue per-task authority;
+- restart DevSpace.
 
-Activation receipt:
+Human interaction remains only at genuine human-presence/security boundaries, especially browser
+authority, authentication/consent, payment/signing and provider/account enrollment.
 
-```text
-E:/WAG-Acceptance/promotion-logs/activate-f1c8cc54cb47.json
+## Do not mutate unrelated projects
 
-state       = SUCCEEDED
-sourceHead  = f1c8cc54cb47b23253992993ba9e583f9864ce60
-previousCli = E:/WAG-Runtime/b05ec91dbc93/dist/cli.js
-cli         = E:/WAG-Runtime/f1c8cc54cb47/dist/cli.js
-launcherPid = 19820
-completed   = 2026-09-23T16:25:27.870Z
-```
+Do not modify UAF or PFP while working this WAG project unless the user explicitly switches project
+scope.
 
-DevSpace was not restarted.
-
-Fresh live behavioral fingerprint after activation:
-
-- WAG health = ok;
-- current WAG development workspace resolves `lease_mue8eeve_793f7c2c` as ACTIVE;
-- FILE_WRITE, GIT_COMMIT and LOCAL_COMMAND are granted there;
-- GIT_PUSH remains denied/non-grantable;
-- `E:/Projects/web-agent-gateway` has no matching lease, reports
-  `LOCAL_COMMAND.reason = NO_LEASE`, and `command.run` is denied with
-  `Gateway denied command: NO_LEASE`.
-
-That zero-match behavior is the deployed resolver path, not the old singleton selected-lease path.
-
-## Durable lease inventory / current live blocker
-
-The durable store was inspected directly. Historical A/B/multi-workspace leases are expired or
-revoked. Exactly the current development lease is ACTIVE:
-
-```text
-lease_mue8eeve_793f7c2c
-session = session_d9e39801-87fd-40f5-92b7-999a48609f1d
-adapter = private.stdio.v1
-workspace =
-  E:/Projects/web-agent-gateway/.worktrees/claude-autonomous-wag-harness-v1
-commit HEAD binding =
-  b05ec91dbc93cb772e8d1d2b73ea4ff4ff4426d5
-expiresAt = 1790190116042
-```
-
-Because source HEAD is now `f1c8cc54...`, this lease still grants command/file authority but its
-commit CAS is intentionally stale. Do not weaken or bypass that CAS.
-
-A read-only rollover preview measured current spend:
-
-```text
-source lease = lease_mue8eeve_793f7c2c
-filesChanged = 18
-bytesWritten = 207515
-preview digest =
-  19dfa4aabc8194d6ae143e549fe9c6724673c87050fae8bd8161e912b6cd2b73
-```
-
-Prepared successor bindings intentionally narrower than the measured residual budget, while updating only the commit HEAD, are stored
-at:
-
-```text
-docs/benchmarks/2026-09-23-goal-lease-successor-f1c8cc54.bindings.json
-
-maxFiles     = 96
-maxBytes     = 3500000
-maxDiffBytes = 262144
-HEAD         = f1c8cc54cb47b23253992993ba9e583f9864ce60
-```
-
-Do **not** use the old `--apply-rollover` activation path for this architecture: the new invariant
-is that durable leases are resolved hot and do not require `goalLeaseId` config edits or WAG
-restart.
-
-The next authority-changing step is deliberately human-only. The agent must not mint, renew, widen,
-or choose a new session correlation on the human's behalf.
-
-## Direct stdio session identity reality
-
-The private stdio adapter does not currently receive or derive a ChatGPT per-conversation identity.
-Its stable session is selected by human-written local `sessionCorrelation`, then resolved through
-`adapterCorrelationDigest(...)` and the durable adapter-session store.
-
-Therefore two ChatGPT conversations that enter through the same configured stdio lane are not, by
-themselves, two WAG authority sessions. Live A/B acceptance currently requires two separately
-human-configured connector/runtime lanes with distinct stable correlations, or a later Phase 4
-provider-derived identity mechanism. The agent must not create those correlations on the human's
-behalf; the human-presence guard explicitly treats writing `sessionCorrelation` as authority
-configuration.
-
-## Human-only next step — successor handoff
-
-The next mutation of authority must be performed by a person in an interactive local terminal. The
-prepared envelope is deliberately tighter than the measured predecessor residual budget.
-
-While `lease_mue8eeve_793f7c2c` is still ACTIVE with more than 60 minutes remaining, run:
-
-```powershell
-Push-Location 'E:\Projects\web-agent-gateway\.worktrees\claude-autonomous-wag-harness-v1'
-try {
-  npx.cmd tsx .\scripts\goal-lease-delegation-control.ts --issue `
-    --state 'E:\AI-BROWSER\wag-acceptance\devspace-state\wag-mutation.sqlite' `
-    --bindings 'E:\Projects\web-agent-gateway\.worktrees\claude-autonomous-wag-harness-v1\docs\benchmarks\2026-09-23-goal-lease-successor-f1c8cc54.bindings.json' `
-    --ttl-minutes 60
-} finally {
-  Pop-Location
-}
-```
-
-Review the emitted plan and type the exact requested `ISSUE <sha256>` only if it matches.
-
-For the live ambiguity acceptance, **do not revoke the predecessor yet**. With both matching rows
-active, the deployed resolver should report `AMBIGUOUS_LEASE` without any WAG restart. After that
-observation, revoke the predecessor locally:
-
-```powershell
-Push-Location 'E:\Projects\web-agent-gateway\.worktrees\claude-autonomous-wag-harness-v1'
-try {
-  npx.cmd tsx .\scripts\goal-lease-delegation-control.ts `
-    --revoke lease_mue8eeve_793f7c2c `
-    --state 'E:\AI-BROWSER\wag-acceptance\devspace-state\wag-mutation.sqlite'
-} finally {
-  Pop-Location
-}
-```
-
-The new lease must then become uniquely resolvable immediately, again without config edit or WAG
-restart. If the predecessor has less than 60 minutes remaining, do not use the fixed TTL above;
-remeasure/review the grant as a new human issuance instead of pretending it is a bounded successor.
-
-## Live acceptance still required
-
-Source-level acceptance is green and the resolver runtime is live, but full multi-session production
-acceptance is not yet claimed.
-
-Still required:
-
-- human-issued successor for the current HEAD, with residual budget preserved;
-- at least two concurrently usable stable provider/session contexts with independent workspace
-  leases;
-- A/Workspace A -> Lease A and B/Workspace B -> Lease B;
-- cross-session/workspace denial;
-- revoke A while B remains usable;
-- issue C and successor C2 observed without WAG restart;
-- duplicate matching lease -> AMBIGUOUS_LEASE;
-- branch/HEAD CAS and path/argv/budget/kill constraints;
-- GIT_PUSH remains impossible.
-
-## Do not mutate
-
-- UAF
-- PFP
-- DevSpace configuration merely for this deployment
-- Goal Lease human-only issuance boundary
-- provider/account/tunnel credentials
-
-Do not restart DevSpace unless fresh evidence proves it is required.
-
-After live multi-session Goal Lease acceptance, return to UAF Task4 runtime verification.
+Do not restart DevSpace unless fresh evidence shows it is required.
