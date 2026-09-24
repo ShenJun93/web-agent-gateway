@@ -164,7 +164,7 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
             argv,
             ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
             ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
-          }, cwd);
+          }, cwd, workspace.canonicalRoot);
           return { profile, devspaceWorkspaceId: workspace.devspaceWorkspaceId };
         });
         if (options.beforeExecute) {

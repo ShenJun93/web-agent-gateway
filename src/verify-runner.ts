@@ -97,9 +97,17 @@ const args = isScript
   ? ['/d', '/s', '/c', '""' + resolved + '"' + input.argv.slice(1).map(function (a) { return ' ' + a; }).join('') + '"']
   : input.argv.slice(1);
 
+const executionRoot = input.executionRoot;
+if (executionRoot !== undefined && (typeof executionRoot !== 'string' || !isAbsolute(executionRoot))) {
+  process.exit(125);
+}
+const childCwd = executionRoot === undefined
+  ? input.cwd
+  : join(executionRoot, input.cwd === '.' ? '' : input.cwd);
+
 const child = spawn(file, args, {
   env: env,
-  cwd: input.cwd,
+  cwd: childCwd,
   stdio: 'inherit',
   windowsHide: true,
   windowsVerbatimArguments: isScript,
@@ -149,11 +157,13 @@ export function buildVerifyCommand(
   envEntries: readonly (readonly [string, string])[],
   timeoutMs: number,
   cwd = '.',
+  executionRoot?: string,
 ): string {
   const payload = {
     argv: [...argv],
     env: Object.fromEntries(envEntries),
     cwd,
+    ...(executionRoot === undefined ? {} : { executionRoot }),
     treeKillAfterMs: timeoutMs + VERIFY_TREE_KILL_GRACE_MS,
   };
   return [
