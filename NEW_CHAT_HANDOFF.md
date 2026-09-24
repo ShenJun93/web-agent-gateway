@@ -26,11 +26,12 @@ E:/Projects/web-agent-gateway/.worktrees/claude-autonomous-wag-harness-v1
 branch:
 feat/goal-ui-delegation-v1
 
-HEAD:
+behavior source commit:
 e8e846f9ea8c6d8873922a22d06b6393d4fb7d8a
-
-latest commit:
 e8e846f fix: prevent redacted local file round-trip corruption
+
+current Git HEAD:
+fresh-check it; documentation-only commits may be newer than the deployed behavior commit
 
 runtime:
 E:/WAG-Runtime/e8e846f9ea8c/dist/cli.js
