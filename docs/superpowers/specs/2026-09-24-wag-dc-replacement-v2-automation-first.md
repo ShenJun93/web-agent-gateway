@@ -1,25 +1,18 @@
 # WAG DC Replacement v2 — Automation-First Local Machine Control
 
-Date: 2026-09-24
-Status: IMPLEMENTATION IN PROGRESS
-Supersedes the scope limitation in: `2026-09-19-wag-dc-replacement-v1-design.md`
+Date: 2026-09-25
+Status: LIVE / CORE LOCAL AUTOMATION ACCEPTED
 
 ## Mission
 
-WAG must replace Desktop Commander for local-computer work rather than only repository engineering.
+WAG replaces Desktop Commander as the normal execution gateway for local-computer work.
 
-The human authorizes a bounded goal. WAG then performs every machine-local step inside that authority
-without asking the human to relay PowerShell, inspect processes, copy files, or restart local WAG
-components manually.
+A normal private-local task must not require the user to relay PowerShell, inspect process trees,
+edit launchers, refresh the connector catalog, issue a per-task authority object, or restart
+DevSpace.
 
-```text
-HUMAN = authority decision
-WAG   = execution, observation, recovery, receipts
-
-human relay of shell commands = failure of the automation target
-```
-
-DevSpace remains one privileged execution backend. It is no longer the boundary of the gateway.
+If a local task cannot be completed through WAG, treat that as a WAG capability gap and prefer a
+bounded WAG capability plus acceptance proof over a Desktop Commander fallback.
 
 ## Architecture
 
@@ -29,106 +22,131 @@ ChatGPT
   v
 private stdio WAG
   |
-  +-- Goal Lease resolver / kill switch / durable authority
+  +-- stable caller/session identity
+  +-- caller-owned workspaces
+  +-- live workspace-identity revalidation
+  +-- autonomous-local kill switch
+  +-- durable mutation / exact Git commit receipts
   |
-  +-- DevSpace backend
-  |     repository inspection / verify / repo commands / git
+  +-- DevSpace repository backend
   |
   +-- local-machine backend
-        filesystem inspection
-        exact-file mutation
-        bounded argv execution
-        detached process start
+        filesystem
+        bounded argv
+        process lifecycle
+        interactive terminal
         WAG runtime/launcher management
 ```
 
-The two backends share the same stable caller identity, Goal Lease resolution, path scope, durable
-workspace records, stable workspace identity and pre-effect revalidation.
+DevSpace is one backend, not WAG's filesystem boundary.
 
 ## Authority model
 
-Local-machine capability is not derived from `allowedRoots`.
+Private stdio / WAG Local is `AUTONOMOUS_LOCAL`.
 
-`allowedRoots` continues to bound the historical DevSpace `workspace.open` surface.
-Machine-local roots are admitted by a human-issued Goal Lease and opened through `machine.open`.
+There is no Goal Lease, per-goal issuance, successor, TTL grant, budget lease, rollover, or
+per-change human approval on this plane.
 
-A lease must name:
+`sessionCorrelation` is reconnect/audit identity only and may be minted by WAG.
 
-- exact canonical machine root;
-- exact session and adapter;
-- exact machine tools;
-- path patterns for read/write operations;
-- budget and lifetime.
+Consequential local effects remain bounded by:
 
-No machine capability may issue, renew, widen or revoke its own Goal Lease.
+- the fixed private stdio adapter;
+- caller-owned durable workspace handles;
+- canonical-root and path validation;
+- live filesystem/repository identity re-observation;
+- exact base-content CAS for mutation;
+- branch/HEAD/tree/identity CAS for commit;
+- bounded argv/time/output/input;
+- sanitized child environments and secret redaction;
+- PID creation-identity checks for process termination;
+- the autonomous-local emergency stop immediately before effects.
 
-The running gateway checkout remains protected by `SELF_MODIFICATION_REFUSED`. WAG upgrades are
-built beside the running checkout and activated through external runtime/launcher state, never by
-rewriting the approver in place.
+`git.push` and remote Git effects are unavailable/non-grantable.
 
-## Phase A production surface
+Browser Goal UI Delegation is separate browser Run authority. Browser-originated filesystem/Git
+effects remain on the operator-review plane.
 
-The first production slice exposes:
+## Current production local surface
 
-```text
-machine.open
-machine.describe
-machine.list
-machine.read
-machine.command.run
-machine.process.start
-```
+The accepted deployed surface contains 37 tools. Local-machine capabilities include:
 
-Existing durable mutation tools operate on a machine workspace through the new
-`local-machine` file backend:
+### Filesystem
 
-```text
-mutation.preview
-file.replace
-file.create
-mutation.result
-```
+- `machine.open` / `machine.describe`
+- recursive bounded `machine.list`
+- paged `machine.read`
+- `machine.read_many`
+- bounded recursive `machine.search`
+- `machine.info`
+- `machine.mkdir`
+- `machine.move`
+- exact / explicit-recursive `machine.delete`
+- durable `file.create`
+- exact-hash `file.replace`
+- secret-safe exact-block `file.edit_block`
 
-`machine.command.run` is intentionally powerful and therefore separately leased. It accepts argv,
-not a shell string, does not accept caller-supplied environment variables, uses a sanitized child
-environment, applies time/output bounds, revalidates authority immediately before spawn, and
-redacts obvious credential-shaped output before returning it.
+### Commands and processes
 
-A caller may explicitly run `pwsh.exe -Command ...` as argv when the human grant includes
-`machine.command.run`. WAG does not pretend such a process is confined to the root: the root is
-the authority context and cwd boundary, not an operating-system sandbox.
+- bounded argv `machine.command.run`
+- detached `machine.process.start`
+- `machine.process.list`
+- `machine.process.inspect`
+- PID-identity checked `machine.process.terminate`
 
-`machine.process.start` is a separately grantable detached-process capability with the same
-sanitized environment and immediate pre-spawn authority revalidation.
+### Interactive terminal
 
-## Follow-on parity
+- `machine.terminal.open`
+- `machine.terminal.list`
+- bounded `machine.terminal.input`
+- bounded/redacted `machine.terminal.output`
+- `machine.terminal.close`
 
-Phase A removes the blocker that forced human PowerShell relay and is the bootstrap needed to let WAG
-dogfood the remainder. Follow-on work should add purpose-built surfaces for:
+### Repository
 
-- process list / inspect / terminate;
-- interactive process sessions with bounded input/output;
-- mkdir / move / delete with durable receipts;
-- bounded recursive search and metadata;
-- native process-tree ownership and recovery;
-- machine-operation durable receipts independent of command output.
+- repo list/search/snapshot/diff
+- bounded verify and command execution
+- durable mutation receipts
+- exact-path Git commit and result receipts
 
-Generic local argv remains available only when explicitly granted, so purpose-built tools can reduce
-authority without reducing automation.
+## Frozen connector compatibility
 
-## Mandatory dogfood gate
+A ChatGPT conversation may retain an older 16-tool tool catalog.
 
-This milestone is not accepted until WAG itself, without Desktop Commander and without human shell
-relay, can:
+The runtime bridges the existing names to local-machine workspaces for ordinary local
+open/list/search/read/create/replace/command work, so catalog refresh is not a prerequisite for
+automation.
 
-1. open `C:/Users/PACMAP/AppData/Local/WAG-Local`;
-2. read the installed WAG launcher;
-3. inspect the current A runtime/process wiring;
-4. create or modify the bounded B launcher/profile;
-5. start the B runtime;
-6. verify the B process argv references `wag-live-b.config.json`;
-7. verify the B durable stable session is
-   `session_e2dad5f3-4961-4134-b5f9-3a35b58d3248`;
-8. complete the live A/B multi-session Goal Lease acceptance.
+The richer dedicated machine schemas become visible after connector refresh, but stale discovery
+must not force a human-shell fallback.
 
-Any step that asks the user to copy/paste PowerShell means the gate is not complete.
+## Secret-bearing edit rule
+
+A redacted full-file read must not be written back as a replacement.
+
+Use `file.edit_block` when editing a secret-bearing file without needing its unrelated contents.
+WAG reads the raw bytes internally, requires the target block to be unique, derives the exact base
+SHA itself, and executes through the normal durable mutation path.
+
+## Current accepted evidence
+
+- autonomous A/B/C sessions run without per-goal grants;
+- WAG can inspect and repair its own machine-local launcher/runtime state;
+- frozen connector read/write/command bridge is live;
+- filesystem/process/terminal DC-parity dogfood is live;
+- paged large reads, multi-read and recursive list are live;
+- secret-safe edit-block and terminal inventory are live on runtime
+  `E:/WAG-Runtime/805165068f9f`.
+
+## Remaining parity backlog
+
+These are improvements, not current human-relay blockers:
+
+- explicit append primitive for log/text workflows;
+- durable/recoverable process and terminal sessions across WAG restart;
+- asynchronous/search-continuation handles for very large trees;
+- WAG-native recent-tool-call / usage diagnostics;
+- richer binary/document/media operations where they materially improve over bounded local argv.
+
+Any new capability must preserve caller/workspace ownership, output bounds, secret handling,
+kill-switch revalidation and durable effect evidence.
