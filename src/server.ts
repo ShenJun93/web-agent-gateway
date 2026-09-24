@@ -605,6 +605,18 @@ export function createGatewayMcpServer(
       }),
     ));
 
+    server.registerTool('machine.search_continue', {
+      description: 'Continue one bounded local-machine search from an opaque WAG cursor.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        cursor: z.string().min(1).max(4096),
+        max_results: z.number().int().min(1).max(50).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, cursor, max_results }) => toolResult(
+      await machineContext.searchContinue(workspace_id, cursor, max_results),
+    ));
+
     server.registerTool('machine.info', {
       description: 'Read bounded filesystem metadata for one local-machine path.',
       inputSchema: z.object({

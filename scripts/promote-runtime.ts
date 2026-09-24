@@ -53,8 +53,8 @@ function run(
   if (result.status !== 0 && !options.allowFailure) {
     throw new Error(
       'Command failed (' + String(result.status) + '): ' + file + ' ' + args.join(' ')
-      + '\\nSTDOUT:\\n' + (result.stdout ?? '').trim()
-      + '\\nSTDERR:\\n' + (result.stderr ?? '').trim(),
+      + '\nSTDOUT:\n' + (result.stdout ?? '').trim()
+      + '\nSTDERR:\n' + (result.stderr ?? '').trim(),
     );
   }
   return {
@@ -86,7 +86,7 @@ function switchWrapper(expectedOld: string, next: string): void {
     '    if old not in s: raise SystemExit("expected WAG CLI path not found")',
     '    s = s.replace(old, new, 1)',
     'with open(p, "w", encoding="utf-8", newline="\\n") as f: f.write(s)',
-  ].join('\\n');
+  ].join('\n');
   run('wsl.exe', ['-e', 'python3', '-c', python, Wrapper, expectedOld, next]);
   run('wsl.exe', ['-e', 'chmod', '700', Wrapper]);
 }
@@ -168,7 +168,7 @@ function startWagTunnel(tag: string) {
       + ' -RedirectStandardError ' + psSingleQuote(stderr)
       + ' -PassThru',
     '[IO.File]::WriteAllText(' + psSingleQuote(pidFile) + ', [string]$p.Id)',
-  ].join('\\n');
+  ].join('\n');
 
   const launched = spawnSync(
     'powershell.exe',
@@ -272,7 +272,7 @@ function prepareRuntime(sourceHead: string): PreparedRuntime {
       sourceWorktree: Repo,
       preparedAtUtc: new Date().toISOString(),
       capability: Capability,
-    }, null, 2) + '\\n', 'utf8');
+    }, null, 2) + '\n', 'utf8');
   } finally {
     run('git.exe', ['-C', Repo, 'worktree', 'remove', '--force', staging], { allowFailure: true });
     rmSync(staging, { recursive: true, force: true });
@@ -288,7 +288,7 @@ function prepareRuntime(sourceHead: string): PreparedRuntime {
 function writeActivationReceipt(path: string, value: Record<string, unknown>): void {
   mkdirSync(LogDir, { recursive: true });
   const temp = path + '.activating';
-  writeFileSync(temp, JSON.stringify(value, null, 2) + '\\n', 'utf8');
+  writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', 'utf8');
   renameSync(temp, path);
 }
 

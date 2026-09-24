@@ -71,6 +71,16 @@ export interface LocalMachineSearchOptions {
   contextLines?: number;
   path?: string;
 }
+interface SearchCursorPayload {
+  version: 1;
+  rootHash: string;
+  query: string;
+  path: string;
+  ignoreCase: boolean;
+  contextLines: number;
+  skipFiles: number;
+  skipLine: number | null;
+}
 
 export interface LocalMachineReadOptions {
   offset?: number;
@@ -128,6 +138,7 @@ export interface LocalMachineContext {
   describe(workspaceId: string): Promise<object>;
   list(workspaceId: string, path?: string, maxEntries?: number, depth?: number): Promise<object>;
   search(workspaceId: string, query: string, options?: LocalMachineSearchOptions): Promise<object>;
+  searchContinue(workspaceId: string, cursor: string, maxResults?: number): Promise<object>;
   info(workspaceId: string, path?: string): Promise<object>;
   read(workspaceId: string, path: string, options?: LocalMachineReadOptions): Promise<object>;
   readMany(workspaceId: string, paths: readonly string[], options?: LocalMachineReadOptions): Promise<object>;
@@ -425,6 +436,102 @@ export function createLocalMachineContext(options: {
     };
   }
 
+  function validateSearchQuery(query: string): void {
+    if (!query || query.includes("\0") || query.includes("\r") || query.includes("\n")
+      || Buffer.byteLength(query, 'utf8') > 256) throw new Error('Gateway denied search query');
+  }
+
+  function searchRootHash(root: string): string {
+    const value = process.platform === 'win32' ? root.toLowerCase() : root;
+    return createHash('sha256').update(value, 'utf8').digest('hex');
+  }
+
+  function encodeSearchCursor(value: SearchCursorPayload): string {
+    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+  }
+
+  function decodeSearchCursor(cursor: string): SearchCursorPayload {
+    if (!cursor || cursor.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error('Gateway denied search cursor');
+    let parsed;
+    try { parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); }
+    catch { throw new Error('Gateway denied search cursor'); }
+    const value = parsed;
+    if (value?.version !== 1 || typeof value.rootHash !== "string" || !/^[a-f0-9]{64}$/.test(value.rootHash)
+      || typeof value.query !== "string" || typeof value.path !== "string"
+      || typeof value.ignoreCase !== "boolean" || !Number.isInteger(value.contextLines)
+      || value.contextLines < 0 || value.contextLines > 2 || !Number.isInteger(value.skipFiles)
+      || value.skipFiles < 0 || value.skipFiles > 10000000
+      || (value.skipLine !== null && (!Number.isInteger(value.skipLine) || value.skipLine < 0 || value.skipLine > 1000000))) {
+      throw new Error('Gateway denied search cursor');
+    }
+    validateSearchQuery(value.query);
+    const path = value.path === '.' ? '.' : validateReadPath(value.path);
+    return { ...value, path };
+  }
+
+  async function searchPage(workspace: WorkspaceRecord, query: string, searchOptions: LocalMachineSearchOptions = {}, resume?: SearchCursorPayload): Promise<object> {
+    validateSearchQuery(query);
+    const maxResults = Math.min(Math.max(searchOptions.maxResults ?? 20, 1), MAX_SEARCH_RESULTS);
+    const contextLines = Math.min(Math.max(searchOptions.contextLines ?? 1, 0), 2);
+    const startPath = searchOptions.path === undefined || searchOptions.path === '.' ? '.' : validateReadPath(searchOptions.path);
+    const start = startPath === '.' ? workspace.canonicalRoot : resolve(workspace.canonicalRoot, startPath);
+    if (startPath !== '.') await assertReadTarget(workspace.canonicalRoot, startPath);
+    if (resume && (resume.rootHash !== searchRootHash(workspace.canonicalRoot) || resume.query !== query
+      || resume.path !== startPath || resume.ignoreCase !== (searchOptions.ignoreCase ?? false)
+      || resume.contextLines !== contextLines)) throw new Error("Gateway denied search cursor workspace/options mismatch");
+
+    const needle = searchOptions.ignoreCase ? query.toLocaleLowerCase() : query;
+    const matches: Array<{ path: string; line: number; text: string; before: string[]; after: string[] }> = [];
+    let absoluteFiles = 0;
+    let visitedFiles = 0;
+    let stopped = false;
+    let nextCursor: string | undefined;
+    const skipFiles = resume?.skipFiles ?? 0;
+    const skipLine = resume?.skipLine ?? null;
+    const cursorFor = (files: number, line: number | null): string => encodeSearchCursor({
+      version: 1, rootHash: searchRootHash(workspace.canonicalRoot), query, path: startPath,
+      ignoreCase: searchOptions.ignoreCase ?? false, contextLines, skipFiles: files, skipLine: line,
+    });
+
+    const walk = async (dir: string): Promise<void> => {
+      if (stopped) return;
+      const entries = await readdir(dir, { withFileTypes: true });
+      entries.sort((a,b)=>a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+      for (const entry of entries) {
+        if (stopped) break;
+        if (entry.isSymbolicLink()) continue;
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) { await walk(full); continue; }
+        if (!entry.isFile()) continue;
+        if (absoluteFiles < skipFiles) { absoluteFiles += 1; continue; }
+        if (visitedFiles >= MAX_SEARCH_FILES) { nextCursor = cursorFor(absoluteFiles, null); stopped = true; break; }
+        visitedFiles += 1;
+        const currentFile = absoluteFiles;
+        absoluteFiles += 1;
+        const info = await stat(full);
+        if (info.size > MAX_READ_BYTES) continue;
+        let raw;
+        try { raw = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(full)); } catch { continue; }
+        const lines = raw.split(/\r?\n/);
+        const firstLine = currentFile === skipFiles && skipLine !== null ? Math.min(skipLine + 1, lines.length) : 0;
+        for (let index=firstLine; index<lines.length; index+=1) {
+          const hay = searchOptions.ignoreCase ? lines[index].toLocaleLowerCase() : lines[index];
+          if (!hay.includes(needle)) continue;
+          const rel = relative(workspace.canonicalRoot, full).replaceAll('\\', '/');
+          matches.push({ path: rel, line: index + 1, text: redactSecrets(lines[index]),
+            before: lines.slice(Math.max(0,index-contextLines),index).map(redactSecrets),
+            after: lines.slice(index+1,index+1+contextLines).map(redactSecrets) });
+          if (matches.length >= maxResults) { nextCursor = cursorFor(currentFile, index); stopped = true; break; }
+        }
+      }
+    };
+    await walk(start);
+    if (resume && absoluteFiles <= skipFiles && !stopped) throw new Error("Gateway denied stale search cursor");
+    return { matches, truncated: nextCursor !== undefined, visited_files: visitedFiles,
+      ...(nextCursor === undefined ? {} : { cursor: nextCursor }) };
+  }
+
+
   return {
     async open(path) {
       const requested = path.trim();
@@ -504,83 +611,15 @@ export function createLocalMachineContext(options: {
 
     async search(workspaceId, query, searchOptions = {}) {
       const { workspace } = await ownedWorkspace(workspaceId);
-      if (
-        !query
-        || query.includes('\0')
-        || query.includes('\r')
-        || query.includes('\n')
-        || Buffer.byteLength(query, 'utf8') > 256
-      ) {
-        throw new Error('Gateway denied search query');
-      }
-      const maxResults = Math.min(Math.max(searchOptions.maxResults ?? 20, 1), MAX_SEARCH_RESULTS);
-      const contextLines = Math.min(Math.max(searchOptions.contextLines ?? 1, 0), 2);
-      const startPath = searchOptions.path === undefined || searchOptions.path === '.'
-        ? '.'
-        : validateReadPath(searchOptions.path);
-      const start = startPath === '.'
-        ? workspace.canonicalRoot
-        : resolve(workspace.canonicalRoot, startPath);
-      if (startPath !== '.') await assertReadTarget(workspace.canonicalRoot, startPath);
+      return searchPage(workspace, query, searchOptions);
+    },
 
-      const needle = searchOptions.ignoreCase ? query.toLocaleLowerCase() : query;
-      const matches: Array<{
-        path: string;
-        line: number;
-        text: string;
-        before: string[];
-        after: string[];
-      }> = [];
-      let visitedFiles = 0;
-      let truncated = false;
-
-      const walk = async (dir: string): Promise<void> => {
-        if (truncated) return;
-        const entries = await readdir(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (truncated) break;
-          if (entry.isSymbolicLink()) continue;
-          const full = resolve(dir, entry.name);
-          if (entry.isDirectory()) {
-            await walk(full);
-            continue;
-          }
-          if (!entry.isFile()) continue;
-          visitedFiles += 1;
-          if (visitedFiles > MAX_SEARCH_FILES) {
-            truncated = true;
-            break;
-          }
-          const info = await stat(full);
-          if (info.size > MAX_READ_BYTES) continue;
-          let raw: string;
-          try {
-            raw = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(full));
-          } catch {
-            continue;
-          }
-          const lines = raw.split(/\r?\n/);
-          for (let index = 0; index < lines.length; index += 1) {
-            const hay = searchOptions.ignoreCase ? lines[index]!.toLocaleLowerCase() : lines[index]!;
-            if (!hay.includes(needle)) continue;
-            const rel = relative(workspace.canonicalRoot, full).replaceAll('\\', '/');
-            matches.push({
-              path: rel,
-              line: index + 1,
-              text: redactSecrets(lines[index]!),
-              before: lines.slice(Math.max(0, index - contextLines), index).map(redactSecrets),
-              after: lines.slice(index + 1, index + 1 + contextLines).map(redactSecrets),
-            });
-            if (matches.length >= maxResults) {
-              truncated = true;
-              break;
-            }
-          }
-        }
-      };
-
-      await walk(start);
-      return { matches, truncated, visited_files: visitedFiles };
+    async searchContinue(workspaceId, cursor, maxResults) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const resume = decodeSearchCursor(cursor);
+      if (resume.rootHash !== searchRootHash(workspace.canonicalRoot)) throw new Error("Gateway denied search cursor workspace/options mismatch");
+      return searchPage(workspace, resume.query, { path: resume.path, ignoreCase: resume.ignoreCase,
+        contextLines: resume.contextLines, ...(maxResults === undefined ? {} : { maxResults }) }, resume);
     },
 
     async info(workspaceId, path = '.') {
