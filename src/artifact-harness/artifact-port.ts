@@ -82,37 +82,18 @@ export class ArtifactPort {
     if (info.size > this.#maxBytes) throw new Error('ArtifactPort source exceeds size limit');
     const bytes = await readFile(source);
     if (bytes.length > this.#maxBytes) throw new Error('ArtifactPort source exceeds size limit');
+    return this.#persistBytes(owner, safeFilename(source), bytes);
+  }
 
-    const artifactId = `artifact_${this.#uuid()}`;
-    if (!ARTIFACT_ID.test(artifactId)) throw new Error('ArtifactPort generated invalid artifact id');
-    const root = await this.#rootPath();
-    const artifactRoot = resolve(root, artifactId);
-    await mkdir(artifactRoot);
-    const filename = safeFilename(source);
-    const payload = resolve(artifactRoot, filename);
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
-    const createdAt = this.#now();
-    const meta: ArtifactMeta = {
-      version: 1,
-      artifactId,
-      owner: Object.freeze({ ...owner }),
-      filename,
-      sizeBytes: bytes.length,
-      sha256,
-      createdAt,
-    };
-
-    try {
-      await writeFile(payload, bytes, { flag: 'wx' });
-      await writeFile(resolve(artifactRoot, 'META.json'), `${JSON.stringify(meta, null, 2)}\n`, {
-        encoding: 'utf8',
-        flag: 'wx',
-      });
-    } catch (error) {
-      await rm(artifactRoot, { recursive: true, force: true }).catch(() => undefined);
-      throw error;
-    }
-    return handle(meta, root);
+  async createBytes(
+    owner: GatewayAuthority,
+    filename: string,
+    bytesInput: Uint8Array,
+  ): Promise<ArtifactHandle> {
+    if (!(bytesInput instanceof Uint8Array)) throw new Error('ArtifactPort bytes are invalid');
+    const bytes = Buffer.from(bytesInput);
+    if (bytes.length > this.#maxBytes) throw new Error('ArtifactPort bytes exceed size limit');
+    return this.#persistBytes(owner, safeFilename(filename), bytes);
   }
 
   async get(owner: GatewayAuthority, artifactId: string): Promise<ArtifactHandle> {
@@ -147,6 +128,43 @@ export class ArtifactPort {
   async remove(owner: GatewayAuthority, artifactId: string): Promise<void> {
     const artifact = await this.get(owner, artifactId);
     await rm(resolve(await this.#rootPath(), artifact.artifactId), { recursive: true, force: false });
+  }
+
+  async #persistBytes(
+    owner: GatewayAuthority,
+    filename: string,
+    bytes: Uint8Array,
+  ): Promise<ArtifactHandle> {
+    if (bytes.length > this.#maxBytes) throw new Error('ArtifactPort bytes exceed size limit');
+    const artifactId = `artifact_${this.#uuid()}`;
+    if (!ARTIFACT_ID.test(artifactId)) throw new Error('ArtifactPort generated invalid artifact id');
+    const root = await this.#rootPath();
+    const artifactRoot = resolve(root, artifactId);
+    await mkdir(artifactRoot);
+    const payload = resolve(artifactRoot, filename);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const createdAt = this.#now();
+    const meta: ArtifactMeta = {
+      version: 1,
+      artifactId,
+      owner: Object.freeze({ ...owner }),
+      filename,
+      sizeBytes: bytes.length,
+      sha256,
+      createdAt,
+    };
+
+    try {
+      await writeFile(payload, bytes, { flag: 'wx' });
+      await writeFile(resolve(artifactRoot, 'META.json'), `${JSON.stringify(meta, null, 2)}\n`, {
+        encoding: 'utf8',
+        flag: 'wx',
+      });
+    } catch (error) {
+      await rm(artifactRoot, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+    return handle(meta, root);
   }
 
   async #rootPath(): Promise<string> {
