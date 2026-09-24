@@ -132,6 +132,7 @@ export async function main(
       commandContext: engineering.commandContext,
       capabilityContext: engineering.capabilityContext,
       machineContext: engineering.machineContext,
+      diagnosticsContext: engineering.diagnosticsContext,
     });
   } catch (error) {
     await closeQuietly(engineering);

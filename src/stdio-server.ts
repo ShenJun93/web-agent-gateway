@@ -9,6 +9,7 @@ import {
   type MutationMcpContext,
 } from './server.js';
 import type { LocalMachineContext } from './local-machine-runtime.js';
+import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 
 export interface GatewayStdioServerOptions {
   gateway: GatewayApi;
@@ -20,6 +21,7 @@ export interface GatewayStdioServerOptions {
   commandContext?: CommandMcpContext;
   capabilityContext?: CapabilityMcpContext;
   machineContext?: LocalMachineContext;
+  diagnosticsContext?: ToolUsageDiagnostics;
 }
 
 export interface GatewayStdioServer {
@@ -36,6 +38,7 @@ export async function startGatewayStdioServer(
     commandContext: options.commandContext,
     capabilityContext: options.capabilityContext,
     machineContext: options.machineContext,
+    diagnosticsContext: options.diagnosticsContext,
   });
   const transport = new StdioServerTransport(options.input, options.output);
   await server.connect(transport);

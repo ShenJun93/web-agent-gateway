@@ -5,6 +5,7 @@ import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext } from './local-machine-runtime.js';
+import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
 import type { DurableCommitCoordinator } from './git-commit.js';
 import type { BrowserVerifyRequestCoordinator } from './browser-verify-request.js';
@@ -460,16 +461,31 @@ export interface CapabilityMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext, machineContext }: {
+  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext, machineContext, diagnosticsContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     gitCommitContext?: GitCommitMcpContext;
     commandContext?: CommandMcpContext;
     capabilityContext?: CapabilityMcpContext;
     machineContext?: LocalMachineContext;
+    diagnosticsContext?: ToolUsageDiagnostics;
   } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
+  const registerTool = ((name: string, config: unknown, handler: (...args: any[]) => unknown) => {
+    const wrapped = async (...args: any[]) => {
+      const finish = diagnosticsContext?.begin(name);
+      try {
+        const value = await handler(...args);
+        finish?.(true);
+        return value;
+      } catch (error) {
+        finish?.(false, error);
+        throw error;
+      }
+    };
+    return (server.registerTool as any)(name, config, wrapped);
+  }) as McpServer['registerTool'];
 
   // Compatibility bridge for ChatGPT workspaces that still hold a frozen 16-tool snapshot.
   // The live server also exposes machine.* tools, but published/custom-app metadata is not
@@ -487,7 +503,7 @@ export function createGatewayMcpServer(
     }
   }
 
-  server.registerTool('health', {
+  registerTool('health', {
     description: 'Check gateway and executor compatibility.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async () => toolResult(await gateway.health()));
@@ -496,7 +512,7 @@ export function createGatewayMcpServer(
   // annotation may cause a client's write confirmation to be skipped, so the surface that a
   // remote client discovers must not under-declare. `createBrowserVerifyAdmittedMcpServer`
   // already declares this correctly; this surface had disagreed with it.
-  server.registerTool('workspace.open', {
+  registerTool('workspace.open', {
     description: 'Open one approved local workspace and return an opaque workspace id.',
     inputSchema: z.object({ path: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -520,7 +536,7 @@ export function createGatewayMcpServer(
   });
 
   if (capabilityContext) {
-    server.registerTool('capabilities.describe', {
+    registerTool('capabilities.describe', {
       description: 'Describe the effective bounded authority for one opened workspace before attempting consequential tools.',
       inputSchema: z.object({ workspace_id: z.string().min(1).max(256) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -528,19 +544,19 @@ export function createGatewayMcpServer(
   }
 
   if (machineContext) {
-    server.registerTool('machine.open', {
+    registerTool('machine.open', {
       description: 'Open one local-machine directory in the trusted autonomous-local profile, independent of DevSpace allowedRoots.',
       inputSchema: z.object({ path: z.string().min(1).max(4096) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     }, async ({ path }) => toolResult(await machineContext.open(path)));
 
-    server.registerTool('machine.describe', {
+    registerTool('machine.describe', {
       description: 'Describe the autonomous-local authority state for one opened local-machine workspace.',
       inputSchema: z.object({ workspace_id: z.string().min(1).max(256) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id }) => toolResult(await machineContext.describe(workspace_id)));
 
-    server.registerTool('machine.list', {
+    registerTool('machine.list', {
       description: 'List bounded directory entries inside one caller-owned local-machine workspace.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -553,7 +569,7 @@ export function createGatewayMcpServer(
       await machineContext.list(workspace_id, path, max_entries, depth),
     ));
 
-    server.registerTool('machine.read', {
+    registerTool('machine.read', {
       description: 'Read bounded UTF-8 text inside one caller-owned local-machine workspace with optional line pagination and secret redaction.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -569,7 +585,7 @@ export function createGatewayMcpServer(
       }),
     ));
 
-    server.registerTool('machine.read_many', {
+    registerTool('machine.read_many', {
       description: 'Read up to 20 bounded UTF-8 files from one caller-owned local-machine workspace; one failed file does not fail the batch.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -585,7 +601,7 @@ export function createGatewayMcpServer(
       }),
     ));
 
-    server.registerTool('machine.search', {
+    registerTool('machine.search', {
       description: 'Search bounded UTF-8 files recursively inside one caller-owned local-machine workspace.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -605,7 +621,7 @@ export function createGatewayMcpServer(
       }),
     ));
 
-    server.registerTool('machine.search_continue', {
+    registerTool('machine.search_continue', {
       description: 'Continue one bounded local-machine search from an opaque WAG cursor.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -617,7 +633,7 @@ export function createGatewayMcpServer(
       await machineContext.searchContinue(workspace_id, cursor, max_results),
     ));
 
-    server.registerTool('machine.info', {
+    registerTool('machine.info', {
       description: 'Read bounded filesystem metadata for one local-machine path.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -626,7 +642,7 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id, path }) => toolResult(await machineContext.info(workspace_id, path)));
 
-    server.registerTool('machine.mkdir', {
+    registerTool('machine.mkdir', {
       description: 'Create exactly one directory inside a caller-owned local-machine workspace.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -635,7 +651,7 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     }, async ({ workspace_id, path }) => toolResult(await machineContext.mkdir(workspace_id, path)));
 
-    server.registerTool('machine.move', {
+    registerTool('machine.move', {
       description: 'Move one existing local-machine path to one new path inside the same caller-owned workspace.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -645,7 +661,7 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     }, async ({ workspace_id, from, to }) => toolResult(await machineContext.move(workspace_id, from, to)));
 
-    server.registerTool('machine.delete', {
+    registerTool('machine.delete', {
       description: 'Delete one local-machine path inside a caller-owned workspace; recursive directory deletion requires explicit recursive=true.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -657,7 +673,7 @@ export function createGatewayMcpServer(
       await machineContext.delete(workspace_id, path, recursive),
     ));
 
-    server.registerTool('machine.command.run', {
+    registerTool('machine.command.run', {
       description: 'Run one bounded local-machine argv command in the trusted autonomous-local profile; no caller-supplied environment or shell string is accepted.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -675,7 +691,7 @@ export function createGatewayMcpServer(
       }),
     ));
 
-    server.registerTool('machine.process.start', {
+    registerTool('machine.process.start', {
       description: 'Start one detached local-machine argv process in the trusted autonomous-local profile and sanitized environment.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -689,13 +705,13 @@ export function createGatewayMcpServer(
       }),
     ));
 
-    server.registerTool('machine.process.list', {
+    registerTool('machine.process.list', {
       description: 'List local processes with WAG-owned process records marked when available.',
       inputSchema: z.object({ workspace_id: z.string().min(1).max(256) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async ({ workspace_id }) => toolResult(await machineContext.processList(workspace_id)));
 
-    server.registerTool('machine.process.inspect', {
+    registerTool('machine.process.inspect', {
       description: 'Inspect one local PID or WAG-owned process id with credential-shaped command-line values redacted.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -706,7 +722,7 @@ export function createGatewayMcpServer(
       await machineContext.processInspect(workspace_id, id_or_pid),
     ));
 
-    server.registerTool('machine.process.terminate', {
+    registerTool('machine.process.terminate', {
       description: 'Terminate one WAG-owned process record after live PID-identity revalidation.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -717,7 +733,7 @@ export function createGatewayMcpServer(
       await machineContext.processTerminate(workspace_id, process_id),
     ));
 
-    server.registerTool('machine.terminal.open', {
+    registerTool('machine.terminal.open', {
       description: 'Open one interactive local terminal session in a caller-owned workspace.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -729,7 +745,7 @@ export function createGatewayMcpServer(
       await machineContext.terminalOpen(workspace_id, shell, cwd),
     ));
 
-    server.registerTool('machine.terminal.list', {
+    registerTool('machine.terminal.list', {
       description: 'List WAG-owned interactive terminal sessions for one caller-owned workspace.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -739,7 +755,7 @@ export function createGatewayMcpServer(
       await machineContext.terminalList(workspace_id),
     ));
 
-    server.registerTool('machine.terminal.output', {
+    registerTool('machine.terminal.output', {
       description: 'Drain bounded redacted output from one WAG-owned interactive terminal session.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -750,7 +766,7 @@ export function createGatewayMcpServer(
       await machineContext.terminalOutput(workspace_id, terminal_id),
     ));
 
-    server.registerTool('machine.terminal.input', {
+    registerTool('machine.terminal.input', {
       description: 'Write bounded base64-decoded bytes to one WAG-owned interactive terminal session.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -762,7 +778,7 @@ export function createGatewayMcpServer(
       await machineContext.terminalInput(workspace_id, terminal_id, base64),
     ));
 
-    server.registerTool('machine.terminal.close', {
+    registerTool('machine.terminal.close', {
       description: 'Close one WAG-owned interactive terminal session.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -775,7 +791,7 @@ export function createGatewayMcpServer(
   }
 
   if (inspect === true) {
-    server.registerTool('repo.list', {
+    registerTool('repo.list', {
       description: 'List the immediate tracked and untracked entries of one workspace directory.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -790,7 +806,7 @@ export function createGatewayMcpServer(
       return toolResult(await gateway.repoList(workspace_id, { path, maxEntries: max_entries }));
     });
 
-    server.registerTool('repo.search', {
+    registerTool('repo.search', {
       description: 'Search tracked repository files for a literal string.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -814,13 +830,13 @@ export function createGatewayMcpServer(
       }));
     });
   }
-  server.registerTool('repo.snapshot', {
+  registerTool('repo.snapshot', {
     description: 'Return bounded repository status, HEAD, diff summary, and tracked files.',
     inputSchema: z.object({ workspace_id: z.string().min(1), max_files: z.number().int().min(1).max(500).optional() }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ workspace_id, max_files }) => toolResult(await gateway.repoSnapshot(workspace_id, { maxFiles: max_files })));
   if (inspect === true) {
-    server.registerTool('repo.diff', {
+    registerTool('repo.diff', {
       description: 'Return the bounded unified diff of the working tree against HEAD.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -829,7 +845,7 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id, path }) => toolResult(await gateway.repoDiff(workspace_id, { path })));
   }
-  server.registerTool('file.read', {
+  registerTool('file.read', {
     description: 'Read bounded text from an opened workspace.',
     inputSchema: z.object({ workspace_id: z.string().min(1), path: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -843,14 +859,14 @@ export function createGatewayMcpServer(
   // profile set is local configuration and the model cannot choose or extend it (ADR-0025), so
   // the domain of interaction is closed even though a profile may run a substantial command.
   // Not idempotent, and not read-only: it executes.
-  server.registerTool('verify.run', {
+  registerTool('verify.run', {
     description: 'Run one locally configured verification profile; arbitrary shell input is not accepted.',
     inputSchema: z.object({ workspace_id: z.string().min(1), profile: z.string().min(1) }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async ({ workspace_id, profile }) => toolResult(await gateway.verifyRun(workspace_id, profile)));
 
   if (commandContext) {
-    server.registerTool('command.run', {
+    registerTool('command.run', {
       description: 'Run one bounded argv command in the caller-owned workspace under the trusted autonomous-local profile; shell strings and caller-supplied environment are not accepted.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
@@ -889,7 +905,7 @@ export function createGatewayMcpServer(
       before: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
       after: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024),
     }).strict();
-    server.registerTool('mutation.preview', {
+    registerTool('mutation.preview', {
       description: mutationContext.autonomous
         ? 'Execute one bounded existing-file update immediately under the trusted autonomous-local profile.'
         : 'Persist an immutable preview of one bounded existing-file update for local human review.',
@@ -904,7 +920,7 @@ export function createGatewayMcpServer(
       ),
     ));
 
-    server.registerTool('file.replace', {
+    registerTool('file.replace', {
       description: mutationContext.autonomous
         ? 'Replace one existing text file immediately under the trusted autonomous-local profile and exact base SHA-256.'
         : 'Propose replacing one existing text file by exact base SHA-256; no raw patch text is accepted.',
@@ -924,7 +940,7 @@ export function createGatewayMcpServer(
       ),
     ));
 
-    server.registerTool('file.edit_block', {
+    registerTool('file.edit_block', {
       description: mutationContext.autonomous
         ? 'Replace one exact unique text block immediately without requiring a full-file read or exposing unrelated secret-bearing content.'
         : 'Propose replacing one exact unique text block for local human review.',
@@ -944,7 +960,7 @@ export function createGatewayMcpServer(
       ),
     ));
 
-    server.registerTool('file.append', {
+    registerTool('file.append', {
       description: mutationContext.autonomous
         ? 'Append bounded text immediately after verifying one exact unique expected file suffix; unrelated file content is not exposed.'
         : 'Propose a bounded suffix-guarded append for local human review.',
@@ -964,7 +980,7 @@ export function createGatewayMcpServer(
       ),
     ));
 
-    server.registerTool('file.create', {
+    registerTool('file.create', {
       description: mutationContext.autonomous
         ? 'Create one new file immediately under the trusted autonomous-local profile.'
         : 'Propose creating one new file for local human review; nothing is written until approved.',
@@ -990,7 +1006,7 @@ export function createGatewayMcpServer(
       ),
     ));
 
-    server.registerTool('mutation.result', {
+    registerTool('mutation.result', {
       description: 'Read the durable state and bounded result metadata for one mutation.',
       inputSchema: z.object({ mutation_id: z.string().min(1) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1000,7 +1016,7 @@ export function createGatewayMcpServer(
   }
 
   if (gitCommitContext) {
-    server.registerTool('git.commit', {
+    registerTool('git.commit', {
       description: gitCommitContext.autonomous
         ? 'Create one exact-path commit immediately under the trusted autonomous-local profile and branch/HEAD CAS.'
         : 'Propose one commit of an exact path set for local human review; nothing is committed until approved.',
@@ -1022,11 +1038,31 @@ export function createGatewayMcpServer(
       ),
     ));
 
-    server.registerTool('git.commit.result', {
+    registerTool('git.commit.result', {
       description: 'Read the durable state and bounded result of one proposed commit.',
       inputSchema: z.object({ commit_id: z.string().min(1).max(256) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ commit_id }) => toolResult(gitCommitContext.coordinator.result(gitCommitContext.callerContext, commit_id)));
+  }
+
+  if (diagnosticsContext) {
+    server.registerTool('diagnostics.recent', {
+      description: 'Return recent sanitized WAG MCP tool-call timing/outcome records. Arguments, paths, content and output are never stored.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+        after_sequence: z.number().int().min(0).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ limit, after_sequence }) => toolResult(diagnosticsContext.recent({
+      ...(limit === undefined ? {} : { limit }),
+      ...(after_sequence === undefined ? {} : { afterSequence: after_sequence }),
+    })));
+
+    server.registerTool('diagnostics.usage', {
+      description: 'Return sanitized rolling WAG tool usage totals grouped by tool name.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async () => toolResult(diagnosticsContext.usage()));
   }
 
   return server;

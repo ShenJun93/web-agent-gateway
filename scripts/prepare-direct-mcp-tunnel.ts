@@ -29,6 +29,7 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { loadPrivateGatewayConfig, type PrivateGatewayConfig } from '../src/private-config.js';
 import { createGatewayMcpServer } from '../src/server.js';
+import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 
@@ -94,6 +95,7 @@ export async function projectedTools(
       mutationContext: { callerContext, coordinator: refusing() },
       capabilityContext: refusing(),
       machineContext: refusing(),
+      diagnosticsContext: new ToolUsageDiagnostics(),
       ...(engineering.gitCommit === undefined
         ? {}
         : {

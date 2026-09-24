@@ -17,6 +17,7 @@ import {
   startRepositoryEngineeringRuntime,
 } from '../src/repository-engineering-runtime.js';
 import { projectedTools } from '../scripts/prepare-direct-mcp-tunnel.js';
+import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 
 /**
  * The direct-MCP surface is the one a remote MCP client discovers over the Secure MCP Tunnel.
@@ -84,6 +85,8 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['mutation.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['git.commit', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['git.commit.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['diagnostics.recent', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['diagnostics.usage', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
 ];
 
 /** Names WAG derives locally and must never accept from a tool argument (ADR-0015, ADR-0020). */
@@ -139,6 +142,7 @@ async function openDirectSurface(t: TestContext) {
     machineContext: new Proxy({}, {
       get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
     }) as never,
+    diagnosticsContext: new ToolUsageDiagnostics(),
   });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

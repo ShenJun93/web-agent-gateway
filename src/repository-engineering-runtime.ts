@@ -22,6 +22,7 @@ import {
   observeLocalMachineWorkspaceIdentity,
   type LocalMachineContext,
 } from './local-machine-runtime.js';
+import { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
@@ -60,6 +61,8 @@ export interface RepositoryEngineeringRuntime {
   capabilityContext?: CapabilityMcpContext;
   /** Trusted autonomous-local Windows operations independent of DevSpace roots. */
   machineContext?: LocalMachineContext;
+  /** Bounded process-local MCP tool usage diagnostics; never stores arguments or output. */
+  diagnosticsContext?: ToolUsageDiagnostics;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
@@ -155,6 +158,7 @@ export async function startRepositoryEngineeringRuntime(
     processRegistryPath: mutationSettings.statePath + '.machine-processes.' + sessionId + '.json',
     terminalRegistryPath: mutationSettings.statePath + '.machine-terminals.' + sessionId,
   });
+  const diagnosticsContext = new ToolUsageDiagnostics();
 
   async function freshWorkspaceFingerprint(workspaceId: string): Promise<string | undefined> {
     const workspace = store.getWorkspace(workspaceId);
@@ -222,6 +226,7 @@ export async function startRepositoryEngineeringRuntime(
       ...(mutationSettings.sessionCorrelation === undefined ? {} : { stableSessionId: sessionId }),
     },
     machineContext,
+    diagnosticsContext,
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,
       sessionId: callerContext.sessionId,
