@@ -546,20 +546,44 @@ export function createGatewayMcpServer(
         workspace_id: z.string().min(1).max(256),
         path: z.string().min(1).max(4096).optional(),
         max_entries: z.number().int().min(1).max(1_000).optional(),
+        depth: z.number().int().min(1).max(8).optional(),
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, async ({ workspace_id, path, max_entries }) => toolResult(
-      await machineContext.list(workspace_id, path, max_entries),
+    }, async ({ workspace_id, path, max_entries, depth }) => toolResult(
+      await machineContext.list(workspace_id, path, max_entries, depth),
     ));
 
     server.registerTool('machine.read', {
-      description: 'Read bounded UTF-8 text inside one caller-owned local-machine workspace with secret redaction.',
+      description: 'Read bounded UTF-8 text inside one caller-owned local-machine workspace with optional line pagination and secret redaction.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         path: z.string().min(1).max(4096),
+        offset: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+        length: z.number().int().min(1).max(1_000).optional(),
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, async ({ workspace_id, path }) => toolResult(await machineContext.read(workspace_id, path)));
+    }, async ({ workspace_id, path, offset, length }) => toolResult(
+      await machineContext.read(workspace_id, path, {
+        ...(offset === undefined ? {} : { offset }),
+        ...(length === undefined ? {} : { length }),
+      }),
+    ));
+
+    server.registerTool('machine.read_many', {
+      description: 'Read up to 20 bounded UTF-8 files from one caller-owned local-machine workspace; one failed file does not fail the batch.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        paths: z.array(z.string().min(1).max(4096)).min(1).max(20),
+        offset: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+        length: z.number().int().min(1).max(1_000).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, paths, offset, length }) => toolResult(
+      await machineContext.readMany(workspace_id, paths, {
+        ...(offset === undefined ? {} : { offset }),
+        ...(length === undefined ? {} : { length }),
+      }),
+    ));
 
     server.registerTool('machine.search', {
       description: 'Search bounded UTF-8 files recursively inside one caller-owned local-machine workspace.',

@@ -17,10 +17,11 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
   const machineContext: LocalMachineContext = {
     open: async (path) => record('open', path),
     describe: async (id) => record('describe', id),
-    list: async (id, path, maxEntries) => record('list', id, path, maxEntries),
+    list: async (id, path, maxEntries, depth) => record('list', id, path, maxEntries, depth),
     search: async (id, query, options) => record('search', id, query, options),
     info: async (id, path) => record('info', id, path),
-    read: async (id, path) => record('read', id, path),
+    read: async (id, path, options) => record('read', id, path, options),
+    readMany: async (id, paths, options) => record('readMany', id, paths, options),
     mkdir: async (id, path) => record('mkdir', id, path),
     move: async (id, from, to) => record('move', id, from, to),
     delete: async (id, path, recursive) => record('delete', id, path, recursive),
@@ -61,6 +62,27 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     assert.notEqual(result.isError, true, name + ' should succeed');
     return result.structuredContent as { name: string; args: unknown[] };
   };
+
+  assert.equal((await invoke('machine.list', {
+    workspace_id: workspaceId,
+    path: '.',
+    max_entries: 25,
+    depth: 3,
+  })).name, 'list');
+
+  assert.equal((await invoke('machine.read', {
+    workspace_id: workspaceId,
+    path: 'note.txt',
+    offset: -5,
+    length: 2,
+  })).name, 'read');
+
+  assert.equal((await invoke('machine.read_many', {
+    workspace_id: workspaceId,
+    paths: ['a.txt', 'b.txt'],
+    offset: 10,
+    length: 20,
+  })).name, 'readMany');
 
   assert.equal((await invoke('machine.search', {
     workspace_id: workspaceId,
@@ -129,6 +151,15 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     workspace_id: workspaceId,
     terminal_id: 'term_123',
   })).name, 'terminalClose');
+
+  const list = calls.find((call) => call.name === 'list');
+  assert.deepEqual(list?.args, [workspaceId, '.', 25, 3]);
+
+  const readCall = calls.find((call) => call.name === 'read');
+  assert.deepEqual(readCall?.args, [workspaceId, 'note.txt', { offset: -5, length: 2 }]);
+
+  const readManyCall = calls.find((call) => call.name === 'readMany');
+  assert.deepEqual(readManyCall?.args, [workspaceId, ['a.txt', 'b.txt'], { offset: 10, length: 20 }]);
 
   const search = calls.find((call) => call.name === 'search');
   assert.deepEqual(search?.args, [

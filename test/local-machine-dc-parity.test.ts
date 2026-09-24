@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,6 +92,78 @@ test('local-machine filesystem parity covers info/search/mkdir/move/delete insid
   await context.delete(workspaceId, 'nested/secret.txt');
   await context.delete(workspaceId, 'nested');
   await assert.rejects(() => readFile(join(root, 'nested', 'moved.txt'), 'utf8'));
+});
+
+test('local-machine read pagination, multi-read and recursive list cover large local trees without unbounded output', async (t) => {
+  const { root, context, workspaceId } = await fixture(t);
+
+  await context.mkdir(workspaceId, 'tree');
+  await context.mkdir(workspaceId, 'tree/deep');
+  await writeFile(join(root, 'tree', 'a.txt'), 'alpha\n', 'utf8');
+  await writeFile(join(root, 'tree', 'deep', 'b.txt'), 'bravo\n', 'utf8');
+
+  const lines = Array.from({ length: 1_200 }, (_, index) =>
+    `line-${String(index).padStart(4, '0')} ${'x'.repeat(80)}`);
+  const largeText = lines.join('\n') + '\n';
+  assert.ok(Buffer.byteLength(largeText, 'utf8') > 64 * 1024);
+  await writeFile(join(root, 'large.txt'), largeText, 'utf8');
+
+  await assert.rejects(
+    () => context.read(workspaceId, 'large.txt'),
+    /use offset\/length pagination/,
+  );
+
+  const page = await context.read(workspaceId, 'large.txt', { offset: 100, length: 3 }) as {
+    content: string;
+    raw_sha256: string;
+    offset: number;
+    length: number;
+    total_lines: number;
+    has_more: boolean;
+    truncated: boolean;
+  };
+  assert.equal(page.content, lines.slice(100, 103).join('\n'));
+  assert.equal(page.raw_sha256, createHash('sha256').update(largeText).digest('hex'));
+  assert.equal(page.offset, 100);
+  assert.equal(page.length, 3);
+  assert.equal(page.total_lines, 1_201);
+  assert.equal(page.has_more, true);
+  assert.equal(page.truncated, false);
+
+  const tail = await context.read(workspaceId, 'large.txt', { offset: -2, length: 2 }) as {
+    content: string;
+    offset: number;
+    length: number;
+    has_more: boolean;
+  };
+  assert.equal(tail.offset, 1_199);
+  assert.equal(tail.content, lines[1_199] + '\n');
+  assert.equal(tail.length, 2);
+  assert.equal(tail.has_more, false);
+
+  const many = await context.readMany(
+    workspaceId,
+    ['tree/a.txt', 'tree/deep/b.txt', 'missing.txt'],
+  ) as {
+    files: Array<{ path: string; result?: { content: string }; error?: string }>;
+  };
+  assert.equal(many.files[0]?.result?.content, 'alpha');
+  assert.equal(many.files[1]?.result?.content, 'bravo');
+  assert.match(many.files[2]?.error ?? '', /missing path/i);
+
+  const shallow = await context.list(workspaceId, 'tree', 20, 1) as {
+    entries: Array<{ name: string; path?: string; depth?: number }>;
+  };
+  assert.equal(shallow.entries.some((entry) => entry.name === 'b.txt'), false);
+
+  const recursive = await context.list(workspaceId, 'tree', 20, 3) as {
+    entries: Array<{ name: string; path?: string; depth?: number }>;
+    depth: number;
+    truncated: boolean;
+  };
+  assert.equal(recursive.depth, 3);
+  assert.equal(recursive.truncated, false);
+  assert.ok(recursive.entries.some((entry) => entry.path === 'tree/deep/b.txt' && entry.depth === 2));
 });
 
 test('local-machine owned process lifecycle supports start, inspect, list and terminate', async (t) => {

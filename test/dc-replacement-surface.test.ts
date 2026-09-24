@@ -514,6 +514,7 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
       machineCalls.push('read');
       return { content: 'machine-read\n', raw_sha256: 'a'.repeat(64), size_bytes: 13, encoding: 'utf-8' };
     },
+    async readMany() { throw new Error('not used'); },
     async commandRun(workspaceId, argv) {
       assert.equal(workspaceId, machineWorkspaceId);
       machineCalls.push('command:' + JSON.stringify(argv));

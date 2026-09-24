@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
@@ -26,6 +26,9 @@ import {
 
 const BACKEND_KIND = 'local-machine';
 const MAX_READ_BYTES = 64 * 1024;
+const MAX_PAGED_READ_BYTES = 16 * 1024 * 1024;
+const MAX_READ_LINES = 1_000;
+const MAX_READ_MANY_FILES = 20;
 const MAX_COMMAND_ARGS = 32;
 const MAX_ARG_BYTES = 4 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -65,6 +68,11 @@ export interface LocalMachineSearchOptions {
   path?: string;
 }
 
+export interface LocalMachineReadOptions {
+  offset?: number;
+  length?: number;
+}
+
 interface StartedProcess {
   readonly processId: string;
   readonly workspaceId: string;
@@ -100,10 +108,11 @@ interface TerminalSession {
 export interface LocalMachineContext {
   open(path: string): Promise<object>;
   describe(workspaceId: string): Promise<object>;
-  list(workspaceId: string, path?: string, maxEntries?: number): Promise<object>;
+  list(workspaceId: string, path?: string, maxEntries?: number, depth?: number): Promise<object>;
   search(workspaceId: string, query: string, options?: LocalMachineSearchOptions): Promise<object>;
   info(workspaceId: string, path?: string): Promise<object>;
-  read(workspaceId: string, path: string): Promise<object>;
+  read(workspaceId: string, path: string, options?: LocalMachineReadOptions): Promise<object>;
+  readMany(workspaceId: string, paths: readonly string[], options?: LocalMachineReadOptions): Promise<object>;
   mkdir(workspaceId: string, path: string): Promise<object>;
   move(workspaceId: string, from: string, to: string): Promise<object>;
   delete(workspaceId: string, path: string, recursive?: boolean): Promise<object>;
@@ -192,6 +201,60 @@ export function createLocalMachineContext(options: {
     return session;
   }
 
+  async function readLocalText(root: string, path: string, readOptions: LocalMachineReadOptions = {}): Promise<object> {
+    const safePath = validateReadPath(path);
+    await assertReadTarget(root, safePath);
+    const target = await realpath(resolve(root, safePath));
+    const bytes = await readFile(target);
+    const paged = readOptions.offset !== undefined || readOptions.length !== undefined;
+    const maxBytes = paged ? MAX_PAGED_READ_BYTES : MAX_READ_BYTES;
+    if (bytes.length > maxBytes) {
+      throw new Error(paged
+        ? 'Gateway rejected paged local-machine read exceeds 16 MiB'
+        : 'Gateway rejected local-machine read exceeds 64 KiB; use offset/length pagination');
+    }
+    let raw: string;
+    try { raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch { throw new Error('Gateway rejected local-machine non-UTF-8 content'); }
+
+    if (!paged) return redactRead(describeReadableUtf8Text(raw));
+
+    const offset = readOptions.offset ?? 0;
+    const length = Math.min(Math.max(readOptions.length ?? 200, 1), MAX_READ_LINES);
+    if (!Number.isInteger(offset) || offset < -1_000_000 || offset > 1_000_000) {
+      throw new Error('Gateway rejected local-machine read offset');
+    }
+    const lines = raw.split(/\r?\n/);
+    const start = offset < 0 ? Math.max(lines.length + offset, 0) : Math.min(offset, lines.length);
+    const wanted = lines.slice(start, start + length);
+    const bounded: string[] = [];
+    let outputBytes = 0;
+    let outputTruncated = false;
+    for (const line of wanted) {
+      const nextBytes = Buffer.byteLength(line, 'utf8') + (bounded.length === 0 ? 0 : 1);
+      if (outputBytes + nextBytes > MAX_READ_BYTES) {
+        outputTruncated = true;
+        break;
+      }
+      bounded.push(line);
+      outputBytes += nextBytes;
+    }
+    const metadata = describeReadableUtf8Text(raw);
+    const unredacted = bounded.join('\n');
+    const content = redactSecrets(unredacted);
+    return {
+      ...metadata,
+      content,
+      redacted: content !== unredacted,
+      raw_sha256: createHash('sha256').update(bytes).digest('hex'),
+      offset: start,
+      length: bounded.length,
+      total_lines: lines.length,
+      has_more: start + bounded.length < lines.length,
+      truncated: outputTruncated || wanted.length > bounded.length,
+    };
+  }
+
   return {
     async open(path) {
       const requested = path.trim();
@@ -231,7 +294,7 @@ export function createLocalMachineContext(options: {
       };
     },
 
-    async list(workspaceId, path = '.', maxEntries = 200) {
+    async list(workspaceId, path = '.', maxEntries = 200, depth = 1) {
       const { workspace } = await ownedWorkspace(workspaceId);
       const safePath = path === '.' ? '.' : validateReadPath(path);
       const target = safePath === '.'
@@ -239,18 +302,34 @@ export function createLocalMachineContext(options: {
         : await realpath(resolve(workspace.canonicalRoot, safePath));
       if (safePath !== '.') await assertReadTarget(workspace.canonicalRoot, safePath);
       const limit = Math.min(Math.max(maxEntries, 1), 1_000);
-      const entries = await readdir(target, { withFileTypes: true });
-      return {
-        path: safePath,
-        entries: entries.slice(0, limit).map((entry) => ({
-          name: entry.name,
-          type: entry.isDirectory() ? 'directory'
+      const maxDepth = Math.min(Math.max(depth, 1), 8);
+      const collected: Array<{ name: string; type: string; path?: string; depth?: number }> = [];
+      let truncated = false;
+
+      const walk = async (dir: string, relativeBase: string, currentDepth: number): Promise<void> => {
+        if (truncated) return;
+        const entries = await readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (collected.length >= limit) {
+            truncated = true;
+            break;
+          }
+          const type = entry.isDirectory() ? 'directory'
             : entry.isFile() ? 'file'
             : entry.isSymbolicLink() ? 'symlink'
-            : 'other',
-        })),
-        truncated: entries.length > limit,
+            : 'other';
+          const rel = relativeBase === '.' ? entry.name : relativeBase + '/' + entry.name;
+          collected.push(maxDepth === 1
+            ? { name: entry.name, type }
+            : { name: entry.name, type, path: rel, depth: currentDepth });
+          if (entry.isDirectory() && !entry.isSymbolicLink() && currentDepth < maxDepth) {
+            await walk(resolve(dir, entry.name), rel, currentDepth + 1);
+          }
+        }
       };
+
+      await walk(target, safePath, 1);
+      return { path: safePath, depth: maxDepth, entries: collected, truncated };
     },
 
     async search(workspaceId, query, searchOptions = {}) {
@@ -354,17 +433,25 @@ export function createLocalMachineContext(options: {
       };
     },
 
-    async read(workspaceId, path) {
+    async read(workspaceId, path, readOptions = {}) {
       const { workspace } = await ownedWorkspace(workspaceId);
-      const safePath = validateReadPath(path);
-      await assertReadTarget(workspace.canonicalRoot, safePath);
-      const target = await realpath(resolve(workspace.canonicalRoot, safePath));
-      const bytes = await readFile(target);
-      if (bytes.length > MAX_READ_BYTES) throw new Error('Gateway rejected local-machine read exceeds 64 KiB');
-      let raw: string;
-      try { raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-      catch { throw new Error('Gateway rejected local-machine non-UTF-8 content'); }
-      return redactRead(describeReadableUtf8Text(raw));
+      return readLocalText(workspace.canonicalRoot, path, readOptions);
+    },
+
+    async readMany(workspaceId, paths, readOptions = {}) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      if (!Array.isArray(paths) || paths.length < 1 || paths.length > MAX_READ_MANY_FILES) {
+        throw new Error('Gateway rejected local-machine multi-read file count');
+      }
+      const files: Array<{ path: string; result?: object; error?: string }> = [];
+      for (const path of paths) {
+        try {
+          files.push({ path, result: await readLocalText(workspace.canonicalRoot, path, readOptions) });
+        } catch (error) {
+          files.push({ path, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      return { files };
     },
 
     async mkdir(workspaceId, path) {
