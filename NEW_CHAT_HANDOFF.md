@@ -190,6 +190,9 @@ Filesystem:
 Processes:
 - bounded argv;
 - start/list/inspect/terminate;
+- WAG-started detached process registry persists per stable session across runtime reconstruction;
+- recovered process records re-bind by canonical workspace root and revalidate PID creation identity;
+- registry persists executable/cwd/identity only, never full argv;
 - external termination only after PID creation-identity observation.
 
 Terminal:
@@ -217,7 +220,7 @@ edit WAG launchers, refresh tools, issue per-task authority, or restart DevSpace
 
 Next useful improvements:
 
-1. restart-recoverable process/terminal session registry;
+1. restart-recoverable terminal broker/session registry (detached process recovery is live);
 2. asynchronous/search continuation for very large trees;
 3. WAG-native recent tool-call and usage diagnostics;
 4. richer binary/document/media support when it improves over bounded local argv.
