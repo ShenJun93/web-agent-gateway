@@ -1,4 +1,9 @@
-import type { BrowserBackend, BrowserBackendSession, BrowserExecRequest } from './browser-port.js';
+import type {
+  BrowserBackend,
+  BrowserBackendSession,
+  BrowserExecRequest,
+  BrowserProfileHandle,
+} from './browser-port.js';
 import { CdpProtocolClient, type CdpTransport } from './cdp-protocol.js';
 
 interface TargetInfo {
@@ -29,11 +34,12 @@ function targetList(value: unknown): TargetInfo[] {
 }
 
 export function createCdpBrowserBackend(options: {
-  connect(profileId: string): Promise<CdpTransport>;
+  connect(profile: BrowserProfileHandle): Promise<CdpTransport>;
 }): BrowserBackend {
   return {
-    async open(profileId) {
-      const transport = await options.connect(profileId);
+    kind: 'cdp',
+    async open(profile) {
+      const transport = await options.connect(profile);
       const browser = new CdpProtocolClient(transport);
       const targets = targetList(await browser.call('Target.getTargets') as TargetList);
       const page = targets.find((target) => target.type === 'page');

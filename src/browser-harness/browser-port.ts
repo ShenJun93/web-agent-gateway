@@ -1,14 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import type { GatewayAuthority } from '../caller-context.js';
 import { sameAuthorityTuple } from '../authority-tuple.js';
+import {
+  createMemoryBrowserProfileStore,
+  type BrowserProfileHandle,
+  type BrowserProfileStore,
+} from './browser-profile-store.js';
+
+export type { BrowserProfileHandle, BrowserProfileStore } from './browser-profile-store.js';
 
 export type BrowserSessionState = 'ACTIVE' | 'ORPHANED' | 'RECOVERABLE' | 'CLOSING' | 'CLOSED' | 'FAILED';
+export type BrowserBackendKind = 'cdp' | 'playwright-cdp';
 
 export interface BrowserSessionHandle {
   readonly browserSessionId: string;
   readonly profileId: string;
   readonly owner: GatewayAuthority;
-  readonly backend: 'cdp';
+  readonly backend: BrowserBackendKind;
   readonly createdAt: number;
   readonly lastSeenAt: number;
   readonly state: BrowserSessionState;
@@ -41,7 +49,8 @@ export interface BrowserBackendSession {
 }
 
 export interface BrowserBackend {
-  open(profileId: string): Promise<BrowserBackendSession>;
+  readonly kind: BrowserBackendKind;
+  open(profile: BrowserProfileHandle): Promise<BrowserBackendSession>;
 }
 
 export interface BrowserPort {
@@ -55,16 +64,12 @@ export interface BrowserPort {
 
 interface LiveBrowserSession {
   handle: BrowserSessionHandle;
+  profile: BrowserProfileHandle;
   backend: BrowserBackendSession;
 }
 
 const SESSION_ID = /^browser_[0-9a-f-]{36}$/;
-const PROFILE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const CDP_METHOD = /^[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*$/;
-
-function assertProfileId(profileId: string): void {
-  if (!PROFILE_ID.test(profileId)) throw new Error('Browser profile id is invalid');
-}
 
 function assertSessionId(browserSessionId: string): void {
   if (!SESSION_ID.test(browserSessionId)) throw new Error('Browser session id is invalid');
@@ -76,13 +81,14 @@ function cloneHandle(handle: BrowserSessionHandle): BrowserSessionHandle {
 
 export function createBrowserPort(options: {
   backend: BrowserBackend;
+  profileStore?: BrowserProfileStore;
   now?: () => number;
   randomUUID?: () => string;
 }): BrowserPort {
   const now = options.now ?? Date.now;
   const uuid = options.randomUUID ?? randomUUID;
+  const profileStore = options.profileStore ?? createMemoryBrowserProfileStore();
   const sessions = new Map<string, LiveBrowserSession>();
-  const profileOwners = new Map<string, string>();
 
   function owned(owner: GatewayAuthority, browserSessionId: string): LiveBrowserSession {
     assertSessionId(browserSessionId);
@@ -99,22 +105,26 @@ export function createBrowserPort(options: {
 
   return {
     async open(request) {
-      assertProfileId(request.profileId);
-      if (profileOwners.has(request.profileId)) throw new Error('Browser profile is already owned by an active session');
-      const backend = await options.backend.open(request.profileId);
+      const profile = await profileStore.acquire(request.profileId, request.owner);
+      let backend: BrowserBackendSession;
+      try {
+        backend = await options.backend.open(profile);
+      } catch (error) {
+        await profileStore.release(profile, request.owner);
+        throw error;
+      }
       const createdAt = now();
       const browserSessionId = `browser_${uuid()}`;
       const handle: BrowserSessionHandle = Object.freeze({
         browserSessionId,
         profileId: request.profileId,
         owner: Object.freeze({ ...request.owner }),
-        backend: 'cdp',
+        backend: options.backend.kind,
         createdAt,
         lastSeenAt: createdAt,
         state: 'ACTIVE',
       });
-      sessions.set(browserSessionId, { handle, backend });
-      profileOwners.set(request.profileId, browserSessionId);
+      sessions.set(browserSessionId, { handle, profile, backend });
       return cloneHandle(handle);
     },
 
@@ -155,15 +165,21 @@ export function createBrowserPort(options: {
     async close(owner, browserSessionId) {
       const session = owned(owner, browserSessionId);
       session.handle = Object.freeze({ ...session.handle, state: 'CLOSING', lastSeenAt: now() });
+      let failure: unknown;
       try {
         await session.backend.close();
         session.handle = Object.freeze({ ...session.handle, state: 'CLOSED', lastSeenAt: now() });
       } catch (error) {
+        failure = error;
         session.handle = Object.freeze({ ...session.handle, state: 'FAILED', lastSeenAt: now() });
-        throw error;
-      } finally {
-        profileOwners.delete(session.handle.profileId);
       }
+      try {
+        await profileStore.release(session.profile, owner);
+      } catch (error) {
+        failure ??= error;
+        session.handle = Object.freeze({ ...session.handle, state: 'FAILED', lastSeenAt: now() });
+      }
+      if (failure) throw failure;
       return cloneHandle(session.handle);
     },
   };

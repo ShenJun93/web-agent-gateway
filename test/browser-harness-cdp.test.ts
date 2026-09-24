@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { GatewayAuthority } from '../src/caller-context.js';
 import { CdpProtocolClient, type CdpCommand, type CdpTransport } from '../src/browser-harness/cdp-protocol.js';
 import { createCdpBrowserBackend } from '../src/browser-harness/cdp-browser-backend.js';
+
+const OWNER: GatewayAuthority = { ownerId: 'owner', sessionId: 'session', adapterId: 'private.stdio.v1' };
 
 test('CDP protocol client increments ids and propagates the target session', async () => {
   const commands: CdpCommand[] = [];
@@ -47,11 +50,13 @@ test('CDP browser backend attaches one page target and routes page commands to i
     },
     async close() { closed = true; },
   };
-  const backend = createCdpBrowserBackend({ connect: async (profileId) => {
-    assert.equal(profileId, 'profile_a');
+  const backend = createCdpBrowserBackend({ connect: async (profile) => {
+    assert.equal(profile.profileId, 'profile_a');
+    assert.deepEqual(profile.owner, OWNER);
     return transport;
   }});
-  const session = await backend.open('profile_a');
+  assert.equal(backend.kind, 'cdp');
+  const session = await backend.open({ profileId: 'profile_a', owner: OWNER });
   assert.equal(session.targetId, 'page_1');
   assert.deepEqual(await session.describe(), { url: 'https://example.test/', title: 'Example' });
   assert.deepEqual(await session.exec({ method: 'Runtime.evaluate', params: { expression: '1+1' } }), { result: { value: 2 } });

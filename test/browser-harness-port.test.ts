@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { GatewayAuthority } from '../src/caller-context.js';
-import { createBrowserPort, type BrowserBackend, type BrowserBackendSession } from '../src/browser-harness/browser-port.js';
+import {
+  createBrowserPort,
+  type BrowserBackend,
+  type BrowserBackendSession,
+} from '../src/browser-harness/browser-port.js';
 
 const OWNER: GatewayAuthority = { ownerId: 'owner_a', sessionId: 'session_a', adapterId: 'private.stdio.v1' };
 const OTHER: GatewayAuthority = { ownerId: 'owner_a', sessionId: 'session_b', adapterId: 'private.stdio.v1' };
 
-function backendFixture() {
+function backendFixture(options: { failFirstOpen?: boolean } = {}) {
   const calls: Array<{ profileId?: string; method?: string }> = [];
   let closed = false;
+  let openCount = 0;
   const backendSession: BrowserBackendSession = {
     targetId: 'target_1',
     async describe() { return { url: 'https://example.test/', title: 'Example' }; },
@@ -17,7 +22,13 @@ function backendFixture() {
     async close() { closed = true; },
   };
   const backend: BrowserBackend = {
-    async open(profileId) { calls.push({ profileId }); return backendSession; },
+    kind: 'cdp',
+    async open(profile) {
+      openCount += 1;
+      calls.push({ profileId: profile.profileId });
+      if (options.failFirstOpen && openCount === 1) throw new Error('backend open failed');
+      return backendSession;
+    },
   };
   return { backend, calls, closed: () => closed };
 }
@@ -33,8 +44,9 @@ test('browser port owns one profile and one session by exact authority tuple', a
   const opened = await port.open({ profileId: 'notebook99', owner: OWNER });
   assert.equal(opened.browserSessionId, 'browser_00000000-0000-4000-8000-000000000001');
   assert.equal(opened.profileId, 'notebook99');
+  assert.equal(opened.backend, 'cdp');
   assert.equal(opened.state, 'ACTIVE');
-  await assert.rejects(() => port.open({ profileId: 'notebook99', owner: OTHER }), /already owned/);
+  await assert.rejects(() => port.open({ profileId: 'notebook99', owner: OTHER }), /another authority/);
   await assert.rejects(() => port.describe(OTHER, opened.browserSessionId), /another authority/);
   assert.equal((await port.describe(OWNER, opened.browserSessionId)).state, 'ACTIVE');
 });
@@ -55,7 +67,7 @@ test('browser port snapshots, executes and screenshots through the owned backend
   assert.deepEqual(f.calls.map((call) => call.method).filter(Boolean), ['Runtime.evaluate']);
 });
 
-test('browser close releases the profile but never lets a foreign authority close it', async () => {
+test('browser close releases active use but persistent profile ownership stays with the same authority', async () => {
   const f = backendFixture();
   let n = 2;
   const port = createBrowserPort({
@@ -67,8 +79,20 @@ test('browser close releases the profile but never lets a foreign authority clos
   assert.equal(f.closed(), false);
   assert.equal((await port.close(OWNER, opened.browserSessionId)).state, 'CLOSED');
   assert.equal(f.closed(), true);
-  const reopened = await port.open({ profileId: 'shared', owner: OTHER });
-  assert.equal(reopened.state, 'ACTIVE');
+  await assert.rejects(() => port.open({ profileId: 'shared', owner: OTHER }), /another authority/);
+  assert.equal((await port.open({ profileId: 'shared', owner: OWNER })).state, 'ACTIVE');
+});
+
+test('failed backend open releases the active slot without transferring persistent profile ownership', async () => {
+  const f = backendFixture({ failFirstOpen: true });
+  const port = createBrowserPort({
+    backend: f.backend,
+    randomUUID: () => '00000000-0000-4000-8000-000000000005',
+  });
+  await assert.rejects(() => port.open({ profileId: 'retry', owner: OWNER }), /backend open failed/);
+  const opened = await port.open({ profileId: 'retry', owner: OWNER });
+  assert.equal(opened.state, 'ACTIVE');
+  await assert.rejects(() => port.open({ profileId: 'retry', owner: OTHER }), /another authority/);
 });
 
 test('browser exec accepts CDP-style domain methods only', async () => {
