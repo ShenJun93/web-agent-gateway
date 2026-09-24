@@ -178,7 +178,7 @@ function report(readiness: Readiness, allowPartial: boolean): number {
   }
 
   console.log('\n  authority        trusted private-local profile + caller-owned workspace identity');
-  console.log('                   + immediate kill-switch revalidation; no Goal Lease is required.');
+  console.log('                   + immediate kill-switch revalidation; no per-goal authority step exists.');
   if (readiness.stableSession) {
     console.log('  session          stable, resolved from the configured correlation.');
     console.log('                   stableSessionId is reconnect/audit identity only; it grants no');

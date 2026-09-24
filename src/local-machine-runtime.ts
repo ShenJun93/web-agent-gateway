@@ -1,12 +1,23 @@
-import { spawn } from 'node:child_process';
-import { realpath, readdir, readFile, stat } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import {
+  lstat,
+  mkdir,
+  realpath,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  stat,
+} from 'node:fs/promises';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { sameAuthorityTuple } from './authority-tuple.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
 import { sanitizeLocalMachineEnvironment } from './environment-policy.js';
 import { describeReadableUtf8Text } from './file-read-metadata.js';
-import { assertReadTarget, validateReadPath } from './path-policy.js';
+import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import {
   WorkspaceIdentityRegistry,
   type WorkspaceIdentityObservation,
@@ -20,6 +31,10 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 const DEFAULT_OUTPUT_TOKENS = 4_000;
 const MAX_OUTPUT_TOKENS = 20_000;
+const MAX_SEARCH_RESULTS = 50;
+const MAX_SEARCH_FILES = 5_000;
+const MAX_TERMINAL_BUFFER_BYTES = 64 * 1024;
+const MAX_TERMINAL_INPUT_BYTES = 4 * 1024;
 
 export async function observeLocalMachineWorkspaceIdentity(
   root: string,
@@ -41,13 +56,56 @@ export interface LocalMachineCommandOptions {
   maxOutputTokens?: number;
 }
 
+export interface LocalMachineSearchOptions {
+  ignoreCase?: boolean;
+  maxResults?: number;
+  contextLines?: number;
+  path?: string;
+}
+
+interface StartedProcess {
+  readonly processId: string;
+  readonly workspaceId: string;
+  readonly pid: number;
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly startedAt: number;
+  creationDate?: string;
+  state: 'RUNNING' | 'EXITED' | 'TERMINATED';
+  exitCode?: number;
+}
+
+interface TerminalSession {
+  readonly terminalId: string;
+  readonly workspaceId: string;
+  readonly child: ChildProcessWithoutNullStreams;
+  readonly cwd: string;
+  readonly startedAt: number;
+  buffer: string;
+  truncated: boolean;
+  state: 'RUNNING' | 'EXITED' | 'TERMINATED';
+  exitCode?: number;
+}
+
 export interface LocalMachineContext {
   open(path: string): Promise<object>;
-  list(workspaceId: string, path?: string, maxEntries?: number): Promise<object>;
-  read(workspaceId: string, path: string): Promise<object>;
-  commandRun(workspaceId: string, argv: readonly string[], options?: LocalMachineCommandOptions): Promise<object>;
-  processStart(workspaceId: string, argv: readonly string[], options?: Pick<LocalMachineCommandOptions, 'cwd'>): Promise<object>;
   describe(workspaceId: string): Promise<object>;
+  list(workspaceId: string, path?: string, maxEntries?: number): Promise<object>;
+  search(workspaceId: string, query: string, options?: LocalMachineSearchOptions): Promise<object>;
+  info(workspaceId: string, path?: string): Promise<object>;
+  read(workspaceId: string, path: string): Promise<object>;
+  mkdir(workspaceId: string, path: string): Promise<object>;
+  move(workspaceId: string, from: string, to: string): Promise<object>;
+  delete(workspaceId: string, path: string, recursive?: boolean): Promise<object>;
+  commandRun(workspaceId: string, argv: readonly string[], options?: LocalMachineCommandOptions): Promise<object>;
+  processList(workspaceId: string): Promise<object>;
+  processInspect(workspaceId: string, idOrPid: string): Promise<object>;
+  processStart(workspaceId: string, argv: readonly string[], options?: Pick<LocalMachineCommandOptions, 'cwd'>): Promise<object>;
+  processTerminate(workspaceId: string, processId: string): Promise<object>;
+  terminalOpen(workspaceId: string, shell?: 'powershell' | 'cmd' | 'bash', cwd?: string): Promise<object>;
+  terminalOutput(workspaceId: string, terminalId: string): Promise<object>;
+  terminalInput(workspaceId: string, terminalId: string, base64: string): Promise<object>;
+  terminalClose(workspaceId: string, terminalId: string): Promise<object>;
 }
 
 export function createLocalMachineContext(options: {
@@ -57,6 +115,8 @@ export function createLocalMachineContext(options: {
   killSwitch: () => boolean;
 }): LocalMachineContext {
   const { store, callerContext, workspaceIdentities } = options;
+  const startedProcesses = new Map<string, StartedProcess>();
+  const terminals = new Map<string, TerminalSession>();
 
   function assertEffectAllowed(): void {
     if (options.killSwitch()) {
@@ -82,6 +142,43 @@ export function createLocalMachineContext(options: {
     const info = await stat(target);
     if (!info.isDirectory()) throw new Error('Gateway denied local-machine cwd is not a directory');
     return target;
+  }
+
+  async function inspectPid(pid: number): Promise<Record<string, unknown> | undefined> {
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('Gateway rejected process id');
+    if (process.platform !== 'win32') {
+      try {
+        process.kill(pid, 0);
+        return { ProcessId: pid, Name: 'process', CreationDate: undefined };
+      } catch {
+        return undefined;
+      }
+    }
+    const script = [
+      "$ErrorActionPreference='Stop'",
+      `$p=Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"`,
+      'if($null -eq $p){exit 3}',
+      '$p | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CreationDate,CommandLine | ConvertTo-Json -Compress',
+    ].join('; ');
+    const result = await runBounded(
+      ['powershell.exe', '-NoLogo', '-NoProfile', '-Command', script],
+      process.cwd(),
+      10_000,
+      4_000,
+    );
+    if (result.exitCode === 3) return undefined;
+    if (result.exitCode !== 0) throw new Error('Gateway process inspection failed');
+    const value = JSON.parse(result.output || '{}') as Record<string, unknown>;
+    if (typeof value.CommandLine === 'string') value.CommandLine = redactCommandLine(value.CommandLine);
+    return value;
+  }
+
+  function terminal(workspaceId: string, terminalId: string): TerminalSession {
+    const session = terminals.get(terminalId);
+    if (!session || session.workspaceId !== workspaceId) {
+      throw new Error('Gateway denied terminal session');
+    }
+    return session;
   }
 
   return {
@@ -145,6 +242,107 @@ export function createLocalMachineContext(options: {
       };
     },
 
+    async search(workspaceId, query, searchOptions = {}) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      if (
+        !query
+        || query.includes('\0')
+        || query.includes('\r')
+        || query.includes('\n')
+        || Buffer.byteLength(query, 'utf8') > 256
+      ) {
+        throw new Error('Gateway denied search query');
+      }
+      const maxResults = Math.min(Math.max(searchOptions.maxResults ?? 20, 1), MAX_SEARCH_RESULTS);
+      const contextLines = Math.min(Math.max(searchOptions.contextLines ?? 1, 0), 2);
+      const startPath = searchOptions.path === undefined || searchOptions.path === '.'
+        ? '.'
+        : validateReadPath(searchOptions.path);
+      const start = startPath === '.'
+        ? workspace.canonicalRoot
+        : resolve(workspace.canonicalRoot, startPath);
+      if (startPath !== '.') await assertReadTarget(workspace.canonicalRoot, startPath);
+
+      const needle = searchOptions.ignoreCase ? query.toLocaleLowerCase() : query;
+      const matches: Array<{
+        path: string;
+        line: number;
+        text: string;
+        before: string[];
+        after: string[];
+      }> = [];
+      let visitedFiles = 0;
+      let truncated = false;
+
+      const walk = async (dir: string): Promise<void> => {
+        if (truncated) return;
+        const entries = await readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (truncated) break;
+          if (entry.isSymbolicLink()) continue;
+          const full = resolve(dir, entry.name);
+          if (entry.isDirectory()) {
+            await walk(full);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          visitedFiles += 1;
+          if (visitedFiles > MAX_SEARCH_FILES) {
+            truncated = true;
+            break;
+          }
+          const info = await stat(full);
+          if (info.size > MAX_READ_BYTES) continue;
+          let raw: string;
+          try {
+            raw = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(full));
+          } catch {
+            continue;
+          }
+          const lines = raw.split(/\r?\n/);
+          for (let index = 0; index < lines.length; index += 1) {
+            const hay = searchOptions.ignoreCase ? lines[index]!.toLocaleLowerCase() : lines[index]!;
+            if (!hay.includes(needle)) continue;
+            const rel = relative(workspace.canonicalRoot, full).replaceAll('\\', '/');
+            matches.push({
+              path: rel,
+              line: index + 1,
+              text: lines[index]!,
+              before: lines.slice(Math.max(0, index - contextLines), index),
+              after: lines.slice(index + 1, index + 1 + contextLines),
+            });
+            if (matches.length >= maxResults) {
+              truncated = true;
+              break;
+            }
+          }
+        }
+      };
+
+      await walk(start);
+      return { matches, truncated, visited_files: visitedFiles };
+    },
+
+    async info(workspaceId, path = '.') {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const safePath = path === '.' ? '.' : validateReadPath(path);
+      const target = safePath === '.' ? workspace.canonicalRoot : resolve(workspace.canonicalRoot, safePath);
+      if (safePath !== '.') await assertReadTarget(workspace.canonicalRoot, safePath);
+      const [meta, real] = await Promise.all([lstat(target), realpath(target)]);
+      return {
+        path: safePath,
+        realpath: real,
+        type: meta.isDirectory() ? 'directory'
+          : meta.isFile() ? 'file'
+          : meta.isSymbolicLink() ? 'symlink'
+          : 'other',
+        size_bytes: meta.size,
+        created_at: meta.birthtime.toISOString(),
+        modified_at: meta.mtime.toISOString(),
+        mode: meta.mode,
+      };
+    },
+
     async read(workspaceId, path) {
       const { workspace } = await ownedWorkspace(workspaceId);
       const safePath = validateReadPath(path);
@@ -158,6 +356,48 @@ export function createLocalMachineContext(options: {
       return redactRead(describeReadableUtf8Text(raw));
     },
 
+    async mkdir(workspaceId, path) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const safePath = validateReadPath(path);
+      assertEffectAllowed();
+      await assertCreateTarget(workspace.canonicalRoot, safePath);
+      assertEffectAllowed();
+      await mkdir(resolve(workspace.canonicalRoot, safePath));
+      return { path: safePath, created: true };
+    },
+
+    async move(workspaceId, from, to) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const source = validateReadPath(from);
+      const target = validateReadPath(to);
+      assertEffectAllowed();
+      await assertReadTarget(workspace.canonicalRoot, source);
+      await assertCreateTarget(workspace.canonicalRoot, target);
+      assertEffectAllowed();
+      await rename(resolve(workspace.canonicalRoot, source), resolve(workspace.canonicalRoot, target));
+      return { from: source, to: target, moved: true };
+    },
+
+    async delete(workspaceId, path, recursive = false) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const safePath = validateReadPath(path);
+      assertEffectAllowed();
+      await assertReadTarget(workspace.canonicalRoot, safePath);
+      const target = resolve(workspace.canonicalRoot, safePath);
+      const meta = await lstat(target);
+      if (meta.isDirectory() && !recursive) {
+        const children = await readdir(target);
+        if (children.length > 0) throw new Error('Gateway denied non-empty directory delete without recursive=true');
+      }
+      assertEffectAllowed();
+      if (meta.isDirectory() && !recursive) {
+        await rmdir(target);
+      } else {
+        await rm(target, { recursive, force: false });
+      }
+      return { path: safePath, deleted: true, recursive };
+    },
+
     async commandRun(workspaceId, argv, commandOptions = {}) {
       const { workspace } = await ownedWorkspace(workspaceId);
       validateArgv(argv);
@@ -168,9 +408,88 @@ export function createLocalMachineContext(options: {
         Math.max(commandOptions.maxOutputTokens ?? DEFAULT_OUTPUT_TOKENS, 100),
         MAX_OUTPUT_TOKENS,
       );
-      // Revalidate the emergency stop immediately before process creation.
       assertEffectAllowed();
       return runBounded(argv, cwd, timeoutMs, maxOutputTokens);
+    },
+
+    async processList(workspaceId) {
+      await ownedWorkspace(workspaceId);
+      if (process.platform !== 'win32') {
+        const owned = [...startedProcesses.values()].map((record) => ({
+          process_id: record.processId,
+          pid: record.pid,
+          executable: record.argv[0],
+          cwd: record.cwd,
+          state: record.state,
+          started_at: new Date(record.startedAt).toISOString(),
+        }));
+        return { processes: owned, owned_only: true };
+      }
+      const script = [
+        "$ErrorActionPreference='Stop'",
+        '$p=Get-CimInstance Win32_Process | Select-Object -First 500 ProcessId,ParentProcessId,Name,ExecutablePath,CreationDate',
+        '$p | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 2 }',
+      ].join('; ');
+      const result = await runBounded(
+        ['powershell.exe', '-NoLogo', '-NoProfile', '-Command', script],
+        process.cwd(),
+        15_000,
+        MAX_OUTPUT_TOKENS,
+      );
+      if (result.exitCode !== 0) throw new Error('Gateway process list failed');
+      const values: Array<Record<string, unknown>> = [];
+      const lines = result.output.split(/\r?\n/).filter(Boolean);
+      for (let index = 0; index < lines.length; index += 1) {
+        try {
+          values.push(JSON.parse(lines[index]!) as Record<string, unknown>);
+        } catch {
+          if (result.truncated && index === lines.length - 1) break;
+          throw new Error('Gateway process list returned invalid data');
+        }
+      }
+      const ownedByPid = new Map([...startedProcesses.values()].map((record) => [record.pid, record]));
+      return {
+        processes: values.map((value) => {
+          const pid = Number(value.ProcessId);
+          const owned = ownedByPid.get(pid);
+          return {
+            pid,
+            parent_pid: Number(value.ParentProcessId),
+            name: String(value.Name ?? ''),
+            executable_path: value.ExecutablePath == null ? undefined : String(value.ExecutablePath),
+            creation_date: value.CreationDate == null ? undefined : String(value.CreationDate),
+            ...(owned === undefined ? {} : {
+              process_id: owned.processId,
+              owned: true,
+              state: owned.state,
+            }),
+          };
+        }),
+        truncated: result.truncated || values.length >= 500,
+      };
+    },
+
+    async processInspect(workspaceId, idOrPid) {
+      await ownedWorkspace(workspaceId);
+      const owned = startedProcesses.get(idOrPid);
+      if (owned && owned.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
+      const pid = owned ? owned.pid : Number(idOrPid);
+      const value = await inspectPid(pid);
+      if (!value) return { found: false, pid };
+      return {
+        found: true,
+        ...(owned === undefined ? {} : {
+          process_id: owned.processId,
+          owned: true,
+          state: owned.state,
+        }),
+        pid,
+        parent_pid: Number(value.ParentProcessId),
+        name: String(value.Name ?? ''),
+        executable_path: value.ExecutablePath == null ? undefined : String(value.ExecutablePath),
+        creation_date: value.CreationDate == null ? undefined : String(value.CreationDate),
+        command_line: value.CommandLine == null ? undefined : String(value.CommandLine),
+      };
     },
 
     async processStart(workspaceId, argv, commandOptions = {}) {
@@ -178,7 +497,6 @@ export function createLocalMachineContext(options: {
       validateArgv(argv);
       assertEffectAllowed();
       const cwd = await resolveCwd(workspace.canonicalRoot, commandOptions.cwd);
-      // Revalidate the emergency stop immediately before process creation.
       assertEffectAllowed();
       const child = spawn(argv[0]!, argv.slice(1), {
         cwd,
@@ -190,8 +508,159 @@ export function createLocalMachineContext(options: {
       });
       const pid = child.pid;
       if (!pid) throw new Error('Gateway local-machine process did not start');
+      const processId = `proc_${randomUUID()}`;
+      const record: StartedProcess = {
+        processId,
+        workspaceId,
+        pid,
+        argv: [...argv],
+        cwd,
+        startedAt: Date.now(),
+        state: 'RUNNING',
+      };
+      startedProcesses.set(processId, record);
+      child.once('exit', (code) => {
+        record.state = record.state === 'TERMINATED' ? 'TERMINATED' : 'EXITED';
+        record.exitCode = code ?? -1;
+      });
       child.unref();
-      return { pid, cwd, started: true };
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const inspected = await inspectPid(pid).catch(() => undefined);
+        if (inspected) {
+          record.creationDate = inspected.CreationDate == null ? undefined : String(inspected.CreationDate);
+          break;
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+      }
+      return { process_id: processId, pid, cwd, started: true };
+    },
+
+    async processTerminate(workspaceId, processId) {
+      await ownedWorkspace(workspaceId);
+      const record = startedProcesses.get(processId);
+      if (!record || record.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
+      assertEffectAllowed();
+      const inspected = await inspectPid(record.pid);
+      if (!inspected) {
+        record.state = 'EXITED';
+        return { process_id: processId, pid: record.pid, terminated: false, state: 'EXITED' };
+      }
+      const liveCreation = inspected.CreationDate == null ? undefined : String(inspected.CreationDate);
+      if (record.creationDate && liveCreation && record.creationDate !== liveCreation) {
+        throw new Error('Gateway denied process PID reuse');
+      }
+      assertEffectAllowed();
+      if (process.platform === 'win32') {
+        const result = await runBounded(
+          ['taskkill.exe', '/PID', String(record.pid), '/T', '/F'],
+          process.cwd(),
+          10_000,
+          2_000,
+        );
+        if (result.exitCode !== 0) throw new Error('Gateway process termination failed');
+      } else {
+        process.kill(record.pid, 'SIGTERM');
+      }
+      record.state = 'TERMINATED';
+      return { process_id: processId, pid: record.pid, terminated: true, state: record.state };
+    },
+
+    async terminalOpen(workspaceId, shell = 'powershell', requestedCwd) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      assertEffectAllowed();
+      const cwd = await resolveCwd(workspace.canonicalRoot, requestedCwd);
+      let argv: string[];
+      if (shell === 'powershell') {
+        if (process.platform !== 'win32') throw new Error('Gateway denied unavailable shell');
+        argv = ['powershell.exe', '-NoLogo', '-NoProfile'];
+      } else if (shell === 'cmd') {
+        if (process.platform !== 'win32') throw new Error('Gateway denied unavailable shell');
+        argv = ['cmd.exe', '/d', '/q'];
+      } else {
+        argv = ['bash', '--noprofile', '--norc'];
+      }
+      assertEffectAllowed();
+      const child = spawn(argv[0]!, argv.slice(1), {
+        cwd,
+        env: sanitizeLocalMachineEnvironment(process.env),
+        shell: false,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      if (!child.pid) throw new Error('Gateway terminal did not start');
+      const terminalId = `term_${randomUUID()}`;
+      const session: TerminalSession = {
+        terminalId,
+        workspaceId,
+        child,
+        cwd,
+        startedAt: Date.now(),
+        buffer: '',
+        truncated: false,
+        state: 'RUNNING',
+      };
+      const append = (chunk: Buffer) => {
+        const text = chunk.toString('utf8');
+        session.buffer += text;
+        const bytes = Buffer.byteLength(session.buffer, 'utf8');
+        if (bytes > MAX_TERMINAL_BUFFER_BYTES) {
+          const keep = Buffer.from(session.buffer, 'utf8').subarray(bytes - MAX_TERMINAL_BUFFER_BYTES);
+          session.buffer = keep.toString('utf8');
+          session.truncated = true;
+        }
+      };
+      child.stdout.on('data', append);
+      child.stderr.on('data', append);
+      child.once('exit', (code) => {
+        session.state = session.state === 'TERMINATED' ? 'TERMINATED' : 'EXITED';
+        session.exitCode = code ?? -1;
+      });
+      terminals.set(terminalId, session);
+      return { terminal_id: terminalId, pid: child.pid, shell, cwd, state: session.state };
+    },
+
+    async terminalOutput(workspaceId, terminalId) {
+      await ownedWorkspace(workspaceId);
+      const session = terminal(workspaceId, terminalId);
+      const output = redactSecrets(session.buffer);
+      const truncated = session.truncated;
+      session.buffer = '';
+      session.truncated = false;
+      return {
+        terminal_id: terminalId,
+        state: session.state,
+        exit_code: session.exitCode,
+        output,
+        truncated,
+      };
+    },
+
+    async terminalInput(workspaceId, terminalId, base64) {
+      await ownedWorkspace(workspaceId);
+      const session = terminal(workspaceId, terminalId);
+      assertEffectAllowed();
+      if (session.state !== 'RUNNING') throw new Error('Gateway terminal is not running');
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) throw new Error('Gateway rejected terminal input encoding');
+      const payload = Buffer.from(base64, 'base64');
+      if (payload.length === 0 || payload.length > MAX_TERMINAL_INPUT_BYTES) {
+        throw new Error('Gateway rejected terminal input size');
+      }
+      assertEffectAllowed();
+      await new Promise<void>((resolvePromise, reject) => {
+        session.child.stdin.write(payload, (error) => error ? reject(error) : resolvePromise());
+      });
+      return { terminal_id: terminalId, bytes_written: payload.length, state: session.state };
+    },
+
+    async terminalClose(workspaceId, terminalId) {
+      await ownedWorkspace(workspaceId);
+      const session = terminal(workspaceId, terminalId);
+      assertEffectAllowed();
+      if (session.state === 'RUNNING') {
+        session.state = 'TERMINATED';
+        session.child.kill('SIGTERM');
+      }
+      return { terminal_id: terminalId, state: session.state, closed: true };
     },
   };
 }
@@ -201,7 +670,7 @@ async function runBounded(
   cwd: string,
   timeoutMs: number,
   maxOutputTokens: number,
-): Promise<object> {
+): Promise<{ exitCode: number; output: string; timedOut: boolean; truncated: boolean; durationMs: number; cwd: string }> {
   const startedAt = Date.now();
   const child = spawn(argv[0]!, argv.slice(1), {
     cwd,
@@ -265,9 +734,15 @@ function redactRead<T extends { content: string }>(value: T): T & { redacted: bo
   return { ...value, content, redacted: content !== value.content };
 }
 
+function redactCommandLine(value: string): string {
+  return redactSecrets(value)
+    .replace(/((?:--|\/)(?:token|api[-_]?key|secret|password|credential)(?:=|\s+))[^\s"']+/gi, '$1<REDACTED>');
+}
+
 function redactSecrets(value: string): string {
   return value
     .replace(/(?i:bearer)\s+[A-Za-z0-9._~+\/-]{12,}/g, 'Bearer <REDACTED>')
+    .replace(/((?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|CREDENTIAL)\s*[=:]\s*)[^\s;,]+/gi, '$1<REDACTED>')
     .replace(
       /(^|\n)(\s*[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|CREDENTIAL)[A-Za-z0-9_]*\s*=\s*)([^\r\n]+)/gi,
       (_m, prefix, key) => `${prefix}${key}<REDACTED>`,

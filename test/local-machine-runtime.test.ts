@@ -38,7 +38,7 @@ async function fixture(t: test.TestContext, killSwitch = false) {
   return { root, context };
 }
 
-test('local-machine opens without Goal Lease and reports autonomous-local authority', async (t) => {
+test('local-machine opens directly under autonomous-local authority', async (t) => {
   const { root, context } = await fixture(t);
   const opened = await context.open(root) as {
     workspace_id: string;
@@ -66,8 +66,9 @@ test('local-machine autonomous profile permits bounded read/list/argv execution 
     redacted: boolean;
   };
   assert.match(read.content, /alpha/);
+  assert.match(read.content, /secret=<REDACTED>/i);
   assert.match(read.raw_sha256, /^[a-f0-9]{64}$/);
-  assert.equal(read.redacted, false);
+  assert.equal(read.redacted, true);
 
   const command = await context.commandRun(
     opened.workspace_id,

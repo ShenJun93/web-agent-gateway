@@ -561,6 +561,66 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id, path }) => toolResult(await machineContext.read(workspace_id, path)));
 
+    server.registerTool('machine.search', {
+      description: 'Search bounded UTF-8 files recursively inside one caller-owned local-machine workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        query: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096).optional(),
+        ignore_case: z.boolean().optional(),
+        max_results: z.number().int().min(1).max(50).optional(),
+        context_lines: z.number().int().min(0).max(2).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, query, path, ignore_case, max_results, context_lines }) => toolResult(
+      await machineContext.search(workspace_id, query, {
+        ...(path === undefined ? {} : { path }),
+        ...(ignore_case === undefined ? {} : { ignoreCase: ignore_case }),
+        ...(max_results === undefined ? {} : { maxResults: max_results }),
+        ...(context_lines === undefined ? {} : { contextLines: context_lines }),
+      }),
+    ));
+
+    server.registerTool('machine.info', {
+      description: 'Read bounded filesystem metadata for one local-machine path.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path }) => toolResult(await machineContext.info(workspace_id, path)));
+
+    server.registerTool('machine.mkdir', {
+      description: 'Create exactly one directory inside a caller-owned local-machine workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path }) => toolResult(await machineContext.mkdir(workspace_id, path)));
+
+    server.registerTool('machine.move', {
+      description: 'Move one existing local-machine path to one new path inside the same caller-owned workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        from: z.string().min(1).max(4096),
+        to: z.string().min(1).max(4096),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, from, to }) => toolResult(await machineContext.move(workspace_id, from, to)));
+
+    server.registerTool('machine.delete', {
+      description: 'Delete one local-machine path inside a caller-owned workspace; recursive directory deletion requires explicit recursive=true.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        recursive: z.boolean().optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, recursive }) => toolResult(
+      await machineContext.delete(workspace_id, path, recursive),
+    ));
+
     server.registerTool('machine.command.run', {
       description: 'Run one bounded local-machine argv command in the trusted autonomous-local profile; no caller-supplied environment or shell string is accepted.',
       inputSchema: z.object({
@@ -591,6 +651,80 @@ export function createGatewayMcpServer(
       await machineContext.processStart(workspace_id, argv, {
         ...(cwd === undefined ? {} : { cwd }),
       }),
+    ));
+
+    server.registerTool('machine.process.list', {
+      description: 'List local processes with WAG-owned process records marked when available.',
+      inputSchema: z.object({ workspace_id: z.string().min(1).max(256) }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async ({ workspace_id }) => toolResult(await machineContext.processList(workspace_id)));
+
+    server.registerTool('machine.process.inspect', {
+      description: 'Inspect one local PID or WAG-owned process id with credential-shaped command-line values redacted.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        id_or_pid: z.string().min(1).max(256),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async ({ workspace_id, id_or_pid }) => toolResult(
+      await machineContext.processInspect(workspace_id, id_or_pid),
+    ));
+
+    server.registerTool('machine.process.terminate', {
+      description: 'Terminate one WAG-owned process record after live PID-identity revalidation.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        process_id: z.string().min(1).max(256),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ workspace_id, process_id }) => toolResult(
+      await machineContext.processTerminate(workspace_id, process_id),
+    ));
+
+    server.registerTool('machine.terminal.open', {
+      description: 'Open one interactive local terminal session in a caller-owned workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        shell: z.enum(['powershell', 'cmd', 'bash']).optional(),
+        cwd: z.string().min(1).max(4096).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ workspace_id, shell, cwd }) => toolResult(
+      await machineContext.terminalOpen(workspace_id, shell, cwd),
+    ));
+
+    server.registerTool('machine.terminal.output', {
+      description: 'Drain bounded redacted output from one WAG-owned interactive terminal session.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        terminal_id: z.string().min(1).max(256),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    }, async ({ workspace_id, terminal_id }) => toolResult(
+      await machineContext.terminalOutput(workspace_id, terminal_id),
+    ));
+
+    server.registerTool('machine.terminal.input', {
+      description: 'Write bounded base64-decoded bytes to one WAG-owned interactive terminal session.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        terminal_id: z.string().min(1).max(256),
+        base64: z.string().min(1).max(6_000),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ workspace_id, terminal_id, base64 }) => toolResult(
+      await machineContext.terminalInput(workspace_id, terminal_id, base64),
+    ));
+
+    server.registerTool('machine.terminal.close', {
+      description: 'Close one WAG-owned interactive terminal session.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        terminal_id: z.string().min(1).max(256),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ workspace_id, terminal_id }) => toolResult(
+      await machineContext.terminalClose(workspace_id, terminal_id),
     ));
   }
 

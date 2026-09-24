@@ -911,7 +911,10 @@ export class SqliteDurableStore {
       );
       return columns.has('lease_id');
     });
-    if (migrations.length === 0) return;
+    const retiredTablePresent = Boolean(this.db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'goal_leases'",
+    ).get());
+    if (migrations.length === 0 && !retiredTablePresent) return;
 
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -922,6 +925,7 @@ export class SqliteDurableStore {
         this.db.exec(`DROP TABLE ${spec.table}`);
         this.db.exec(`ALTER TABLE ${spec.next} RENAME TO ${spec.table}`);
       }
+      this.db.exec('DROP TABLE IF EXISTS goal_leases');
       this.db.exec('COMMIT');
     } catch (error) {
       try { this.db.exec('ROLLBACK'); } catch { /* preserve migration failure */ }

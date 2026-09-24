@@ -51,8 +51,20 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['machine.describe', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.search', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.info', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.mkdir', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['machine.move', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['machine.delete', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['machine.command.run', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['machine.process.start', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.process.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
+  ['machine.process.inspect', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
+  ['machine.process.terminate', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.open', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.output', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.input', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.close', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['repo.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['repo.search', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['repo.snapshot', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
@@ -172,8 +184,16 @@ test('no direct tool claims read-only while creating durable state', async (t) =
   for (const name of [
     'workspace.open',
     'machine.open',
+    'machine.mkdir',
+    'machine.move',
+    'machine.delete',
     'machine.command.run',
     'machine.process.start',
+    'machine.process.terminate',
+    'machine.terminal.open',
+    'machine.terminal.output',
+    'machine.terminal.input',
+    'machine.terminal.close',
     'verify.run',
     'command.run',
     'mutation.preview',
@@ -222,7 +242,7 @@ test('every direct tool refuses unknown arguments instead of silently dropping t
  * this pins — is that its config-to-options mapping opts in to the same capabilities the runtime
  * does, and that an unconfigured gateway still projects exactly the accepted five.
  */
-test('runtime command authority needs no Goal Lease in the trusted private-local profile', async (t) => {
+test('runtime command authority is immediate in the trusted autonomous-local profile', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-direct-command-authority-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const ownerId = 'local.private.stdio';

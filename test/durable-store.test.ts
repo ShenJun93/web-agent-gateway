@@ -113,6 +113,7 @@ test('retired per-goal authority columns migrate away without reviving old polic
   const legacy = new DatabaseSync(path);
   legacy.exec('ALTER TABLE mutation_authority ADD COLUMN lease_id TEXT');
   legacy.exec('ALTER TABLE commit_authority ADD COLUMN lease_id TEXT');
+  legacy.exec('CREATE TABLE goal_leases (lease_id TEXT PRIMARY KEY, bindings TEXT NOT NULL)');
   legacy.prepare('UPDATE mutation_authority SET lease_id = ? WHERE mutation_id = ?')
     .run('retired-authority-row', mutation.mutationId);
   legacy.close();
@@ -132,10 +133,12 @@ test('retired per-goal authority columns migrate away without reviving old polic
     .map((row) => String((row as { name: string }).name));
   const commitColumns = inspect.prepare('PRAGMA table_info(commit_authority)').all()
     .map((row) => String((row as { name: string }).name));
+  const retiredTable = inspect.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='goal_leases'").get();
   inspect.close();
 
   for (const columns of [mutationColumns, commitColumns]) {
     assert.equal(columns.includes('lease_id'), false);
     assert.equal(columns.includes('retired_policy_authority'), true);
   }
+  assert.equal(retiredTable, undefined);
 });

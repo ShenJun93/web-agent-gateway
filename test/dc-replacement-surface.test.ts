@@ -17,10 +17,10 @@ const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.replace', 'file.
 const COMMIT_TOOLS = [...INSPECT_TOOLS, 'command.run', 'mutation.preview', 'file.replace', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result'];
 
 /**
- * DC-class authority stays unavailable unless WAG defines a narrower accepted contract.
- * command.run is the one accepted process capability: argv-only, Goal-Lease-authorized and
- * bounded by WAG's sanitized runner. Raw shell/terminal/PTY and broad Git/filesystem verbs remain
- * absent. git.commit and git.commit.result are the only accepted Git tools (ADR-0023).
+ * Repository-only profiles stay narrow. Full local-computer/DC-parity operations are exposed only
+ * when the production runtime wires a LocalMachineContext. This guard prevents a repository-only
+ * profile from accidentally acquiring process/terminal or broad filesystem verbs.
+ * git.commit and git.commit.result remain the only repository Git mutation tools.
  */
 const ACCEPTED_GIT_TOOLS = new Set(['git.commit', 'git.commit.result']);
 const FORBIDDEN_TOOL_FRAGMENTS = [
@@ -192,7 +192,7 @@ test('workspace.open embeds capability preflight and capabilities.describe retur
   const gateway = gatewayWith(executor);
   const authority = {
     workspace_id: 'dynamic',
-    lease: { state: 'ACTIVE', lease_id: 'lease_fixture', expires_at: 12345 },
+    authority: { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' },
     capabilities: {
       FILE_READ: { granted: true, denied: false, grantable: true, requires_human: false, reason: 'WORKSPACE_OWNED' },
       LOCAL_COMMAND: { granted: false, denied: true, grantable: true, requires_human: true, reason: 'WORKSPACE_NOT_GRANTED' },
@@ -224,18 +224,18 @@ test('workspace.open embeds capability preflight and capabilities.describe retur
   assert.deepEqual(described, opened.authority);
 });
 
-test('direct stdio lease-only mutation executes immediately and returns the terminal result', async (t) => {
+test('direct stdio autonomous mutation executes immediately and returns the terminal result', async (t) => {
   const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
   const callerContext = createGatewayCallerContext({
-    ownerId: 'owner_direct_lease',
-    sessionId: 'session_direct_lease',
+    ownerId: 'owner_direct_autonomous',
+    sessionId: 'session_direct_autonomous',
     adapterId: 'private.stdio.v1',
   });
   let admissions = 0;
   let rejections = 0;
   const preview = {
     status: 'approval_required' as const,
-    mutationId: 'mut_direct_lease',
+    mutationId: 'mut_direct_autonomous',
     fingerprint: 'f'.repeat(64),
     expiresAt: 2_000,
     path: 'note.txt',
@@ -422,7 +422,7 @@ test('private stdio search opt-in is an explicit true, never a truthy value', as
   assert.deepEqual(tools.tools.map((tool) => tool.name), DEFAULT_TOOLS);
 });
 
-test('private stdio profiles compose independently and never expose DC-class authority', async (t) => {
+test('repository-only stdio profiles compose independently and do not expose machine authority', async (t) => {
   const store = new SqliteDurableStore(':memory:');
   t.after(() => store.close());
   const callerContext = createGatewayCallerContext({
@@ -527,9 +527,19 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
         cwd: 'machine-root',
       };
     },
-    async processStart() {
-      throw new Error('not used');
-    },
+    async search() { throw new Error('not used'); },
+    async info() { throw new Error('not used'); },
+    async mkdir() { throw new Error('not used'); },
+    async move() { throw new Error('not used'); },
+    async delete() { throw new Error('not used'); },
+    async processList() { throw new Error('not used'); },
+    async processInspect() { throw new Error('not used'); },
+    async processStart() { throw new Error('not used'); },
+    async processTerminate() { throw new Error('not used'); },
+    async terminalOpen() { throw new Error('not used'); },
+    async terminalOutput() { throw new Error('not used'); },
+    async terminalInput() { throw new Error('not used'); },
+    async terminalClose() { throw new Error('not used'); },
   };
   const capabilityContext = {
     describe(workspaceId: string) {

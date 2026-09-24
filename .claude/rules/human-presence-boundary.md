@@ -94,5 +94,3 @@ Private-local autonomy and browser human authority are intentionally separate.
 A failure or absence of browser authority must never reduce WAG Local back to a per-task human
 approval workflow. Conversely, trusted private-local authority must never be projected onto an
 untrusted browser page.
-
-
