@@ -41,21 +41,25 @@ export function createCdpBrowserBackend(options: {
     async open(profile) {
       const transport = await options.connect(profile);
       const browser = new CdpProtocolClient(transport);
-      const targets = targetList(await browser.call('Target.getTargets') as TargetList);
-      const page = targets.find((target) => target.type === 'page');
-      if (!page) {
-        await browser.close();
-        throw new Error('CDP browser has no page target');
+      let page: TargetInfo;
+      let pageClient: CdpProtocolClient;
+      try {
+        const targets = targetList(await browser.call('Target.getTargets') as TargetList);
+        const selected = targets.find((target) => target.type === 'page');
+        if (!selected) throw new Error('CDP browser has no page target');
+        page = selected;
+        const attach = object(await browser.call('Target.attachToTarget', {
+          targetId: page.targetId,
+          flatten: true,
+        })) as AttachResult;
+        if (typeof attach.sessionId !== 'string' || attach.sessionId.length === 0) {
+          throw new Error('CDP target attach did not return a session id');
+        }
+        pageClient = new CdpProtocolClient(transport, attach.sessionId);
+      } catch (error) {
+        await browser.close().catch(() => undefined);
+        throw error;
       }
-      const attach = object(await browser.call('Target.attachToTarget', {
-        targetId: page.targetId,
-        flatten: true,
-      })) as AttachResult;
-      if (typeof attach.sessionId !== 'string' || attach.sessionId.length === 0) {
-        await browser.close();
-        throw new Error('CDP target attach did not return a session id');
-      }
-      const pageClient = new CdpProtocolClient(transport, attach.sessionId);
 
       const session: BrowserBackendSession = {
         targetId: page.targetId,
