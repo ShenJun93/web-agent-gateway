@@ -47,6 +47,7 @@ interface Hints {
 const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['health', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['workspace.open', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['capabilities.describe', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.open', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
   ['machine.describe', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
@@ -127,6 +128,9 @@ async function openDirectSurface(t: TestContext) {
       coordinator: new DurableCommitCoordinator({ store, backend: commitBackend as never }),
     },
     commandContext: { authorize: async () => undefined },
+    capabilityContext: new Proxy({}, {
+      get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
+    }) as never,
     machineContext: new Proxy({}, {
       get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
     }) as never,
