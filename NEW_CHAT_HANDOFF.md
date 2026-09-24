@@ -97,7 +97,7 @@ filesystem/Git effects remain operator reviewed.
 
 ## Production MCP surface
 
-Full deployed production assembly exposes 37 tools:
+Full deployed production assembly exposes 38 tools:
 
 ```text
 health
@@ -133,6 +133,7 @@ command.run
 mutation.preview
 file.replace
 file.edit_block
+file.append
 file.create
 mutation.result
 git.commit
@@ -145,25 +146,26 @@ work to the local-machine backend.
 
 ## Latest live acceptance
 
-Runtime `805165068f9f` proved:
+Runtime `3687bf3b5c18` proved the new safe-append slice live:
 
 ```text
-toolCount             = 37
-file.edit_block       = live
-machine.terminal.list = live
+toolCount             = 38
+file.append           = live
 redactionObserved     = true
 rawSecretPreserved    = true
-terminalListed        = true
-terminalMarkerSeen    = true
-cleanup               = true
+staleSuffixRejected   = true
 ```
 
-Live mutations:
+Live append mutation:
 
 ```text
-create = mut_3d5b0895-6698-407b-b462-9625803794a0
-edit   = mut_78f45a71-2d91-4224-a168-ef1ff588a53c
+append = mut_da676085-8b43-44af-84c1-a78d5e756a22
+state  = SUCCEEDED
 ```
+
+The preceding 37-tool runtime already proved `file.edit_block`, terminal inventory, redaction and
+terminal cleanup live; the 38-tool runtime carries those capabilities forward and adds explicit
+suffix-guarded append.
 
 Before promotion:
 
@@ -215,11 +217,10 @@ edit WAG launchers, refresh tools, issue per-task authority, or restart DevSpace
 
 Next useful improvements:
 
-1. explicit safe append;
-2. restart-recoverable process/terminal session registry;
-3. asynchronous/search continuation for very large trees;
-4. WAG-native recent tool-call and usage diagnostics;
-5. richer binary/document/media support when it improves over bounded local argv.
+1. restart-recoverable process/terminal session registry;
+2. asynchronous/search continuation for very large trees;
+3. WAG-native recent tool-call and usage diagnostics;
+4. richer binary/document/media support when it improves over bounded local argv.
 
 ## Project isolation
 
