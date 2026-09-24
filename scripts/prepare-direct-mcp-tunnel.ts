@@ -225,7 +225,8 @@ function report(readiness: Readiness, allowPartial: boolean): number {
   console.log('  1. create the tunnel and a runtime API key in the OpenAI platform settings');
   console.log('  2. install tunnel-client from the openai/tunnel-client releases');
   console.log('  3. add the connector in ChatGPT settings, on a plan that permits custom MCP');
-  console.log('  4. approve, in ChatGPT, any write action it asks you to confirm');
+  console.log('  4. choose the connector permission mode you want in ChatGPT; WAG Local itself');
+  console.log('     requires no per-change Goal Lease or operator approval');
 
   const blocked = readiness.missing.length > 0 && !allowPartial;
   console.log(`\nDIRECT_MCP_LOCAL_READINESS = ${blocked ? 'INCOMPLETE' : 'READY'}`);
