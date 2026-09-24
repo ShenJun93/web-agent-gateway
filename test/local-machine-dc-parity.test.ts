@@ -310,6 +310,109 @@ test('local-machine interactive terminal supports bounded input/output and close
   assert.ok(['EXITED', 'TERMINATED'].includes(closed.state) || state === 'EXITED');
 });
 
+test('persistent terminal broker reconnects after LocalMachineContext reconstruction', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wag-local-terminal-recovery-'));
+  const root = await realpath(dir);
+  const statePath = join(dir, 'state.sqlite');
+  const terminalRegistryPath = join(dir, 'terminals');
+  const store = new SqliteDurableStore(statePath);
+  const identities = new WorkspaceIdentityRegistry(statePath);
+  const callerContext = createGatewayCallerContext({
+    ownerId: 'local.private.stdio',
+    sessionId: 'session_terminal_recovery',
+    adapterId: 'private.stdio.v1',
+  });
+  let second: ReturnType<typeof createLocalMachineContext> | undefined;
+  let workspaceId = '';
+  let terminalId = '';
+
+  t.after(async () => {
+    if (second && workspaceId && terminalId) {
+      await second.terminalClose(workspaceId, terminalId).catch(() => undefined);
+    }
+    identities.close();
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const first = createLocalMachineContext({
+    store,
+    callerContext,
+    workspaceIdentities: identities,
+    killSwitch: () => false,
+    terminalRegistryPath,
+  });
+  workspaceId = (await first.open(root) as { workspace_id: string }).workspace_id;
+  const shell = process.platform === 'win32' ? 'powershell' : 'bash';
+  const opened = await first.terminalOpen(workspaceId, shell) as {
+    terminal_id: string;
+    persistent: boolean;
+    state: string;
+  };
+  terminalId = opened.terminal_id;
+  assert.equal(opened.persistent, true);
+  assert.equal(opened.state, 'RUNNING');
+
+  const command = process.platform === 'win32'
+    ? "Write-Output 'API_KEY=terminal-recovery-secret'; Write-Output 'terminal-before-restart'\r\n"
+    : "printf 'API_KEY=terminal-recovery-secret\\nterminal-before-restart\\n'\n";
+  await first.terminalInput(workspaceId, terminalId, Buffer.from(command, 'utf8').toString('base64'));
+
+  second = createLocalMachineContext({
+    store,
+    callerContext,
+    workspaceIdentities: identities,
+    killSwitch: () => false,
+    terminalRegistryPath,
+  });
+  const reopened = (await second.open(root) as { workspace_id: string }).workspace_id;
+  workspaceId = reopened;
+
+  const listed = await second.terminalList(reopened) as {
+    terminals: Array<{ terminal_id: string; persistent?: boolean; state: string }>;
+  };
+  assert.ok(listed.terminals.some((entry) =>
+    entry.terminal_id === terminalId && entry.persistent === true && entry.state === 'RUNNING'));
+
+  let output = '';
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline && !output.includes('terminal-before-restart')) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    const result = await second.terminalOutput(reopened, terminalId) as { output: string };
+    output += result.output;
+  }
+  assert.match(output, /terminal-before-restart/);
+  assert.doesNotMatch(output, /terminal-recovery-secret/);
+  assert.match(output, /API_KEY=<REDACTED>/);
+
+  const terminalDir = join(terminalRegistryPath, terminalId);
+  const tokenText = await readFile(join(terminalDir, 'token.txt'), 'utf8');
+  const listingJson = JSON.stringify(listed);
+  assert.match(tokenText, /^TERMINAL_TOKEN=[a-f0-9]{64}\n$/);
+  assert.doesNotMatch(listingJson, /TERMINAL_TOKEN|[a-f0-9]{64}/);
+
+  const afterRestart = process.platform === 'win32'
+    ? "Write-Output 'terminal-after-restart'\r\n"
+    : "printf 'terminal-after-restart\\n'\n";
+  await second.terminalInput(
+    reopened,
+    terminalId,
+    Buffer.from(afterRestart, 'utf8').toString('base64'),
+  );
+
+  let afterOutput = '';
+  const secondDeadline = Date.now() + 5_000;
+  while (Date.now() < secondDeadline && !afterOutput.includes('terminal-after-restart')) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    const result = await second.terminalOutput(reopened, terminalId) as { output: string };
+    afterOutput += result.output;
+  }
+  assert.match(afterOutput, /terminal-after-restart/);
+
+  const closed = await second.terminalClose(reopened, terminalId) as { closed: boolean };
+  assert.equal(closed.closed, true);
+});
+
 test('autonomous stop blocks new filesystem/process/terminal effects but leaves inspection available', async (t) => {
   const { context, workspaceId } = await fixture(t, true);
 

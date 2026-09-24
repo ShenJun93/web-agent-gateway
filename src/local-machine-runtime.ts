@@ -1,10 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createConnection } from 'node:net';
 import {
   lstat,
   mkdir,
   realpath,
+  writeFile,
   readdir,
   readFile,
   rename,
@@ -12,7 +14,8 @@ import {
   rmdir,
   stat,
 } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { sameAuthorityTuple } from './authority-tuple.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
@@ -106,6 +109,20 @@ interface TerminalSession {
   exitCode?: number;
 }
 
+interface PersistentTerminalStatus {
+  version: 1;
+  terminal_id: string;
+  workspace_root: string;
+  broker_pid: number;
+  shell_pid: number;
+  shell: 'powershell' | 'cmd' | 'bash';
+  cwd: string;
+  started_at: string;
+  state: 'RUNNING' | 'EXITED' | 'TERMINATED';
+  exit_code?: number;
+  port: number;
+}
+
 export interface LocalMachineContext {
   open(path: string): Promise<object>;
   describe(workspaceId: string): Promise<object>;
@@ -135,6 +152,7 @@ export function createLocalMachineContext(options: {
   workspaceIdentities: WorkspaceIdentityRegistry;
   killSwitch: () => boolean;
   processRegistryPath?: string;
+  terminalRegistryPath?: string;
 }): LocalMachineContext {
   const { store, callerContext, workspaceIdentities } = options;
   const startedProcesses = loadStartedProcessRegistry(options.processRegistryPath);
@@ -228,6 +246,129 @@ export function createLocalMachineContext(options: {
       throw new Error('Gateway denied terminal session');
     }
     return session;
+  }
+
+  function terminalBrokerScript(): { argv: string[] } {
+    const modulePath = fileURLToPath(import.meta.url);
+    const sourceMode = modulePath.endsWith('.ts');
+    const brokerPath = resolve(dirname(modulePath), sourceMode
+      ? 'local-terminal-broker.ts'
+      : 'local-terminal-broker.js');
+    return {
+      argv: sourceMode
+        ? [process.execPath, '--import', import.meta.resolve('tsx'), brokerPath]
+        : [process.execPath, brokerPath],
+    };
+  }
+
+  function persistentTerminalDir(terminalId: string): string {
+    if (!options.terminalRegistryPath) throw new Error('Gateway terminal registry is unavailable');
+    if (!/^term_[A-Za-z0-9-]+$/.test(terminalId)) throw new Error('Gateway denied terminal session');
+    return join(options.terminalRegistryPath, terminalId);
+  }
+
+  async function readPersistentTerminalStatus(terminalId: string): Promise<PersistentTerminalStatus> {
+    const path = join(persistentTerminalDir(terminalId), 'status.json');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(path, 'utf8'));
+    } catch {
+      throw new Error('Gateway denied terminal session');
+    }
+    const status = parsed as Partial<PersistentTerminalStatus>;
+    if (status.version !== 1
+      || status.terminal_id !== terminalId
+      || !isAbsolute(status.workspace_root ?? '')
+      || !Number.isSafeInteger(status.broker_pid) || (status.broker_pid ?? 0) <= 0
+      || !Number.isSafeInteger(status.shell_pid) || (status.shell_pid ?? 0) <= 0
+      || !Number.isSafeInteger(status.port) || (status.port ?? 0) <= 0 || (status.port ?? 0) > 65_535
+      || !['powershell', 'cmd', 'bash'].includes(status.shell ?? '')
+      || !['RUNNING', 'EXITED', 'TERMINATED'].includes(status.state ?? '')
+      || !isAbsolute(status.cwd ?? '')
+      || typeof status.started_at !== 'string') {
+      throw new Error('Gateway denied invalid terminal registry');
+    }
+    return status as PersistentTerminalStatus;
+  }
+
+  async function persistentTerminalRequest(
+    workspace: WorkspaceRecord,
+    terminalId: string,
+    request: { op: 'status' | 'output' | 'input' | 'close'; base64?: string },
+  ): Promise<Record<string, unknown>> {
+    const status = await readPersistentTerminalStatus(terminalId);
+    if (!sameCanonicalRoot(status.workspace_root, workspace.canonicalRoot)) {
+      throw new Error('Gateway denied terminal session');
+    }
+    let token: string;
+    try {
+      const raw = (await readFile(join(persistentTerminalDir(terminalId), 'token.txt'), 'utf8')).trim();
+      token = raw.startsWith('TERMINAL_TOKEN=') ? raw.slice('TERMINAL_TOKEN='.length) : '';
+    } catch {
+      throw new Error('Gateway denied terminal session');
+    }
+    if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Gateway denied terminal session');
+
+    const payload = JSON.stringify({ token, ...request }) + '\n';
+    const response = await new Promise<string>((resolvePromise, reject) => {
+      const socket = createConnection({ host: '127.0.0.1', port: status.port });
+      let output = '';
+      const timer = setTimeout(() => {
+        socket.destroy(new Error('terminal broker timeout'));
+      }, 5_000);
+      timer.unref?.();
+      socket.setEncoding('utf8');
+      socket.once('connect', () => socket.write(payload));
+      socket.on('data', (chunk) => {
+        output += chunk;
+        if (Buffer.byteLength(output, 'utf8') > 128 * 1024) {
+          socket.destroy(new Error('terminal broker response too large'));
+        }
+      });
+      socket.once('error', reject);
+      socket.once('end', () => {
+        clearTimeout(timer);
+        resolvePromise(output);
+      });
+    });
+    let parsed: Record<string, unknown>;
+    try { parsed = JSON.parse(response.trim()) as Record<string, unknown>; }
+    catch { throw new Error('Gateway terminal broker returned invalid response'); }
+    if (parsed.ok !== true) throw new Error('Gateway terminal broker refused request');
+    return parsed;
+  }
+
+  async function listPersistentTerminals(workspace: WorkspaceRecord): Promise<object[]> {
+    if (!options.terminalRegistryPath) return [];
+    let entries;
+    try {
+      entries = await readdir(options.terminalRegistryPath, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+    const result: object[] = [];
+    for (const entry of entries.slice(0, 200)) {
+      if (!entry.isDirectory() || !/^term_[A-Za-z0-9-]+$/.test(entry.name)) continue;
+      try {
+        const status = await readPersistentTerminalStatus(entry.name);
+        if (!sameCanonicalRoot(status.workspace_root, workspace.canonicalRoot)) continue;
+        result.push({
+          terminal_id: status.terminal_id,
+          pid: status.shell_pid,
+          broker_pid: status.broker_pid,
+          cwd: status.cwd,
+          started_at: status.started_at,
+          state: status.state,
+          exit_code: status.exit_code,
+          shell: status.shell,
+          persistent: true,
+        });
+      } catch {
+        // Ignore malformed or incomplete broker directories in listing; direct access still fails.
+      }
+    }
+    return result;
   }
 
   async function readLocalText(root: string, path: string, readOptions: LocalMachineReadOptions = {}): Promise<object> {
@@ -775,6 +916,66 @@ export function createLocalMachineContext(options: {
       const { workspace } = await ownedWorkspace(workspaceId);
       assertEffectAllowed();
       const cwd = await resolveCwd(workspace.canonicalRoot, requestedCwd);
+
+      if (options.terminalRegistryPath) {
+        if (shell === 'powershell' && process.platform !== 'win32') throw new Error('Gateway denied unavailable shell');
+        if (shell === 'cmd' && process.platform !== 'win32') throw new Error('Gateway denied unavailable shell');
+        const terminalId = `term_${randomUUID()}`;
+        await mkdir(options.terminalRegistryPath, { recursive: true });
+        const dir = persistentTerminalDir(terminalId);
+        await mkdir(dir, { recursive: false });
+        const tokenFile = join(dir, 'token.txt');
+        const token = randomBytes(32).toString('hex');
+        await writeFile(tokenFile, `TERMINAL_TOKEN=${token}\n`, { encoding: 'utf8', mode: 0o600 });
+
+        const broker = terminalBrokerScript();
+        assertEffectAllowed();
+        const child = spawn(
+          broker.argv[0]!,
+          [...broker.argv.slice(1),
+            '--dir', dir,
+            '--token-file', tokenFile,
+            '--shell', shell,
+            '--cwd', cwd,
+            '--workspace-root', workspace.canonicalRoot,
+            '--terminal-id', terminalId],
+          {
+            cwd,
+            env: sanitizeLocalMachineEnvironment(process.env),
+            shell: false,
+            windowsHide: true,
+            detached: true,
+            stdio: 'ignore',
+          },
+        );
+        if (!child.pid) throw new Error('Gateway terminal broker did not start');
+        child.unref();
+
+        let status: PersistentTerminalStatus | undefined;
+        for (let attempt = 0; attempt < 80; attempt += 1) {
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+          try {
+            status = await readPersistentTerminalStatus(terminalId);
+            if (status.state === 'RUNNING' && status.port > 0) break;
+          } catch {
+            // Broker writes status only after the loopback listener is ready.
+          }
+        }
+        if (!status || status.state !== 'RUNNING') {
+          try { process.kill(child.pid, 'SIGTERM'); } catch {}
+          throw new Error('Gateway terminal broker did not become ready');
+        }
+        return {
+          terminal_id: terminalId,
+          pid: status.shell_pid,
+          broker_pid: status.broker_pid,
+          shell,
+          cwd,
+          state: status.state,
+          persistent: true,
+        };
+      }
+
       let argv: string[];
       if (shell === 'powershell') {
         if (process.platform !== 'win32') throw new Error('Gateway denied unavailable shell');
@@ -822,29 +1023,37 @@ export function createLocalMachineContext(options: {
         session.exitCode = code ?? -1;
       });
       terminals.set(terminalId, session);
-      return { terminal_id: terminalId, pid: child.pid, shell, cwd, state: session.state };
+      return { terminal_id: terminalId, pid: child.pid, shell, cwd, state: session.state, persistent: false };
     },
 
     async terminalList(workspaceId) {
-      await ownedWorkspace(workspaceId);
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const persistent = await listPersistentTerminals(workspace);
       return {
-        terminals: [...terminals.values()]
-          .filter((session) => session.workspaceId === workspaceId)
-          .map((session) => ({
-            terminal_id: session.terminalId,
-            pid: session.child.pid,
-            cwd: session.cwd,
-            started_at: new Date(session.startedAt).toISOString(),
-            state: session.state,
-            exit_code: session.exitCode,
-            buffered_bytes: Buffer.byteLength(session.buffer, 'utf8'),
-            truncated: session.truncated,
-          })),
+        terminals: [
+          ...persistent,
+          ...[...terminals.values()]
+            .filter((session) => session.workspaceId === workspaceId)
+            .map((session) => ({
+              terminal_id: session.terminalId,
+              pid: session.child.pid,
+              cwd: session.cwd,
+              started_at: new Date(session.startedAt).toISOString(),
+              state: session.state,
+              exit_code: session.exitCode,
+              buffered_bytes: Buffer.byteLength(session.buffer, 'utf8'),
+              truncated: session.truncated,
+              persistent: false,
+            })),
+        ],
       };
     },
 
     async terminalOutput(workspaceId, terminalId) {
-      await ownedWorkspace(workspaceId);
+      const { workspace } = await ownedWorkspace(workspaceId);
+      if (options.terminalRegistryPath) {
+        return persistentTerminalRequest(workspace, terminalId, { op: 'output' });
+      }
       const session = terminal(workspaceId, terminalId);
       const output = redactSecrets(session.buffer);
       const truncated = session.truncated;
@@ -860,16 +1069,19 @@ export function createLocalMachineContext(options: {
     },
 
     async terminalInput(workspaceId, terminalId, base64) {
-      await ownedWorkspace(workspaceId);
-      const session = terminal(workspaceId, terminalId);
+      const { workspace } = await ownedWorkspace(workspaceId);
       assertEffectAllowed();
-      if (session.state !== 'RUNNING') throw new Error('Gateway terminal is not running');
       if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) throw new Error('Gateway rejected terminal input encoding');
       const payload = Buffer.from(base64, 'base64');
       if (payload.length === 0 || payload.length > MAX_TERMINAL_INPUT_BYTES) {
         throw new Error('Gateway rejected terminal input size');
       }
       assertEffectAllowed();
+      if (options.terminalRegistryPath) {
+        return persistentTerminalRequest(workspace, terminalId, { op: 'input', base64 });
+      }
+      const session = terminal(workspaceId, terminalId);
+      if (session.state !== 'RUNNING') throw new Error('Gateway terminal is not running');
       await new Promise<void>((resolvePromise, reject) => {
         session.child.stdin.write(payload, (error) => error ? reject(error) : resolvePromise());
       });
@@ -877,15 +1089,44 @@ export function createLocalMachineContext(options: {
     },
 
     async terminalClose(workspaceId, terminalId) {
-      await ownedWorkspace(workspaceId);
-      const session = terminal(workspaceId, terminalId);
+      const { workspace } = await ownedWorkspace(workspaceId);
       assertEffectAllowed();
+      if (options.terminalRegistryPath) {
+        const status = await readPersistentTerminalStatus(terminalId);
+        if (!sameCanonicalRoot(status.workspace_root, workspace.canonicalRoot)) {
+          throw new Error('Gateway denied terminal session');
+        }
+        const result = await persistentTerminalRequest(workspace, terminalId, { op: 'close' });
+
+        let brokerAlive = true;
+        let shellAlive = true;
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline && (brokerAlive || shellAlive)) {
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+          [brokerAlive, shellAlive] = await Promise.all([
+            inspectPid(status.broker_pid).then((value) => value !== undefined),
+            inspectPid(status.shell_pid).then((value) => value !== undefined),
+          ]);
+        }
+        if (brokerAlive || shellAlive) {
+          throw new Error('Gateway terminal did not terminate cleanly');
+        }
+        await rm(persistentTerminalDir(terminalId), {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 50,
+        });
+        return result;
+      }
+      const session = terminal(workspaceId, terminalId);
       if (session.state === 'RUNNING') {
         session.state = 'TERMINATED';
         session.child.kill('SIGTERM');
       }
       return { terminal_id: terminalId, state: session.state, closed: true };
     },
+
   };
 }
 
