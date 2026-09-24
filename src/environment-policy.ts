@@ -3,6 +3,20 @@ const RUNTIME_ENV_KEYS = new Set([
 ]);
 const DEVSPACE_ENV_KEYS = new Set(['DEVSPACE_CONFIG_DIR', 'DEVSPACE_OAUTH_OWNER_TOKEN']);
 
+export function sanitizeLocalMachineEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const allowed = new Set([
+    ...RUNTIME_ENV_KEYS,
+    'userprofile', 'localappdata', 'appdata', 'homedrive', 'homepath', 'username',
+    'wsl_env', 'wslenv', 'psmodulepath',
+  ]);
+  const result: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && allowed.has(key.toLowerCase())) result[key] = value;
+  }
+  result.GIT_OPTIONAL_LOCKS = '0';
+  return result;
+}
+
 export function sanitizeDevspaceEnvironment(
   source: NodeJS.ProcessEnv,
   additions: Readonly<Record<string, string>>,

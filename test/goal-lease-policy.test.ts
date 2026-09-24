@@ -112,6 +112,32 @@ test('command.run is a separate workspace-scoped grant, not a file-pattern short
   }
 });
 
+test('local-machine execution capabilities are explicit workspace-scoped Goal Lease grants', () => {
+  for (const tool of ['machine.open', 'machine.command.run', 'machine.process.start']) {
+    const lease: GoalLeaseRecord = {
+      ...LEASE,
+      bindings: { ...BINDINGS, allowedTools: [tool] },
+    };
+    const ask = (over: Partial<LeaseRequest> = {}) => evaluateGoalLease({
+      lease,
+      now: NOW,
+      request: {
+        ...REQUEST,
+        tool,
+        path: '.',
+        diffBytes: 0,
+        ...over,
+      },
+      spend: { filesChanged: BINDINGS.maxFiles, bytesWritten: BINDINGS.maxBytes },
+      killSwitch: false,
+    });
+
+    assert.deepEqual(ask(), { admitted: true }, `${tool} is not charged as a file mutation`);
+    assert.equal((ask({ path: 'child' }) as { code: string }).code, 'LEASE_MALFORMED');
+    assert.equal((ask({ diffBytes: 1 }) as { code: string }).code, 'LEASE_MALFORMED');
+  }
+});
+
 test('every binding is load-bearing: change one thing and it is denied', () => {
   // Each row is a single deviation from a request that is otherwise admitted above, so a guard
   // that stopped being consulted would show up here as an admission rather than a denial.

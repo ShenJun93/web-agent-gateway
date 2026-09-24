@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import type { GatewayCallerContext } from './caller-context.js';
+import type { LocalMachineContext } from './local-machine-runtime.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
 import type { DurableCommitCoordinator } from './git-commit.js';
 import type { BrowserVerifyRequestCoordinator } from './browser-verify-request.js';
@@ -463,12 +464,13 @@ export interface CapabilityMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext }: {
+  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext, machineContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     gitCommitContext?: GitCommitMcpContext;
     commandContext?: CommandMcpContext;
     capabilityContext?: CapabilityMcpContext;
+    machineContext?: LocalMachineContext;
   } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
@@ -498,6 +500,73 @@ export function createGatewayMcpServer(
       inputSchema: z.object({ workspace_id: z.string().min(1).max(256) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ workspace_id }) => toolResult(await capabilityContext.describe(workspace_id)));
+  }
+
+  if (machineContext) {
+    server.registerTool('machine.open', {
+      description: 'Open one Goal-Lease-authorized local-machine directory independent of DevSpace allowedRoots.',
+      inputSchema: z.object({ path: z.string().min(1).max(4096) }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    }, async ({ path }) => toolResult(await machineContext.open(path)));
+
+    server.registerTool('machine.describe', {
+      description: 'Describe the effective Goal Lease for one opened local-machine workspace.',
+      inputSchema: z.object({ workspace_id: z.string().min(1).max(256) }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id }) => toolResult(await machineContext.describe(workspace_id)));
+
+    server.registerTool('machine.list', {
+      description: 'List bounded directory entries inside one Goal-Lease-authorized local-machine workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096).optional(),
+        max_entries: z.number().int().min(1).max(1_000).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path, max_entries }) => toolResult(
+      await machineContext.list(workspace_id, path, max_entries),
+    ));
+
+    server.registerTool('machine.read', {
+      description: 'Read bounded UTF-8 text inside one Goal-Lease-authorized local-machine workspace with secret redaction.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path }) => toolResult(await machineContext.read(workspace_id, path)));
+
+    server.registerTool('machine.command.run', {
+      description: 'Run one bounded local-machine argv command under an explicit Goal Lease; no caller-supplied environment or shell string is accepted.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        argv: z.array(z.string().min(1).max(4096)).min(1).max(32),
+        cwd: z.string().min(1).max(4096).optional(),
+        timeout_ms: z.number().int().min(100).max(120_000).optional(),
+        max_output_tokens: z.number().int().min(100).max(20_000).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ workspace_id, argv, cwd, timeout_ms, max_output_tokens }) => toolResult(
+      await machineContext.commandRun(workspace_id, argv, {
+        ...(cwd === undefined ? {} : { cwd }),
+        ...(timeout_ms === undefined ? {} : { timeoutMs: timeout_ms }),
+        ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+      }),
+    ));
+
+    server.registerTool('machine.process.start', {
+      description: 'Start one detached local-machine argv process under an explicit Goal Lease and sanitized environment.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        argv: z.array(z.string().min(1).max(4096)).min(1).max(32),
+        cwd: z.string().min(1).max(4096).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ workspace_id, argv, cwd }) => toolResult(
+      await machineContext.processStart(workspace_id, argv, {
+        ...(cwd === undefined ? {} : { cwd }),
+      }),
+    ));
   }
 
   if (inspect === true) {

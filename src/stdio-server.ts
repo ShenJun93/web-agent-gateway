@@ -8,6 +8,7 @@ import {
   type GitCommitMcpContext,
   type MutationMcpContext,
 } from './server.js';
+import type { LocalMachineContext } from './local-machine-runtime.js';
 
 export interface GatewayStdioServerOptions {
   gateway: GatewayApi;
@@ -18,6 +19,7 @@ export interface GatewayStdioServerOptions {
   gitCommitContext?: GitCommitMcpContext;
   commandContext?: CommandMcpContext;
   capabilityContext?: CapabilityMcpContext;
+  machineContext?: LocalMachineContext;
 }
 
 export interface GatewayStdioServer {
@@ -33,6 +35,7 @@ export async function startGatewayStdioServer(
     gitCommitContext: options.gitCommitContext,
     commandContext: options.commandContext,
     capabilityContext: options.capabilityContext,
+    machineContext: options.machineContext,
   });
   const transport = new StdioServerTransport(options.input, options.output);
   await server.connect(transport);

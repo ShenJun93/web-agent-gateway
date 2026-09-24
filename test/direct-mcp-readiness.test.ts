@@ -50,6 +50,12 @@ interface Hints {
 const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['health', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['workspace.open', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['machine.open', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+  ['machine.describe', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.command.run', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.process.start', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['repo.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['repo.search', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['repo.snapshot', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
@@ -112,6 +118,9 @@ async function openDirectSurface(t: TestContext) {
       coordinator: new DurableCommitCoordinator({ store, backend: commitBackend as never }),
     },
     commandContext: { authorize: async () => undefined },
+    machineContext: new Proxy({}, {
+      get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
+    }) as never,
   });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -163,7 +172,18 @@ test('no direct tool claims read-only while creating durable state', async (t) =
   // The regression this pins: `workspace.open` mints a durable caller-owned workspace record,
   // and previously claimed `readOnlyHint: true` — the one annotation class ADR-0020 warns can
   // cause a provider-side write confirmation to be skipped.
-  for (const name of ['workspace.open', 'verify.run', 'command.run', 'mutation.preview', 'file.replace', 'file.create', 'git.commit']) {
+  for (const name of [
+    'workspace.open',
+    'machine.open',
+    'machine.command.run',
+    'machine.process.start',
+    'verify.run',
+    'command.run',
+    'mutation.preview',
+    'file.replace',
+    'file.create',
+    'git.commit',
+  ]) {
     const tool = tools.tools.find((candidate) => candidate.name === name);
     assert.equal(
       tool?.annotations?.readOnlyHint, false,

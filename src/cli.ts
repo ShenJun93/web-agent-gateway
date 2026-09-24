@@ -131,6 +131,7 @@ export async function main(
       gitCommitContext: engineering.gitCommitContext,
       commandContext: engineering.commandContext,
       capabilityContext: engineering.capabilityContext,
+      machineContext: engineering.machineContext,
     });
   } catch (error) {
     await closeQuietly(engineering);

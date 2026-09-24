@@ -632,9 +632,18 @@ export function evaluateGoalLease(input: {
   // byte budget that bounds what repository code may do once executed. The command runner adds
   // separate argv/env/time/output/process-tree bounds; the lease supplies identity, workspace,
   // lifetime, kill-switch, tool-grant and self-modification bounds.
-  if (request.tool === 'command.run') {
+  const workspaceScopedExecution = [
+    'command.run',
+    'machine.open',
+    'machine.command.run',
+    'machine.process.start',
+  ].includes(request.tool);
+  if (workspaceScopedExecution) {
     if (request.path !== '.' || request.diffBytes !== 0 || request.wantsCommit === true) {
-      return deny('LEASE_MALFORMED', 'command.run must be represented as one workspace-scoped execution action');
+      return deny(
+        'LEASE_MALFORMED',
+        `${request.tool} must be represented as one workspace-scoped execution action`,
+      );
     }
     return { admitted: true };
   }

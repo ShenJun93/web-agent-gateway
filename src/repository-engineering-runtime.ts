@@ -8,6 +8,7 @@ import { createGatewayCallerContext, type GatewayCallerContext } from './caller-
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { SqliteDurableStore } from './durable-store.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
+import { LocalMachineFileMutationBackend } from './executor/local-machine-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
 import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
 import { DurableCommitCoordinator } from './git-commit.js';
@@ -20,6 +21,11 @@ import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
 import type { CapabilityMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext } from './server.js';
 import { WorkspaceIdentityRegistry } from './workspace-identity.js';
+import {
+  createLocalMachineContext,
+  observeLocalMachineWorkspaceIdentity,
+  type LocalMachineContext,
+} from './local-machine-runtime.js';
 
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
@@ -63,6 +69,8 @@ export interface RepositoryEngineeringRuntime {
   commandContext?: CommandMcpContext;
   /** Effective preflight authority for an opened workspace. */
   capabilityContext?: CapabilityMcpContext;
+  /** Goal-Lease-authorized Windows/local-machine operations independent of DevSpace roots. */
+  machineContext?: LocalMachineContext;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
@@ -154,6 +162,14 @@ export async function startRepositoryEngineeringRuntime(
   /** Read on every consequential decision so the kill switch remains immediate. */
   const killSwitch = () => isKillSwitchEngaged(dirname(mutationSettings.statePath));
 
+  const machineContext = createLocalMachineContext({
+    store,
+    callerContext,
+    workspaceIdentities,
+    killSwitch,
+    gatewayRoot: GATEWAY_ROOT,
+  });
+
   async function freshWorkspaceFingerprint(workspaceId: string): Promise<string | undefined> {
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) return undefined;
@@ -161,6 +177,17 @@ export async function startRepositoryEngineeringRuntime(
     // identity to revalidate. New production workspace.open calls bindWorkspaceIdentity before
     // returning the handle, so every new handle takes the live-observation path below.
     if (workspaceIdentities.fingerprint(workspaceId) === undefined) return undefined;
+
+    if (workspace.backendKind === 'local-machine') {
+      const observation = await observeLocalMachineWorkspaceIdentity(workspace.canonicalRoot);
+      const observedRoot = process.platform === 'win32'
+        ? observation.canonicalRoot.toLowerCase() : observation.canonicalRoot;
+      const expectedRoot = process.platform === 'win32'
+        ? workspace.canonicalRoot.toLowerCase() : workspace.canonicalRoot;
+      if (observedRoot !== expectedRoot) throw new Error('Gateway denied workspace identity drift');
+      return workspaceIdentities.record(workspaceId, observation).fingerprint;
+    }
+
     if (workspace.backendKind !== 'devspace') {
       throw new Error('Gateway denied workspace identity backend');
     }
@@ -234,6 +261,7 @@ export async function startRepositoryEngineeringRuntime(
       gitCommit: gitCommitSettings !== undefined,
       ...(mutationSettings.sessionCorrelation === undefined ? {} : { stableSessionId: sessionId }),
     },
+    machineContext,
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,
       sessionId: callerContext.sessionId,
@@ -345,7 +373,10 @@ export async function startRepositoryEngineeringRuntime(
         };
         const coordinator = new DurableMutationCoordinator({
           store,
-          backends: [new DevspaceFileMutationBackend(executor)],
+          backends: [
+            new DevspaceFileMutationBackend(executor),
+            new LocalMachineFileMutationBackend(),
+          ],
           goalLeaseResolver,
         });
         await coordinator.reconcile();

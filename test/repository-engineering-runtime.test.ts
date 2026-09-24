@@ -204,6 +204,8 @@ test('serve-stdio forwards the resolved capability profile to the MCP surface', 
   assert.equal(h.stdioOptions.length, 1);
   assert.equal(h.stdioOptions[0]!.inspect, true);
   assert.ok(h.stdioOptions[0]!.mutationContext, 'mutation opt-in must reach the stdio surface');
+  assert.ok(h.stdioOptions[0]!.machineContext,
+    'mutation opt-in must also wire the Goal-Lease local-machine backend to stdio');
 
   h.requestShutdown();
   assert.equal(await running, 0);
