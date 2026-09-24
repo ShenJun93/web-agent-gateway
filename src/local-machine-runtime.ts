@@ -36,6 +36,7 @@ const MAX_SEARCH_RESULTS = 50;
 const MAX_SEARCH_FILES = 5_000;
 const MAX_TERMINAL_BUFFER_BYTES = 64 * 1024;
 const MAX_TERMINAL_INPUT_BYTES = 4 * 1024;
+const MAX_PROCESS_OBSERVATION_MS = 5 * 60_000;
 
 export async function observeLocalMachineWorkspaceIdentity(
   root: string,
@@ -74,6 +75,14 @@ interface StartedProcess {
   creationDate?: string;
   state: 'RUNNING' | 'EXITED' | 'TERMINATED';
   exitCode?: number;
+}
+
+interface ObservedProcess {
+  readonly processId: string;
+  readonly workspaceId: string;
+  readonly pid: number;
+  readonly creationDate: string;
+  readonly observedAt: number;
 }
 
 interface TerminalSession {
@@ -117,6 +126,7 @@ export function createLocalMachineContext(options: {
 }): LocalMachineContext {
   const { store, callerContext, workspaceIdentities } = options;
   const startedProcesses = new Map<string, StartedProcess>();
+  const observedProcesses = new Map<string, ObservedProcess>();
   const terminals = new Map<string, TerminalSession>();
 
   function assertEffectAllowed(): void {
@@ -474,21 +484,47 @@ export function createLocalMachineContext(options: {
       await ownedWorkspace(workspaceId);
       const owned = startedProcesses.get(idOrPid);
       if (owned && owned.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
-      const pid = owned ? owned.pid : Number(idOrPid);
+      const observed = observedProcesses.get(idOrPid);
+      if (observed && observed.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
+      if (!owned && !observed && /^(?:proc|obs)_/.test(idOrPid)) {
+        throw new Error('Gateway denied process record');
+      }
+      const pid = owned ? owned.pid : observed ? observed.pid : Number(idOrPid);
       const value = await inspectPid(pid);
       if (!value) return { found: false, pid };
+
+      let processId = owned?.processId ?? observed?.processId;
+      let observedExternal = observed;
+      const creationDate = value.CreationDate == null ? undefined : String(value.CreationDate);
+      if (!owned && !observed && creationDate) {
+        processId = `obs_${randomUUID()}`;
+        observedExternal = {
+          processId,
+          workspaceId,
+          pid,
+          creationDate,
+          observedAt: Date.now(),
+        };
+        observedProcesses.set(processId, observedExternal);
+      }
+
       return {
         found: true,
-        ...(owned === undefined ? {} : {
+        ...(owned === undefined ? {
+          ...(processId === undefined ? {} : { process_id: processId }),
+          observed: observedExternal !== undefined,
+          terminable: observedExternal !== undefined,
+        } : {
           process_id: owned.processId,
           owned: true,
+          terminable: true,
           state: owned.state,
         }),
         pid,
         parent_pid: Number(value.ParentProcessId),
         name: String(value.Name ?? ''),
         executable_path: value.ExecutablePath == null ? undefined : String(value.ExecutablePath),
-        creation_date: value.CreationDate == null ? undefined : String(value.CreationDate),
+        creation_date: creationDate,
         command_line: value.CommandLine == null ? undefined : String(value.CommandLine),
       };
     },
@@ -538,32 +574,52 @@ export function createLocalMachineContext(options: {
 
     async processTerminate(workspaceId, processId) {
       await ownedWorkspace(workspaceId);
-      const record = startedProcesses.get(processId);
-      if (!record || record.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
+      const owned = startedProcesses.get(processId);
+      const observed = observedProcesses.get(processId);
+      if (owned && owned.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
+      if (observed && observed.workspaceId !== workspaceId) throw new Error('Gateway denied process record');
+      if (!owned && !observed) throw new Error('Gateway denied process record');
+      if (observed && Date.now() - observed.observedAt > MAX_PROCESS_OBSERVATION_MS) {
+        observedProcesses.delete(processId);
+        throw new Error('Gateway denied expired process observation; inspect the PID again');
+      }
+
       assertEffectAllowed();
-      const inspected = await inspectPid(record.pid);
+      const pid = owned?.pid ?? observed!.pid;
+      const inspected = await inspectPid(pid);
       if (!inspected) {
-        record.state = 'EXITED';
-        return { process_id: processId, pid: record.pid, terminated: false, state: 'EXITED' };
+        if (owned) owned.state = 'EXITED';
+        observedProcesses.delete(processId);
+        return { process_id: processId, pid, terminated: false, state: 'EXITED' };
       }
       const liveCreation = inspected.CreationDate == null ? undefined : String(inspected.CreationDate);
-      if (record.creationDate && liveCreation && record.creationDate !== liveCreation) {
-        throw new Error('Gateway denied process PID reuse');
+      const expectedCreation = owned?.creationDate ?? observed?.creationDate;
+      if (!expectedCreation || !liveCreation || expectedCreation !== liveCreation) {
+        throw new Error('Gateway denied process PID reuse or missing creation identity');
       }
+
       assertEffectAllowed();
       if (process.platform === 'win32') {
         const result = await runBounded(
-          ['taskkill.exe', '/PID', String(record.pid), '/T', '/F'],
+          ['taskkill.exe', '/PID', String(pid), '/T', '/F'],
           process.cwd(),
           10_000,
           2_000,
         );
         if (result.exitCode !== 0) throw new Error('Gateway process termination failed');
       } else {
-        process.kill(record.pid, 'SIGTERM');
+        if (observed) throw new Error('Gateway denied external process termination without creation identity');
+        process.kill(pid, 'SIGTERM');
       }
-      record.state = 'TERMINATED';
-      return { process_id: processId, pid: record.pid, terminated: true, state: record.state };
+      if (owned) owned.state = 'TERMINATED';
+      observedProcesses.delete(processId);
+      return {
+        process_id: processId,
+        pid,
+        terminated: true,
+        state: 'TERMINATED',
+        observed: observed !== undefined,
+      };
     },
 
     async terminalOpen(workspaceId, shell = 'powershell', requestedCwd) {

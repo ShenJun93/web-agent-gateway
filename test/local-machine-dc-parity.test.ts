@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -127,6 +128,65 @@ test('local-machine owned process lifecycle supports start, inspect, list and te
   };
   assert.equal(terminated.terminated, true);
   assert.equal(terminated.state, 'TERMINATED');
+});
+
+test('local-machine can terminate an externally started process only after an observed identity token', async (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('external process termination proof currently requires Windows CreationDate identity');
+    return;
+  }
+  const { context, workspaceId } = await fixture(t);
+  const external = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  if (!external.pid) throw new Error('external fixture process did not start');
+  external.unref();
+
+  t.after(() => {
+    try { process.kill(external.pid!, 'SIGKILL'); } catch {}
+  });
+
+  await assert.rejects(
+    () => context.processTerminate(workspaceId, String(external.pid)),
+    /process record/,
+    'a raw PID is never itself termination authority',
+  );
+
+  let inspected: {
+    found: boolean;
+    pid: number;
+    process_id?: string;
+    observed?: boolean;
+    terminable?: boolean;
+  } | undefined;
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    inspected = await context.processInspect(workspaceId, String(external.pid)) as typeof inspected;
+    if (inspected?.found && inspected.process_id) break;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
+  assert.equal(inspected?.found, true);
+  assert.equal(inspected?.pid, external.pid);
+  assert.equal(inspected?.observed, true);
+  assert.equal(inspected?.terminable, true);
+  assert.match(inspected?.process_id ?? '', /^obs_/);
+
+  const terminated = await context.processTerminate(workspaceId, inspected!.process_id!) as {
+    terminated: boolean;
+    observed: boolean;
+    state: string;
+  };
+  assert.equal(terminated.terminated, true);
+  assert.equal(terminated.observed, true);
+  assert.equal(terminated.state, 'TERMINATED');
+
+  await assert.rejects(
+    () => context.processTerminate(workspaceId, inspected!.process_id!),
+    /process record/,
+    'observation tokens are single-use after termination',
+  );
 });
 
 test('local-machine interactive terminal supports bounded input/output and close', async (t) => {
