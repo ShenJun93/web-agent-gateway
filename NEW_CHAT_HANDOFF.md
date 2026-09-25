@@ -25,12 +25,12 @@ branch:
 feat/goal-ui-delegation-v1
 
 behavior commit:
-365100ef92c0b304bee2082b6799f002f7d72c0d
-feat: add native tool usage diagnostics
+fcf262403bc477380ac2e45f49ca901006522dd7
+feat: persist tool usage diagnostics
 
 current source/runtime HEAD:
-365100ef92c0b304bee2082b6799f002f7d72c0d
-feat: add native tool usage diagnostics
+fcf262403bc477380ac2e45f49ca901006522dd7
+feat: persist tool usage diagnostics
 ```
 
 Documentation-only commits may make Git HEAD newer than the behavior commit.
@@ -53,16 +53,16 @@ Use exact paths for every commit and inspect its receipt.
 
 ```text
 runtime:
-E:/WAG-Runtime/365100ef92c0
+E:/WAG-Runtime/fcf262403bc4
 
 activation:
-E:/WAG-Acceptance/promotion-logs/activate-365100ef92c0.json
+E:/WAG-Acceptance/promotion-logs/activate-fcf262403bc4.json
 
 state:
 SUCCEEDED
 
 previous:
-E:/WAG-Runtime/350b9fd47d56/dist/cli.js
+E:/WAG-Runtime/5b6ab4aab5ef/dist/cli.js
 ```
 
 DevSpace was not restarted.
@@ -101,7 +101,7 @@ filesystem/Git effects remain operator reviewed.
 
 ## Production MCP surface
 
-Full deployed production assembly exposes 42 tools:
+Full deployed production assembly exposes 43 tools:
 
 ```text
 health
@@ -113,6 +113,7 @@ machine.list
 machine.read
 machine.read_many
 machine.image.read
+machine.pdf.extract
 machine.search
 machine.search_continue
 machine.info
@@ -154,51 +155,45 @@ work to the local-machine backend.
 
 ## Latest live acceptance
 
-Runtime `aa12f6e228ad` is active from exact committed source HEAD
-`aa12f6e228ad2f46b5587ea4dab4247ca695f385`
-(`feat: add native image read parity`).
+Runtime `fcf262403bc4` is active from exact committed source HEAD
+`fcf262403bc477380ac2e45f49ca901006522dd7`
+(`feat: persist tool usage diagnostics`).
 
-Fresh direct-MCP readiness projects 42 tools and includes `machine.image.read`.
-Activation receipt `E:/WAG-Acceptance/promotion-logs/activate-aa12f6e228ad.json` is
-`SUCCEEDED`; DevSpace was not restarted.
+Activation receipt
+`E:/WAG-Acceptance/promotion-logs/activate-fcf262403bc4.json` is `SUCCEEDED`; DevSpace was not
+restarted.
 
-Native image support is bounded to 4 MiB and validates PNG/JPEG/WEBP/GIF signatures. The tool returns
-image bytes as a native MCP image content item while structured metadata contains only path, MIME,
-size and SHA-256.
+Fresh direct-MCP readiness projects 43 tools and returns
+`DIRECT_MCP_LOCAL_READINESS = READY`.
 
-The live proof deliberately used the **frozen existing `file.read` tool name**, not the newly
-published name. It opened `C:/Users/PACMAP/AppData/Local/WAG-Local`, created a temporary 1x1 PNG,
-and `file.read` returned:
+The 43-tool surface includes native image read, native PDF text extraction, restart-recoverable
+process/terminal registries, safe block edit/append, and diagnostics.recent/diagnostics.usage.
+
+Persistent diagnostics live proof:
 
 ```text
-mime_type          = image/png
-size_bytes         = 68
-sha256             = 749de74b69c1255b49e30dc2033b90521227e9f5575842cbec4b0b0d865ac83a
-content[0].type    = image
-structured base64  = absent
+runtime reconstruction #1:
+1 health          success=true
+2 workspace.open  success=false error_class=TypeError
+
+runtime reconstruction #2:
+history 1,2 preserved
+3 repo.snapshot   success=true
+
+runtime reconstruction #3:
+history = 1,2,3
+total_calls = 3
+successes   = 2
+failures    = 1
+secretPersisted = false
 ```
 
-The temporary image was deleted after the proof. This closes local image inspection without waiting
-for provider-side connector-catalog refresh.
+The diagnostics ring remains bounded to 512 sanitized events and is stored per stable private-stdio
+session. Arguments, paths, command text, output, credentials and exception messages are never
+persisted.
 
 Receipt:
-`docs/benchmarks/2026-09-25-live-42-tool-native-image-read.md`.
-
-The preceding 41-tool runtime `365100ef92c0` remains the accepted diagnostics baseline for
-`diagnostics.recent` and `diagnostics.usage`; those capabilities carry forward in the 42-tool
-runtime.
-
-Before image promotion:
-
-```text
-local image/DC + machine MCP = 9/9 PASS
-direct/frozen/MCP surface    = 27/27 PASS
-surface                      = 24/24 PASS
-bootstrap                    = 14/14 PASS
-typecheck                    = PASS
-build                        = PASS
-diffcheck                    = PASS
-```
+`docs/benchmarks/2026-09-25-live-persistent-diagnostics.md`.
 
 ## DC-replacement capabilities
 
@@ -243,10 +238,10 @@ edit WAG launchers, refresh tools, issue per-task authority, or restart DevSpace
 
 Next useful improvements:
 
-1. add bounded document/PDF extraction when it materially avoids external shell/tool fallback;
-2. persist diagnostics across runtime restart if operational history beyond one process becomes useful;
-3. add audio/media metadata or preview only when a real workflow needs it;
-4. continue reducing frozen-connector dependence when provider-side catalog refresh lags runtime deployment.
+1. add bounded audio/media metadata or preview only when a real workflow needs it;
+2. add native office/document extraction only when it materially avoids external conversion fallback;
+3. continue reducing frozen-connector dependence when provider-side catalog refresh lags runtime deployment;
+4. add richer WAG-native operational/runtime self-inspection where it removes shell fallback.
 
 ## Project isolation
 
