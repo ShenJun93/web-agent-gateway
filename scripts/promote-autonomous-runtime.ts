@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 const PREPARE = '--prepare-runtime';
 const ACTIVATE = '--activate-prepared-runtime';
@@ -245,12 +245,9 @@ function prepareRuntime(head: string): PreparedRuntime {
   const short = head.slice(0, 12);
   const root = join(RuntimeBase, short);
   const staging = 'E:\\WAG-Acceptance\\runtime-build-' + short;
-  const commonDir = git(['rev-parse', '--path-format=absolute', '--git-common-dir']);
-  const mainRepo = dirname(commonDir);
   const buildNodeModules = join(Repo, 'node_modules');
-  const runtimeNodeModules = join(mainRepo, 'node_modules');
-  if (!existsSync(buildNodeModules) || !existsSync(runtimeNodeModules)) {
-    throw new Error('node_modules required for runtime build');
+  if (!existsSync(buildNodeModules)) {
+    throw new Error('worktree node_modules required for runtime build');
   }
 
   if (existsSync(staging)) {
@@ -269,7 +266,7 @@ function prepareRuntime(head: string): PreparedRuntime {
     rmSync(join(root, 'dist'), { recursive: true, force: true });
     cpSync(join(staging, 'dist'), join(root, 'dist'), { recursive: true });
     cpSync(join(staging, 'package.json'), join(root, 'package.json'));
-    ensureJunction(join(root, 'node_modules'), runtimeNodeModules);
+    ensureJunction(join(root, 'node_modules'), buildNodeModules);
     writeFileSync(
       join(root, 'RUNTIME.json'),
       JSON.stringify({
