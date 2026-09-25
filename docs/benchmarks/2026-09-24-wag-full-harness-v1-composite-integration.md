@@ -131,3 +131,67 @@ them through an accepted MCP surface and runs live acceptance.
 8. Only after live acceptance, consider runtime promotion.
 
 Do not merge uncommitted bytes from any parallel worktree into this candidate.
+
+## Rebase refresh — 2026-09-25
+
+The composite was rebased from the preserved candidate
+`0a81c428527efc3b887db542b9365ae12d5eca5e` onto the newer committed WAG-Core base:
+
+```text
+ac4daf2e20cab4e44623b0359d6728dd221e2772
+```
+
+A local safety ref preserves the pre-rebase candidate:
+
+```text
+safety/full-harness-pre-rebase-0a81c428
+```
+
+The rebase replayed 18 commits and completed without conflict. No bytes from the dirty active
+WAG-Core worktree were merged into this integration worktree.
+
+Two integration-only test compatibility fixes were then committed:
+
+- type the CredentialBroker denial fixtures as `CredentialRequest[]`, preserving production broker
+  behavior while satisfying the newer core TypeScript environment;
+- align the DC replacement acceptance tool inventory with the current 43-tool private-stdio surface.
+
+The worktree dependency environment was synchronized from the existing lockfile with
+`npm ci --ignore-scripts`; this changed no tracked package metadata.
+
+Fresh gates on the rebased candidate:
+
+```text
+npm run build       PASS
+npm run typecheck   PASS
+git diff --check    PASS
+
+Full Harness changed test files:
+117 / 117 PASS
+
+Current autonomous-local/core regression batch:
+16 / 16 PASS
+
+Composite:
+133 / 133 PASS
+0 FAIL
+```
+
+The 16-test current core batch is:
+
+```text
+test/activation-step.test.ts
+test/autonomous-local-policy.test.ts
+test/direct-mcp-readiness.test.ts
+test/workspace-identity-effect-revalidation.test.ts
+```
+
+The long-form `test/dc-replacement.acceptance.ts` was updated to expect the current 43-tool
+surface. A complete runtime result is not claimed here because WAG `command.run` has a 30-second
+execution ceiling and the long acceptance exceeds that observation window. Its surface contract is
+covered by the green direct-MCP regression above.
+
+This refresh still makes no claim of Full Harness MCP publication, live owned-browser acceptance,
+Notebook99 live execution, or runtime promotion. The next source action is the dedicated
+single-writer MCP publication/integration slice.
+
