@@ -25,8 +25,12 @@ branch:
 feat/goal-ui-delegation-v1
 
 behavior commit:
-805165068f9fdd9c950a6da5cf97dce64bf2b73b
-feat: add safe block edit and terminal inventory
+365100ef92c0b304bee2082b6799f002f7d72c0d
+feat: add native tool usage diagnostics
+
+current source/runtime HEAD:
+365100ef92c0b304bee2082b6799f002f7d72c0d
+feat: add native tool usage diagnostics
 ```
 
 Documentation-only commits may make Git HEAD newer than the behavior commit.
@@ -49,16 +53,16 @@ Use exact paths for every commit and inspect its receipt.
 
 ```text
 runtime:
-E:/WAG-Runtime/805165068f9f
+E:/WAG-Runtime/365100ef92c0
 
 activation:
-E:/WAG-Acceptance/promotion-logs/activate-805165068f9f.json
+E:/WAG-Acceptance/promotion-logs/activate-365100ef92c0.json
 
 state:
 SUCCEEDED
 
 previous:
-E:/WAG-Runtime/827b2583fee0/dist/cli.js
+E:/WAG-Runtime/350b9fd47d56/dist/cli.js
 ```
 
 DevSpace was not restarted.
@@ -97,7 +101,7 @@ filesystem/Git effects remain operator reviewed.
 
 ## Production MCP surface
 
-Full deployed production assembly exposes 38 tools:
+Full deployed production assembly exposes 42 tools:
 
 ```text
 health
@@ -108,7 +112,9 @@ machine.describe
 machine.list
 machine.read
 machine.read_many
+machine.image.read
 machine.search
+machine.search_continue
 machine.info
 machine.mkdir
 machine.move
@@ -138,6 +144,8 @@ file.create
 mutation.result
 git.commit
 git.commit.result
+diagnostics.recent
+diagnostics.usage
 ```
 
 The current ChatGPT conversation may still display the older 16-tool connector catalog. This is not
@@ -146,35 +154,50 @@ work to the local-machine backend.
 
 ## Latest live acceptance
 
-Runtime `3687bf3b5c18` proved the new safe-append slice live:
+Runtime `aa12f6e228ad` is active from exact committed source HEAD
+`aa12f6e228ad2f46b5587ea4dab4247ca695f385`
+(`feat: add native image read parity`).
+
+Fresh direct-MCP readiness projects 42 tools and includes `machine.image.read`.
+Activation receipt `E:/WAG-Acceptance/promotion-logs/activate-aa12f6e228ad.json` is
+`SUCCEEDED`; DevSpace was not restarted.
+
+Native image support is bounded to 4 MiB and validates PNG/JPEG/WEBP/GIF signatures. The tool returns
+image bytes as a native MCP image content item while structured metadata contains only path, MIME,
+size and SHA-256.
+
+The live proof deliberately used the **frozen existing `file.read` tool name**, not the newly
+published name. It opened `C:/Users/PACMAP/AppData/Local/WAG-Local`, created a temporary 1x1 PNG,
+and `file.read` returned:
 
 ```text
-toolCount             = 38
-file.append           = live
-redactionObserved     = true
-rawSecretPreserved    = true
-staleSuffixRejected   = true
+mime_type          = image/png
+size_bytes         = 68
+sha256             = 749de74b69c1255b49e30dc2033b90521227e9f5575842cbec4b0b0d865ac83a
+content[0].type    = image
+structured base64  = absent
 ```
 
-Live append mutation:
+The temporary image was deleted after the proof. This closes local image inspection without waiting
+for provider-side connector-catalog refresh.
+
+Receipt:
+`docs/benchmarks/2026-09-25-live-42-tool-native-image-read.md`.
+
+The preceding 41-tool runtime `365100ef92c0` remains the accepted diagnostics baseline for
+`diagnostics.recent` and `diagnostics.usage`; those capabilities carry forward in the 42-tool
+runtime.
+
+Before image promotion:
 
 ```text
-append = mut_da676085-8b43-44af-84c1-a78d5e756a22
-state  = SUCCEEDED
-```
-
-The preceding 37-tool runtime already proved `file.edit_block`, terminal inventory, redaction and
-terminal cleanup live; the 38-tool runtime carries those capabilities forward and adds explicit
-suffix-guarded append.
-
-Before promotion:
-
-```text
-focused batch = 43/43 PASS
-surface       = 24/24 PASS
-typecheck     = PASS
-build         = PASS
-diffcheck     = PASS
+local image/DC + machine MCP = 9/9 PASS
+direct/frozen/MCP surface    = 27/27 PASS
+surface                      = 24/24 PASS
+bootstrap                    = 14/14 PASS
+typecheck                    = PASS
+build                        = PASS
+diffcheck                    = PASS
 ```
 
 ## DC-replacement capabilities
@@ -220,10 +243,10 @@ edit WAG launchers, refresh tools, issue per-task authority, or restart DevSpace
 
 Next useful improvements:
 
-1. restart-recoverable terminal broker/session registry (detached process recovery is live);
-2. asynchronous/search continuation for very large trees;
-3. WAG-native recent tool-call and usage diagnostics;
-4. richer binary/document/media support when it improves over bounded local argv.
+1. add bounded document/PDF extraction when it materially avoids external shell/tool fallback;
+2. persist diagnostics across runtime restart if operational history beyond one process becomes useful;
+3. add audio/media metadata or preview only when a real workflow needs it;
+4. continue reducing frozen-connector dependence when provider-side catalog refresh lags runtime deployment.
 
 ## Project isolation
 
