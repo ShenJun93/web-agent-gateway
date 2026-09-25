@@ -23,9 +23,15 @@ test('autonomous runtime promotion has no per-goal authority or rollover path', 
     '--activate-prepared-runtime-worker',
     'RUNTIME.json',
     'rollback',
+    'fileURLToPath(import.meta.url)',
   ]) {
     assert.equal(source.includes(required), true, required + ' must remain in runtime promotion');
   }
+  assert.equal(
+    source.includes('claude-autonomous-wag-harness-v1'),
+    false,
+    'runtime promotion must bind to the checkout containing the helper, not a historical worktree',
+  );
 });
 
 test('promotion CLI fails closed before touching the machine when mode selection is invalid', () => {

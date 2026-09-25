@@ -9,14 +9,15 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PREPARE = '--prepare-runtime';
 const ACTIVATE = '--activate-prepared-runtime';
 const WORKER = '--activate-prepared-runtime-worker';
 const PROMOTE_CURRENT = '--promote-current';
 
-const Repo = 'E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1';
+const Repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RuntimeBase = 'E:\\WAG-Runtime';
 const LogDir = 'E:\\WAG-Acceptance\\promotion-logs';
 const Wrapper = '/home/pacmap/bin/wag-mcp-stdio.sh';
