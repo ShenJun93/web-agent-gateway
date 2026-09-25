@@ -23,6 +23,13 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     info: async (id, path) => record('info', id, path),
     read: async (id, path, options) => record('read', id, path, options),
     readMany: async (id, paths, options) => record('readMany', id, paths, options),
+    readImage: async (_id, path) => ({
+      path,
+      mime_type: 'image/png',
+      size_bytes: 8,
+      sha256: 'a'.repeat(64),
+      data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
+    }),
     mkdir: async (id, path) => record('mkdir', id, path),
     move: async (id, from, to) => record('move', id, from, to),
     delete: async (id, path, recursive) => record('delete', id, path, recursive),
@@ -85,6 +92,14 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     offset: 10,
     length: 20,
   })).name, 'readMany');
+
+  const image = await client.callTool({
+    name: 'machine.image.read',
+    arguments: { workspace_id: workspaceId, path: 'pixel.png' },
+  });
+  assert.notEqual(image.isError, true);
+  assert.equal((image.structuredContent as { mime_type?: string }).mime_type, 'image/png');
+  assert.equal((image.content[0] as { type?: string }).type, 'image');
 
   assert.equal((await invoke('machine.search', {
     workspace_id: workspaceId,

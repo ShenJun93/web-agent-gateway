@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import type { GatewayCallerContext } from './caller-context.js';
-import type { LocalMachineContext } from './local-machine-runtime.js';
+import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
 import type { DurableCommitCoordinator } from './git-commit.js';
@@ -601,6 +601,17 @@ export function createGatewayMcpServer(
       }),
     ));
 
+    registerTool('machine.image.read', {
+      description: 'Read one bounded PNG/JPEG/WEBP/GIF as native MCP image content without exposing base64 in structured metadata.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path }) => imageToolResult(
+      await machineContext.readImage(workspace_id, path),
+    ));
+
     registerTool('machine.search', {
       description: 'Search bounded UTF-8 files recursively inside one caller-owned local-machine workspace.',
       inputSchema: z.object({
@@ -851,7 +862,15 @@ export function createGatewayMcpServer(
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ workspace_id, path }) => {
     if (await isLocalMachineWorkspace(workspace_id)) {
-      return toolResult(await machineContext!.read(workspace_id, path));
+      try {
+        return toolResult(await machineContext!.read(workspace_id, path));
+      } catch (readError) {
+        try {
+          return imageToolResult(await machineContext!.readImage(workspace_id, path));
+        } catch {
+          throw readError;
+        }
+      }
     }
     return toolResult(await gateway.readFile(workspace_id, path));
   });
@@ -1116,6 +1135,17 @@ function directMutationToolResult<T extends object & { baseSha256: string; resul
 
 function toolResult(value: object) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value as Record<string, unknown> };
+}
+
+function imageToolResult(value: LocalMachineImageRead) {
+  const { data_base64, ...metadata } = value;
+  return {
+    content: [
+      { type: 'image' as const, data: data_base64, mimeType: value.mime_type },
+      { type: 'text' as const, text: JSON.stringify(metadata) },
+    ],
+    structuredContent: metadata as Record<string, unknown>,
+  };
 }
 
 /**

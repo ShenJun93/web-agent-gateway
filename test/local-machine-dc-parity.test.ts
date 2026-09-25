@@ -94,6 +94,27 @@ test('local-machine filesystem parity covers info/search/mkdir/move/delete insid
   await assert.rejects(() => readFile(join(root, 'nested', 'moved.txt'), 'utf8'));
 });
 
+test('local-machine image read returns bounded signature-validated MCP payload data', async (t) => {
+  const { root, context, workspaceId } = await fixture(t);
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2lVQAAAAASUVORK5CYII=',
+    'base64',
+  );
+  await writeFile(join(root, 'pixel.png'), png);
+
+  const image = await context.readImage(workspaceId, 'pixel.png');
+  assert.equal(image.mime_type, 'image/png');
+  assert.equal(image.size_bytes, png.length);
+  assert.equal(image.sha256, createHash('sha256').update(png).digest('hex'));
+  assert.equal(Buffer.from(image.data_base64, 'base64').equals(png), true);
+
+  await writeFile(join(root, 'fake.png'), Buffer.from('not actually an image', 'utf8'));
+  await assert.rejects(
+    () => context.readImage(workspaceId, 'fake.png'),
+    /unsupported local-machine image format/,
+  );
+});
+
 test('local-machine read pagination, multi-read and recursive list cover large local trees without unbounded output', async (t) => {
   const { root, context, workspaceId } = await fixture(t);
 

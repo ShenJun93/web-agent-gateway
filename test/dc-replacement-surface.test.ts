@@ -514,11 +514,24 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
     },
     async read(workspaceId, path) {
       assert.equal(workspaceId, machineWorkspaceId);
+      machineCalls.push('read:' + path);
+      if (path === 'image.png') throw new Error('Gateway rejected local-machine non-UTF-8 content');
       assert.equal(path, 'note.txt');
-      machineCalls.push('read');
       return { content: 'machine-read\n', raw_sha256: 'a'.repeat(64), size_bytes: 13, encoding: 'utf-8' };
     },
     async readMany() { throw new Error('not used'); },
+    async readImage(workspaceId, path) {
+      assert.equal(workspaceId, machineWorkspaceId);
+      assert.equal(path, 'image.png');
+      machineCalls.push('image');
+      return {
+        path,
+        mime_type: 'image/png',
+        size_bytes: 8,
+        sha256: 'b'.repeat(64),
+        data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
+      };
+    },
     async commandRun(workspaceId, argv) {
       assert.equal(workspaceId, machineWorkspaceId);
       machineCalls.push('command:' + JSON.stringify(argv));
@@ -603,6 +616,14 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
   });
   assert.equal((read.structuredContent as { content?: string }).content, 'machine-read\n');
 
+  const image = await client.callTool({
+    name: 'file.read',
+    arguments: { workspace_id: machineWorkspaceId, path: 'image.png' },
+  });
+  assert.notEqual(image.isError, true);
+  assert.equal((image.structuredContent as { mime_type?: string }).mime_type, 'image/png');
+  assert.equal((image.content[0] as { type?: string }).type, 'image');
+
   const searched = await client.callTool({
     name: 'repo.search',
     arguments: { workspace_id: machineWorkspaceId, query: 'needle' },
@@ -626,7 +647,9 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
   assert.equal(calls.length, 0, 'local-machine compatibility calls must not reach DevSpace exec');
   assert.ok(machineCalls.some((entry) => entry.startsWith('open:')));
   assert.ok(machineCalls.includes('list'));
-  assert.ok(machineCalls.includes('read'));
+  assert.ok(machineCalls.includes('read:note.txt'));
+  assert.ok(machineCalls.includes('read:image.png'));
+  assert.ok(machineCalls.includes('image'));
   assert.ok(machineCalls.includes('search'));
   assert.ok(machineCalls.some((entry) => entry.startsWith('command:')));
 });

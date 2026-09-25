@@ -54,6 +54,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['machine.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.read_many', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.image.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.search', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.search_continue', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.info', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],

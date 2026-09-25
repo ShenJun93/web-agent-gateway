@@ -33,6 +33,7 @@ const MAX_READ_BYTES = 64 * 1024;
 const MAX_PAGED_READ_BYTES = 16 * 1024 * 1024;
 const MAX_READ_LINES = 1_000;
 const MAX_READ_MANY_FILES = 20;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_COMMAND_ARGS = 32;
 const MAX_ARG_BYTES = 4 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -85,6 +86,14 @@ interface SearchCursorPayload {
 export interface LocalMachineReadOptions {
   offset?: number;
   length?: number;
+}
+
+export interface LocalMachineImageRead {
+  path: string;
+  mime_type: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  size_bytes: number;
+  sha256: string;
+  data_base64: string;
 }
 
 interface StartedProcess {
@@ -142,6 +151,7 @@ export interface LocalMachineContext {
   info(workspaceId: string, path?: string): Promise<object>;
   read(workspaceId: string, path: string, options?: LocalMachineReadOptions): Promise<object>;
   readMany(workspaceId: string, paths: readonly string[], options?: LocalMachineReadOptions): Promise<object>;
+  readImage(workspaceId: string, path: string): Promise<LocalMachineImageRead>;
   mkdir(workspaceId: string, path: string): Promise<object>;
   move(workspaceId: string, from: string, to: string): Promise<object>;
   delete(workspaceId: string, path: string, recursive?: boolean): Promise<object>;
@@ -436,6 +446,25 @@ export function createLocalMachineContext(options: {
     };
   }
 
+  async function readLocalImage(root: string, path: string): Promise<LocalMachineImageRead> {
+    const safePath = validateReadPath(path);
+    await assertReadTarget(root, safePath);
+    const target = await realpath(resolve(root, safePath));
+    const meta = await stat(target);
+    if (!meta.isFile()) throw new Error('Gateway rejected local-machine image target is not a file');
+    if (meta.size > MAX_IMAGE_BYTES) throw new Error('Gateway rejected local-machine image exceeds 4 MiB');
+    const bytes = await readFile(target);
+    const mime = detectImageMime(bytes);
+    if (!mime) throw new Error('Gateway rejected unsupported local-machine image format');
+    return {
+      path: safePath,
+      mime_type: mime,
+      size_bytes: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      data_base64: bytes.toString('base64'),
+    };
+  }
+
   function validateSearchQuery(query: string): void {
     if (!query || query.includes("\0") || query.includes("\r") || query.includes("\n")
       || Buffer.byteLength(query, 'utf8') > 256) throw new Error('Gateway denied search query');
@@ -661,6 +690,11 @@ export function createLocalMachineContext(options: {
         }
       }
       return { files };
+    },
+
+    async readImage(workspaceId, path) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      return readLocalImage(workspace.canonicalRoot, path);
     },
 
     async mkdir(workspaceId, path) {
@@ -1260,6 +1294,27 @@ function loadStartedProcessRegistry(path: string | undefined): Map<string, Start
     });
   }
   return records;
+}
+
+function detectImageMime(bytes: Buffer): LocalMachineImageRead['mime_type'] | undefined {
+  if (bytes.length >= 8
+    && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 12
+    && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+    && bytes.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp';
+  }
+  if (bytes.length >= 6) {
+    const signature = bytes.subarray(0, 6).toString('ascii');
+    if (signature === 'GIF87a' || signature === 'GIF89a') return 'image/gif';
+  }
+  return undefined;
 }
 
 function validateArgv(argv: readonly string[]): void {
