@@ -14,6 +14,7 @@ const RESERVED = [
   '--user-data-dir',
   '--remote-debugging-port',
   '--remote-debugging-pipe',
+  '--headless',
 ];
 
 function reservedArgument(argument: string): boolean {
@@ -43,6 +44,7 @@ export function createEdgeCdpLaunchPlan(options: {
   const argv = Object.freeze([
     `--user-data-dir=${options.profile.userDataDir}`,
     `--remote-debugging-port=${options.debugPort}`,
+    '--headless=new',
     '--no-first-run',
     '--no-default-browser-check',
     ...(options.extraArgs ?? []),

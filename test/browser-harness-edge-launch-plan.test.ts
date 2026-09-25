@@ -10,7 +10,7 @@ const profile = {
   userDataDir: 'E:\\AI-BROWSER\\profiles\\notebook99',
 };
 
-test('Edge launch plan always binds CDP to a dedicated custom profile and loopback endpoint', () => {
+test('Edge launch plan always binds CDP to a dedicated headless profile and loopback endpoint', () => {
   const plan = createEdgeCdpLaunchPlan({
     executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     profile,
@@ -23,6 +23,7 @@ test('Edge launch plan always binds CDP to a dedicated custom profile and loopba
   assert.deepEqual(plan.argv, [
     '--user-data-dir=E:\\AI-BROWSER\\profiles\\notebook99',
     '--remote-debugging-port=9333',
+    '--headless=new',
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-background-networking',
@@ -41,6 +42,8 @@ test('Edge launch plan refuses missing dedicated profile and caller overrides of
     '--user-data-dir=C:\\other',
     '--remote-debugging-port=9444',
     '--remote-debugging-pipe',
+    '--headless',
+    '--headless=old',
   ]) {
     assert.throws(() => createEdgeCdpLaunchPlan({
       executablePath: 'C:\\Edge\\msedge.exe',

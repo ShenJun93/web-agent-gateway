@@ -41,7 +41,7 @@ function fakeProcessPort() {
   return { port, starts, stops };
 }
 
-test('owned Edge launcher starts the exact launch plan and waits for loopback CDP readiness', async () => {
+test('owned Edge launcher starts the exact headless launch plan and waits for loopback CDP readiness', async () => {
   const f = fakeProcessPort();
   const probes: Array<{ endpoint: string; timeout: number }> = [];
   const launcher = createOwnedEdgeLauncher({
@@ -58,6 +58,7 @@ test('owned Edge launcher starts the exact launch plan and waits for loopback CD
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       '--user-data-dir=E:\\AI-BROWSER\\profiles\\notebook99',
       '--remote-debugging-port=9333',
+      '--headless=new',
       '--no-first-run',
       '--no-default-browser-check',
       'https://notebooklm.google.com/',
