@@ -133,6 +133,7 @@ export async function main(
       capabilityContext: engineering.capabilityContext,
       machineContext: engineering.machineContext,
       diagnosticsContext: engineering.diagnosticsContext,
+      browserContext: engineering.browserContext,
     });
   } catch (error) {
     await closeQuietly(engineering);
@@ -253,13 +254,14 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
  * operator reads it from there.
  */
 function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime): void {
-  const { inspect, mutation, gitCommit, stableSessionId } = engineering.profile;
-  if (!inspect && !mutation && !gitCommit) return;
+  const { inspect, mutation, gitCommit, browser, stableSessionId } = engineering.profile;
+  if (!inspect && !mutation && !gitCommit && browser !== true) return;
   stderr.write(`${JSON.stringify({
     type: 'gateway.profile',
     inspect,
     mutation,
     gitCommit,
+    ...(browser === true ? { browser: true } : {}),
     // Only when a correlation makes it stable, so the default profile line is byte-identical to
     // what it was. The id is reconnect/audit continuity, not an authority grant.
     ...(stableSessionId === undefined ? {} : { stableSessionId }),

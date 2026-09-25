@@ -23,6 +23,10 @@ import {
   type LocalMachineContext,
 } from './local-machine-runtime.js';
 import { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import {
+  createPrivateBrowserMcpContext,
+  type BrowserMcpContext,
+} from './browser-harness/browser-mcp-runtime.js';
 
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
@@ -31,6 +35,7 @@ export interface RepositoryEngineeringProfile {
   inspect: boolean;
   mutation: boolean;
   gitCommit: boolean;
+  browser?: boolean;
   /**
    * The durable session this surface will keep using, present only when a `sessionCorrelation`
    * makes it stable.
@@ -63,6 +68,8 @@ export interface RepositoryEngineeringRuntime {
   machineContext?: LocalMachineContext;
   /** Bounded process-local MCP tool usage diagnostics; never stores arguments or output. */
   diagnosticsContext?: ToolUsageDiagnostics;
+  /** Optional outbound BrowserPort surface. It shares identity, not filesystem/Git authority. */
+  browserContext?: BrowserMcpContext;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
@@ -91,8 +98,10 @@ export async function startRepositoryEngineeringRuntime(
   const inspect = settings?.inspect === true;
   const mutationSettings = settings?.mutation;
   const gitCommitSettings = settings?.gitCommit;
+  const browserSettings = settings?.browser;
 
   if (!mutationSettings) {
+    if (browserSettings) throw new Error('Repository engineering browser requires mutation identity');
     return {
       profile: { inspect, mutation: false, gitCommit: false },
       async attach() { /* nothing to attach */ },
@@ -163,6 +172,20 @@ export async function startRepositoryEngineeringRuntime(
       ? {}
       : { statePath: mutationSettings.statePath + '.tool-usage.' + sessionId + '.json' }),
   });
+  let browserContext: BrowserMcpContext | undefined;
+  try {
+    browserContext = browserSettings === undefined ? undefined : createPrivateBrowserMcpContext({
+      owner: callerContext,
+      edgeExecutablePath: browserSettings.edgeExecutablePath,
+      profileRoot: browserSettings.profileRoot,
+      effectStatePath: mutationSettings.statePath + '.harness-effects.sqlite',
+      killSwitch,
+    });
+  } catch (error) {
+    workspaceIdentities.close();
+    store.close();
+    throw error;
+  }
 
   async function freshWorkspaceFingerprint(workspaceId: string): Promise<string | undefined> {
     const workspace = store.getWorkspace(workspaceId);
@@ -227,10 +250,12 @@ export async function startRepositoryEngineeringRuntime(
       inspect,
       mutation: true,
       gitCommit: gitCommitSettings !== undefined,
+      ...(browserSettings === undefined ? {} : { browser: true }),
       ...(mutationSettings.sessionCorrelation === undefined ? {} : { stableSessionId: sessionId }),
     },
     machineContext,
     diagnosticsContext,
+    ...(browserContext === undefined ? {} : { browserContext }),
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,
       sessionId: callerContext.sessionId,
@@ -388,14 +413,22 @@ export async function startRepositoryEngineeringRuntime(
     async close() {
       if (closed) return;
       closed = true;
+      let failure: unknown;
+      try {
+        await browserContext?.closeAll();
+      } catch (error) {
+        failure = error;
+      }
       try {
         await rm(urlFile, { force: true }).catch(() => undefined);
         await operator?.close();
-      }
-      finally {
+      } catch (error) {
+        failure ??= error;
+      } finally {
         workspaceIdentities.close();
         store.close();
       }
+      if (failure) throw failure;
     },
   };
   return runtime;

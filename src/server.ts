@@ -6,6 +6,7 @@ import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-p
 import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
 import { detectRuntimeIdentity } from './runtime-identity.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
 import type { DurableCommitCoordinator } from './git-commit.js';
@@ -462,7 +463,7 @@ export interface CapabilityMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext, machineContext, diagnosticsContext }: {
+  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext, machineContext, diagnosticsContext, browserContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     gitCommitContext?: GitCommitMcpContext;
@@ -470,6 +471,7 @@ export function createGatewayMcpServer(
     capabilityContext?: CapabilityMcpContext;
     machineContext?: LocalMachineContext;
     diagnosticsContext?: ToolUsageDiagnostics;
+    browserContext?: BrowserMcpContext;
   } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
@@ -840,6 +842,77 @@ export function createGatewayMcpServer(
     }, async ({ workspace_id, terminal_id }) => toolResult(
       await machineContext.terminalClose(workspace_id, terminal_id),
     ));
+  }
+
+  if (browserContext) {
+    const browserSessionId = z.string().regex(/^browser_[0-9a-f-]{36}$/);
+    const browserAction = z.discriminatedUnion('type', [
+      z.object({ type: z.literal('navigate'), url: z.string().url().max(4096) }).strict(),
+      z.object({ type: z.literal('click'), ref: z.string().min(1).max(256) }).strict(),
+      z.object({
+        type: z.literal('fill'),
+        ref: z.string().min(1).max(256),
+        text: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 64 * 1024),
+      }).strict(),
+      z.object({
+        type: z.literal('press'),
+        key: z.enum(['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']),
+      }).strict(),
+    ]);
+
+    registerTool('browser.open', {
+      description: 'Open or recover one WAG-owned dedicated Edge profile on loopback CDP.',
+      inputSchema: z.object({
+        profile_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    }, async ({ profile_id }) => toolResult(await browserContext.open(profile_id)));
+
+    registerTool('browser.describe', {
+      description: 'Describe one caller-owned BrowserPort session without exposing authority identifiers.',
+      inputSchema: z.object({ browser_session_id: browserSessionId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ browser_session_id }) => toolResult(await browserContext.describe(browser_session_id)));
+
+    registerTool('browser.snapshot', {
+      description: 'Return a bounded semantic accessibility snapshot with opaque action refs.',
+      inputSchema: z.object({ browser_session_id: browserSessionId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    }, async ({ browser_session_id }) => toolResult(await browserContext.snapshot(browser_session_id)));
+
+    registerTool('browser.exec', {
+      description: 'Execute one exact-once semantic browser action. Raw CDP methods and host shell execution are not accepted.',
+      inputSchema: z.object({
+        browser_session_id: browserSessionId,
+        idempotency_key: z.string().min(1).max(200).regex(/^[A-Za-z0-9._:-]+$/),
+        action: browserAction,
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    }, async ({ browser_session_id, idempotency_key, action }) => toolResult(
+      await browserContext.exec(browser_session_id, idempotency_key, action),
+    ));
+
+    registerTool('browser.screenshot', {
+      description: 'Capture a bounded PNG screenshot from one caller-owned BrowserPort session.',
+      inputSchema: z.object({ browser_session_id: browserSessionId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    }, async ({ browser_session_id }) => {
+      const image = await browserContext.screenshot(browser_session_id);
+      const metadata = { mime_type: image.mimeType };
+      return {
+        content: [
+          { type: 'image' as const, data: image.dataBase64, mimeType: image.mimeType },
+          { type: 'text' as const, text: JSON.stringify(metadata) },
+        ],
+        structuredContent: metadata,
+      };
+    });
+
+    registerTool('browser.close', {
+      description: 'Close the exact WAG-owned browser target and its owned Edge process.',
+      inputSchema: z.object({ browser_session_id: browserSessionId }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ browser_session_id }) => toolResult(await browserContext.close(browser_session_id)));
   }
 
   if (inspect === true) {

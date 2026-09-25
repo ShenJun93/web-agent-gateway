@@ -17,6 +17,8 @@ export interface BrowserSessionHandle {
   readonly profileId: string;
   readonly owner: GatewayAuthority;
   readonly backend: BrowserBackendKind;
+  readonly processId?: string;
+  readonly pid?: number;
   readonly createdAt: number;
   readonly lastSeenAt: number;
   readonly state: BrowserSessionState;
@@ -42,6 +44,8 @@ export interface BrowserExecRequest {
 
 export interface BrowserBackendSession {
   readonly targetId: string;
+  readonly processId?: string;
+  readonly pid?: number;
   describe(): Promise<{ url: string; title: string }>;
   exec(request: BrowserExecRequest): Promise<unknown>;
   screenshot(): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
@@ -120,6 +124,8 @@ export function createBrowserPort(options: {
         profileId: request.profileId,
         owner: Object.freeze({ ...request.owner }),
         backend: options.backend.kind,
+        ...(backend.processId === undefined ? {} : { processId: backend.processId }),
+        ...(backend.pid === undefined ? {} : { pid: backend.pid }),
         createdAt,
         lastSeenAt: createdAt,
         state: 'ACTIVE',

@@ -10,6 +10,7 @@ import {
 } from './server.js';
 import type { LocalMachineContext } from './local-machine-runtime.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
 
 export interface GatewayStdioServerOptions {
   gateway: GatewayApi;
@@ -22,6 +23,7 @@ export interface GatewayStdioServerOptions {
   capabilityContext?: CapabilityMcpContext;
   machineContext?: LocalMachineContext;
   diagnosticsContext?: ToolUsageDiagnostics;
+  browserContext?: BrowserMcpContext;
 }
 
 export interface GatewayStdioServer {
@@ -39,6 +41,7 @@ export async function startGatewayStdioServer(
     capabilityContext: options.capabilityContext,
     machineContext: options.machineContext,
     diagnosticsContext: options.diagnosticsContext,
+    browserContext: options.browserContext,
   });
   const transport = new StdioServerTransport(options.input, options.output);
   await server.connect(transport);

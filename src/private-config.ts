@@ -17,6 +17,10 @@ const repositoryEngineeringSchema = z.object({
   gitCommit: z.object({
     protectedBranches: z.array(z.string().min(1).max(256)).min(1).max(64).optional(),
   }).strict().optional(),
+  browser: z.object({
+    edgeExecutablePath: z.string().min(1),
+    profileRoot: z.string().min(1),
+  }).strict().optional(),
   mutation: z.object({
     statePath: z.string().min(1),
     ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).default(DEFAULT_PRIVATE_STDIO_OWNER_ID),
@@ -78,9 +82,14 @@ export interface PrivateRepositoryEngineeringMutation {
 export interface PrivateRepositoryEngineeringGitCommit {
   protectedBranches?: string[];
 }
+export interface PrivateRepositoryEngineeringBrowser {
+  edgeExecutablePath: string;
+  profileRoot: string;
+}
 export interface PrivateRepositoryEngineering {
   inspect: boolean;
   gitCommit?: PrivateRepositoryEngineeringGitCommit;
+  browser?: PrivateRepositoryEngineeringBrowser;
   mutation?: PrivateRepositoryEngineeringMutation;
 }
 export interface PrivateGatewayConfig {
@@ -111,6 +120,13 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
   if (parsed.repositoryEngineering?.gitCommit && !mutation) {
     throw new Error('Private gateway repository engineering gitCommit requires mutation');
   }
+  const browser = parsed.repositoryEngineering?.browser;
+  if (browser && !mutation) {
+    throw new Error('Private gateway repository engineering browser requires mutation identity');
+  }
+  if (browser && (!isAbsolute(browser.edgeExecutablePath) || !isAbsolute(browser.profileRoot))) {
+    throw new Error('Private gateway browser paths must be absolute');
+  }
 
   const allowedRoots: string[] = [];
   for (const configuredRoot of parsed.allowedRoots) {
@@ -137,6 +153,12 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
             ...(parsed.repositoryEngineering.gitCommit.protectedBranches === undefined
               ? {}
               : { protectedBranches: parsed.repositoryEngineering.gitCommit.protectedBranches }),
+          },
+        }),
+        ...(browser === undefined ? {} : {
+          browser: {
+            edgeExecutablePath: browser.edgeExecutablePath,
+            profileRoot: browser.profileRoot,
           },
         }),
         ...(mutation === undefined ? {} : {

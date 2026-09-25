@@ -30,6 +30,8 @@ export function createOwnedEdgeCdpBackend(options: {
       let closed = false;
       return {
         targetId: session.targetId,
+        processId: launch.process.processId,
+        pid: launch.process.pid,
         describe: () => session.describe(),
         exec: (request) => session.exec(request),
         screenshot: () => session.screenshot(),
