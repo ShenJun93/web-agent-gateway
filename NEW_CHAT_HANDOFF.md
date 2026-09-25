@@ -25,12 +25,12 @@ branch:
 feat/goal-ui-delegation-v1
 
 behavior commit:
-fcf262403bc477380ac2e45f49ca901006522dd7
-feat: persist tool usage diagnostics
+91817b796d8cc4544ed08b94950bb90da9ac1a26
+feat: expose live MCP surface through health
 
 current source/runtime HEAD:
-fcf262403bc477380ac2e45f49ca901006522dd7
-feat: persist tool usage diagnostics
+91817b796d8cc4544ed08b94950bb90da9ac1a26
+feat: expose live MCP surface through health
 ```
 
 Documentation-only commits may make Git HEAD newer than the behavior commit.
@@ -53,16 +53,16 @@ Use exact paths for every commit and inspect its receipt.
 
 ```text
 runtime:
-E:/WAG-Runtime/fcf262403bc4
+E:/WAG-Runtime/91817b796d8c
 
 activation:
-E:/WAG-Acceptance/promotion-logs/activate-fcf262403bc4.json
+E:/WAG-Acceptance/promotion-logs/activate-91817b796d8c.json
 
 state:
 SUCCEEDED
 
 previous:
-E:/WAG-Runtime/5b6ab4aab5ef/dist/cli.js
+E:/WAG-Runtime/fcf262403bc4/dist/cli.js
 ```
 
 DevSpace was not restarted.
@@ -155,45 +155,36 @@ work to the local-machine backend.
 
 ## Latest live acceptance
 
-Runtime `fcf262403bc4` is active from exact committed source HEAD
-`fcf262403bc477380ac2e45f49ca901006522dd7`
-(`feat: persist tool usage diagnostics`).
+Runtime `91817b796d8c` is active from exact committed source HEAD
+`91817b796d8cc4544ed08b94950bb90da9ac1a26`
+(`feat: expose live MCP surface through health`).
 
 Activation receipt
-`E:/WAG-Acceptance/promotion-logs/activate-fcf262403bc4.json` is `SUCCEEDED`; DevSpace was not
+`E:/WAG-Acceptance/promotion-logs/activate-91817b796d8c.json` is `SUCCEEDED`; DevSpace was not
 restarted.
 
-Fresh direct-MCP readiness projects 43 tools and returns
-`DIRECT_MCP_LOCAL_READINESS = READY`.
-
-The 43-tool surface includes native image read, native PDF text extraction, restart-recoverable
-process/terminal registries, safe block edit/append, and diagnostics.recent/diagnostics.usage.
-
-Persistent diagnostics live proof:
+The currently cached ChatGPT connector still exposes 16 callable names, but the existing frozen
+`health` name now reports the authoritative live private-stdio surface:
 
 ```text
-runtime reconstruction #1:
-1 health          success=true
-2 workspace.open  success=false error_class=TypeError
-
-runtime reconstruction #2:
-history 1,2 preserved
-3 repo.snapshot   success=true
-
-runtime reconstruction #3:
-history = 1,2,3
-total_calls = 3
-successes   = 2
-failures    = 1
-secretPersisted = false
+toolCount       = 6    # underlying DevSpace contract
+mcpToolCount    = 43   # full live WAG surface
+authorityMode   = AUTONOMOUS_LOCAL
 ```
 
-The diagnostics ring remains bounded to 512 sanitized events and is stored per stable private-stdio
-session. Arguments, paths, command text, output, credentials and exception messages are never
-persisted.
+`health.mcpTools` returns the exact 43 live names in registration order, including native image,
+PDF, process, terminal, safe mutation and diagnostics capabilities.
 
-Receipt:
-`docs/benchmarks/2026-09-25-live-persistent-diagnostics.md`.
+It also returns a bounded diagnostics summary, so a frozen connector can inspect operational usage
+without waiting for `diagnostics.recent` / `diagnostics.usage` catalog refresh.
+
+Persistent diagnostics from the preceding `fcf262403bc4` runtime carry forward unchanged and
+remain restart-persistent per stable private-stdio session.
+
+Receipts:
+
+- `docs/benchmarks/2026-09-25-live-health-surface-self-inspection.md`
+- `docs/benchmarks/2026-09-25-live-persistent-diagnostics.md`
 
 ## DC-replacement capabilities
 
