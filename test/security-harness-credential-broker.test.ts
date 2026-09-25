@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { GatewayAuthority } from '../src/caller-context.js';
 import {
   createCredentialBroker,
+  type CredentialRequest,
   type CredentialSecretSource,
   type CredentialTransport,
 } from '../src/security-harness/credential-broker.js';
@@ -139,7 +140,7 @@ test('CredentialBroker injects host-only auth after policy checks and exposes on
 test('origin, method, path and broker-owned headers are denied before secret acquisition', async () => {
   const f = fixture();
 
-  for (const request of [
+  const deniedRequests: CredentialRequest[] = [
     {
       credentialId: 'github', method: 'GET' as const,
       url: 'https://evil.example/repos/openai/example',
@@ -170,7 +171,9 @@ test('origin, method, path and broker-owned headers are denied before secret acq
       url: 'https://api.github.com/repos/openai/example',
       headers: { Cookie: 'session=caller' },
     },
-  ]) {
+  ];
+
+  for (const request of deniedRequests) {
     await assert.rejects(
       () => f.broker.request(OWNER, request),
       /(denied|broker-owned)/,
