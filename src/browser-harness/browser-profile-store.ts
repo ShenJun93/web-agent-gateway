@@ -19,9 +19,20 @@ interface OwnerRecord {
   readonly profileId: string;
   readonly owner: GatewayAuthority;
   readonly createdAt: number;
+  /** Canonical browser-policy session name. */
+  readonly session?: string;
+  /** Human-readable caller identity label; never an authority token. */
+  readonly caller?: string;
+  /** Fixed purpose for WAG-owned dedicated profiles. */
+  readonly purpose?: string;
+  /** ISO timestamp mirror used by browser-policy tooling. */
+  readonly created_at?: string;
+  /** Exact dedicated profile path used by this worker. */
+  readonly profile_path?: string;
 }
 
 const PROFILE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const PROFILE_PURPOSE = 'WAG BrowserPort dedicated profile';
 
 function assertProfileId(profileId: string): void {
   if (!PROFILE_ID.test(profileId)) throw new Error('Browser profile id is invalid');
@@ -29,6 +40,10 @@ function assertProfileId(profileId: string): void {
 
 function cloneOwner(owner: GatewayAuthority): GatewayAuthority {
   return Object.freeze({ ...owner });
+}
+
+function callerLabel(owner: GatewayAuthority): string {
+  return `${owner.ownerId}/${owner.sessionId}/${owner.adapterId}`;
 }
 
 function sameProfileOwner(record: OwnerRecord, profileId: string, owner: GatewayAuthority): boolean {
@@ -56,6 +71,11 @@ function parseOwnerRecord(text: string): OwnerRecord {
       adapterId: owner.adapterId,
     },
     createdAt: value.createdAt,
+    ...(typeof value.session === 'string' ? { session: value.session } : {}),
+    ...(typeof value.caller === 'string' ? { caller: value.caller } : {}),
+    ...(typeof value.purpose === 'string' ? { purpose: value.purpose } : {}),
+    ...(typeof value.created_at === 'string' ? { created_at: value.created_at } : {}),
+    ...(typeof value.profile_path === 'string' ? { profile_path: value.profile_path } : {}),
   };
 }
 
@@ -127,11 +147,17 @@ export function createFileBrowserProfileStore(options: {
 
       const ownerPath = resolve(profileRoot, 'OWNER.json');
       if (created) {
+        const createdAt = now();
         const record: OwnerRecord = {
           version: 1,
           profileId,
           owner: cloneOwner(owner),
-          createdAt: now(),
+          createdAt,
+          session: profileId,
+          caller: callerLabel(owner),
+          purpose: PROFILE_PURPOSE,
+          created_at: new Date(createdAt).toISOString(),
+          profile_path: profileRoot,
         };
         await writeFile(ownerPath, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
       } else {

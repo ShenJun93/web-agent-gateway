@@ -21,16 +21,35 @@ test('memory profile store keeps persistent authority ownership after active rel
   await assert.rejects(() => store.acquire('profile_a', OTHER), /another authority/);
 });
 
-test('file profile store writes OWNER.json once and permits only the same exact authority to reopen it', async (t) => {
+test('file profile store writes canonical browser-policy OWNER.json and reopens only for same authority', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-browser-profiles-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = createFileBrowserProfileStore({ root, now: () => 1234 });
   const first = await store.acquire('notebook99', OWNER);
-  assert.equal(first.userDataDir, join(root, 'notebook99'));
-  const owner = JSON.parse(await readFile(join(root, 'notebook99', 'OWNER.json'), 'utf8')) as {
-    version: number; profileId: string; owner: GatewayAuthority; createdAt: number;
+  const profilePath = join(root, 'notebook99');
+  assert.equal(first.userDataDir, profilePath);
+  const owner = JSON.parse(await readFile(join(profilePath, 'OWNER.json'), 'utf8')) as {
+    version: number;
+    profileId: string;
+    owner: GatewayAuthority;
+    createdAt: number;
+    session: string;
+    caller: string;
+    purpose: string;
+    created_at: string;
+    profile_path: string;
   };
-  assert.deepEqual(owner, { version: 1, profileId: 'notebook99', owner: OWNER, createdAt: 1234 });
+  assert.deepEqual(owner, {
+    version: 1,
+    profileId: 'notebook99',
+    owner: OWNER,
+    createdAt: 1234,
+    session: 'notebook99',
+    caller: 'owner_a/session_a/private.stdio.v1',
+    purpose: 'WAG BrowserPort dedicated profile',
+    created_at: '1970-01-01T00:00:01.234Z',
+    profile_path: profilePath,
+  });
   await store.release(first, OWNER);
 
   const reopened = await store.acquire('notebook99', OWNER);
