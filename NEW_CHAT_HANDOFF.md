@@ -25,12 +25,12 @@ branch:
 feat/goal-ui-delegation-v1
 
 behavior commit:
-91817b796d8cc4544ed08b94950bb90da9ac1a26
-feat: expose live MCP surface through health
+603f1be08a4af9a9d93059364639abafea90339d
+feat: expose runtime identity through health
 
 current source/runtime HEAD:
-91817b796d8cc4544ed08b94950bb90da9ac1a26
-feat: expose live MCP surface through health
+603f1be08a4af9a9d93059364639abafea90339d
+feat: expose runtime identity through health
 ```
 
 Documentation-only commits may make Git HEAD newer than the behavior commit.
@@ -53,16 +53,16 @@ Use exact paths for every commit and inspect its receipt.
 
 ```text
 runtime:
-E:/WAG-Runtime/91817b796d8c
+E:/WAG-Runtime/603f1be08a4a
 
 activation:
-E:/WAG-Acceptance/promotion-logs/activate-91817b796d8c.json
+E:/WAG-Acceptance/promotion-logs/activate-603f1be08a4a.json
 
 state:
 SUCCEEDED
 
 previous:
-E:/WAG-Runtime/fcf262403bc4/dist/cli.js
+E:/WAG-Runtime/91817b796d8c/dist/cli.js
 ```
 
 DevSpace was not restarted.
@@ -155,34 +155,35 @@ work to the local-machine backend.
 
 ## Latest live acceptance
 
-Runtime `91817b796d8c` is active from exact committed source HEAD
-`91817b796d8cc4544ed08b94950bb90da9ac1a26`
-(`feat: expose live MCP surface through health`).
+Runtime `603f1be08a4a` is active from exact committed source HEAD
+`603f1be08a4af9a9d93059364639abafea90339d`
+(`feat: expose runtime identity through health`).
 
 Activation receipt
-`E:/WAG-Acceptance/promotion-logs/activate-91817b796d8c.json` is `SUCCEEDED`; DevSpace was not
+`E:/WAG-Acceptance/promotion-logs/activate-603f1be08a4a.json` is `SUCCEEDED`; DevSpace was not
 restarted.
 
-The currently cached ChatGPT connector still exposes 16 callable names, but the existing frozen
-`health` name now reports the authoritative live private-stdio surface:
+The existing frozen `health` tool is now the primary runtime self-inspection bridge. Live result:
 
 ```text
-toolCount       = 6    # underlying DevSpace contract
-mcpToolCount    = 43   # full live WAG surface
+toolCount       = 6
+mcpToolCount    = 43
 authorityMode   = AUTONOMOUS_LOCAL
+
+runtime.cli_path     = E:\WAG-Runtime\603f1be08a4a\dist\cli.js
+runtime.runtime_root = E:\WAG-Runtime\603f1be08a4a
+runtime.source_head  = 603f1be08a4af9a9d93059364639abafea90339d
+runtime.capability   = autonomous-local-runtime-v1
+runtime.deployed     = true
 ```
 
-`health.mcpTools` returns the exact 43 live names in registration order, including native image,
-PDF, process, terminal, safe mutation and diagnostics capabilities.
-
-It also returns a bounded diagnostics summary, so a frozen connector can inspect operational usage
-without waiting for `diagnostics.recent` / `diagnostics.usage` catalog refresh.
-
-Persistent diagnostics from the preceding `fcf262403bc4` runtime carry forward unchanged and
-remain restart-persistent per stable private-stdio session.
+The health response also returns the exact 43 live tool names and bounded restart-persistent
+diagnostics summary. A stale provider-side connector catalog therefore no longer hides either the
+real WAG surface or the active deployed runtime identity.
 
 Receipts:
 
+- `docs/benchmarks/2026-09-25-live-runtime-identity-health.md`
 - `docs/benchmarks/2026-09-25-live-health-surface-self-inspection.md`
 - `docs/benchmarks/2026-09-25-live-persistent-diagnostics.md`
 
