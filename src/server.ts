@@ -472,7 +472,9 @@ export function createGatewayMcpServer(
   } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
+  const publishedToolNames: string[] = [];
   const registerTool = ((name: string, config: unknown, handler: (...args: any[]) => unknown) => {
+    publishedToolNames.push(name);
     const wrapped = async (...args: any[]) => {
       const finish = diagnosticsContext?.begin(name);
       try {
@@ -504,9 +506,27 @@ export function createGatewayMcpServer(
   }
 
   registerTool('health', {
-    description: 'Check gateway and executor compatibility.',
+    description: 'Check gateway/executor compatibility and report the live private-stdio surface.',
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async () => toolResult(await gateway.health()));
+  }, async () => {
+    const base = await gateway.health();
+    const usage = diagnosticsContext?.usage();
+    return toolResult({
+      ...base,
+      mcpToolCount: publishedToolNames.length,
+      mcpTools: [...publishedToolNames],
+      ...(machineContext === undefined ? {} : { authorityMode: 'AUTONOMOUS_LOCAL' }),
+      ...(usage === undefined ? {} : {
+        diagnostics: {
+          retained_events: usage.retained_events,
+          capacity: usage.capacity,
+          total_calls: usage.total_calls,
+          successes: usage.successes,
+          failures: usage.failures,
+        },
+      }),
+    });
+  });
   // Not read-only: this canonicalises a root, opens a DevSpace workspace and mints a durable
   // caller-owned workspace record. ADR-0020 records the provider's own warning that a read-only
   // annotation may cause a client's write confirmation to be skipped, so the surface that a
@@ -1083,6 +1103,9 @@ export function createGatewayMcpServer(
   }
 
   if (diagnosticsContext) {
+    // These two readers intentionally bypass the diagnostics wrapper so observation does not
+    // recursively change what is being observed. They still belong to the published MCP surface.
+    publishedToolNames.push('diagnostics.recent', 'diagnostics.usage');
     server.registerTool('diagnostics.recent', {
       description: 'Return recent sanitized WAG MCP tool-call timing/outcome records. Arguments, paths, content and output are never stored.',
       inputSchema: z.object({

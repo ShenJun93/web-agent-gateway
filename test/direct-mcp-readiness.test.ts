@@ -8,7 +8,7 @@ import { adapterCorrelationDigest } from '../src/adapter-admission.js';
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DurableMutationCoordinator } from '../src/durable-mutation.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import { DevspaceExecutor } from '../src/executor/devspace.js';
+import { DevspaceExecutor, REQUIRED_DEVSPACE_TOOLS } from '../src/executor/devspace.js';
 import { DurableCommitCoordinator } from '../src/git-commit.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
 import type { PrivateGatewayConfig } from '../src/private-config.js';
@@ -126,6 +126,8 @@ async function openDirectSurface(t: TestContext) {
   };
 
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
+  (executor as unknown as { listTools(): Promise<Array<{ name: string; inputSchema: unknown }>> }).listTools = async () =>
+    REQUIRED_DEVSPACE_TOOLS.map((name) => ({ name, inputSchema: {} }));
   const gateway = createGateway({ executor, allowedRoots: [root], verifyProfiles: { unit: { argv: ['node', '--version'] } } });
   const server = createGatewayMcpServer(gateway, {
     inspect: true,
@@ -163,6 +165,33 @@ test('the direct MCP surface is exactly the required ChatGPT tool loop', async (
     DECLARED_SURFACE.map(([name]) => name),
     'a direct client must discover read, mutation, verify and commit in one surface',
   );
+});
+
+test('health reports the full live private-stdio surface through the frozen health name', async (t) => {
+  const { client } = await openDirectSurface(t);
+
+  const first = await client.callTool({ name: 'health', arguments: {} });
+  assert.notEqual(first.isError, true);
+  const firstView = first.structuredContent as {
+    toolCount: number;
+    mcpToolCount: number;
+    mcpTools: string[];
+    authorityMode?: string;
+    diagnostics?: { total_calls: number; retained_events: number; capacity: number };
+  };
+  assert.equal(firstView.toolCount, REQUIRED_DEVSPACE_TOOLS.length,
+    'executor tool count remains distinct from the MCP surface count');
+  assert.equal(firstView.mcpToolCount, DECLARED_SURFACE.length);
+  assert.deepEqual(firstView.mcpTools, DECLARED_SURFACE.map(([name]) => name));
+  assert.equal(firstView.authorityMode, 'AUTONOMOUS_LOCAL');
+  assert.equal(firstView.diagnostics?.total_calls, 0,
+    'the in-flight health call must not count itself before its result exists');
+
+  const second = await client.callTool({ name: 'health', arguments: {} });
+  const secondView = second.structuredContent as { diagnostics?: { total_calls: number; retained_events: number } };
+  assert.equal(secondView.diagnostics?.total_calls, 1,
+    'a frozen connector can observe prior tool usage through health without diagnostics.* discovery');
+  assert.equal(secondView.diagnostics?.retained_events, 1);
 });
 
 test('every direct tool declares all four hints, so none falls back to a specification default', async (t) => {
