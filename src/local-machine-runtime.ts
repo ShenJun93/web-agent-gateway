@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
 import {
@@ -34,6 +34,13 @@ const MAX_PAGED_READ_BYTES = 16 * 1024 * 1024;
 const MAX_READ_LINES = 1_000;
 const MAX_READ_MANY_FILES = 20;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_PDF_BYTES = 16 * 1024 * 1024;
+const DEFAULT_PDF_PAGES = 10;
+const MAX_PDF_PAGES = 50;
+const DEFAULT_PDF_CHARS = 64 * 1024;
+const MAX_PDF_CHARS = 256 * 1024;
+const PDF_WORKER_TIMEOUT_MS = 20_000;
+const MAX_PDF_WORKER_OUTPUT_BYTES = 512 * 1024;
 const MAX_COMMAND_ARGS = 32;
 const MAX_ARG_BYTES = 4 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -86,6 +93,130 @@ interface SearchCursorPayload {
 export interface LocalMachineReadOptions {
   offset?: number;
   length?: number;
+}
+
+export interface LocalMachinePdfExtractOptions {
+  startPage?: number;
+  maxPages?: number;
+  maxChars?: number;
+}
+
+interface PdfWorkerPage {
+  page: number;
+  text: string;
+}
+
+interface PdfWorkerResult {
+  pageCount: number;
+  startPage: number;
+  pages: PdfWorkerPage[];
+  chars: number;
+  hasMore: boolean;
+  truncated: boolean;
+  sha256: string;
+}
+
+async function runPdfWorker(
+  target: string,
+  startPage: number,
+  maxPages: number,
+  maxChars: number,
+): Promise<PdfWorkerResult> {
+  const jsWorker = fileURLToPath(new URL('./pdf-text-worker.js', import.meta.url));
+  const workerArgv = existsSync(jsWorker)
+    ? [jsWorker, target, String(startPage), String(maxPages), String(maxChars)]
+    : [
+        '--import',
+        import.meta.resolve('tsx'),
+        fileURLToPath(new URL('./pdf-text-worker.ts', import.meta.url)),
+        target,
+        String(startPage),
+        String(maxPages),
+        String(maxChars),
+      ];
+
+  const child = spawn(process.execPath, workerArgv, {
+    cwd: dirname(target),
+    env: sanitizeLocalMachineEnvironment(process.env),
+    shell: false,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stdout = '';
+  let stderr = '';
+  let outputBytes = 0;
+  let overflow = false;
+  let timedOut = false;
+  const append = (kind: 'stdout' | 'stderr', chunk: Buffer) => {
+    if (overflow) return;
+    const remaining = MAX_PDF_WORKER_OUTPUT_BYTES - outputBytes;
+    if (remaining <= 0) {
+      overflow = true;
+      child.kill('SIGKILL');
+      return;
+    }
+    const part = chunk.subarray(0, remaining);
+    outputBytes += part.length;
+    if (kind === 'stdout') stdout += part.toString('utf8');
+    else stderr += part.toString('utf8');
+    if (part.length !== chunk.length) {
+      overflow = true;
+      child.kill('SIGKILL');
+    }
+  };
+  child.stdout?.on('data', (chunk: Buffer) => append('stdout', chunk));
+  child.stderr?.on('data', (chunk: Buffer) => append('stderr', chunk));
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGKILL');
+  }, PDF_WORKER_TIMEOUT_MS);
+  timer.unref?.();
+
+  const exitCode = await new Promise<number>((resolvePromise, reject) => {
+    child.once('error', reject);
+    child.once('close', (code) => resolvePromise(code ?? -1));
+  }).finally(() => clearTimeout(timer));
+
+  if (timedOut) throw new Error('Gateway PDF extraction timed out');
+  if (overflow) throw new Error('Gateway PDF extraction output exceeded limit');
+  if (exitCode !== 0) {
+    const detail = redactSecrets((stderr || stdout).trim()).slice(0, 1024);
+    throw new Error('Gateway PDF extraction failed' + (detail ? ': ' + detail : ''));
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error('Gateway rejected invalid PDF worker output');
+  }
+  if (!parsed || typeof parsed !== 'object') throw new Error('Gateway rejected invalid PDF worker output');
+  const value = parsed as Partial<PdfWorkerResult>;
+  if (!Number.isInteger(value.pageCount) || (value.pageCount ?? -1) < 0
+    || !Number.isInteger(value.startPage) || (value.startPage ?? 0) < 1
+    || !Array.isArray(value.pages)
+    || !Number.isInteger(value.chars) || (value.chars ?? -1) < 0
+    || typeof value.hasMore !== 'boolean'
+    || typeof value.truncated !== 'boolean'
+    || typeof value.sha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(value.sha256)) {
+    throw new Error('Gateway rejected invalid PDF worker output');
+  }
+  for (const page of value.pages) {
+    if (!page || typeof page !== 'object'
+      || !Number.isInteger((page as PdfWorkerPage).page)
+      || (page as PdfWorkerPage).page < 1
+      || typeof (page as PdfWorkerPage).text !== 'string') {
+      throw new Error('Gateway rejected invalid PDF worker page');
+    }
+  }
+  return value as PdfWorkerResult;
+}
+
+function isPdfBytes(bytes: Buffer): boolean {
+  return bytes.length >= 5 && bytes.subarray(0, 5).toString('ascii') === '%PDF-';
 }
 
 export interface LocalMachineImageRead {
@@ -152,6 +283,7 @@ export interface LocalMachineContext {
   read(workspaceId: string, path: string, options?: LocalMachineReadOptions): Promise<object>;
   readMany(workspaceId: string, paths: readonly string[], options?: LocalMachineReadOptions): Promise<object>;
   readImage(workspaceId: string, path: string): Promise<LocalMachineImageRead>;
+  extractPdf(workspaceId: string, path: string, options?: LocalMachinePdfExtractOptions): Promise<object>;
   mkdir(workspaceId: string, path: string): Promise<object>;
   move(workspaceId: string, from: string, to: string): Promise<object>;
   delete(workspaceId: string, path: string, recursive?: boolean): Promise<object>;
@@ -392,11 +524,81 @@ export function createLocalMachineContext(options: {
     return result;
   }
 
+  async function extractPdfBytes(
+    safePath: string,
+    target: string,
+    bytes: Buffer,
+    options: LocalMachinePdfExtractOptions = {},
+  ): Promise<object> {
+    if (bytes.length > MAX_PDF_BYTES) throw new Error('Gateway rejected local-machine PDF exceeds 16 MiB');
+    if (!isPdfBytes(bytes)) throw new Error('Gateway rejected target is not a PDF');
+
+    const startPage = options.startPage ?? 1;
+    const maxPages = options.maxPages ?? DEFAULT_PDF_PAGES;
+    const maxChars = options.maxChars ?? DEFAULT_PDF_CHARS;
+    if (!Number.isInteger(startPage) || startPage < 1 || startPage > 1_000_000) {
+      throw new Error('Gateway rejected PDF start page');
+    }
+    if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > MAX_PDF_PAGES) {
+      throw new Error('Gateway rejected PDF page limit');
+    }
+    if (!Number.isInteger(maxChars) || maxChars < 1 || maxChars > MAX_PDF_CHARS) {
+      throw new Error('Gateway rejected PDF character limit');
+    }
+
+    const result = await runPdfWorker(target, startPage, maxPages, maxChars);
+    const rawSha256 = createHash('sha256').update(bytes).digest('hex');
+    if (result.sha256 !== rawSha256) throw new Error('Gateway rejected PDF worker identity mismatch');
+
+    let redacted = false;
+    const pages = result.pages.map((page) => {
+      const pageText = redactSecrets(page.text);
+      if (pageText !== page.text) redacted = true;
+      return { page: page.page, text: pageText };
+    });
+    return {
+      path: safePath,
+      mime_type: 'application/pdf',
+      size_bytes: bytes.length,
+      raw_sha256: rawSha256,
+      page_count: result.pageCount,
+      start_page: result.startPage,
+      extracted_pages: pages.length,
+      extracted_chars: result.chars,
+      pages,
+      content: pages.map((page) => page.text).join('\n\n'),
+      has_more: result.hasMore,
+      truncated: result.truncated,
+      redacted,
+    };
+  }
+
+  async function readLocalPdf(
+    root: string,
+    path: string,
+    options: LocalMachinePdfExtractOptions = {},
+  ): Promise<object> {
+    const safePath = validateReadPath(path);
+    await assertReadTarget(root, safePath);
+    const target = await realpath(resolve(root, safePath));
+    const meta = await stat(target);
+    if (!meta.isFile()) throw new Error('Gateway rejected local-machine PDF target is not a file');
+    if (meta.size > MAX_PDF_BYTES) throw new Error('Gateway rejected local-machine PDF exceeds 16 MiB');
+    const bytes = await readFile(target);
+    return extractPdfBytes(safePath, target, bytes, options);
+  }
+
   async function readLocalText(root: string, path: string, readOptions: LocalMachineReadOptions = {}): Promise<object> {
     const safePath = validateReadPath(path);
     await assertReadTarget(root, safePath);
     const target = await realpath(resolve(root, safePath));
     const bytes = await readFile(target);
+    if (isPdfBytes(bytes)) {
+      if (readOptions.offset !== undefined || readOptions.length !== undefined) {
+        throw new Error('Gateway rejected line pagination for PDF; use machine.pdf.extract');
+      }
+      return extractPdfBytes(safePath, target, bytes);
+    }
     const paged = readOptions.offset !== undefined || readOptions.length !== undefined;
     const maxBytes = paged ? MAX_PAGED_READ_BYTES : MAX_READ_BYTES;
     if (bytes.length > maxBytes) {
@@ -695,6 +897,11 @@ export function createLocalMachineContext(options: {
     async readImage(workspaceId, path) {
       const { workspace } = await ownedWorkspace(workspaceId);
       return readLocalImage(workspace.canonicalRoot, path);
+    },
+
+    async extractPdf(workspaceId, path, extractOptions = {}) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      return readLocalPdf(workspace.canonicalRoot, path, extractOptions);
     },
 
     async mkdir(workspaceId, path) {

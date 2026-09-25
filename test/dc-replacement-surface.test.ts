@@ -532,6 +532,7 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
         data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
       };
     },
+    async extractPdf() { throw new Error('not used'); },
     async commandRun(workspaceId, argv) {
       assert.equal(workspaceId, machineWorkspaceId);
       machineCalls.push('command:' + JSON.stringify(argv));

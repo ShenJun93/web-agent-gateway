@@ -612,6 +612,24 @@ export function createGatewayMcpServer(
       await machineContext.readImage(workspace_id, path),
     ));
 
+    registerTool('machine.pdf.extract', {
+      description: 'Extract bounded text from one local PDF in an isolated worker with page and character limits.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        start_page: z.number().int().min(1).max(1_000_000).optional(),
+        max_pages: z.number().int().min(1).max(50).optional(),
+        max_chars: z.number().int().min(1).max(256 * 1024).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path, start_page, max_pages, max_chars }) => toolResult(
+      await machineContext.extractPdf(workspace_id, path, {
+        ...(start_page === undefined ? {} : { startPage: start_page }),
+        ...(max_pages === undefined ? {} : { maxPages: max_pages }),
+        ...(max_chars === undefined ? {} : { maxChars: max_chars }),
+      }),
+    ));
+
     registerTool('machine.search', {
       description: 'Search bounded UTF-8 files recursively inside one caller-owned local-machine workspace.',
       inputSchema: z.object({

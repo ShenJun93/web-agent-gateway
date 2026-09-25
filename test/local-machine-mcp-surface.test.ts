@@ -30,6 +30,7 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
       sha256: 'a'.repeat(64),
       data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
     }),
+    extractPdf: async (id, path, options) => record('extractPdf', id, path, options),
     mkdir: async (id, path) => record('mkdir', id, path),
     move: async (id, from, to) => record('move', id, from, to),
     delete: async (id, path, recursive) => record('delete', id, path, recursive),
@@ -101,6 +102,13 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
   assert.equal((image.structuredContent as { mime_type?: string }).mime_type, 'image/png');
   assert.equal((image.content[0] as { type?: string }).type, 'image');
 
+  assert.equal((await invoke('machine.pdf.extract', {
+    workspace_id: workspaceId,
+    path: 'document.pdf',
+    start_page: 2,
+    max_pages: 4,
+    max_chars: 12000,
+  })).name, 'extractPdf');
   assert.equal((await invoke('machine.search', {
     workspace_id: workspaceId,
     query: 'needle',
