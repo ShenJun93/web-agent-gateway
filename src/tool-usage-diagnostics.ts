@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+
 export interface ToolUsageEvent {
   sequence: number;
   tool: string;
@@ -25,26 +27,46 @@ export interface RecentToolUsage {
   capacity: number;
 }
 
+export interface ToolUsageDiagnosticsOptions {
+  capacity?: number;
+  /**
+   * Optional durable state file. When provided, the bounded event ring survives runtime restart.
+   * The file stores only the same sanitized fields exposed by diagnostics.recent.
+   */
+  statePath?: string;
+}
+
+interface PersistedToolUsage {
+  version: 1;
+  next_sequence: number;
+  events: ToolUsageEvent[];
+}
+
 const DEFAULT_CAPACITY = 512;
 const MAX_RECENT = 100;
 
 /**
- * Process-local, bounded MCP usage diagnostics.
+ * Bounded MCP usage diagnostics.
  *
  * Deliberately stores no arguments, paths, command text, file contents, output, owner/session ids,
- * credentials, or exception messages. It is safe to surface through private stdio because each row
- * contains only the tool name, timing, outcome, sequence and error class.
+ * credentials, or exception messages. A durable state file is optional; stable private-local
+ * sessions use one so operational history survives a WAG runtime restart.
  */
 export class ToolUsageDiagnostics {
   private readonly capacity: number;
+  private readonly statePath: string | undefined;
   private readonly events: ToolUsageEvent[] = [];
   private nextSequence = 1;
 
-  constructor(capacity = DEFAULT_CAPACITY) {
+  constructor(options: number | ToolUsageDiagnosticsOptions = DEFAULT_CAPACITY) {
+    const normalized = typeof options === 'number' ? { capacity: options } : options;
+    const capacity = normalized.capacity ?? DEFAULT_CAPACITY;
     if (!Number.isInteger(capacity) || capacity < 16 || capacity > 10_000) {
       throw new Error('Tool usage diagnostics capacity must be an integer in [16,10000]');
     }
     this.capacity = capacity;
+    this.statePath = normalized.statePath;
+    this.loadPersisted();
   }
 
   begin(tool: string): (success: boolean, error?: unknown) => void {
@@ -68,6 +90,7 @@ export class ToolUsageDiagnostics {
       if (this.events.length > this.capacity) {
         this.events.splice(0, this.events.length - this.capacity);
       }
+      this.persist();
     };
   }
 
@@ -140,6 +163,61 @@ export class ToolUsageDiagnostics {
       tools,
     };
   }
+
+  private loadPersisted(): void {
+    if (!this.statePath || !existsSync(this.statePath)) return;
+    try {
+      const parsed = JSON.parse(readFileSync(this.statePath, 'utf8')) as unknown;
+      if (!isPersistedToolUsage(parsed)) return;
+      const retained = parsed.events.slice(-this.capacity);
+      this.events.push(...retained.map((event) => ({ ...event })));
+      const maxSequence = retained.reduce((max, event) => Math.max(max, event.sequence), 0);
+      this.nextSequence = Math.max(parsed.next_sequence, maxSequence + 1, 1);
+    } catch {
+      // Diagnostics must never make the gateway unavailable. A malformed diagnostics file is
+      // ignored and replaced atomically on the next ordinary tool event.
+    }
+  }
+
+  private persist(): void {
+    if (!this.statePath) return;
+    const payload: PersistedToolUsage = {
+      version: 1,
+      next_sequence: this.nextSequence,
+      events: this.events,
+    };
+    const temp = this.statePath + '.tmp';
+    writeFileSync(temp, JSON.stringify(payload, null, 2) + '\n', {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    renameSync(temp, this.statePath);
+  }
+}
+
+function isPersistedToolUsage(value: unknown): value is PersistedToolUsage {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as Partial<PersistedToolUsage>;
+  if (row.version !== 1 || !Number.isInteger(row.next_sequence) || (row.next_sequence ?? 0) < 1
+    || !Array.isArray(row.events)) {
+    return false;
+  }
+  let previous = 0;
+  for (const event of row.events) {
+    if (!event || typeof event !== 'object') return false;
+    const candidate = event as Partial<ToolUsageEvent>;
+    if (!Number.isInteger(candidate.sequence) || (candidate.sequence ?? 0) <= previous
+      || typeof candidate.tool !== 'string' || candidate.tool.length < 1 || candidate.tool.length > 128
+      || typeof candidate.started_at_utc !== 'string'
+      || !Number.isFinite(candidate.duration_ms) || (candidate.duration_ms ?? -1) < 0
+      || typeof candidate.success !== 'boolean'
+      || (candidate.error_class !== undefined
+        && (typeof candidate.error_class !== 'string' || candidate.error_class.length > 128))) {
+      return false;
+    }
+    previous = candidate.sequence!;
+  }
+  return true;
 }
 
 function roundMillis(value: number): number {

@@ -452,3 +452,59 @@ test('private-stdio authority is autonomous-local without any per-goal authority
     await runtime.close();
   }
 });
+
+test('stable private-stdio diagnostics survive repository runtime restart', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-runtime-diagnostics-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const settings = config({
+    inspect: true,
+    mutation: {
+      statePath,
+      ownerId: 'local.private.stdio',
+      sessionCorrelation: 'session_diagnostics_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    },
+  });
+
+  const first = await startRepositoryEngineeringRuntime(settings);
+  const stableSessionId = first.profile.stableSessionId;
+  assert.ok(stableSessionId);
+  assert.ok(first.diagnosticsContext);
+  first.diagnosticsContext!.begin('health')(true);
+  await first.close();
+
+  const diagnosticsPath = statePath + '.tool-usage.' + stableSessionId + '.json';
+  const persisted = await readFile(diagnosticsPath, 'utf8');
+  assert.equal(persisted.includes('"tool": "health"'), true);
+
+  const second = await startRepositoryEngineeringRuntime(settings);
+  try {
+    assert.equal(second.profile.stableSessionId, stableSessionId);
+    assert.deepEqual(
+      second.diagnosticsContext!.recent({ limit: 10 }).events.map((event) => [
+        event.sequence,
+        event.tool,
+        event.success,
+      ]),
+      [[1, 'health', true]],
+    );
+    second.diagnosticsContext!.begin('workspace.open')(false, new TypeError('must never persist'));
+  } finally {
+    await second.close();
+  }
+
+  const third = await startRepositoryEngineeringRuntime(settings);
+  try {
+    const recent = third.diagnosticsContext!.recent({ limit: 10 });
+    assert.deepEqual(
+      recent.events.map((event) => [event.sequence, event.tool, event.success, event.error_class]),
+      [
+        [1, 'health', true, undefined],
+        [2, 'workspace.open', false, 'TypeError'],
+      ],
+    );
+    assert.equal(JSON.stringify(recent).includes('must never persist'), false);
+  } finally {
+    await third.close();
+  }
+});

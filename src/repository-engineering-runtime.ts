@@ -158,7 +158,11 @@ export async function startRepositoryEngineeringRuntime(
     processRegistryPath: mutationSettings.statePath + '.machine-processes.' + sessionId + '.json',
     terminalRegistryPath: mutationSettings.statePath + '.machine-terminals.' + sessionId,
   });
-  const diagnosticsContext = new ToolUsageDiagnostics();
+  const diagnosticsContext = new ToolUsageDiagnostics({
+    ...(mutationSettings.sessionCorrelation === undefined
+      ? {}
+      : { statePath: mutationSettings.statePath + '.tool-usage.' + sessionId + '.json' }),
+  });
 
   async function freshWorkspaceFingerprint(workspaceId: string): Promise<string | undefined> {
     const workspace = store.getWorkspace(workspaceId);

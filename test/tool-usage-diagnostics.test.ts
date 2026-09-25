@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 
@@ -102,4 +105,53 @@ test('diagnostics MCP tools observe ordinary calls but do not recursively count 
   };
   assert.equal(usage.total_calls, 1);
   assert.deepEqual(usage.tools.map((entry) => [entry.tool, entry.calls]), [['health', 1]]);
+});
+
+test('durable diagnostics survives runtime reconstruction with monotonic sequence', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wag-tool-usage-'));
+  const statePath = join(dir, 'tool-usage.json');
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  let diagnostics = new ToolUsageDiagnostics({ capacity: 16, statePath });
+  diagnostics.begin('alpha')(true);
+  diagnostics.begin('beta')(false, new Error('secret-bearing failure text'));
+
+  const onDisk = await readFile(statePath, 'utf8');
+  assert.equal(onDisk.includes('secret-bearing'), false);
+  assert.equal(onDisk.includes('alpha'), true);
+  assert.equal(onDisk.includes('beta'), true);
+
+  diagnostics = new ToolUsageDiagnostics({ capacity: 16, statePath });
+  assert.deepEqual(
+    diagnostics.recent({ limit: 10 }).events.map((event) => [event.sequence, event.tool, event.success]),
+    [[1, 'alpha', true], [2, 'beta', false]],
+  );
+
+  diagnostics.begin('gamma')(true);
+  diagnostics = new ToolUsageDiagnostics({ capacity: 16, statePath });
+  assert.deepEqual(
+    diagnostics.recent({ limit: 10 }).events.map((event) => [event.sequence, event.tool]),
+    [[1, 'alpha'], [2, 'beta'], [3, 'gamma']],
+  );
+  assert.equal(diagnostics.usage().total_calls, 3);
+});
+
+test('malformed durable diagnostics never blocks startup and is replaced by the next event', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wag-tool-usage-corrupt-'));
+  const statePath = join(dir, 'tool-usage.json');
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await writeFile(statePath, '{not-json', 'utf8');
+
+  const diagnostics = new ToolUsageDiagnostics({ capacity: 16, statePath });
+  assert.equal(diagnostics.recent().events.length, 0);
+  diagnostics.begin('health')(true);
+
+  const parsed = JSON.parse(await readFile(statePath, 'utf8')) as {
+    version: number;
+    next_sequence: number;
+    events: Array<{ sequence: number; tool: string }>;
+  };
+  assert.equal(parsed.version, 1);
+  assert.equal(parsed.next_sequence, 2);
+  assert.deepEqual(parsed.events.map((event) => [event.sequence, event.tool]), [[1, 'health']]);
 });
