@@ -1,12 +1,24 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 export interface ToolUsageEvent {
   sequence: number;
+  /** WAG-local MCP request identity. Optional only for pre-upgrade persisted events. */
+  request_id?: string;
   tool: string;
   started_at_utc: string;
   duration_ms: number;
   success: boolean;
   error_class?: string;
+  effect_id?: string;
+  attempt_id?: string;
+}
+
+export interface InFlightToolUsage {
+  request_id: string;
+  tool: string;
+  started_at_utc: string;
+  elapsed_ms: number;
 }
 
 export interface ToolUsageSummary {
@@ -22,18 +34,31 @@ export interface ToolUsageSummary {
 
 export interface RecentToolUsage {
   events: ToolUsageEvent[];
+  in_flight: InFlightToolUsage[];
   next_after_sequence: number;
   retained_events: number;
   capacity: number;
 }
 
+export interface ToolUsageCorrelation {
+  readonly effectId?: string;
+  readonly attemptId?: string;
+}
+
+export interface ToolUsageCompletion {
+  (success: boolean, error?: unknown, correlation?: ToolUsageCorrelation): void;
+  readonly requestId: string;
+}
+
 export interface ToolUsageDiagnosticsOptions {
   capacity?: number;
   /**
-   * Optional durable state file. When provided, the bounded event ring survives runtime restart.
-   * The file stores only the same sanitized fields exposed by diagnostics.recent.
+   * Optional durable state file. When provided, the bounded completed-event ring survives runtime
+   * restart. In-flight calls are process-local because a restart makes them no longer in flight.
    */
   statePath?: string;
+  /** Test seam for deterministic request ids. Production uses crypto.randomUUID. */
+  randomUUID?: () => string;
 }
 
 interface PersistedToolUsage {
@@ -42,20 +67,33 @@ interface PersistedToolUsage {
   events: ToolUsageEvent[];
 }
 
+interface InFlightState {
+  requestId: string;
+  tool: string;
+  startedWall: number;
+  startedMono: number;
+}
+
 const DEFAULT_CAPACITY = 512;
 const MAX_RECENT = 100;
+const REQUEST_ID = /^request_[0-9a-f-]{36}$/;
+const EFFECT_ID = /^effect_[0-9a-f-]{36}$/;
+const ATTEMPT_ID = /^attempt_[0-9a-f-]{36}$/;
 
 /**
  * Bounded MCP usage diagnostics.
  *
  * Deliberately stores no arguments, paths, command text, file contents, output, owner/session ids,
- * credentials, or exception messages. A durable state file is optional; stable private-local
- * sessions use one so operational history survives a WAG runtime restart.
+ * credentials, idempotency keys, or exception messages. Completed calls can retain only opaque
+ * WAG request/effect identities so a lost ChatGPT response stream can be reconciled without
+ * replaying a consequential effect blindly.
  */
 export class ToolUsageDiagnostics {
   private readonly capacity: number;
   private readonly statePath: string | undefined;
+  private readonly uuid: () => string;
   private readonly events: ToolUsageEvent[] = [];
+  private readonly inFlight = new Map<string, InFlightState>();
   private nextSequence = 1;
 
   constructor(options: number | ToolUsageDiagnosticsOptions = DEFAULT_CAPACITY) {
@@ -66,18 +104,26 @@ export class ToolUsageDiagnostics {
     }
     this.capacity = capacity;
     this.statePath = normalized.statePath;
+    this.uuid = normalized.randomUUID ?? randomUUID;
     this.loadPersisted();
   }
 
-  begin(tool: string): (success: boolean, error?: unknown) => void {
+  begin(tool: string): ToolUsageCompletion {
+    const requestId = `request_${this.uuid()}`;
+    if (!REQUEST_ID.test(requestId)) throw new Error('Tool usage diagnostics request id is invalid');
     const startedWall = Date.now();
     const startedMono = performance.now();
+    this.inFlight.set(requestId, { requestId, tool, startedWall, startedMono });
+
     let finished = false;
-    return (success, error) => {
+    const complete = ((success: boolean, error?: unknown, correlation?: ToolUsageCorrelation) => {
       if (finished) return;
       finished = true;
+      this.inFlight.delete(requestId);
+      const safeCorrelation = sanitizeCorrelation(correlation);
       const event: ToolUsageEvent = {
         sequence: this.nextSequence++,
+        request_id: requestId,
         tool,
         started_at_utc: new Date(startedWall).toISOString(),
         duration_ms: roundMillis(performance.now() - startedMono),
@@ -85,21 +131,37 @@ export class ToolUsageDiagnostics {
         ...(error === undefined ? {} : {
           error_class: error instanceof Error ? error.constructor.name : typeof error,
         }),
+        ...(safeCorrelation.effectId === undefined ? {} : { effect_id: safeCorrelation.effectId }),
+        ...(safeCorrelation.attemptId === undefined ? {} : { attempt_id: safeCorrelation.attemptId }),
       };
       this.events.push(event);
       if (this.events.length > this.capacity) {
         this.events.splice(0, this.events.length - this.capacity);
       }
       this.persist();
-    };
+    }) as ToolUsageCompletion;
+    Object.defineProperty(complete, 'requestId', {
+      value: requestId,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+    return complete;
   }
 
   recent(options: { limit?: number; afterSequence?: number } = {}): RecentToolUsage {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), MAX_RECENT);
     const after = Math.max(options.afterSequence ?? 0, 0);
     const selected = this.events.filter((event) => event.sequence > after).slice(-limit);
+    const nowMono = performance.now();
     return {
       events: selected.map((event) => ({ ...event })),
+      in_flight: [...this.inFlight.values()].map((entry) => ({
+        request_id: entry.requestId,
+        tool: entry.tool,
+        started_at_utc: new Date(entry.startedWall).toISOString(),
+        elapsed_ms: roundMillis(Math.max(0, nowMono - entry.startedMono)),
+      })),
       next_after_sequence: selected.at(-1)?.sequence ?? after,
       retained_events: this.events.length,
       capacity: this.capacity,
@@ -175,7 +237,7 @@ export class ToolUsageDiagnostics {
       this.nextSequence = Math.max(parsed.next_sequence, maxSequence + 1, 1);
     } catch {
       // Diagnostics must never make the gateway unavailable. A malformed diagnostics file is
-      // ignored and replaced atomically on the next ordinary tool event.
+      // ignored and replaced atomically on the next ordinary completed tool event.
     }
   }
 
@@ -195,6 +257,22 @@ export class ToolUsageDiagnostics {
   }
 }
 
+function sanitizeCorrelation(value: ToolUsageCorrelation | undefined): ToolUsageCorrelation {
+  if (!value || typeof value !== 'object') return {};
+  const effectId = typeof value.effectId === 'string' && EFFECT_ID.test(value.effectId)
+    ? value.effectId
+    : undefined;
+  const attemptId = effectId !== undefined
+    && typeof value.attemptId === 'string'
+    && ATTEMPT_ID.test(value.attemptId)
+    ? value.attemptId
+    : undefined;
+  return {
+    ...(effectId === undefined ? {} : { effectId }),
+    ...(attemptId === undefined ? {} : { attemptId }),
+  };
+}
+
 function isPersistedToolUsage(value: unknown): value is PersistedToolUsage {
   if (!value || typeof value !== 'object') return false;
   const row = value as Partial<PersistedToolUsage>;
@@ -207,12 +285,19 @@ function isPersistedToolUsage(value: unknown): value is PersistedToolUsage {
     if (!event || typeof event !== 'object') return false;
     const candidate = event as Partial<ToolUsageEvent>;
     if (!Number.isInteger(candidate.sequence) || (candidate.sequence ?? 0) <= previous
+      || (candidate.request_id !== undefined
+        && (typeof candidate.request_id !== 'string' || !REQUEST_ID.test(candidate.request_id)))
       || typeof candidate.tool !== 'string' || candidate.tool.length < 1 || candidate.tool.length > 128
       || typeof candidate.started_at_utc !== 'string'
       || !Number.isFinite(candidate.duration_ms) || (candidate.duration_ms ?? -1) < 0
       || typeof candidate.success !== 'boolean'
       || (candidate.error_class !== undefined
-        && (typeof candidate.error_class !== 'string' || candidate.error_class.length > 128))) {
+        && (typeof candidate.error_class !== 'string' || candidate.error_class.length > 128))
+      || (candidate.effect_id !== undefined
+        && (typeof candidate.effect_id !== 'string' || !EFFECT_ID.test(candidate.effect_id)))
+      || (candidate.attempt_id !== undefined
+        && (typeof candidate.attempt_id !== 'string' || !ATTEMPT_ID.test(candidate.attempt_id)))
+      || (candidate.attempt_id !== undefined && candidate.effect_id === undefined)) {
       return false;
     }
     previous = candidate.sequence!;

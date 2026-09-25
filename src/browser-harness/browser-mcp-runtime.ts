@@ -51,6 +51,19 @@ export interface BrowserMcpSnapshot {
   readonly truncated: boolean;
 }
 
+export interface BrowserMcpEffect {
+  readonly effectId: string;
+  readonly kind: string;
+  readonly resourceId: string;
+  readonly planFingerprint: string;
+  readonly state: HarnessEffectRecord['state'];
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly attemptId?: string;
+  readonly resultDigest?: string;
+  readonly errorClass?: string;
+}
+
 export interface BrowserMcpContext {
   open(profileId: string): Promise<BrowserMcpSession>;
   describe(browserSessionId: string): Promise<BrowserMcpSession>;
@@ -59,7 +72,8 @@ export interface BrowserMcpContext {
     browserSessionId: string,
     idempotencyKey: string,
     action: BrowserMcpAction,
-  ): Promise<HarnessEffectRecord>;
+  ): Promise<BrowserMcpEffect>;
+  effect(effectId: string): Promise<BrowserMcpEffect>;
   screenshot(browserSessionId: string): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   close(browserSessionId: string): Promise<BrowserMcpSession>;
   closeAll(): Promise<void>;
@@ -84,6 +98,21 @@ function sessionView(handle: BrowserSessionHandle): BrowserMcpSession {
     createdAt: handle.createdAt,
     lastSeenAt: handle.lastSeenAt,
     state: handle.state,
+  });
+}
+
+function effectView(value: HarnessEffectRecord): BrowserMcpEffect {
+  return Object.freeze({
+    effectId: value.effectId,
+    kind: value.kind,
+    resourceId: value.resourceId,
+    planFingerprint: value.planFingerprint,
+    state: value.state,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    ...(value.attemptId === undefined ? {} : { attemptId: value.attemptId }),
+    ...(value.resultDigest === undefined ? {} : { resultDigest: value.resultDigest }),
+    ...(value.errorClass === undefined ? {} : { errorClass: value.errorClass }),
   });
 }
 
@@ -214,7 +243,7 @@ export function createPrivateBrowserMcpContext(options: {
 
     async exec(browserSessionId, idempotencyKey, action) {
       assertEffectAllowed();
-      return coordinator.execute(
+      return effectView(await coordinator.execute(
         options.owner,
         idempotencyKey,
         {
@@ -240,7 +269,12 @@ export function createPrivateBrowserMcpContext(options: {
           }
           return { status: 'CONFIRMED_SUCCESS', resultDigest: successDigest(action) };
         },
-      );
+      ));
+    },
+
+    async effect(effectId) {
+      assertOpen();
+      return effectView(effects.get(options.owner, effectId));
     },
 
     async screenshot(browserSessionId) {

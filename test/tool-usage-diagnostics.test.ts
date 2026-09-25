@@ -8,10 +8,14 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { createGatewayMcpServer } from '../src/server.js';
 import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 
+const EFFECT_ID = 'effect_00000000-0000-4000-8000-000000000901';
+const ATTEMPT_ID = 'attempt_00000000-0000-4000-8000-000000000902';
+
 test('tool usage diagnostics is bounded, sanitized and groups outcomes by tool', () => {
   const diagnostics = new ToolUsageDiagnostics(16);
 
   let finish = diagnostics.begin('alpha');
+  const firstRequestId = finish.requestId;
   finish(true);
 
   finish = diagnostics.begin('alpha');
@@ -24,7 +28,10 @@ test('tool usage diagnostics is bounded, sanitized and groups outcomes by tool',
   assert.equal(recent.events.length, 3);
   assert.deepEqual(recent.events.map((event) => event.tool), ['alpha', 'alpha', 'beta']);
   assert.deepEqual(recent.events.map((event) => event.success), [true, false, true]);
+  assert.match(firstRequestId, /^request_[0-9a-f-]{36}$/);
+  assert.equal(recent.events[0]?.request_id, firstRequestId);
   assert.equal(recent.events[1]?.error_class, 'TypeError');
+  assert.deepEqual(recent.in_flight, []);
   assert.equal(JSON.stringify(recent).includes('secret-bearing'), false);
 
   const usage = diagnostics.usage();
@@ -42,6 +49,30 @@ test('tool usage diagnostics is bounded, sanitized and groups outcomes by tool',
       { tool: 'beta', calls: 1, failures: 0 },
     ],
   );
+});
+
+test('diagnostics exposes in-flight request identity then durable effect correlation on completion', () => {
+  let n = 1;
+  const diagnostics = new ToolUsageDiagnostics({
+    capacity: 16,
+    randomUUID: () => `00000000-0000-4000-8000-${String(n++).padStart(12, '0')}`,
+  });
+
+  const finish = diagnostics.begin('browser.exec');
+  const during = diagnostics.recent();
+  assert.equal(during.events.length, 0);
+  assert.equal(during.in_flight.length, 1);
+  assert.equal(during.in_flight[0]?.request_id, finish.requestId);
+  assert.equal(during.in_flight[0]?.tool, 'browser.exec');
+  assert.ok((during.in_flight[0]?.elapsed_ms ?? -1) >= 0);
+
+  finish(true, undefined, { effectId: EFFECT_ID, attemptId: ATTEMPT_ID });
+  const after = diagnostics.recent();
+  assert.deepEqual(after.in_flight, []);
+  assert.equal(after.events.length, 1);
+  assert.equal(after.events[0]?.request_id, finish.requestId);
+  assert.equal(after.events[0]?.effect_id, EFFECT_ID);
+  assert.equal(after.events[0]?.attempt_id, ATTEMPT_ID);
 });
 
 test('tool usage diagnostics retains only the configured rolling window', () => {
@@ -92,10 +123,13 @@ test('diagnostics MCP tools observe ordinary calls but do not recursively count 
   });
   assert.equal(recentResponse.isError, undefined);
   const recent = recentResponse.structuredContent as {
-    events: Array<{ tool: string; success: boolean }>;
+    events: Array<{ request_id?: string; tool: string; success: boolean }>;
+    in_flight: unknown[];
   };
   assert.deepEqual(recent.events.map((event) => event.tool), ['health']);
   assert.equal(recent.events[0]?.success, true);
+  assert.match(recent.events[0]?.request_id ?? '', /^request_[0-9a-f-]{36}$/);
+  assert.deepEqual(recent.in_flight, []);
 
   const usageResponse = await client.callTool({ name: 'diagnostics.usage', arguments: {} });
   assert.equal(usageResponse.isError, undefined);
@@ -107,24 +141,31 @@ test('diagnostics MCP tools observe ordinary calls but do not recursively count 
   assert.deepEqual(usage.tools.map((entry) => [entry.tool, entry.calls]), [['health', 1]]);
 });
 
-test('durable diagnostics survives runtime reconstruction with monotonic sequence', async (t) => {
+test('durable diagnostics survives runtime reconstruction with monotonic sequence and correlation', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'wag-tool-usage-'));
   const statePath = join(dir, 'tool-usage.json');
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   let diagnostics = new ToolUsageDiagnostics({ capacity: 16, statePath });
-  diagnostics.begin('alpha')(true);
+  diagnostics.begin('alpha')(true, undefined, { effectId: EFFECT_ID, attemptId: ATTEMPT_ID });
   diagnostics.begin('beta')(false, new Error('secret-bearing failure text'));
 
   const onDisk = await readFile(statePath, 'utf8');
   assert.equal(onDisk.includes('secret-bearing'), false);
   assert.equal(onDisk.includes('alpha'), true);
   assert.equal(onDisk.includes('beta'), true);
+  assert.equal(onDisk.includes(EFFECT_ID), true);
+  assert.equal(onDisk.includes(ATTEMPT_ID), true);
 
   diagnostics = new ToolUsageDiagnostics({ capacity: 16, statePath });
   assert.deepEqual(
-    diagnostics.recent({ limit: 10 }).events.map((event) => [event.sequence, event.tool, event.success]),
-    [[1, 'alpha', true], [2, 'beta', false]],
+    diagnostics.recent({ limit: 10 }).events.map((event) => [
+      event.sequence, event.tool, event.success, event.effect_id, event.attempt_id,
+    ]),
+    [
+      [1, 'alpha', true, EFFECT_ID, ATTEMPT_ID],
+      [2, 'beta', false, undefined, undefined],
+    ],
   );
 
   diagnostics.begin('gamma')(true);
@@ -134,6 +175,29 @@ test('durable diagnostics survives runtime reconstruction with monotonic sequenc
     [[1, 'alpha'], [2, 'beta'], [3, 'gamma']],
   );
   assert.equal(diagnostics.usage().total_calls, 3);
+});
+
+test('pre-upgrade durable diagnostics without request ids remains readable', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wag-tool-usage-legacy-'));
+  const statePath = join(dir, 'tool-usage.json');
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await writeFile(statePath, JSON.stringify({
+    version: 1,
+    next_sequence: 2,
+    events: [{
+      sequence: 1,
+      tool: 'health',
+      started_at_utc: '2026-09-25T00:00:00.000Z',
+      duration_ms: 1,
+      success: true,
+    }],
+  }), 'utf8');
+
+  const diagnostics = new ToolUsageDiagnostics({ capacity: 16, statePath });
+  const recent = diagnostics.recent();
+  assert.equal(recent.events.length, 1);
+  assert.equal(recent.events[0]?.request_id, undefined);
+  assert.equal(recent.events[0]?.tool, 'health');
 });
 
 test('malformed durable diagnostics never blocks startup and is replaced by the next event', async (t) => {
@@ -149,9 +213,10 @@ test('malformed durable diagnostics never blocks startup and is replaced by the 
   const parsed = JSON.parse(await readFile(statePath, 'utf8')) as {
     version: number;
     next_sequence: number;
-    events: Array<{ sequence: number; tool: string }>;
+    events: Array<{ sequence: number; tool: string; request_id?: string }>;
   };
   assert.equal(parsed.version, 1);
   assert.equal(parsed.next_sequence, 2);
   assert.deepEqual(parsed.events.map((event) => [event.sequence, event.tool]), [[1, 'health']]);
+  assert.match(parsed.events[0]?.request_id ?? '', /^request_[0-9a-f-]{36}$/);
 });

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import type { GatewayAuthority } from '../src/caller-context.js';
+import { harnessEffectCorrelationFromError } from '../src/effect-correlation.js';
 import { HarnessEffectCoordinator } from '../src/harness-effect-coordinator.js';
 import { HarnessEffectLedger } from '../src/harness-effect-ledger.js';
 
@@ -45,17 +46,28 @@ test('coordinator executes a confirmed effect once and returns the durable resul
   assert.equal(executions, 1);
 });
 
-test('executor throw is outcome-unknown and a retry never blindly executes again', async (t) => {
+test('executor throw is outcome-unknown, carries recovery correlation, and never blindly replays', async (t) => {
   const { ledger, coordinator } = await fixture(t);
   let executions = 0;
-  await assert.rejects(() => coordinator.execute(OWNER, 'key-throw', PLAN, async () => {
-    executions += 1;
-    throw new Error('connection lost after submit');
-  }), /connection lost after submit/);
+  let thrown: unknown;
+  try {
+    await coordinator.execute(OWNER, 'key-throw', PLAN, async () => {
+      executions += 1;
+      throw new Error('connection lost after submit');
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown instanceof Error);
+  assert.match(thrown.message, /connection lost after submit/);
 
   const effect = ledger.reserve(OWNER, 'key-throw', PLAN);
+  const correlation = harnessEffectCorrelationFromError(thrown);
+  assert.equal(correlation?.effectId, effect.effectId);
+  assert.equal(correlation?.attemptId, effect.attemptId);
   assert.equal(effect.state, 'OUTCOME_UNKNOWN');
   assert.equal(effect.errorClass, 'EXECUTOR_THROW');
+
   await assert.rejects(
     () => coordinator.execute(OWNER, 'key-throw', PLAN, async () => {
       executions += 1;

@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import type { BrowserMcpContext } from '../src/browser-harness/browser-mcp-runtime.js';
+import type { BrowserMcpContext, BrowserMcpEffect } from '../src/browser-harness/browser-mcp-runtime.js';
 import type { PrivateGatewayConfig } from '../src/private-config.js';
 import { createGatewayMcpServer, type GatewayApi } from '../src/server.js';
+import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 import { projectedTools } from '../scripts/prepare-direct-mcp-tunnel.js';
 
 const BROWSER_TOOLS = [
@@ -12,9 +13,27 @@ const BROWSER_TOOLS = [
   'browser.describe',
   'browser.snapshot',
   'browser.exec',
+  'browser.effect.get',
   'browser.screenshot',
   'browser.close',
 ] as const;
+
+const EFFECT_ID = 'effect_00000000-0000-4000-8000-000000000003';
+const ATTEMPT_ID = 'attempt_00000000-0000-4000-8000-000000000004';
+
+function effectView(resourceId: string, kind = 'browser.click'): BrowserMcpEffect {
+  return {
+    effectId: EFFECT_ID,
+    kind,
+    resourceId,
+    planFingerprint: 'effectfp_test',
+    state: 'SUCCEEDED',
+    createdAt: 1,
+    updatedAt: 2,
+    attemptId: ATTEMPT_ID,
+    resultDigest: 'sha256_test',
+  };
+}
 
 function fullBrowserConfig(): PrivateGatewayConfig {
   const root = process.cwd();
@@ -42,16 +61,16 @@ function fullBrowserConfig(): PrivateGatewayConfig {
   };
 }
 
-test('browser opt-in projects exactly six BrowserPort tools on top of the 43-tool core surface', async () => {
+test('browser opt-in projects exactly seven BrowserPort tools on top of the 43-tool core surface', async () => {
   const projected = await projectedTools(fullBrowserConfig());
   assert.equal(projected.missing.length, 0);
-  assert.equal(projected.tools.length, 49);
+  assert.equal(projected.tools.length, 50);
   for (const name of BROWSER_TOOLS) assert.ok(projected.tools.includes(name), name);
   assert.equal(projected.tools.some((name) => name.includes('cdp') || name.includes('playwright')), false,
     'raw transport implementation names must not become public MCP tools');
 });
 
-test('browser.exec accepts semantic exact-once actions and never accepts a raw CDP method', async (t) => {
+test('browser exact-once recovery correlates diagnostics to durable effect state without replay', async (t) => {
   const calls: unknown[][] = [];
   const browserContext: BrowserMcpContext = {
     async open(profileId) {
@@ -91,21 +110,11 @@ test('browser.exec accepts semantic exact-once actions and never accepts a raw C
     },
     async exec(browserSessionId, idempotencyKey, action) {
       calls.push(['exec', browserSessionId, idempotencyKey, action]);
-      return {
-        effectId: 'effect_00000000-0000-4000-8000-000000000003',
-        ownerId: 'owner',
-        sessionId: 'session',
-        adapterId: 'private.stdio.v1',
-        idempotencyKey,
-        kind: `browser.${action.type}`,
-        resourceId: browserSessionId,
-        planFingerprint: 'effectfp_test',
-        state: 'SUCCEEDED',
-        createdAt: 1,
-        updatedAt: 2,
-        attemptId: 'attempt_00000000-0000-4000-8000-000000000004',
-        resultDigest: 'sha256_test',
-      };
+      return effectView(browserSessionId, `browser.${action.type}`);
+    },
+    async effect(effectId) {
+      calls.push(['effect', effectId]);
+      return effectView('browser_00000000-0000-4000-8000-000000000001');
     },
     async screenshot(browserSessionId) {
       calls.push(['screenshot', browserSessionId]);
@@ -125,6 +134,11 @@ test('browser.exec accepts semantic exact-once actions and never accepts a raw C
     async closeAll() {},
   };
 
+  let requestNumber = 1;
+  const diagnostics = new ToolUsageDiagnostics({
+    capacity: 16,
+    randomUUID: () => `00000000-0000-4000-8000-${String(requestNumber++).padStart(12, '0')}`,
+  });
   const gateway = {
     health: async () => ({
       status: 'ok' as const,
@@ -133,7 +147,7 @@ test('browser.exec accepts semantic exact-once actions and never accepts a raw C
       toolCount: 6,
     }),
   } as unknown as GatewayApi;
-  const server = createGatewayMcpServer(gateway, { browserContext });
+  const server = createGatewayMcpServer(gateway, { browserContext, diagnosticsContext: diagnostics });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'browser-mcp-test', version: '1.0.0' }, { capabilities: {} });
   await server.connect(serverTransport);
@@ -162,6 +176,41 @@ test('browser.exec accepts semantic exact-once actions and never accepts a raw C
     'acceptance.click.1',
     { type: 'click', ref: 'node_00000000-0000-4000-8000-000000000010_0' },
   ]);
+  assert.equal(JSON.stringify(executed.structuredContent).includes('ownerId'), false);
+  assert.equal(JSON.stringify(executed.structuredContent).includes('sessionId'), false);
+  assert.equal(JSON.stringify(executed.structuredContent).includes('idempotencyKey'), false);
+
+  const recentResponse = await client.callTool({
+    name: 'diagnostics.recent',
+    arguments: { limit: 10 },
+  });
+  const recent = recentResponse.structuredContent as {
+    events: Array<{
+      request_id?: string;
+      tool: string;
+      effect_id?: string;
+      attempt_id?: string;
+      success: boolean;
+    }>;
+    in_flight: unknown[];
+  };
+  const execEvent = recent.events.find((event) => event.tool === 'browser.exec');
+  assert.ok(execEvent);
+  assert.match(execEvent.request_id ?? '', /^request_[0-9a-f-]{36}$/);
+  assert.equal(execEvent.success, true);
+  assert.equal(execEvent.effect_id, EFFECT_ID);
+  assert.equal(execEvent.attempt_id, ATTEMPT_ID);
+  assert.deepEqual(recent.in_flight, []);
+
+  const recovered = await client.callTool({
+    name: 'browser.effect.get',
+    arguments: { effect_id: EFFECT_ID },
+  });
+  assert.equal(recovered.isError === true, false);
+  assert.deepEqual(calls.at(-1), ['effect', EFFECT_ID]);
+  assert.equal((recovered.structuredContent as { state?: string } | undefined)?.state, 'SUCCEEDED');
+  assert.equal(JSON.stringify(recovered.structuredContent).includes('ownerId'), false);
+  assert.equal(JSON.stringify(recovered.structuredContent).includes('sessionId'), false);
 
   const raw = await client.callTool({
     name: 'browser.exec',

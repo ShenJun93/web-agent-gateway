@@ -1,4 +1,5 @@
 import type { GatewayAuthority } from './caller-context.js';
+import { attachHarnessEffectCorrelation } from './effect-correlation.js';
 import {
   HarnessEffectLedger,
   type HarnessEffectPlan,
@@ -29,16 +30,22 @@ export class HarnessEffectCoordinator {
     if (!claim.claimed) return claim.record;
     const attemptId = claim.record.attemptId;
     if (!attemptId) {
-      this.ledger.markOutcomeUnknown(owner, reserved.effectId, 'MISSING_ATTEMPT_ID');
-      throw new Error('Harness effect claim returned no attempt id');
+      const unknown = this.ledger.markOutcomeUnknown(owner, reserved.effectId, 'MISSING_ATTEMPT_ID');
+      throw attachHarnessEffectCorrelation(
+        new Error('Harness effect claim returned no attempt id'),
+        { effectId: unknown.effectId },
+      );
     }
 
     let result: HarnessEffectExecutionResult;
     try {
       result = await executor({ effectId: reserved.effectId, attemptId });
     } catch (error) {
-      this.ledger.markOutcomeUnknown(owner, reserved.effectId, 'EXECUTOR_THROW');
-      throw error;
+      const unknown = this.ledger.markOutcomeUnknown(owner, reserved.effectId, 'EXECUTOR_THROW');
+      throw attachHarnessEffectCorrelation(error, {
+        effectId: unknown.effectId,
+        ...(unknown.attemptId === undefined ? {} : { attemptId: unknown.attemptId }),
+      });
     }
 
     switch (result.status) {

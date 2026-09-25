@@ -7,6 +7,10 @@ import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
+import {
+  harnessEffectCorrelationFromError,
+  harnessEffectCorrelationFromToolResult,
+} from './effect-correlation.js';
 import { detectRuntimeIdentity } from './runtime-identity.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
 import type { DurableCommitCoordinator } from './git-commit.js';
@@ -483,10 +487,10 @@ export function createGatewayMcpServer(
       const finish = diagnosticsContext?.begin(name);
       try {
         const value = await handler(...args);
-        finish?.(true);
+        finish?.(true, undefined, harnessEffectCorrelationFromToolResult(value));
         return value;
       } catch (error) {
-        finish?.(false, error);
+        finish?.(false, error, harnessEffectCorrelationFromError(error));
         throw error;
       }
     };
@@ -846,6 +850,7 @@ export function createGatewayMcpServer(
 
   if (browserContext) {
     const browserSessionId = z.string().regex(/^browser_[0-9a-f-]{36}$/);
+    const effectId = z.string().regex(/^effect_[0-9a-f-]{36}$/);
     const browserAction = z.discriminatedUnion('type', [
       z.object({ type: z.literal('navigate'), url: z.string().url().max(4096) }).strict(),
       z.object({ type: z.literal('click'), ref: z.string().min(1).max(256) }).strict(),
@@ -891,6 +896,12 @@ export function createGatewayMcpServer(
     }, async ({ browser_session_id, idempotency_key, action }) => toolResult(
       await browserContext.exec(browser_session_id, idempotency_key, action),
     ));
+
+    registerTool('browser.effect.get', {
+      description: 'Read the durable exact-once state for one caller-owned browser effect after a response-stream interruption; this never replays the effect.',
+      inputSchema: z.object({ effect_id: effectId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ effect_id }) => toolResult(await browserContext.effect(effect_id)));
 
     registerTool('browser.screenshot', {
       description: 'Capture a bounded PNG screenshot from one caller-owned BrowserPort session.',
