@@ -177,6 +177,7 @@ test('health reports the full live private-stdio surface through the frozen heal
     mcpToolCount: number;
     mcpTools: string[];
     authorityMode?: string;
+    runtime?: { pid: number; parent_pid: number; cli_path: string; deployed: boolean };
     diagnostics?: { total_calls: number; retained_events: number; capacity: number };
   };
   assert.equal(firstView.toolCount, REQUIRED_DEVSPACE_TOOLS.length,
@@ -184,6 +185,10 @@ test('health reports the full live private-stdio surface through the frozen heal
   assert.equal(firstView.mcpToolCount, DECLARED_SURFACE.length);
   assert.deepEqual(firstView.mcpTools, DECLARED_SURFACE.map(([name]) => name));
   assert.equal(firstView.authorityMode, 'AUTONOMOUS_LOCAL');
+  assert.ok((firstView.runtime?.pid ?? 0) > 0);
+  assert.ok((firstView.runtime?.parent_pid ?? -1) >= 0);
+  assert.equal(typeof firstView.runtime?.cli_path, 'string');
+  assert.equal(typeof firstView.runtime?.deployed, 'boolean');
   assert.equal(firstView.diagnostics?.total_calls, 0,
     'the in-flight health call must not count itself before its result exists');
 

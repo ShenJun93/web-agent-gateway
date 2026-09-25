@@ -6,6 +6,7 @@ import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-p
 import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import { detectRuntimeIdentity } from './runtime-identity.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
 import type { DurableCommitCoordinator } from './git-commit.js';
 import type { BrowserVerifyRequestCoordinator } from './browser-verify-request.js';
@@ -472,6 +473,7 @@ export function createGatewayMcpServer(
   } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
+  const runtimeIdentity = detectRuntimeIdentity();
   const publishedToolNames: string[] = [];
   const registerTool = ((name: string, config: unknown, handler: (...args: any[]) => unknown) => {
     publishedToolNames.push(name);
@@ -516,6 +518,7 @@ export function createGatewayMcpServer(
       mcpToolCount: publishedToolNames.length,
       mcpTools: [...publishedToolNames],
       ...(machineContext === undefined ? {} : { authorityMode: 'AUTONOMOUS_LOCAL' }),
+      runtime: runtimeIdentity,
       ...(usage === undefined ? {} : {
         diagnostics: {
           retained_events: usage.retained_events,
