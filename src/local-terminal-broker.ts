@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer, type Socket } from 'node:net';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { sanitizeLocalMachineEnvironment } from './environment-policy.js';
+import { nextTerminalRemoteEffectPolicyBuffer } from './remote-effect-policy.js';
 import { redactSecrets } from './secret-redaction.js';
 
 const MAX_BUFFER_BYTES = 64 * 1024;
@@ -97,6 +98,7 @@ async function main(): Promise<void> {
   let exitCode: number | undefined;
   let buffer = '';
   let truncated = false;
+  let remoteEffectPolicyBuffer = '';
   const startedAt = new Date().toISOString();
   let port = 0;
 
@@ -200,6 +202,22 @@ async function main(): Promise<void> {
           const payload = Buffer.from(request.base64, 'base64');
           if (payload.length === 0 || payload.length > MAX_INPUT_BYTES) {
             await reply(socket, { ok: false, error: 'INVALID_INPUT_SIZE' });
+            return;
+          }
+          try {
+            remoteEffectPolicyBuffer = nextTerminalRemoteEffectPolicyBuffer(
+              remoteEffectPolicyBuffer,
+              payload.toString('utf8'),
+            );
+          } catch (error) {
+            remoteEffectPolicyBuffer = '';
+            await new Promise<void>((resolvePromise) => {
+              child.stdin.write(Buffer.from([0x03]), () => resolvePromise());
+            }).catch(() => undefined);
+            await reply(socket, {
+              ok: false,
+              error: error instanceof Error ? error.message : 'REMOTE_EFFECT_POLICY_DENIED',
+            });
             return;
           }
           await new Promise<void>((resolvePromise, reject) => {

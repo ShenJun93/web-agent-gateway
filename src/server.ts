@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from 'zod';
 import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
@@ -34,6 +35,7 @@ import { DevspaceRepositoryInspectionBackend, type RepoDiffOptions, type RepoLis
 import { readDevspaceText } from './executor/devspace-read.js';
 import { readDevspaceRawFileIdentity } from './executor/devspace-file-identity.js';
 import { describeReadableUtf8Text } from './file-read-metadata.js';
+import { assertGenericExecutionRemoteEffectPolicy } from './remote-effect-policy.js';
 
 export function createGateway({ executor, allowedRoots, verifyProfiles = {}, telemetry = NOOP_TELEMETRY, openWorkspaceId, bindWorkspaceIdentity }: { executor: DevspaceExecutor; allowedRoots: readonly string[]; verifyProfiles?: Readonly<Record<string, VerifyProfile>>; telemetry?: TelemetrySink; openWorkspaceId?: (canonicalRoot: string) => string | Promise<string>; bindWorkspaceIdentity?: (workspaceId: string, canonicalRoot: string, devspaceWorkspaceId: string) => Promise<void> }) {
   const workspaces = new Map<string, WorkspaceBinding>();
@@ -128,10 +130,12 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
     async verifyRun(workspaceId: string, profileName: string) {
       const trace = startTrace('verify.run', telemetry); trace.markIngress();
       try {
-        const scoped = await trace.phase('policyMs', () => {
+        const scoped = await trace.phase('policyMs', async () => {
           const profile = verifyProfiles[profileName];
           if (!profile) throw new Error('Gateway denied verify profile');
-          return { profile: resolveVerifyProfile(profile), devspaceWorkspaceId: binding(workspaceId).devspaceWorkspaceId };
+          const workspace = binding(workspaceId);
+          await assertGenericExecutionRemoteEffectPolicy(profile.argv, workspace.canonicalRoot);
+          return { profile: resolveVerifyProfile(profile), devspaceWorkspaceId: workspace.devspaceWorkspaceId };
         });
         const result = await trace.phase('executorMs', () => executor.execCommand(
           scoped.devspaceWorkspaceId,
@@ -166,6 +170,8 @@ export function createGateway({ executor, allowedRoots, verifyProfiles = {}, tel
             ? '.'
             : validateReadPath(requestedCwd);
           if (cwd !== '.') await assertReadTarget(workspace.canonicalRoot, cwd);
+          const executionCwd = cwd === '.' ? workspace.canonicalRoot : resolve(workspace.canonicalRoot, cwd);
+          await assertGenericExecutionRemoteEffectPolicy(argv, executionCwd);
           const profile = resolveVerifyProfile({
             argv,
             ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),

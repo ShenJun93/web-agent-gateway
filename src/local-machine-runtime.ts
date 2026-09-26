@@ -21,6 +21,10 @@ import type { GatewayCallerContext } from './caller-context.js';
 import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
 import { sanitizeLocalMachineEnvironment } from './environment-policy.js';
 import { describeReadableUtf8Text } from './file-read-metadata.js';
+import {
+  assertGenericExecutionRemoteEffectPolicy,
+  nextTerminalRemoteEffectPolicyBuffer,
+} from './remote-effect-policy.js';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import { redactCommandLine, redactSecrets } from './secret-redaction.js';
 import {
@@ -260,6 +264,7 @@ interface TerminalSession {
   readonly startedAt: number;
   buffer: string;
   truncated: boolean;
+  remoteEffectPolicyBuffer: string;
   state: 'RUNNING' | 'EXITED' | 'TERMINATED';
   exitCode?: number;
 }
@@ -980,6 +985,7 @@ export function createLocalMachineContext(options: {
       validateArgv(argv);
       assertEffectAllowed();
       const cwd = await resolveCwd(workspace.canonicalRoot, commandOptions.cwd);
+      await assertGenericExecutionRemoteEffectPolicy(argv, cwd);
       const timeoutMs = Math.min(Math.max(commandOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS, 100), MAX_TIMEOUT_MS);
       const maxOutputTokens = Math.min(
         Math.max(commandOptions.maxOutputTokens ?? DEFAULT_OUTPUT_TOKENS, 100),
@@ -1152,6 +1158,7 @@ export function createLocalMachineContext(options: {
       validateArgv(argv);
       assertEffectAllowed();
       const cwd = await resolveCwd(workspace.canonicalRoot, commandOptions.cwd);
+      await assertGenericExecutionRemoteEffectPolicy(argv, cwd);
       assertEffectAllowed();
       const child = spawn(argv[0]!, argv.slice(1), {
         cwd,
@@ -1362,6 +1369,7 @@ export function createLocalMachineContext(options: {
         startedAt: Date.now(),
         buffer: '',
         truncated: false,
+        remoteEffectPolicyBuffer: '',
         state: 'RUNNING',
       };
       const append = (chunk: Buffer) => {
@@ -1440,6 +1448,18 @@ export function createLocalMachineContext(options: {
       }
       const session = terminal(workspaceId, terminalId);
       if (session.state !== 'RUNNING') throw new Error('Gateway terminal is not running');
+      try {
+        session.remoteEffectPolicyBuffer = nextTerminalRemoteEffectPolicyBuffer(
+          session.remoteEffectPolicyBuffer,
+          payload.toString('utf8'),
+        );
+      } catch (error) {
+        session.remoteEffectPolicyBuffer = '';
+        await new Promise<void>((resolvePromise) => {
+          session.child.stdin.write(Buffer.from([0x03]), () => resolvePromise());
+        }).catch(() => undefined);
+        throw error;
+      }
       await new Promise<void>((resolvePromise, reject) => {
         session.child.stdin.write(payload, (error) => error ? reject(error) : resolvePromise());
       });
