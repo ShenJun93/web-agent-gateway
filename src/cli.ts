@@ -134,6 +134,7 @@ export async function main(
       machineContext: engineering.machineContext,
       diagnosticsContext: engineering.diagnosticsContext,
       browserContext: engineering.browserContext,
+      desktopContext: engineering.desktopContext,
     });
   } catch (error) {
     await closeQuietly(engineering);

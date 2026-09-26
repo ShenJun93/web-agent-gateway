@@ -14,7 +14,7 @@ import {
   rmdir,
   stat,
 } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sameAuthorityTuple } from './authority-tuple.js';
 import type { GatewayCallerContext } from './caller-context.js';
@@ -71,6 +71,11 @@ export interface LocalMachineCommandOptions {
   cwd?: string;
   timeoutMs?: number;
   maxOutputTokens?: number;
+}
+
+export interface LocalMachineProcessStartOptions {
+  cwd?: string;
+  windowMode?: 'hidden' | 'normal';
 }
 
 export interface LocalMachineSearchOptions {
@@ -290,7 +295,7 @@ export interface LocalMachineContext {
   commandRun(workspaceId: string, argv: readonly string[], options?: LocalMachineCommandOptions): Promise<object>;
   processList(workspaceId: string): Promise<object>;
   processInspect(workspaceId: string, idOrPid: string): Promise<object>;
-  processStart(workspaceId: string, argv: readonly string[], options?: Pick<LocalMachineCommandOptions, 'cwd'>): Promise<object>;
+  processStart(workspaceId: string, argv: readonly string[], options?: LocalMachineProcessStartOptions): Promise<object>;
   processTerminate(workspaceId: string, processId: string): Promise<object>;
   terminalOpen(workspaceId: string, shell?: 'powershell' | 'cmd' | 'bash', cwd?: string): Promise<object>;
   terminalList(workspaceId: string): Promise<object>;
@@ -309,6 +314,10 @@ export function createLocalMachineContext(options: {
 }): LocalMachineContext {
   const { store, callerContext, workspaceIdentities } = options;
   const startedProcesses = loadStartedProcessRegistry(options.processRegistryPath);
+  // Runtime-local proof that this gateway instance created and still owns the live child handle.
+  // Recovered registry rows deliberately do not enter this set and continue through OS identity
+  // inspection before they may be trusted for observation or termination.
+  const liveOwnedProcesses = new Set<string>();
   const observedProcesses = new Map<string, ObservedProcess>();
   const terminals = new Map<string, TerminalSession>();
 
@@ -374,23 +383,43 @@ export function createLocalMachineContext(options: {
         return undefined;
       }
     }
+
+    // Per-PID identity checks sit directly on process/desktop effect boundaries. Avoid CIM/WMI
+    // here: Win32_Process queries can block for seconds on GUI processes and strand the MCP
+    // request. System.Diagnostics.Process exposes PID, image path and start time without WMI;
+    // StartTime is the process-instance discriminator used to reject PID reuse.
     const script = [
       "$ErrorActionPreference='Stop'",
-      `$p=Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"`,
-      'if($null -eq $p){exit 3}',
-      '$p | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CreationDate,CommandLine | ConvertTo-Json -Compress',
+      `try { $p=Get-Process -Id ${pid} -ErrorAction Stop } catch { exit 3 }`,
+      '$path=$null; try { $path=[string]$p.Path } catch {}',
+      '$start=$null; try { $start=$p.StartTime.ToUniversalTime().ToString("O") } catch {}',
+      '$name=[string]$p.ProcessName',
+      'if($name -and -not $name.EndsWith(".exe",[System.StringComparison]::OrdinalIgnoreCase)){ $name += ".exe" }',
+      '[pscustomobject]@{ProcessId=$p.Id;Name=$name;ExecutablePath=$path;CreationDate=$start} | ConvertTo-Json -Compress',
     ].join('; ');
-    const result = await runBounded(
-      ['powershell.exe', '-NoLogo', '-NoProfile', '-Command', script],
-      process.cwd(),
-      10_000,
-      4_000,
-    );
+    let result: Awaited<ReturnType<typeof runBounded>> | undefined;
+    try {
+      result = await runBounded(
+        ['pwsh.exe', '-NoLogo', '-NoProfile', '-Command', script],
+        process.cwd(),
+        2_000,
+        2_000,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (result?.exitCode === 3) return undefined;
+    if (!result || result.timedOut || result.exitCode !== 0) {
+      result = await runBounded(
+        ['powershell.exe', '-NoLogo', '-NoProfile', '-Command', script],
+        process.cwd(),
+        8_000,
+        2_000,
+      );
+    }
     if (result.exitCode === 3) return undefined;
-    if (result.exitCode !== 0) throw new Error('Gateway process inspection failed');
-    const value = JSON.parse(result.output || '{}') as Record<string, unknown>;
-    if (typeof value.CommandLine === 'string') value.CommandLine = redactCommandLine(value.CommandLine);
-    return value;
+    if (result.exitCode !== 0 || result.timedOut) throw new Error('Gateway process inspection failed');
+    return JSON.parse(result.output || '{}') as Record<string, unknown>;
   }
 
   function terminal(workspaceId: string, terminalId: string): TerminalSession {
@@ -1002,23 +1031,38 @@ export function createLocalMachineContext(options: {
           .filter((record) => sameCanonicalRoot(record.workspaceRoot, workspace.canonicalRoot))
           .map((record) => [record.pid, record]),
       );
+      const processes = values.map((value) => {
+        const pid = Number(value.ProcessId);
+        const owned = ownedByPid.get(pid);
+        return {
+          pid,
+          parent_pid: Number(value.ParentProcessId),
+          name: String(value.Name ?? ''),
+          executable_path: value.ExecutablePath == null ? undefined : String(value.ExecutablePath),
+          creation_date: value.CreationDate == null ? undefined : String(value.CreationDate),
+          ...(owned === undefined ? {} : {
+            process_id: owned.processId,
+            owned: true,
+            state: owned.state,
+          }),
+        };
+      });
+      const listedPids = new Set(processes.map((value) => value.pid));
+      for (const owned of ownedByPid.values()) {
+        if (listedPids.has(owned.pid)) continue;
+        processes.push({
+          pid: owned.pid,
+          parent_pid: 0,
+          name: basename(owned.executable),
+          executable_path: owned.executable,
+          creation_date: owned.creationDate ?? `gateway:${new Date(owned.startedAt).toISOString()}`,
+          process_id: owned.processId,
+          owned: true,
+          state: owned.state,
+        });
+      }
       return {
-        processes: values.map((value) => {
-          const pid = Number(value.ProcessId);
-          const owned = ownedByPid.get(pid);
-          return {
-            pid,
-            parent_pid: Number(value.ParentProcessId),
-            name: String(value.Name ?? ''),
-            executable_path: value.ExecutablePath == null ? undefined : String(value.ExecutablePath),
-            creation_date: value.CreationDate == null ? undefined : String(value.CreationDate),
-            ...(owned === undefined ? {} : {
-              process_id: owned.processId,
-              owned: true,
-              state: owned.state,
-            }),
-          };
-        }),
+        processes,
         truncated: result.truncated || values.length >= 500,
       };
     },
@@ -1034,6 +1078,19 @@ export function createLocalMachineContext(options: {
         throw new Error('Gateway denied process record');
       }
       const pid = owned ? owned.pid : observed ? observed.pid : Number(idOrPid);
+      if (owned && liveOwnedProcesses.has(owned.processId) && owned.state === 'RUNNING') {
+        return {
+          found: true,
+          process_id: owned.processId,
+          owned: true,
+          terminable: true,
+          state: owned.state,
+          pid,
+          name: owned.executable,
+          executable_path: owned.executable,
+          creation_date: owned.creationDate ?? `gateway:${new Date(owned.startedAt).toISOString()}`,
+        };
+      }
       const value = await inspectPid(pid);
       if (!value) {
         if (owned && owned.state === 'RUNNING') {
@@ -1100,10 +1157,11 @@ export function createLocalMachineContext(options: {
         cwd,
         env: sanitizeLocalMachineEnvironment(process.env),
         shell: false,
-        windowsHide: true,
-        detached: true,
+        windowsHide: commandOptions.windowMode !== 'normal',
+        detached: commandOptions.windowMode !== 'normal',
         stdio: 'ignore',
       });
+      await awaitChildSpawn(child, 'Gateway local-machine process did not start');
       const pid = child.pid;
       if (!pid) throw new Error('Gateway local-machine process did not start');
       const processId = `proc_${randomUUID()}`;
@@ -1117,7 +1175,9 @@ export function createLocalMachineContext(options: {
         state: 'RUNNING',
       };
       startedProcesses.set(processId, record);
+      liveOwnedProcesses.add(processId);
       child.once('exit', (code) => {
+        liveOwnedProcesses.delete(processId);
         record.state = record.state === 'TERMINATED' ? 'TERMINATED' : 'EXITED';
         record.exitCode = code ?? -1;
         persistStartedProcesses();
@@ -1132,7 +1192,14 @@ export function createLocalMachineContext(options: {
         await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
       }
       persistStartedProcesses();
-      return { process_id: processId, pid, cwd, started: true, registry_persisted: options.processRegistryPath !== undefined };
+      return {
+        process_id: processId,
+        pid,
+        cwd,
+        started: true,
+        window_mode: commandOptions.windowMode ?? 'hidden',
+        registry_persisted: options.processRegistryPath !== undefined,
+      };
     },
 
     async processTerminate(workspaceId, processId) {
@@ -1150,19 +1217,24 @@ export function createLocalMachineContext(options: {
 
       assertEffectAllowed();
       const pid = owned?.pid ?? observed!.pid;
-      const inspected = await inspectPid(pid);
-      if (!inspected) {
-        if (owned) {
-          owned.state = 'EXITED';
-          persistStartedProcesses();
+      const runtimeOwned = owned !== undefined
+        && liveOwnedProcesses.has(owned.processId)
+        && owned.state === 'RUNNING';
+      if (!runtimeOwned) {
+        const inspected = await inspectPid(pid);
+        if (!inspected) {
+          if (owned) {
+            owned.state = 'EXITED';
+            persistStartedProcesses();
+          }
+          observedProcesses.delete(processId);
+          return { process_id: processId, pid, terminated: false, state: 'EXITED' };
         }
-        observedProcesses.delete(processId);
-        return { process_id: processId, pid, terminated: false, state: 'EXITED' };
-      }
-      const liveCreation = inspected.CreationDate == null ? undefined : String(inspected.CreationDate);
-      const expectedCreation = owned?.creationDate ?? observed?.creationDate;
-      if (!expectedCreation || !liveCreation || expectedCreation !== liveCreation) {
-        throw new Error('Gateway denied process PID reuse or missing creation identity');
+        const liveCreation = inspected.CreationDate == null ? undefined : String(inspected.CreationDate);
+        const expectedCreation = owned?.creationDate ?? observed?.creationDate;
+        if (!expectedCreation || !liveCreation || expectedCreation !== liveCreation) {
+          throw new Error('Gateway denied process PID reuse or missing creation identity');
+        }
       }
 
       assertEffectAllowed();
@@ -1178,7 +1250,11 @@ export function createLocalMachineContext(options: {
         if (observed) throw new Error('Gateway denied external process termination without creation identity');
         process.kill(pid, 'SIGTERM');
       }
+      if (!(await waitForPidExit(pid, 2_000))) {
+        throw new Error('Gateway process termination did not settle');
+      }
       if (owned) {
+        liveOwnedProcesses.delete(owned.processId);
         owned.state = 'TERMINATED';
         persistStartedProcesses();
       }
@@ -1228,6 +1304,7 @@ export function createLocalMachineContext(options: {
             stdio: 'ignore',
           },
         );
+        await awaitChildSpawn(child, 'Gateway terminal broker did not start');
         if (!child.pid) throw new Error('Gateway terminal broker did not start');
         child.unref();
 
@@ -1274,6 +1351,7 @@ export function createLocalMachineContext(options: {
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+      await awaitChildSpawn(child, 'Gateway terminal did not start');
       if (!child.pid) throw new Error('Gateway terminal did not start');
       const terminalId = `term_${randomUUID()}`;
       const session: TerminalSession = {
@@ -1522,6 +1600,31 @@ function detectImageMime(bytes: Buffer): LocalMachineImageRead['mime_type'] | un
     if (signature === 'GIF87a' || signature === 'GIF89a') return 'image/gif';
   }
   return undefined;
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function awaitChildSpawn(child: ReturnType<typeof spawn>, message: string): Promise<void> {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    child.once('spawn', () => resolvePromise());
+    child.once('error', () => rejectPromise(new Error(message)));
+  });
 }
 
 function validateArgv(argv: readonly string[]): void {

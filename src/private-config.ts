@@ -21,6 +21,9 @@ const repositoryEngineeringSchema = z.object({
     edgeExecutablePath: z.string().min(1),
     profileRoot: z.string().min(1),
   }).strict().optional(),
+  desktop: z.object({
+    enabled: z.literal(true),
+  }).strict().optional(),
   mutation: z.object({
     statePath: z.string().min(1),
     ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).default(DEFAULT_PRIVATE_STDIO_OWNER_ID),
@@ -86,10 +89,14 @@ export interface PrivateRepositoryEngineeringBrowser {
   edgeExecutablePath: string;
   profileRoot: string;
 }
+export interface PrivateRepositoryEngineeringDesktop {
+  enabled: true;
+}
 export interface PrivateRepositoryEngineering {
   inspect: boolean;
   gitCommit?: PrivateRepositoryEngineeringGitCommit;
   browser?: PrivateRepositoryEngineeringBrowser;
+  desktop?: PrivateRepositoryEngineeringDesktop;
   mutation?: PrivateRepositoryEngineeringMutation;
 }
 export interface PrivateGatewayConfig {
@@ -127,6 +134,10 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
   if (browser && (!isAbsolute(browser.edgeExecutablePath) || !isAbsolute(browser.profileRoot))) {
     throw new Error('Private gateway browser paths must be absolute');
   }
+  const desktop = parsed.repositoryEngineering?.desktop;
+  if (desktop && !mutation) {
+    throw new Error('Private gateway repository engineering desktop requires mutation identity');
+  }
 
   const allowedRoots: string[] = [];
   for (const configuredRoot of parsed.allowedRoots) {
@@ -160,6 +171,9 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
             edgeExecutablePath: browser.edgeExecutablePath,
             profileRoot: browser.profileRoot,
           },
+        }),
+        ...(desktop === undefined ? {} : {
+          desktop: { enabled: true as const },
         }),
         ...(mutation === undefined ? {} : {
           mutation: {

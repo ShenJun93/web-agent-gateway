@@ -27,6 +27,10 @@ import {
   createPrivateBrowserMcpContext,
   type BrowserMcpContext,
 } from './browser-harness/browser-mcp-runtime.js';
+import {
+  createPrivateDesktopMcpContext,
+  type DesktopMcpContext,
+} from './desktop-harness/desktop-mcp-runtime.js';
 
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
@@ -36,6 +40,7 @@ export interface RepositoryEngineeringProfile {
   mutation: boolean;
   gitCommit: boolean;
   browser?: boolean;
+  desktop?: boolean;
   /**
    * The durable session this surface will keep using, present only when a `sessionCorrelation`
    * makes it stable.
@@ -70,6 +75,8 @@ export interface RepositoryEngineeringRuntime {
   diagnosticsContext?: ToolUsageDiagnostics;
   /** Optional outbound BrowserPort surface. It shares identity, not filesystem/Git authority. */
   browserContext?: BrowserMcpContext;
+  /** Optional native Windows DesktopPort surface, restricted to WAG-owned processes. */
+  desktopContext?: DesktopMcpContext;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
@@ -99,9 +106,11 @@ export async function startRepositoryEngineeringRuntime(
   const mutationSettings = settings?.mutation;
   const gitCommitSettings = settings?.gitCommit;
   const browserSettings = settings?.browser;
+  const desktopSettings = settings?.desktop;
 
   if (!mutationSettings) {
     if (browserSettings) throw new Error('Repository engineering browser requires mutation identity');
+    if (desktopSettings) throw new Error('Repository engineering desktop requires mutation identity');
     return {
       profile: { inspect, mutation: false, gitCommit: false },
       async attach() { /* nothing to attach */ },
@@ -173,6 +182,7 @@ export async function startRepositoryEngineeringRuntime(
       : { statePath: mutationSettings.statePath + '.tool-usage.' + sessionId + '.json' }),
   });
   let browserContext: BrowserMcpContext | undefined;
+  let desktopContext: DesktopMcpContext | undefined;
   try {
     browserContext = browserSettings === undefined ? undefined : createPrivateBrowserMcpContext({
       owner: callerContext,
@@ -181,7 +191,14 @@ export async function startRepositoryEngineeringRuntime(
       effectStatePath: mutationSettings.statePath + '.harness-effects.sqlite',
       killSwitch,
     });
+    desktopContext = desktopSettings === undefined ? undefined : createPrivateDesktopMcpContext({
+      owner: callerContext,
+      machineContext,
+      effectStatePath: mutationSettings.statePath + '.desktop-effects.sqlite',
+      killSwitch,
+    });
   } catch (error) {
+    await browserContext?.closeAll().catch(() => undefined);
     workspaceIdentities.close();
     store.close();
     throw error;
@@ -251,11 +268,13 @@ export async function startRepositoryEngineeringRuntime(
       mutation: true,
       gitCommit: gitCommitSettings !== undefined,
       ...(browserSettings === undefined ? {} : { browser: true }),
+      ...(desktopSettings === undefined ? {} : { desktop: true }),
       ...(mutationSettings.sessionCorrelation === undefined ? {} : { stableSessionId: sessionId }),
     },
     machineContext,
     diagnosticsContext,
     ...(browserContext === undefined ? {} : { browserContext }),
+    ...(desktopContext === undefined ? {} : { desktopContext }),
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,
       sessionId: callerContext.sessionId,
@@ -415,9 +434,14 @@ export async function startRepositoryEngineeringRuntime(
       closed = true;
       let failure: unknown;
       try {
-        await browserContext?.closeAll();
+        await desktopContext?.closeAll();
       } catch (error) {
         failure = error;
+      }
+      try {
+        await browserContext?.closeAll();
+      } catch (error) {
+        failure ??= error;
       }
       try {
         await rm(urlFile, { force: true }).catch(() => undefined);

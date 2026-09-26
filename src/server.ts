@@ -7,6 +7,7 @@ import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
+import type { DesktopMcpContext } from './desktop-harness/desktop-mcp-runtime.js';
 import {
   harnessEffectCorrelationFromError,
   harnessEffectCorrelationFromToolResult,
@@ -467,7 +468,7 @@ export interface CapabilityMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext, machineContext, diagnosticsContext, browserContext }: {
+  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext, machineContext, diagnosticsContext, browserContext, desktopContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     gitCommitContext?: GitCommitMcpContext;
@@ -476,6 +477,7 @@ export function createGatewayMcpServer(
     machineContext?: LocalMachineContext;
     diagnosticsContext?: ToolUsageDiagnostics;
     browserContext?: BrowserMcpContext;
+    desktopContext?: DesktopMcpContext;
   } = {},
 ): McpServer {
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
@@ -750,16 +752,18 @@ export function createGatewayMcpServer(
     ));
 
     registerTool('machine.process.start', {
-      description: 'Start one detached local-machine argv process in the trusted autonomous-local profile and sanitized environment.',
+      description: 'Start one detached local-machine argv process in the trusted autonomous-local profile; GUI processes may opt into a visible normal window.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         argv: z.array(z.string().min(1).max(4096)).min(1).max(32),
         cwd: z.string().min(1).max(4096).optional(),
+        window_mode: z.enum(['hidden', 'normal']).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    }, async ({ workspace_id, argv, cwd }) => toolResult(
+    }, async ({ workspace_id, argv, cwd, window_mode }) => toolResult(
       await machineContext.processStart(workspace_id, argv, {
         ...(cwd === undefined ? {} : { cwd }),
+        ...(window_mode === undefined ? {} : { windowMode: window_mode }),
       }),
     ));
 
@@ -924,6 +928,83 @@ export function createGatewayMcpServer(
       inputSchema: z.object({ browser_session_id: browserSessionId }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     }, async ({ browser_session_id }) => toolResult(await browserContext.close(browser_session_id)));
+  }
+
+  if (desktopContext) {
+    const desktopSessionId = z.string().regex(/^desktop_[0-9a-f-]{36}$/);
+    const desktopEffectId = z.string().regex(/^effect_[0-9a-f-]{36}$/);
+    const desktopRef = z.string().regex(/^desktop_node_[0-9a-f-]{36}_[0-9]+$/);
+    const desktopAction = z.discriminatedUnion('type', [
+      z.object({ type: z.literal('invoke'), ref: desktopRef }).strict(),
+      z.object({
+        type: z.literal('setValue'),
+        ref: desktopRef,
+        value: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= 64 * 1024),
+      }).strict(),
+      z.object({ type: z.literal('toggle'), ref: desktopRef }).strict(),
+      z.object({ type: z.literal('select'), ref: desktopRef }).strict(),
+    ]);
+
+    registerTool('desktop.open', {
+      description: 'Open a DesktopPort session for one running WAG-owned process and its single visible top-level window.',
+      inputSchema: z.object({
+        workspace_id: z.string().regex(/^ws_[0-9a-f-]{36}$/),
+        process_id: z.string().regex(/^proc_[0-9a-f-]{36}$/),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, process_id }) => toolResult(await desktopContext.open(workspace_id, process_id)));
+
+    registerTool('desktop.describe', {
+      description: 'Describe one caller-owned DesktopPort session after live process/window identity revalidation.',
+      inputSchema: z.object({ desktop_session_id: desktopSessionId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ desktop_session_id }) => toolResult(await desktopContext.describe(desktop_session_id)));
+
+    registerTool('desktop.snapshot', {
+      description: 'Return a bounded Windows UI Automation Control View snapshot with ephemeral semantic refs.',
+      inputSchema: z.object({ desktop_session_id: desktopSessionId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ desktop_session_id }) => toolResult(await desktopContext.snapshot(desktop_session_id)));
+
+    registerTool('desktop.exec', {
+      description: 'Execute one exact-once semantic Windows UI Automation action. Raw screen coordinates and arbitrary keyboard input are not accepted.',
+      inputSchema: z.object({
+        desktop_session_id: desktopSessionId,
+        idempotency_key: z.string().min(1).max(200).regex(/^[A-Za-z0-9._:-]+$/),
+        action: desktopAction,
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    }, async ({ desktop_session_id, idempotency_key, action }) => toolResult(
+      await desktopContext.exec(desktop_session_id, idempotency_key, action),
+    ));
+
+    registerTool('desktop.effect.get', {
+      description: 'Read the durable exact-once state for one caller-owned desktop effect after a response-stream interruption; this never replays the effect.',
+      inputSchema: z.object({ effect_id: desktopEffectId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ effect_id }) => toolResult(await desktopContext.effect(effect_id)));
+
+    registerTool('desktop.screenshot', {
+      description: 'Capture a bounded PNG image of the exact caller-owned DesktopPort window.',
+      inputSchema: z.object({ desktop_session_id: desktopSessionId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ desktop_session_id }) => {
+      const image = await desktopContext.screenshot(desktop_session_id);
+      const metadata = { mime_type: image.mimeType };
+      return {
+        content: [
+          { type: 'image' as const, data: image.dataBase64, mimeType: image.mimeType },
+          { type: 'text' as const, text: JSON.stringify(metadata) },
+        ],
+        structuredContent: metadata,
+      };
+    });
+
+    registerTool('desktop.close', {
+      description: 'Release one caller-owned DesktopPort automation session without terminating the application process.',
+      inputSchema: z.object({ desktop_session_id: desktopSessionId }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ desktop_session_id }) => toolResult(await desktopContext.close(desktop_session_id)));
   }
 
   if (inspect === true) {
