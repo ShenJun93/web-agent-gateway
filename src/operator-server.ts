@@ -422,7 +422,9 @@ function renderRemotePushReview(review: RemoteGitPushLocalReviewView, csrf: stri
     + `<p>Changed-file summary: ${escapeHtml(review.changedFilesSummary)}</p>`
     + `<p>Destination ref: ${escapeHtml(review.destinationRef)}</p>`
     + `<p>Expected remote state: ${escapeHtml(expected)}</p>`
-    + (review.aheadCommitCount === undefined ? '' : `<p>Ahead commits: ${review.aheadCommitCount}</p>`)
+    + (review.aheadCommitCount === undefined ? '' : review.expectedRemoteState.kind === 'ABSENT'
+      ? `<p>Newly reachable commits: ${review.aheadCommitCount}</p>`
+      : `<p>Ahead commits: ${review.aheadCommitCount}</p>`)
     + (review.reviewedCommitOid === undefined ? '' : `<p>Reviewed OID: ${escapeHtml(review.reviewedCommitOid)}</p>`)
     + (review.reviewReceiptDigest === undefined ? '' : `<p>Review receipt SHA-256: ${escapeHtml(review.reviewReceiptDigest)}</p>`)
     + '<p>Force: NO</p><p>Delete: NO</p><p>Tags: NO</p><p>Uses: 1</p>'

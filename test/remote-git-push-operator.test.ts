@@ -131,6 +131,28 @@ test('remote push operator review is Human-session gated and approval only activ
   assert.equal(rejections, 0);
 });
 
+test('ABSENT remote push review labels the blast radius as newly reachable commits', async (t) => {
+  const absentReview: RemoteGitPushLocalReviewView = {
+    ...review,
+    expectedRemoteState: { kind: 'ABSENT' },
+    aheadCommitCount: 57,
+    changedFilesSummary: 'newly reachable files (showing 2): private/a.ts; private/b.ts',
+  };
+  const coordinator = {
+    listPendingLocal() { return [absentReview]; },
+    reviewLocal(pushId: string) { return pushId === absentReview.pushId ? absentReview : undefined; },
+    async approveLocal() { return true; },
+    rejectLocal() { return true; },
+  };
+  const server = await startOperatorServer({ pushCoordinator: coordinator });
+  t.after(() => server.close());
+
+  const { html } = await bootstrap(server.origin, server.bootstrapUrl);
+  assert.match(html, /Newly reachable commits: 57/);
+  assert.match(html, /newly reachable files \(showing 2\): private\/a\.ts; private\/b\.ts/);
+  assert.doesNotMatch(html, /Ahead commits: 57/);
+});
+
 test('remote push operator rejection is same-origin CSRF-bound and never needs a model-callable grant API', async (t) => {
   let rejected = '';
   const coordinator = {

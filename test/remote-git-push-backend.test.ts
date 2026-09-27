@@ -37,6 +37,8 @@ class FakeRunner {
   root = '';
   gitDir = '';
   commonDir = '';
+  newlyReachableCount = 2;
+  newlyReachableFiles = ['src/a.ts', 'src/b.ts'];
 
   run: RemoteGitCommandRunner = async (cwd, args, options): Promise<RemoteGitCommandResult> => {
     this.calls.push({ cwd, args: [...args], env: { ...options.env } });
@@ -62,7 +64,11 @@ class FakeRunner {
     if (args.includes('merge-base')) {
       return { exitCode: this.fastForward ? 0 : 1, stdout: '', stderr: '' };
     }
-    if (args.includes('rev-list')) return ok('2');
+    if (args.includes('fetch')) return ok('');
+    if (args.includes('rev-list')) {
+      return ok(args.includes('--not') ? String(this.newlyReachableCount) : '2');
+    }
+    if (args.includes('log')) return ok(this.newlyReachableFiles.join('\n'));
     if (args.includes('show')) return ok('feat: bounded remote push');
     if (args.includes('diff-tree')) return ok(' 2 files changed, 3 insertions(+), 1 deletion(-)');
     if (args.includes('ls-remote')) {
@@ -156,6 +162,64 @@ test('planning binds repository, effective push URL, expected remote OID and fas
   assert.equal(plan.aheadCommitCount, 2);
   assert.equal(plan.commitSubject, 'feat: bounded remote push');
   assert.match(plan.changedFilesSummary, /2 files changed/);
+});
+
+test('ABSENT destination reports long newly-reachable ancestry from freshly fetched destination remote refs', async (t) => {
+  const runner = new FakeRunner();
+  runner.remoteOid = undefined;
+  runner.newlyReachableCount = 57;
+  runner.newlyReachableFiles = Array.from({ length: 30 }, (_, index) => `private/file-${index}.ts`);
+  const f = await fixture(t, runner);
+
+  const plan = await f.backend.plan(f.root, {
+    remote: 'origin',
+    sourceOid: SOURCE,
+    destinationRef: DEST,
+  });
+
+  assert.deepEqual(plan.expectedRemoteState, { kind: 'ABSENT' });
+  assert.equal(plan.aheadCommitCount, 57);
+  assert.match(plan.changedFilesSummary, /^newly reachable files \(showing 20\): /);
+  assert.match(plan.changedFilesSummary, /private\/file-0\.ts/);
+  assert.doesNotMatch(plan.changedFilesSummary, /private\/file-20\.ts/);
+  const fetchIndex = runner.calls.findIndex((call) => call.args.includes('fetch'));
+  const revListIndex = runner.calls.findIndex((call) => call.args.includes('rev-list') && call.args.includes('--not'));
+  assert.ok(fetchIndex >= 0, 'ABSENT planning must freshly fetch destination remote refs');
+  assert.ok(revListIndex > fetchIndex, 'newly-reachable count must run after the fresh fetch');
+  const fetch = runner.calls[fetchIndex]!;
+  assert.equal(fetch.args.includes(URL), true, 'fetch must use the verified effective destination URL');
+  assert.equal(fetch.args.some((arg) => arg.startsWith('+refs/heads/*:refs/wag/remote-review/')), true);
+});
+
+test('ABSENT destination with public ancestry reports only the new source commit', async (t) => {
+  const runner = new FakeRunner();
+  runner.remoteOid = undefined;
+  runner.newlyReachableCount = 1;
+  runner.newlyReachableFiles = ['src/one-new-file.ts'];
+  const f = await fixture(t, runner);
+
+  const plan = await f.backend.plan(f.root, {
+    remote: 'origin',
+    sourceOid: SOURCE,
+    destinationRef: DEST,
+  });
+
+  assert.equal(plan.aheadCommitCount, 1);
+  assert.equal(plan.changedFilesSummary, 'newly reachable files (showing 1): src/one-new-file.ts');
+});
+
+test('existing OID fast-forward planning path remains unchanged and does not perform blast-radius fetch', async (t) => {
+  const f = await fixture(t);
+  const plan = await f.backend.plan(f.root, {
+    remote: 'origin',
+    sourceOid: SOURCE,
+    destinationRef: DEST,
+  });
+
+  assert.deepEqual(plan.expectedRemoteState, { kind: 'OID', oid: OLD });
+  assert.equal(plan.aheadCommitCount, 2);
+  assert.match(plan.changedFilesSummary, /^source commit changes:/);
+  assert.equal(f.runner.calls.some((call) => call.args.includes('fetch')), false);
 });
 
 test('dangerous effective Git config is refused before any remote observation', async (t) => {

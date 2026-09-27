@@ -92,6 +92,7 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     }
 
     let aheadCommitCount: number | undefined;
+    let changedFilesSummary: string;
     if (remote.destinationOid !== undefined) {
       await this.#assertCommit(workspaceRoot, remote.destinationOid);
       await this.#assertFastForward(workspaceRoot, remote.destinationOid, input.sourceOid);
@@ -99,6 +100,23 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
         workspaceRoot,
         remote.destinationOid,
         input.sourceOid,
+      );
+      changedFilesSummary = await this.#changedFilesSummary(workspaceRoot, input.sourceOid);
+    } else {
+      const remoteReviewRefGlob = await this.#freshRemoteReviewRefs(
+        workspaceRoot,
+        context.resolvedPushUrl,
+        context.credentialMode,
+      );
+      aheadCommitCount = await this.#newlyReachableCount(
+        workspaceRoot,
+        input.sourceOid,
+        remoteReviewRefGlob,
+      );
+      changedFilesSummary = await this.#newlyReachableFilesSummary(
+        workspaceRoot,
+        input.sourceOid,
+        remoteReviewRefGlob,
       );
     }
 
@@ -111,7 +129,7 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
         ? { kind: 'ABSENT' }
         : { kind: 'OID', oid: remote.destinationOid },
       commitSubject: await this.#commitSubject(workspaceRoot, input.sourceOid),
-      changedFilesSummary: await this.#changedFilesSummary(workspaceRoot, input.sourceOid),
+      changedFilesSummary,
       ...(aheadCommitCount === undefined ? {} : { aheadCommitCount }),
     };
   }
@@ -413,6 +431,86 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
       throw new Error('Gateway rejected remote Git push ahead count');
     }
     return value;
+  }
+
+  async #freshRemoteReviewRefs(
+    workspaceRoot: string,
+    url: string,
+    credentialMode: RemoteCredentialMode,
+  ): Promise<string> {
+    const refPrefix = 'refs/wag/remote-review/' + sha256(url).slice(0, 16);
+    await this.#run(
+      workspaceRoot,
+      [
+        ...this.#remoteSafeBaseArgs(credentialMode),
+        'fetch',
+        '--no-tags',
+        '--prune',
+        '--no-write-fetch-head',
+        url,
+        '+refs/heads/*:' + refPrefix + '/*',
+      ],
+      PUSH_TIMEOUT_MS,
+      true,
+    );
+    return refPrefix + '/*';
+  }
+
+  async #newlyReachableCount(
+    workspaceRoot: string,
+    sourceOid: string,
+    remoteReviewRefGlob: string,
+  ): Promise<number> {
+    const result = await this.#run(
+      workspaceRoot,
+      [
+        ...this.#remoteSafeBaseArgs(),
+        'rev-list',
+        '--count',
+        sourceOid,
+        '--not',
+        '--glob=' + remoteReviewRefGlob,
+      ],
+      READ_TIMEOUT_MS,
+    );
+    const value = Number(singleLine(result.stdout, 'newly reachable count'));
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error('Gateway rejected remote Git push newly reachable count');
+    }
+    return value;
+  }
+
+  async #newlyReachableFilesSummary(
+    workspaceRoot: string,
+    sourceOid: string,
+    remoteReviewRefGlob: string,
+  ): Promise<string> {
+    const result = await this.#run(
+      workspaceRoot,
+      [
+        ...this.#remoteSafeBaseArgs(),
+        'log',
+        '--format=',
+        '--name-only',
+        '--max-count=256',
+        sourceOid,
+        '--not',
+        '--glob=' + remoteReviewRefGlob,
+      ],
+      READ_TIMEOUT_MS,
+    );
+    const candidates = [...new Set(nonEmptyLines(result.stdout))];
+    const shown: string[] = [];
+    for (const path of candidates) {
+      if (shown.length >= 20) break;
+      const candidate = 'newly reachable files (showing ' + (shown.length + 1) + '): '
+        + [...shown, path].join('; ');
+      if (candidate.length > 1000) break;
+      shown.push(path);
+    }
+    return shown.length === 0
+      ? 'newly reachable files (showing 0): none'
+      : 'newly reachable files (showing ' + shown.length + '): ' + shown.join('; ');
   }
 
   async #commitSubject(workspaceRoot: string, sourceOid: string): Promise<string> {
