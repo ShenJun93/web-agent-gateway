@@ -6,7 +6,7 @@ import {
   startBrowserOperatorRuntime,
   type BrowserOperatorRuntime,
 } from './browser-operator-runtime.js';
-import { loadPrivateGatewayConfig } from './private-config.js';
+import { loadPrivateGatewayConfig, type PrivateGatewayConfig } from './private-config.js';
 import {
   bootstrapPrivateGateway,
   PrivateRuntimeError,
@@ -21,6 +21,10 @@ import {
   type GatewayStdioServer,
 } from './stdio-server.js';
 import type { GatewayTelemetryEvent, TelemetrySink } from './telemetry.js';
+import {
+  startRemoteRelayDeviceRuntime,
+  type RemoteRelayDeviceRuntime,
+} from './remote-relay-device-runtime.js';
 
 export interface CliDependencies {
   env: NodeJS.ProcessEnv;
@@ -36,8 +40,12 @@ export interface CliDependencies {
   startRepositoryEngineering?: typeof startRepositoryEngineeringRuntime;
   /** Defaults to the real assembly; injected only by tests. */
   startBrowserOperator?: typeof startBrowserOperatorRuntime;
+  /** Defaults to the real outbound relay-device assembly; injected only by tests. */
+  startRemoteRelayDevice?: typeof startRemoteRelayDeviceRuntime;
+  /** Remote-device service lifetime is signal-driven and must not depend on stdin staying open. */
+  waitForRemoteShutdown?: () => Promise<void>;
 }
-type CliCommand = 'doctor' | 'serve-stdio' | 'serve-browser-operator';
+type CliCommand = 'doctor' | 'serve-stdio' | 'serve-browser-operator' | 'serve-remote-relay-device';
 interface ParsedCli { command: CliCommand; configPath: string; }
 
 class CliUsageError extends Error {}
@@ -120,6 +128,10 @@ export async function main(
   }
   emitProfile(deps.stderr, engineering);
 
+  if (parsed.command === 'serve-remote-relay-device') {
+    return serveRemoteRelayDevice(deps, config, runtime, engineering);
+  }
+
   let stdio: GatewayStdioServer;
   try {
     stdio = await deps.startStdio({
@@ -153,6 +165,66 @@ export async function main(
   } finally {
     for (const step of [
       () => stdio.close(),
+      () => engineering.close(),
+      () => runtime.close(),
+    ]) {
+      try {
+        await step();
+      } catch (error) {
+        emitError(deps.stderr, 'CLI_INTERNAL', error);
+        exitCode = 1;
+      }
+    }
+  }
+  return exitCode;
+}
+
+async function serveRemoteRelayDevice(
+  deps: CliDependencies,
+  config: PrivateGatewayConfig,
+  runtime: PrivateGatewayRuntime,
+  engineering: RepositoryEngineeringRuntime,
+): Promise<number> {
+  let relay: RemoteRelayDeviceRuntime;
+  try {
+    relay = await (deps.startRemoteRelayDevice ?? startRemoteRelayDeviceRuntime)({
+      config,
+      gatewayRuntime: runtime,
+      engineering,
+      env: deps.env,
+      onMetadata(event) {
+        deps.stderr.write(`${JSON.stringify({ type: 'gateway.remote-relay', ...event })}\n`);
+      },
+    });
+  } catch (error) {
+    await closeQuietly(engineering);
+    await runtime.close().catch(() => undefined);
+    emitError(deps.stderr, 'REMOTE_RELAY_DEVICE_START_FAILED', error);
+    return 1;
+  }
+
+  deps.stderr.write(`${JSON.stringify({ type: 'gateway.ready', mode: 'remote-relay-device' })}\n`);
+  const controller = new AbortController();
+  let exitCode = 0;
+  const running = relay.run(controller.signal);
+  try {
+    const outcome = await Promise.race([
+      running.then(() => 'agent-exit' as const),
+      (deps.waitForRemoteShutdown ?? waitForProcessSignals)().then(() => 'shutdown' as const),
+    ]);
+    if (outcome === 'agent-exit') {
+      throw new Error('Remote relay device agent exited before shutdown');
+    }
+    controller.abort();
+    await running;
+  } catch (error) {
+    controller.abort();
+    await running.catch(() => undefined);
+    emitError(deps.stderr, 'REMOTE_RELAY_DEVICE_FAILED', error);
+    exitCode = 1;
+  } finally {
+    for (const step of [
+      () => relay.close(),
       () => engineering.close(),
       () => runtime.close(),
     ]) {
@@ -279,7 +351,12 @@ function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime
 
 function parseCli(argv: string[]): ParsedCli {
   if (argv.length !== 3 || argv[1] !== '--config') throw new CliUsageError('Invalid CLI arguments');
-  if (argv[0] !== 'doctor' && argv[0] !== 'serve-stdio' && argv[0] !== 'serve-browser-operator') {
+  if (
+    argv[0] !== 'doctor'
+    && argv[0] !== 'serve-stdio'
+    && argv[0] !== 'serve-browser-operator'
+    && argv[0] !== 'serve-remote-relay-device'
+  ) {
     throw new CliUsageError('Unknown command');
   }
   if (!isAbsolute(argv[2])) throw new CliUsageError('Config path must be absolute');
@@ -304,6 +381,7 @@ function usageText(): string {
     '  web-agent-gateway doctor --config <absolute-path>',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
     '  web-agent-gateway serve-browser-operator --config <absolute-path>',
+    '  web-agent-gateway serve-remote-relay-device --config <absolute-path>',
     '',
   ].join('\n');
 }
@@ -318,9 +396,25 @@ function createDefaultDependencies(): CliDependencies {
     bootstrap: bootstrapPrivateGateway,
     startStdio: startGatewayStdioServer,
     waitForShutdown: waitForProcessShutdown,
+    waitForRemoteShutdown: waitForProcessSignals,
     telemetry: telemetryToStderr(process.stderr),
   };
 }
+async function waitForProcessSignals(): Promise<void> {
+  await new Promise<void>((resolvePromise) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      process.off('SIGINT', finish);
+      process.off('SIGTERM', finish);
+      resolvePromise();
+    };
+    process.once('SIGINT', finish);
+    process.once('SIGTERM', finish);
+  });
+}
+
 async function waitForProcessShutdown(): Promise<void> {
   if (process.stdin.readableEnded || process.stdin.destroyed) return;
   await new Promise<void>((resolvePromise) => {

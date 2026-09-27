@@ -58,7 +58,10 @@ class FakeExecutor implements RemoteRelayToolExecutionPort {
   calls: Array<{ tool: string; arguments: unknown }> = [];
   result: Awaited<ReturnType<RemoteRelayToolExecutionPort['callTool']>> = {
     ok: true,
-    structuredContent: { status: 'ok' },
+    result: {
+      content: [{ type: 'text', text: '{\"status\":\"ok\"}' }],
+      structuredContent: { status: 'ok' },
+    },
   };
 
   async callTool(input: { tool: string; arguments: unknown }) {
@@ -127,7 +130,10 @@ test('authenticated tool call dispatches exactly once and returns bounded struct
   assert.deepEqual(response?.value, {
     kind: 'tool.result',
     ok: true,
-    structuredContent: { status: 'ok' },
+    result: {
+      content: [{ type: 'text', text: '{\"status\":\"ok\"}' }],
+      structuredContent: { status: 'ok' },
+    },
   });
 });
 
@@ -214,7 +220,7 @@ test('unexpected oversized executor result becomes a small RESULT_BOUND_REQUIRED
   const f = fixture();
   f.executor.result = {
     ok: true,
-    structuredContent: { giant: 'x'.repeat(300 * 1024) },
+    result: { structuredContent: { giant: 'x'.repeat(300 * 1024) } },
   };
   for (const frame of requestFrames('call_large', {
     kind: 'tool.call',

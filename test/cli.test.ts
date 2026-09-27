@@ -153,3 +153,77 @@ test('serve-browser-operator refuses to start without a usable LOCALAPPDATA', as
   assert.equal(started, 0);
   assert.equal(JSON.parse(h.stderr.text()).code, 'CLI_USAGE');
 });
+
+test('serve-remote-relay-device uses the full runtime without stdio and shuts down on the service signal path', async () => {
+  const h = makeCliHarness();
+  const secret = 'relay-device-secret-that-must-not-be-logged';
+  h.deps.env.WAG_RELAY_DEVICE_SECRET = secret;
+  h.deps.loadConfig = async () => ({
+    ...config(),
+    repositoryEngineering: {
+      inspect: true,
+      mutation: {
+        statePath: resolve('relay-state.sqlite'),
+        ownerId: 'local.private.stdio',
+      },
+    },
+    remoteRelayDevice: {
+      supabaseUrl: 'https://project.supabase.co',
+      publishableKey: 'sb_publishable_' + 'a'.repeat(32),
+      deviceId: 'device_primary',
+      secretEnv: 'WAG_RELAY_DEVICE_SECRET',
+    },
+  });
+
+  let engineeringAttached = 0;
+  let engineeringClosed = 0;
+  h.deps.startRepositoryEngineering = async () => ({
+    profile: { inspect: true, mutation: true, gitCommit: false },
+    async attach() { engineeringAttached += 1; },
+    async close() { engineeringClosed += 1; },
+  });
+
+  let relayStarted = 0;
+  let relayClosed = 0;
+  let relayRunStarted = 0;
+  h.deps.startRemoteRelayDevice = async (options) => {
+    relayStarted += 1;
+    assert.equal(options.config.remoteRelayDevice?.deviceId, 'device_primary');
+    return {
+      async run(signal) {
+        relayRunStarted += 1;
+        if (signal.aborted) return;
+        await new Promise<void>((resolvePromise) => {
+          signal.addEventListener('abort', () => resolvePromise(), { once: true });
+        });
+      },
+      async close() { relayClosed += 1; },
+    };
+  };
+
+  let requestRemoteShutdown!: () => void;
+  const remoteShutdown = new Promise<void>((resolvePromise) => {
+    requestRemoteShutdown = resolvePromise;
+  });
+  h.deps.waitForRemoteShutdown = async () => remoteShutdown;
+
+  const running = main(['serve-remote-relay-device', '--config', resolve('private.json')], h.deps);
+  for (let i = 0; i < 20 && relayRunStarted === 0; i += 1) {
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+  }
+
+  assert.equal(relayStarted, 1);
+  assert.equal(relayRunStarted, 1);
+  assert.equal(engineeringAttached, 1);
+  assert.equal(h.stdioClosed(), 0, 'remote relay mode must not create the stdio transport');
+  assert.equal(h.stdout.text(), '', 'remote relay mode reserves no stdout protocol');
+  assert.match(h.stderr.text(), /"mode":"remote-relay-device"/);
+  assert.equal(h.stderr.text().includes(secret), false);
+
+  requestRemoteShutdown();
+  assert.equal(await running, 0);
+  assert.equal(relayClosed, 1);
+  assert.equal(engineeringClosed, 1);
+  assert.equal(h.runtimeClosed(), 1);
+  assert.equal(h.stdioClosed(), 0);
+});

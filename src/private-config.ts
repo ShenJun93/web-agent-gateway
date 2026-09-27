@@ -70,6 +70,13 @@ const repositoryEngineeringSchema = z.object({
   }).strict().optional(),
 }).strict();
 
+const remoteRelayDeviceSchema = z.object({
+  supabaseUrl: z.string().url().max(2048),
+  publishableKey: z.string().min(16).max(4096),
+  deviceId: z.string().min(8).max(160).regex(/^[A-Za-z0-9._:-]+$/),
+  secretEnv: z.string().min(3).max(128).regex(/^[A-Z][A-Z0-9_]+$/),
+}).strict();
+
 const privateGatewayConfigSchema = z.object({
   allowedRoots: z.array(z.string().min(1)).min(1),
   devspace: z.object({
@@ -81,6 +88,7 @@ const privateGatewayConfigSchema = z.object({
     z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
   ).max(32).default([]),
   repositoryEngineering: repositoryEngineeringSchema.optional(),
+  remoteRelayDevice: remoteRelayDeviceSchema.optional(),
 }).strict();
 
 export type PrivateVerifyProfile = z.infer<typeof verifyProfileSchema>;
@@ -115,12 +123,19 @@ export interface PrivateRepositoryEngineering {
   desktop?: PrivateRepositoryEngineeringDesktop;
   mutation?: PrivateRepositoryEngineeringMutation;
 }
+export interface PrivateRemoteRelayDevice {
+  supabaseUrl: string;
+  publishableKey: string;
+  deviceId: string;
+  secretEnv: string;
+}
 export interface PrivateGatewayConfig {
   allowedRoots: string[];
   devspace: { baseUrl: string; resourceUrl: string };
   verifyProfiles: Record<string, PrivateVerifyProfile>;
   browserVerifyProfiles?: string[];
   repositoryEngineering?: PrivateRepositoryEngineering;
+  remoteRelayDevice?: PrivateRemoteRelayDevice;
 }
 export async function loadPrivateGatewayConfig(configPath: string): Promise<PrivateGatewayConfig> {
   if (!isAbsolute(configPath)) throw new Error('Private gateway config path must be absolute');
@@ -170,6 +185,16 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
   if (desktop && !mutation) {
     throw new Error('Private gateway repository engineering desktop requires mutation identity');
   }
+  const remoteRelayDevice = parsed.remoteRelayDevice;
+  if (remoteRelayDevice && !mutation) {
+    throw new Error('Private gateway remote relay device requires mutation identity');
+  }
+  const remoteRelayUrl = remoteRelayDevice === undefined
+    ? undefined
+    : validateRemoteRelaySupabaseUrl(remoteRelayDevice.supabaseUrl);
+  if (remoteRelayDevice?.publishableKey.startsWith('sb_secret_')) {
+    throw new Error('Private gateway remote relay device forbids Supabase secret keys');
+  }
 
   const allowedRoots: string[] = [];
   for (const configuredRoot of parsed.allowedRoots) {
@@ -188,6 +213,14 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
     devspace: { baseUrl, resourceUrl },
     verifyProfiles: parsed.verifyProfiles,
     browserVerifyProfiles: parsed.browserVerifyProfiles,
+    ...(remoteRelayDevice === undefined ? {} : {
+      remoteRelayDevice: {
+        supabaseUrl: remoteRelayUrl!,
+        publishableKey: remoteRelayDevice.publishableKey,
+        deviceId: remoteRelayDevice.deviceId,
+        secretEnv: remoteRelayDevice.secretEnv,
+      },
+    }),
     ...(parsed.repositoryEngineering === undefined ? {} : {
       repositoryEngineering: {
         inspect: parsed.repositoryEngineering.inspect,
@@ -231,6 +264,20 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
       },
     }),
   };
+}
+
+function validateRemoteRelaySupabaseUrl(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== 'https:'
+    || url.username !== ''
+    || url.password !== ''
+    || url.search !== ''
+    || url.hash !== ''
+  ) {
+    throw new Error('Private gateway remote relay Supabase URL must be credential-free HTTPS');
+  }
+  return url.href.replace(/\/$/, '');
 }
 
 function validateAutonomousPushUrl(value: string): string {

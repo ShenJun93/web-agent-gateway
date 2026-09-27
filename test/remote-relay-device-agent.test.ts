@@ -56,7 +56,7 @@ class FakeTransport implements RemoteRelayTransport {
 
 const executor: RemoteRelayToolExecutionPort = {
   async callTool() {
-    return { ok: true, structuredContent: { status: 'ok' } };
+    return { ok: true, result: { structuredContent: { status: 'ok' } } };
   },
 };
 

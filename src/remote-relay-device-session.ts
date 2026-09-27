@@ -24,7 +24,8 @@ export interface RemoteRelayToolExecutionPort {
     arguments: unknown;
   }): Promise<{
     ok: boolean;
-    structuredContent?: unknown;
+    /** Full bounded MCP CallToolResult, including native image/text content when present. */
+    result?: unknown;
   }>;
 }
 
@@ -131,7 +132,7 @@ export class RemoteRelayDeviceSession {
         ? {
           kind: 'tool.result',
           ok: true,
-          structuredContent: result.structuredContent ?? null,
+          result: result.result ?? null,
         }
         : {
           kind: 'tool.result',

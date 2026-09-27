@@ -34,10 +34,10 @@ export interface GatewayStdioServer {
   close(): Promise<void>;
 }
 
-export async function startGatewayStdioServer(
+export function createPrivateGatewayMcpServer(
   options: GatewayStdioServerOptions,
-): Promise<GatewayStdioServer> {
-  const server = createGatewayMcpServer(options.gateway, {
+) {
+  return createGatewayMcpServer(options.gateway, {
     inspect: options.inspect,
     mutationContext: options.mutationContext,
     gitCommitContext: options.gitCommitContext,
@@ -49,6 +49,12 @@ export async function startGatewayStdioServer(
     browserContext: options.browserContext,
     desktopContext: options.desktopContext,
   });
+}
+
+export async function startGatewayStdioServer(
+  options: GatewayStdioServerOptions,
+): Promise<GatewayStdioServer> {
+  const server = createPrivateGatewayMcpServer(options);
   const transport = new StdioServerTransport(options.input, options.output);
   await server.connect(transport);
   let closed = false;

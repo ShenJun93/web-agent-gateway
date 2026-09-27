@@ -270,3 +270,85 @@ test('every accepted repositoryEngineering field survives the loader', async (t)
   }), 'utf8');
   await assert.rejects(loadPrivateGatewayConfig(configPath));
 });
+
+test('remote relay device config is explicit, secret-free, and requires mutation identity', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-relay-device-config-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const relay = {
+    supabaseUrl: 'https://project.supabase.co/',
+    publishableKey: 'sb_publishable_' + 'a'.repeat(32),
+    deviceId: 'device_primary',
+    secretEnv: 'WAG_RELAY_DEVICE_SECRET',
+  };
+
+  await assert.rejects(
+    loadPrivateGatewayConfig(await writeConfig(root, 'orphan-relay.json', {
+      ...baseConfig(root),
+      remoteRelayDevice: relay,
+    })),
+    /remote relay device requires mutation identity/i,
+  );
+
+  const loaded = await loadPrivateGatewayConfig(await writeConfig(root, 'relay.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      mutation: { statePath: join(root, 'state.sqlite') },
+    },
+    remoteRelayDevice: relay,
+  }));
+  assert.deepEqual(loaded.remoteRelayDevice, {
+    ...relay,
+    supabaseUrl: 'https://project.supabase.co',
+  });
+  assert.equal(JSON.stringify(loaded).includes('device-secret-value'), false);
+});
+
+test('remote relay device config rejects unsafe Supabase endpoints and server secrets', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-relay-device-config-unsafe-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const baseRelay = {
+    supabaseUrl: 'https://project.supabase.co',
+    publishableKey: 'sb_publishable_' + 'a'.repeat(32),
+    deviceId: 'device_primary',
+    secretEnv: 'WAG_RELAY_DEVICE_SECRET',
+  };
+
+  for (const supabaseUrl of [
+    'http://project.supabase.co',
+    'https://user:pass@project.supabase.co',
+    'https://project.supabase.co?token=secret',
+  ]) {
+    await assert.rejects(
+      loadPrivateGatewayConfig(await writeConfig(root, 'bad-url.json', {
+        ...baseConfig(root),
+        repositoryEngineering: { mutation: { statePath } },
+        remoteRelayDevice: { ...baseRelay, supabaseUrl },
+      })),
+      /credential-free HTTPS/i,
+    );
+  }
+
+  await assert.rejects(
+    loadPrivateGatewayConfig(await writeConfig(root, 'secret-key.json', {
+      ...baseConfig(root),
+      repositoryEngineering: { mutation: { statePath } },
+      remoteRelayDevice: {
+        ...baseRelay,
+        publishableKey: 'sb_secret_' + 'a'.repeat(32),
+      },
+    })),
+    /forbids Supabase secret keys/i,
+  );
+
+  await assert.rejects(
+    loadPrivateGatewayConfig(await writeConfig(root, 'bad-env.json', {
+      ...baseConfig(root),
+      repositoryEngineering: { mutation: { statePath } },
+      remoteRelayDevice: {
+        ...baseRelay,
+        secretEnv: 'lowercase-secret',
+      },
+    })),
+  );
+});
