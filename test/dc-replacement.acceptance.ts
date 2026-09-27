@@ -69,6 +69,7 @@ const EXTENDED_TOOLS = [
   'git.commit.result',
   'git.push',
   'git.push.result',
+  'result.chunk',
   'diagnostics.recent',
   'diagnostics.usage',
 ];

@@ -10,12 +10,12 @@ import type { LocalMachineContext } from '../src/local-machine-runtime.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
 import type { GatewayTelemetryEvent } from '../src/telemetry.js';
 
-const DEFAULT_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run'];
-const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run'];
-const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result'];
-const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result'];
-const COMMIT_TOOLS = [...INSPECT_TOOLS, 'command.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result'];
-const PUSH_TOOLS = [...COMMIT_TOOLS, 'git.push', 'git.push.result'];
+const DEFAULT_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'result.chunk'];
+const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run', 'result.chunk'];
+const MUTATION_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'result.chunk'];
+const FULL_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'result.chunk'];
+const COMMIT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run', 'command.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result', 'result.chunk'];
+const PUSH_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run', 'command.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result', 'git.push', 'git.push.result', 'result.chunk'];
 
 /**
  * Repository-only profiles stay narrow. Full local-computer/DC-parity operations are exposed only

@@ -61,10 +61,11 @@ function fullBrowserConfig(): PrivateGatewayConfig {
   };
 }
 
-test('browser opt-in projects exactly seven BrowserPort tools on top of the 43-tool core surface', async () => {
+test('browser opt-in projects seven BrowserPort tools plus relay result chunking on the extended surface', async () => {
   const projected = await projectedTools(fullBrowserConfig());
   assert.equal(projected.missing.length, 0);
-  assert.equal(projected.tools.length, 50);
+  assert.equal(projected.tools.length, 51);
+  assert.ok(projected.tools.includes('result.chunk'));
   for (const name of BROWSER_TOOLS) assert.ok(projected.tools.includes(name), name);
   assert.equal(projected.tools.some((name) => name.includes('cdp') || name.includes('playwright')), false,
     'raw transport implementation names must not become public MCP tools');

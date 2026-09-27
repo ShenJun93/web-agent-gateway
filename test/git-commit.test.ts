@@ -678,7 +678,7 @@ test('the git.commit tools expose no authority fields and write nothing before a
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
     'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
-    'git.commit', 'git.commit.result',
+    'git.commit', 'git.commit.result', 'result.chunk',
   ]);
   const schema = JSON.stringify(tools.tools.find((tool) => tool.name === 'git.commit')?.inputSchema);
   for (const forbidden of ['owner_id', 'session_id', 'adapter_id', 'branch', 'amend', 'force', 'allow_empty', 'sign']) {

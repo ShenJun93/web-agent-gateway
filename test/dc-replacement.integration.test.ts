@@ -88,7 +88,7 @@ test('the extended private stdio profile completes the DC repository-engineering
     'health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff',
     'file.read', 'verify.run', 'command.run',
     'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result',
-    'git.commit', 'git.commit.result',
+    'git.commit', 'git.commit.result', 'result.chunk',
   ]);
 
   const { workspaceId } = parse<{ workspaceId: string }>(

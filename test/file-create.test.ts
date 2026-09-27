@@ -199,7 +199,7 @@ test('the file.create tool proposes without writing and carries no authority fie
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
     'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
-    'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result',
+    'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'result.chunk',
   ]);
   const created = tools.tools.find((tool) => tool.name === 'file.create');
   assert.equal(created?.annotations?.readOnlyHint, false);

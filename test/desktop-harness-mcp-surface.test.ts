@@ -45,12 +45,12 @@ function config(withBrowser = true): PrivateGatewayConfig {
 test('desktop opt-in projects exactly seven semantic DesktopPort tools and composes with BrowserPort', async () => {
   const desktopOnly = await projectedTools(config(false));
   assert.equal(desktopOnly.missing.length, 0);
-  assert.equal(desktopOnly.tools.length, 50);
+  assert.equal(desktopOnly.tools.length, 51);
   for (const name of DESKTOP_TOOLS) assert.ok(desktopOnly.tools.includes(name), name);
 
   const full = await projectedTools(config(true));
   assert.equal(full.missing.length, 0);
-  assert.equal(full.tools.length, 57);
+  assert.equal(full.tools.length, 58);
   for (const name of DESKTOP_TOOLS) assert.ok(full.tools.includes(name), name);
   assert.equal(full.tools.some((name) => name.includes('uia') || name.includes('sendinput')), false);
 });

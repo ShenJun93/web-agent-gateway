@@ -87,6 +87,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['mutation.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['git.commit', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['git.commit.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['result.chunk', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['diagnostics.recent', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['diagnostics.usage', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
 ];

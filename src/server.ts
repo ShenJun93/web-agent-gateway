@@ -7,6 +7,7 @@ import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-p
 import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageCorrelation, ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import { RelayResultChunkStore } from './relay-result-chunks.js';
 import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
 import type { DesktopMcpContext } from './desktop-harness/desktop-mcp-runtime.js';
 import {
@@ -496,6 +497,7 @@ export function createGatewayMcpServer(
   const server = new McpServer({ name: 'web-agent-gateway', version: '0.0.0' });
   const runtimeIdentity = detectRuntimeIdentity();
   const publishedToolNames: string[] = [];
+  const relayChunks = new RelayResultChunkStore();
   const registerTool = ((name: string, config: unknown, handler: (...args: any[]) => unknown) => {
     publishedToolNames.push(name);
     const wrapped = async (...args: any[]) => {
@@ -503,7 +505,10 @@ export function createGatewayMcpServer(
       try {
         const value = await handler(...args);
         finish?.(true, undefined, toolUsageCorrelationFromToolResult(value));
-        return value;
+        // A chunk read is already the bounded transport envelope. Re-chunking it would turn
+        // result.chunk into an infinite indirection rather than a stable page reader.
+        const bounded = name === 'result.chunk' ? value : (relayChunks?.wrap(value) ?? value);
+        return bounded === value ? value : toolResult(bounded as object);
       } catch (error) {
         finish?.(false, error, harnessEffectCorrelationFromError(error));
         throw error;
@@ -1328,6 +1333,17 @@ export function createGatewayMcpServer(
     }, async ({ push_id }) => toolResult(
       remoteGitPushContext.coordinator.result(remoteGitPushContext.callerContext, push_id),
     ));
+  }
+
+  {
+    registerTool('result.chunk', {
+      description: 'Read one in-memory chunk of a relay-bounded oversized tool result. Concatenate decoded chunks by index, verify sha256, then parse the reconstructed JSON. This never replays the original tool.',
+      inputSchema: z.object({
+        result_id: z.string().regex(/^result_[0-9a-f-]{36}$/),
+        chunk_index: z.number().int().min(0).max(1_000_000),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ result_id, chunk_index }) => toolResult(relayChunks.get(result_id, chunk_index)));
   }
 
   if (diagnosticsContext) {
