@@ -32,6 +32,7 @@ class FakeRunner {
   defaultBranch: string | undefined = 'refs/heads/main';
   fastForward = true;
   configOutput = 'local file:.git/config remote.origin.url\n';
+  credentialHelperOutput = '';
   remoteUrl = URL;
   root = '';
   gitDir = '';
@@ -41,6 +42,13 @@ class FakeRunner {
     this.calls.push({ cwd, args: [...args], env: { ...options.env } });
 
     if (args.includes('config')) {
+      if (args.includes('--get-all') && args.includes('credential.helper')) {
+        return {
+          exitCode: this.credentialHelperOutput === '' ? 1 : 0,
+          stdout: this.credentialHelperOutput,
+          stderr: '',
+        };
+      }
       return { exitCode: this.configOutput === '' ? 1 : 0, stdout: this.configOutput, stderr: '' };
     }
     if (args.includes('rev-parse')) {
@@ -96,6 +104,8 @@ async function fixture(t: test.TestContext, runner = new FakeRunner()) {
     parentEnv: {
       PATH: process.env.PATH ?? '',
       SYSTEMROOT: process.env.SYSTEMROOT ?? '',
+      ProgramFiles: process.env.ProgramFiles ?? 'C:\\Program Files',
+      'ProgramFiles(x86)': process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)',
       GIT_SSH_COMMAND: 'attacker-controlled',
       GIT_CONFIG_COUNT: '999',
       GIT_CONFIG_KEY_0: 'core.sshCommand',
@@ -153,7 +163,6 @@ test('dangerous effective Git config is refused before any remote observation', 
     'alias.ship',
     'core.sshcommand',
     'core.hookspath',
-    'credential.helper',
     'protocol.https.allow',
     'url.https://mirror/.insteadof',
     'url.ssh://mirror/.pushinsteadof',
@@ -173,6 +182,65 @@ test('dangerous effective Git config is refused before any remote observation', 
     );
     assert.equal(runner.calls.some((call) => call.args.includes('ls-remote')), false);
   }
+});
+
+test('credential helpers are refused unless they are exact trusted Git-for-Windows system GCM', async (t) => {
+  for (const entry of [
+    {
+      config: 'local file:.git/config credential.helper\n',
+      helper: 'local\tfile:.git/config\tmanager\n',
+    },
+    {
+      config: 'global file:C:/Users/example/.gitconfig credential.helper\n',
+      helper: 'global\tfile:C:/Users/example/.gitconfig\tmanager\n',
+    },
+    {
+      config: 'system file:C:/Program Files/Git/etc/gitconfig credential.helper\n',
+      helper: 'system\tfile:C:/Program Files/Git/etc/gitconfig\t!evil helper\n',
+    },
+    {
+      config: 'system file:C:/Other/Git/etc/gitconfig credential.helper\n',
+      helper: 'system\tfile:C:/Other/Git/etc/gitconfig\tmanager\n',
+    },
+  ]) {
+    const runner = new FakeRunner();
+    runner.configOutput = entry.config;
+    runner.credentialHelperOutput = entry.helper;
+    const f = await fixture(t, runner);
+    await assert.rejects(
+      f.backend.plan(f.root, { remote: 'origin', sourceOid: SOURCE, destinationRef: DEST }),
+      /dangerous effective Git config: credential\.helper/i,
+    );
+    assert.equal(runner.calls.some((call) => call.args.includes('ls-remote')), false);
+  }
+});
+
+test('trusted system GCM is enabled only for bounded remote calls and forced non-interactive', async (t) => {
+  const runner = new FakeRunner();
+  runner.configOutput = [
+    'system file:C:/Program Files/Git/etc/gitconfig credential.helper',
+    'local file:.git/config remote.origin.url',
+    '',
+  ].join('\n');
+  runner.credentialHelperOutput = 'system\tfile:C:/Program Files/Git/etc/gitconfig\tmanager\n';
+  const f = await fixture(t, runner);
+
+  await f.backend.plan(f.root, {
+    remote: 'origin',
+    sourceOid: SOURCE,
+    destinationRef: DEST,
+  });
+
+  const remoteCall = runner.calls.find((call) => call.args.includes('ls-remote'));
+  assert.ok(remoteCall);
+  assert.equal(remoteCall.args.includes('credential.helper='), false);
+  assert.equal(remoteCall.args.includes('credential.interactive=false'), true);
+  assert.equal(remoteCall.env.GCM_INTERACTIVE, 'Never');
+
+  const localCall = runner.calls.find((call) => call.args.includes('rev-parse'));
+  assert.ok(localCall);
+  assert.equal(localCall.args.includes('credential.helper='), true);
+  assert.equal(localCall.env.GCM_INTERACTIVE, undefined);
 });
 
 test('planning refuses remote default branch and non-fast-forward source', async (t) => {

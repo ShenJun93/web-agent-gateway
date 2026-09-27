@@ -27,7 +27,6 @@ const DANGEROUS_CONFIG = [
   /^alias\./i,
   /^core\.sshcommand$/i,
   /^core\.hookspath$/i,
-  /^credential\.helper$/i,
   /^protocol\..*\.allow$/i,
   /^url\..*\.(?:insteadof|pushinsteadof)$/i,
   /^remote\..*\.pushurl$/i,
@@ -37,6 +36,8 @@ const DANGEROUS_CONFIG = [
   /^http\.proxy$/i,
   /^remote\..*\.proxy$/i,
 ] as const;
+
+type RemoteCredentialMode = 'none' | 'system-gcm';
 
 export interface RemoteGitCommandResult {
   exitCode: number;
@@ -81,6 +82,7 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
       workspaceRoot,
       context.resolvedPushUrl,
       input.destinationRef,
+      context.credentialMode,
     );
     if (remote.defaultBranch === undefined) {
       throw new Error('Gateway could not prove remote Git default branch');
@@ -137,6 +139,7 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
         record.workspaceRoot,
         record.resolvedPushUrl,
         record.destinationRef,
+        context.credentialMode,
       );
       if (before.defaultBranch === undefined) {
         return { outcome: 'NOT_OBSERVED', errorClass: 'DEFAULT_BRANCH_UNPROVEN' };
@@ -167,7 +170,7 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
       await this.#run(
         record.workspaceRoot,
         [
-          ...this.#remoteSafeBaseArgs(),
+          ...this.#remoteSafeBaseArgs(context.credentialMode),
           'push',
           '--no-verify',
           '--porcelain',
@@ -194,10 +197,21 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
 
   async reconcile(record: RemoteGitPushRecord): Promise<RemoteGitPushBackendOutcome> {
     try {
+      const context = await this.#inspectRepository(
+        record.workspaceRoot,
+        record.remoteDisplayName,
+      );
+      if (
+        context.repositoryIdentity !== record.repositoryIdentity
+        || context.resolvedPushUrl !== record.resolvedPushUrl
+      ) {
+        return { outcome: 'OUTCOME_UNKNOWN', errorClass: 'REMOTE_IDENTITY_DRIFT' };
+      }
       const observed = await this.#observeRemote(
         record.workspaceRoot,
         record.resolvedPushUrl,
         record.destinationRef,
+        context.credentialMode,
       );
       if (observed.destinationOid === record.sourceOid) {
         return { outcome: 'SUCCEEDED', observedRemoteOid: record.sourceOid };
@@ -229,8 +243,9 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
   async #inspectRepository(workspaceRoot: string, remoteName: string): Promise<{
     repositoryIdentity: string;
     resolvedPushUrl: string;
+    credentialMode: RemoteCredentialMode;
   }> {
-    await this.#assertDangerousConfigAbsent(workspaceRoot);
+    const credentialMode = await this.#assertDangerousConfigAbsent(workspaceRoot);
 
     const rootResult = await this.#run(
       workspaceRoot,
@@ -272,10 +287,14 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     const repositoryIdentity = 'repo_' + sha256(
       [foldPath(canonicalWorkspace), foldPath(gitDir), foldPath(commonDir)].join('\0'),
     );
-    return { repositoryIdentity, resolvedPushUrl };
+    return {
+      repositoryIdentity,
+      resolvedPushUrl,
+      credentialMode: resolvedPushUrl.startsWith('https:') ? credentialMode : 'none',
+    };
   }
 
-  async #assertDangerousConfigAbsent(workspaceRoot: string): Promise<void> {
+  async #assertDangerousConfigAbsent(workspaceRoot: string): Promise<RemoteCredentialMode> {
     const result = await this.#runAllowExit(
       workspaceRoot,
       [
@@ -292,15 +311,56 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     if (result.exitCode !== 0 && result.exitCode !== 1) {
       throw new Error('Gateway could not prove effective Git config safety');
     }
+
+    let hasCredentialHelper = false;
     for (const line of nonEmptyLines(result.stdout)) {
       const key = configKeyFromLine(line);
       if (key === undefined) {
         throw new Error('Gateway could not parse effective Git config');
       }
+      if (key.toLowerCase() === 'credential.helper') {
+        hasCredentialHelper = true;
+        continue;
+      }
       if (DANGEROUS_CONFIG.some((pattern) => pattern.test(key))) {
         throw new Error('Gateway denied dangerous effective Git config: ' + key);
       }
     }
+    if (!hasCredentialHelper) return 'none';
+
+    const helpers = await this.#runAllowExit(
+      workspaceRoot,
+      [
+        ...SAFE_GIT_GLOBAL_FLAGS,
+        'config',
+        '--show-origin',
+        '--show-scope',
+        '--get-all',
+        'credential.helper',
+      ],
+      READ_TIMEOUT_MS,
+    );
+    if (helpers.exitCode !== 0) {
+      throw new Error('Gateway could not prove credential helper provenance');
+    }
+
+    const trustedOrigins = trustedGitForWindowsSystemConfigOrigins(this.#parentEnv);
+    const lines = nonEmptyLines(helpers.stdout);
+    if (lines.length === 0 || trustedOrigins.size === 0) {
+      throw new Error('Gateway denied dangerous effective Git config: credential.helper');
+    }
+    for (const line of lines) {
+      const entry = scopedConfigValue(line);
+      if (
+        entry === undefined
+        || entry.scope !== 'system'
+        || !trustedOrigins.has(normalizeConfigOrigin(entry.origin))
+        || (entry.value !== 'manager' && entry.value !== 'manager-core')
+      ) {
+        throw new Error('Gateway denied dangerous effective Git config: credential.helper');
+      }
+    }
+    return 'system-gcm';
   }
 
   async #assertCommit(workspaceRoot: string, oid: string): Promise<void> {
@@ -390,11 +450,12 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     workspaceRoot: string,
     url: string,
     destinationRef: string,
+    credentialMode: RemoteCredentialMode,
   ): Promise<{ destinationOid?: string; defaultBranch?: string }> {
     const result = await this.#run(
       workspaceRoot,
       [
-        ...this.#remoteSafeBaseArgs(),
+        ...this.#remoteSafeBaseArgs(credentialMode),
         'ls-remote',
         '--symref',
         url,
@@ -427,9 +488,10 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     };
   }
 
-  #remoteSafeBaseArgs(): string[] {
+  #remoteSafeBaseArgs(credentialMode: RemoteCredentialMode = 'none'): string[] {
     return [
-      ...SAFE_GIT_BASE_ARGS,
+      ...safeGitBaseArgsForCredentialMode(credentialMode),
+      '-c', 'credential.interactive=false',
       '-c', 'protocol.https.allow=always',
       '-c', 'protocol.ssh.allow=always',
       '-c', 'http.followRedirects=false',
@@ -464,6 +526,7 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
           ? { GIT_SSH_COMMAND: 'ssh -F NUL -oBatchMode=yes -oClearAllForwardings=yes -oProxyCommand=none -oProxyJump=none' }
           : {},
     );
+    if (remote) env.GCM_INTERACTIVE = 'Never';
     return this.#runner(cwd, args, { timeoutMs, env });
   }
 
@@ -517,6 +580,61 @@ function configKeyFromLine(line: string): string | undefined {
   const key = parts[parts.length - 1];
   if (!key || /\s/.test(key)) return undefined;
   return key;
+}
+
+function scopedConfigValue(line: string): { scope: string; origin: string; value: string } | undefined {
+  const parts = line.split('\t');
+  if (parts.length < 3) return undefined;
+  const scope = parts[0]?.trim();
+  const origin = parts[1]?.trim();
+  const value = parts.slice(2).join('\t').trim();
+  if (!scope || !origin || !value) return undefined;
+  return { scope, origin, value };
+}
+
+function normalizeConfigOrigin(value: string): string {
+  return value.replaceAll('\\', '/').replace(/\/{2,}/g, '/').toLowerCase();
+}
+
+function trustedGitForWindowsSystemConfigOrigins(env: NodeJS.ProcessEnv): Set<string> {
+  const roots = new Set<string>();
+  for (const key of [
+    'ProgramFiles',
+    'PROGRAMFILES',
+    'ProgramW6432',
+    'PROGRAMW6432',
+    'ProgramFiles(x86)',
+    'PROGRAMFILES(X86)',
+  ]) {
+    const value = env[key];
+    if (typeof value === 'string' && value.trim() !== '') roots.add(value.trim());
+  }
+  return new Set(
+    [...roots].map((root) => normalizeConfigOrigin(
+      'file:' + root.replaceAll('\\', '/').replace(/\/$/, '') + '/Git/etc/gitconfig',
+    )),
+  );
+}
+
+function safeGitBaseArgsForCredentialMode(mode: RemoteCredentialMode): string[] {
+  if (mode === 'none') return [...SAFE_GIT_BASE_ARGS];
+  const result: string[] = [];
+  let removed = 0;
+  for (let index = 0; index < SAFE_GIT_BASE_ARGS.length; index += 1) {
+    if (
+      SAFE_GIT_BASE_ARGS[index] === '-c'
+      && SAFE_GIT_BASE_ARGS[index + 1] === 'credential.helper='
+    ) {
+      removed += 1;
+      index += 1;
+      continue;
+    }
+    result.push(SAFE_GIT_BASE_ARGS[index]!);
+  }
+  if (removed !== 1) {
+    throw new Error('Gateway remote Git credential policy is internally inconsistent');
+  }
+  return result;
 }
 
 function expectedMatches(record: RemoteGitPushRecord, observedOid: string | undefined): boolean {
