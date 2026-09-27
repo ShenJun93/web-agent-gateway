@@ -609,6 +609,19 @@ function trustedGitForWindowsSystemConfigOrigins(env: NodeJS.ProcessEnv): Set<st
     const value = env[key];
     if (typeof value === 'string' && value.trim() !== '') roots.add(value.trim());
   }
+
+  // The production tunnel intentionally starts WAG with a minimal environment, so ProgramFiles
+  // may be absent even though Git for Windows still reads its system config from the standard
+  // installation root. Derive those two roots from the system drive instead of weakening the
+  // provenance check to an arbitrary system-scope file.
+  const systemDrive = (
+    env.SystemDrive
+    ?? env.SYSTEMDRIVE
+    ?? 'C:'
+  ).replace(/[\\/]$/, '');
+  roots.add(systemDrive + '\\Program Files');
+  roots.add(systemDrive + '\\Program Files (x86)');
+
   return new Set(
     [...roots].map((root) => normalizeConfigOrigin(
       'file:' + root.replaceAll('\\', '/').replace(/\/$/, '') + '/Git/etc/gitconfig',
