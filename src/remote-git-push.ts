@@ -75,6 +75,25 @@ export interface RemoteGitPushLocalReviewView extends RemoteGitPushResultView {
   activeGrantTtlMs: number;
 }
 
+export interface RemoteGitPushAutonomousTarget {
+  resolvedPushUrl: string;
+  destinationRef: string;
+}
+
+export interface RemoteGitPushAutonomousPolicy {
+  /**
+   * Standing local authority. This predicate is configured outside MCP arguments and cannot be
+   * widened by the model. The normal backend still revalidates repository identity, remote state,
+   * fast-forward ancestry, protected refs and the kill switch immediately before the effect.
+   */
+  permits(target: RemoteGitPushAutonomousTarget): boolean;
+  /**
+   * When true, requests outside the standing allowlist are denied rather than falling back to a
+   * per-push Human approval. This is the automation-first production mode.
+   */
+  denyUnmatched?: boolean;
+}
+
 export class DurableRemoteGitPushCoordinator {
   readonly #now: () => number;
   readonly #reviewTtlMs: number;
@@ -87,6 +106,7 @@ export class DurableRemoteGitPushCoordinator {
     now?: () => number;
     reviewTtlMs?: number;
     activeTtlMs?: number;
+    autonomous?: RemoteGitPushAutonomousPolicy;
     killSwitch?: () => boolean;
     effectBoundary?: {
       revalidateWorkspace(workspaceId: string, canonicalRoot: string): Promise<void>;
@@ -121,7 +141,12 @@ export class DurableRemoteGitPushCoordinator {
     }
     if (live.length === 1) {
       const record = live[0]!;
-      if (record.state === 'PENDING') return toResult(record);
+      if (record.state === 'PENDING') {
+        const autonomous = this.#autonomousDecision(record);
+        if (autonomous === 'ALLOW') return this.#executeAutonomousPending(record);
+        if (autonomous === 'DENY') throw new Error('AUTONOMOUS_REMOTE_POLICY_DENIED');
+        return toResult(record);
+      }
       if (record.state === 'ACTIVE') {
         return this.#executeActive(record);
       }
@@ -129,6 +154,8 @@ export class DurableRemoteGitPushCoordinator {
 
     const plan = await this.options.backend.plan(workspace.canonicalRoot, input);
     assertPlanMatchesRequest(plan, input);
+    const autonomous = this.#autonomousDecision(plan);
+    if (autonomous === 'DENY') throw new Error('AUTONOMOUS_REMOTE_POLICY_DENIED');
     const grantFingerprint = grantFingerprintOf(requestFingerprint, plan);
     let record: RemoteGitPushRecord;
     try {
@@ -160,11 +187,16 @@ export class DurableRemoteGitPushCoordinator {
       const raced = this.options.store.findLive(requestFingerprint)
         .filter((candidate) => sameAuthority(caller, candidate));
       if (raced.length !== 1) throw new Error('AMBIGUOUS_REMOTE_EFFECT_GRANT');
-      return raced[0]!.state === 'ACTIVE'
-        ? this.#executeActive(raced[0]!)
-        : toResult(raced[0]!);
+      const racedRecord = raced[0]!;
+      if (racedRecord.state === 'ACTIVE') return this.#executeActive(racedRecord);
+      const racedAutonomous = this.#autonomousDecision(racedRecord);
+      if (racedAutonomous === 'ALLOW') return this.#executeAutonomousPending(racedRecord);
+      if (racedAutonomous === 'DENY') throw new Error('AUTONOMOUS_REMOTE_POLICY_DENIED');
+      return toResult(racedRecord);
     }
-    return toResult(record);
+    return autonomous === 'ALLOW'
+      ? this.#executeAutonomousPending(record)
+      : toResult(record);
   }
 
   result(caller: GatewayCallerContext, pushId: string): RemoteGitPushResultView {
@@ -215,6 +247,32 @@ export class DurableRemoteGitPushCoordinator {
     }
   }
 
+  #autonomousDecision(target: RemoteGitPushAutonomousTarget): 'ALLOW' | 'DENY' | 'HUMAN' {
+    const policy = this.options.autonomous;
+    if (!policy) return 'HUMAN';
+    if (policy.permits(target)) return 'ALLOW';
+    return policy.denyUnmatched === true ? 'DENY' : 'HUMAN';
+  }
+
+  async #executeAutonomousPending(record: RemoteGitPushRecord): Promise<RemoteGitPushResultView> {
+    const now = this.#now();
+    const claimed = this.options.store.activateAndClaim(
+      record.pushId,
+      now,
+      now + this.#activeTtlMs,
+    );
+    if (!claimed) {
+      const current = this.options.store.expire(record.pushId, now)
+        ?? this.options.store.get(record.pushId);
+      if (!current) throw new Error('REMOTE_EFFECT_GRANT_REQUIRED');
+      if (current.state === 'ACTIVE' && current.executionStartedAt === undefined) {
+        return this.#executeActive(current);
+      }
+      return toResult(current);
+    }
+    return this.#executeClaimed(claimed);
+  }
+
   async #executeActive(record: RemoteGitPushRecord): Promise<RemoteGitPushResultView> {
     const now = this.#now();
     const claimed = this.options.store.claimExecution(record.pushId, now);
@@ -224,7 +282,10 @@ export class DurableRemoteGitPushCoordinator {
       if (!current) throw new Error('REMOTE_EFFECT_GRANT_REQUIRED');
       return toResult(current);
     }
+    return this.#executeClaimed(claimed);
+  }
 
+  async #executeClaimed(claimed: RemoteGitPushRecord): Promise<RemoteGitPushResultView> {
     if (this.options.killSwitch?.()) {
       const terminal = this.options.store.finish({
         pushId: claimed.pushId,

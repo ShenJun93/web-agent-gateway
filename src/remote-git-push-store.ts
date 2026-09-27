@@ -224,6 +224,44 @@ export class RemoteGitPushStore {
     });
   }
 
+  /**
+   * Autonomous remote policy consumes the approval/claim window atomically.
+   *
+   * A normal Human approval intentionally stops at ACTIVE so the exact model request must return
+   * to claim the one-shot grant. Autonomous policy has no second Human gesture and therefore must
+   * not create a crash/race window between authority activation and execution claim.
+   */
+  activateAndClaim(pushId: string, now: number, expiresAt: number): RemoteGitPushRecord | undefined {
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      const before = this.get(pushId);
+      if (!before || before.state !== 'PENDING') {
+        this.#db.exec('ROLLBACK');
+        return undefined;
+      }
+      const result = this.#db.prepare(`
+        UPDATE remote_git_push_grants
+        SET state = 'ACTIVE', approved_at = ?, expires_at = ?,
+            use_count = 1, execution_started_at = ?
+        WHERE push_id = ? AND state = 'PENDING'
+          AND review_deadline > ?
+          AND use_count = 0
+          AND execution_started_at IS NULL
+      `).run(now, expiresAt, now, pushId, now);
+      if (Number(result.changes) !== 1) {
+        this.#db.exec('ROLLBACK');
+        return undefined;
+      }
+      const after = this.get(pushId)!;
+      this.#audit(pushId, now, 'PENDING', 'ACTIVE');
+      this.#db.exec('COMMIT');
+      return after;
+    } catch (error) {
+      this.#db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   reject(pushId: string, now: number): boolean {
     return this.#transition(pushId, ['PENDING','ACTIVE'], 'REVOKED', now, () => {
       const result = this.#db.prepare(`

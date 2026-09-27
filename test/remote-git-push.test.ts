@@ -9,6 +9,7 @@ import { createGatewayCallerContext } from '../src/caller-context.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
 import {
   DurableRemoteGitPushCoordinator,
+  type RemoteGitPushAutonomousPolicy,
   type RemoteGitPushBackend,
   type RemoteGitPushPlan,
 } from '../src/remote-git-push.js';
@@ -63,7 +64,13 @@ class FakeBackend implements RemoteGitPushBackend {
   }
 }
 
-async function fixture(t: test.TestContext, options: { killSwitch?: () => boolean } = {}) {
+async function fixture(
+  t: test.TestContext,
+  options: {
+    killSwitch?: () => boolean;
+    autonomous?: RemoteGitPushAutonomousPolicy;
+  } = {},
+) {
   const dir = await mkdtemp(join(tmpdir(), 'wag-remote-git-push-'));
   const state = join(dir, 'state.sqlite');
   const workspaces = new SqliteDurableStore(state);
@@ -96,6 +103,7 @@ async function fixture(t: test.TestContext, options: { killSwitch?: () => boolea
     now: () => now,
     reviewTtlMs: 60_000,
     activeTtlMs: 60_000,
+    ...(options.autonomous === undefined ? {} : { autonomous: options.autonomous }),
     ...(options.killSwitch === undefined ? {} : { killSwitch: options.killSwitch }),
   });
   return {
@@ -165,6 +173,70 @@ test('human approval creates one active exact grant and the same request consume
   assert.equal(replay.status, 'approval_required');
   assert.notEqual(replay.pushId, first.pushId, 'a consumed grant can never authorize a retry');
   assert.equal(f.backend.executeCalls, 1);
+});
+
+test('autonomous standing policy executes an exact allowlisted push on the first request', async (t) => {
+  const f = await fixture(t, {
+    autonomous: {
+      permits(target) {
+        return target.resolvedPushUrl === URL && target.destinationRef === DEST;
+      },
+      denyUnmatched: true,
+    },
+  });
+
+  const result = await f.coordinator.request(f.caller, f.workspaceId, input);
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.state, 'CONSUMED');
+  assert.equal(result.observedRemoteOid, SOURCE);
+  assert.equal(f.backend.planCalls, 1);
+  assert.equal(f.backend.executeCalls, 1);
+  assert.equal(f.pushes.listPending(20).length, 0);
+
+  const stored = f.pushes.get(result.pushId);
+  assert.equal(stored?.useCount, 1);
+  assert.ok(stored?.approvedAt !== undefined);
+  assert.ok(stored?.executionStartedAt !== undefined);
+  assert.equal(stored?.approvedAt, stored?.executionStartedAt,
+    'autonomous activation and execution claim are one atomic authority transition');
+});
+
+test('autonomous-only policy denies unmatched targets without creating a Human approval proposal', async (t) => {
+  const f = await fixture(t, {
+    autonomous: {
+      permits() { return false; },
+      denyUnmatched: true,
+    },
+  });
+
+  await assert.rejects(
+    f.coordinator.request(f.caller, f.workspaceId, input),
+    /AUTONOMOUS_REMOTE_POLICY_DENIED/,
+  );
+  assert.equal(f.backend.planCalls, 1);
+  assert.equal(f.backend.executeCalls, 0);
+  assert.equal(f.pushes.listPending(20).length, 0);
+});
+
+test('autonomous policy still fails closed at the kill switch before the remote effect', async (t) => {
+  let checks = 0;
+  const f = await fixture(t, {
+    autonomous: {
+      permits(target) {
+        return target.resolvedPushUrl === URL && target.destinationRef === DEST;
+      },
+      denyUnmatched: true,
+    },
+    killSwitch: () => {
+      checks += 1;
+      return checks >= 2;
+    },
+  });
+
+  const result = await f.coordinator.request(f.caller, f.workspaceId, input);
+  assert.equal(result.state, 'REVOKED');
+  assert.equal(result.outcomeClass, 'KILL_SWITCH_ENGAGED');
+  assert.equal(f.backend.executeCalls, 0);
 });
 
 test('active grant is exact to source, destination and caller session', async (t) => {

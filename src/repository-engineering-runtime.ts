@@ -110,6 +110,7 @@ export async function startRepositoryEngineeringRuntime(
   const inspect = settings?.inspect === true;
   const mutationSettings = settings?.mutation;
   const gitCommitSettings = settings?.gitCommit;
+  const remoteGitPushSettings = settings?.remoteGitPush;
   const browserSettings = settings?.browser;
   const desktopSettings = settings?.desktop;
 
@@ -177,6 +178,12 @@ export async function startRepositoryEngineeringRuntime(
 
   /** Read on every consequential decision so the kill switch remains immediate. */
   const killSwitch = () => isKillSwitchEngaged(dirname(mutationSettings.statePath));
+  const autonomousPushUrls = new Set(
+    remoteGitPushSettings?.autonomous.allowedPushUrls ?? [],
+  );
+  const autonomousPushRefs = new Set(
+    remoteGitPushSettings?.autonomous.allowedDestinationRefs ?? [],
+  );
 
   const machineContext = createLocalMachineContext({
     store,
@@ -353,13 +360,21 @@ export async function startRepositoryEngineeringRuntime(
               requires_human: false,
               reason: command.reason,
             },
-            GIT_PUSH: {
-              granted: false,
-              denied: true,
-              grantable: true,
-              requires_human: true,
-              reason: executionEnabled ? 'REMOTE_EFFECT_GRANT_REQUIRED' : 'KILL_SWITCH_ENGAGED',
-            },
+            GIT_PUSH: remoteGitPushSettings === undefined
+              ? {
+                granted: false,
+                denied: true,
+                grantable: true,
+                requires_human: true,
+                reason: executionEnabled ? 'REMOTE_EFFECT_GRANT_REQUIRED' : 'KILL_SWITCH_ENGAGED',
+              }
+              : {
+                granted: executionEnabled,
+                denied: !executionEnabled,
+                grantable: true,
+                requires_human: false,
+                reason: executionEnabled ? 'AUTONOMOUS_REMOTE_POLICY' : 'KILL_SWITCH_ENGAGED',
+              },
           },
         };
       },
@@ -392,6 +407,15 @@ export async function startRepositoryEngineeringRuntime(
           workspaceStore: store,
           backend: new LocalRemoteGitPushBackend({
             hooksDir: mutationSettings.statePath + '.remote-git-hooks',
+          }),
+          ...(remoteGitPushSettings === undefined ? {} : {
+            autonomous: {
+              permits(target) {
+                return autonomousPushUrls.has(target.resolvedPushUrl)
+                  && autonomousPushRefs.has(target.destinationRef);
+              },
+              denyUnmatched: true,
+            },
           }),
           killSwitch,
           effectBoundary: {

@@ -17,6 +17,15 @@ const repositoryEngineeringSchema = z.object({
   gitCommit: z.object({
     protectedBranches: z.array(z.string().min(1).max(256)).min(1).max(64).optional(),
   }).strict().optional(),
+  remoteGitPush: z.object({
+    autonomous: z.object({
+      allowedPushUrls: z.array(z.string().url().max(2048)).min(1).max(16),
+      allowedDestinationRefs: z.array(
+        z.string().min(1).max(256)
+          .regex(/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._\/-]*$/),
+      ).min(1).max(64),
+    }).strict(),
+  }).strict().optional(),
   browser: z.object({
     edgeExecutablePath: z.string().min(1),
     profileRoot: z.string().min(1),
@@ -85,6 +94,12 @@ export interface PrivateRepositoryEngineeringMutation {
 export interface PrivateRepositoryEngineeringGitCommit {
   protectedBranches?: string[];
 }
+export interface PrivateRepositoryEngineeringRemoteGitPush {
+  autonomous: {
+    allowedPushUrls: string[];
+    allowedDestinationRefs: string[];
+  };
+}
 export interface PrivateRepositoryEngineeringBrowser {
   edgeExecutablePath: string;
   profileRoot: string;
@@ -95,6 +110,7 @@ export interface PrivateRepositoryEngineeringDesktop {
 export interface PrivateRepositoryEngineering {
   inspect: boolean;
   gitCommit?: PrivateRepositoryEngineeringGitCommit;
+  remoteGitPush?: PrivateRepositoryEngineeringRemoteGitPush;
   browser?: PrivateRepositoryEngineeringBrowser;
   desktop?: PrivateRepositoryEngineeringDesktop;
   mutation?: PrivateRepositoryEngineeringMutation;
@@ -126,6 +142,22 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
   // Accepting it alone would advertise nothing and bind nothing, which reads as a working opt-in.
   if (parsed.repositoryEngineering?.gitCommit && !mutation) {
     throw new Error('Private gateway repository engineering gitCommit requires mutation');
+  }
+  const remoteGitPush = parsed.repositoryEngineering?.remoteGitPush;
+  if (remoteGitPush && !mutation) {
+    throw new Error('Private gateway repository engineering remoteGitPush requires mutation');
+  }
+  if (remoteGitPush) {
+    const pushUrls = remoteGitPush.autonomous.allowedPushUrls;
+    const destinationRefs = remoteGitPush.autonomous.allowedDestinationRefs;
+    if (new Set(pushUrls).size !== pushUrls.length) {
+      throw new Error('Private gateway autonomous remote Git push URLs must be unique');
+    }
+    if (new Set(destinationRefs).size !== destinationRefs.length) {
+      throw new Error('Private gateway autonomous remote Git push destination refs must be unique');
+    }
+    for (const url of pushUrls) validateAutonomousPushUrl(url);
+    for (const ref of destinationRefs) validateAutonomousDestinationRef(ref);
   }
   const browser = parsed.repositoryEngineering?.browser;
   if (browser && !mutation) {
@@ -166,6 +198,16 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
               : { protectedBranches: parsed.repositoryEngineering.gitCommit.protectedBranches }),
           },
         }),
+        ...(remoteGitPush === undefined ? {} : {
+          remoteGitPush: {
+            autonomous: {
+              allowedPushUrls: remoteGitPush.autonomous.allowedPushUrls
+                .map(validateAutonomousPushUrl),
+              allowedDestinationRefs: remoteGitPush.autonomous.allowedDestinationRefs
+                .map(validateAutonomousDestinationRef),
+            },
+          },
+        }),
         ...(browser === undefined ? {} : {
           browser: {
             edgeExecutablePath: browser.edgeExecutablePath,
@@ -189,6 +231,49 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
       },
     }),
   };
+}
+
+function validateAutonomousPushUrl(value: string): string {
+  const url = new URL(value);
+  if (url.protocol !== 'https:' && url.protocol !== 'ssh:') {
+    throw new Error('Private gateway autonomous remote Git push URL must use HTTPS or SSH');
+  }
+  if (url.password !== '' || (url.protocol === 'https:' && url.username !== '')) {
+    throw new Error('Private gateway autonomous remote Git push URL must not contain credentials');
+  }
+  if (
+    url.hostname === ''
+    || url.pathname === ''
+    || url.pathname === '/'
+    || url.search !== ''
+    || url.hash !== ''
+  ) {
+    throw new Error('Private gateway autonomous remote Git push URL is invalid');
+  }
+  return url.href;
+}
+
+function validateAutonomousDestinationRef(value: string): string {
+  if (!value.startsWith('refs/heads/')) {
+    throw new Error('Private gateway autonomous remote Git push destination must be a branch ref');
+  }
+  const name = value.slice('refs/heads/'.length);
+  if (
+    name.length === 0
+    || name.toLowerCase() === 'main'
+    || name.toLowerCase() === 'master'
+    || name.startsWith('-')
+    || name.startsWith('.')
+    || name.endsWith('/')
+    || name.endsWith('.')
+    || name.endsWith('.lock')
+    || name.includes('..')
+    || name.includes('//')
+    || name.includes('@{')
+  ) {
+    throw new Error('Private gateway autonomous remote Git push destination is unsafe');
+  }
+  return value;
 }
 
 function validateLoopbackBaseUrl(value: string): string {

@@ -455,6 +455,57 @@ test('private-stdio authority is autonomous-local without any per-goal authority
   }
 });
 
+test('autonomous remote Git push policy removes per-push Human authority for configured targets', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-autonomous-push-profile-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const workspaceRoot = await realpath(root);
+  const runtime = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: { statePath, ownerId: 'local.private.stdio' },
+      remoteGitPush: {
+        autonomous: {
+          allowedPushUrls: ['https://github.com/example/private.git'],
+          allowedDestinationRefs: ['refs/heads/work/commercial-packaging-v1'],
+        },
+      },
+    }),
+    {
+      startOperatorServer: async () => ({
+        origin: 'http://127.0.0.1:1',
+        bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+        close: async () => {},
+      }),
+    },
+  );
+
+  try {
+    const workspaceId = runtime.openWorkspaceId!(workspaceRoot);
+    await runtime.attach(fakeExecutor);
+    const authority = await runtime.capabilityContext!.describe(workspaceId) as {
+      capabilities: {
+        GIT_PUSH: {
+          granted: boolean;
+          denied: boolean;
+          grantable: boolean;
+          requires_human: boolean;
+          reason: string;
+        };
+      };
+    };
+    assert.deepEqual(authority.capabilities.GIT_PUSH, {
+      granted: true,
+      denied: false,
+      grantable: true,
+      requires_human: false,
+      reason: 'AUTONOMOUS_REMOTE_POLICY',
+    });
+  } finally {
+    await runtime.close();
+  }
+});
+
 test('stable private-stdio diagnostics survive repository runtime restart', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-runtime-diagnostics-'));
   t.after(() => rm(root, { recursive: true, force: true }));

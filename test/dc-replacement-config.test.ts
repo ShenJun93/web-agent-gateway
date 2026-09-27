@@ -122,6 +122,74 @@ test('repository engineering git commit cannot be a half-capability', async (t) 
     'an empty gitCommit block means the built-in protected set, not an empty one');
 });
 
+test('autonomous remote Git push config is explicit, bounded, and requires mutation identity', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-dc-config-autopush-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const autonomous = {
+    allowedPushUrls: ['https://github.com/example/private.git'],
+    allowedDestinationRefs: ['refs/heads/work/commercial-packaging-v1', 'refs/heads/backup/wag-source'],
+  };
+
+  await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'orphan-push.json', {
+    ...baseConfig(root),
+    repositoryEngineering: { remoteGitPush: { autonomous } },
+  })), /remoteGitPush requires mutation/i);
+
+  const loaded = await loadPrivateGatewayConfig(await writeConfig(root, 'bounded-push.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      mutation: { statePath },
+      remoteGitPush: { autonomous },
+    },
+  }));
+  assert.deepEqual(loaded.repositoryEngineering?.remoteGitPush, { autonomous });
+
+  for (const destinationRef of ['refs/heads/main', 'refs/heads/master', 'refs/heads/feat/../escape']) {
+    await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'unsafe-ref.json', {
+      ...baseConfig(root),
+      repositoryEngineering: {
+        mutation: { statePath },
+        remoteGitPush: {
+          autonomous: {
+            allowedPushUrls: autonomous.allowedPushUrls,
+            allowedDestinationRefs: [destinationRef],
+          },
+        },
+      },
+    })), /destination|unsafe|invalid/i);
+  }
+
+  await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'credential-url.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      mutation: { statePath },
+      remoteGitPush: {
+        autonomous: {
+          allowedPushUrls: ['https://token@example.com/private.git'],
+          allowedDestinationRefs: [autonomous.allowedDestinationRefs[0]],
+        },
+      },
+    },
+  })), /credentials/i);
+
+  await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'duplicate-ref.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      mutation: { statePath },
+      remoteGitPush: {
+        autonomous: {
+          allowedPushUrls: autonomous.allowedPushUrls,
+          allowedDestinationRefs: [
+            autonomous.allowedDestinationRefs[0],
+            autonomous.allowedDestinationRefs[0],
+          ],
+        },
+      },
+    },
+  })), /unique/i);
+});
+
 test('repository engineering config stays strict so no key silently grants capability', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-dc-config-strict-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -173,6 +241,12 @@ test('every accepted repositoryEngineering field survives the loader', async (t)
       reviewTtlMs: 300_000,
     },
     gitCommit: { protectedBranches: ['main', 'release'] },
+    remoteGitPush: {
+      autonomous: {
+        allowedPushUrls: ['https://github.com/example/private.git'],
+        allowedDestinationRefs: ['refs/heads/work/commercial-packaging-v1'],
+      },
+    },
   };
   await writeFile(configPath, JSON.stringify({
     allowedRoots: [root],

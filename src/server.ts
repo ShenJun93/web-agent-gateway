@@ -1290,7 +1290,7 @@ export function createGatewayMcpServer(
 
   if (remoteGitPushContext) {
     registerTool('git.push', {
-      description: 'Request one exact remote feature-branch push. Without a matching Human-issued one-shot grant this creates an inert proposal; only an exact active grant can execute the bound push.',
+      description: 'Request one exact bounded remote feature-branch push. A local standing autonomous policy may execute an allowlisted target immediately; otherwise the request follows the Human-gated proposal path. MCP arguments cannot widen local remote authority.',
       inputSchema: z.object({
         workspace_id: z.string().min(1).max(256),
         remote: z.string().min(1).max(128),
