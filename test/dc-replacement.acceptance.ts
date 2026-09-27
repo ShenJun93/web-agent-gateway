@@ -67,6 +67,8 @@ const EXTENDED_TOOLS = [
   'mutation.result',
   'git.commit',
   'git.commit.result',
+  'git.push',
+  'git.push.result',
   'diagnostics.recent',
   'diagnostics.usage',
 ];

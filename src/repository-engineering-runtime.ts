@@ -11,11 +11,14 @@ import { LocalMachineFileMutationBackend } from './executor/local-machine-file-m
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
 import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
 import { DurableCommitCoordinator } from './git-commit.js';
+import { DurableRemoteGitPushCoordinator } from './remote-git-push.js';
+import { LocalRemoteGitPushBackend } from './remote-git-push-backend.js';
+import { RemoteGitPushStore } from './remote-git-push-store.js';
 import { isKillSwitchEngaged } from './autonomy-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
-import type { CapabilityMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext } from './server.js';
+import type { CapabilityMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext, RemoteGitPushMcpContext } from './server.js';
 import { WorkspaceIdentityRegistry } from './workspace-identity.js';
 import {
   createLocalMachineContext,
@@ -65,6 +68,8 @@ export interface RepositoryEngineeringRuntime {
   mutationContext?: MutationMcpContext;
   /** Present only after a successful attach with git commit enabled. */
   gitCommitContext?: GitCommitMcpContext;
+  /** Human-gated exact remote Git push proposal/consume surface. */
+  remoteGitPushContext?: RemoteGitPushMcpContext;
   /** Trusted autonomous-local argv execution, bound to caller-owned workspace identity. */
   commandContext?: CommandMcpContext;
   /** Effective preflight authority for an opened workspace. */
@@ -125,13 +130,18 @@ export async function startRepositoryEngineeringRuntime(
    */
 
   const store = new SqliteDurableStore(mutationSettings.statePath);
+  let remotePushStore: RemoteGitPushStore | undefined;
   let workspaceIdentities: WorkspaceIdentityRegistry;
   try {
+    remotePushStore = new RemoteGitPushStore(mutationSettings.statePath + '.remote-git-push.sqlite');
     workspaceIdentities = new WorkspaceIdentityRegistry(mutationSettings.statePath);
   } catch (error) {
+    remotePushStore?.close();
     store.close();
     throw error;
   }
+  if (!remotePushStore) throw new Error('Remote Git push store initialization failed');
+  const pushStore = remotePushStore;
   const urlFile = `${mutationSettings.statePath}.operator-url`;
 
   /**
@@ -200,6 +210,7 @@ export async function startRepositoryEngineeringRuntime(
   } catch (error) {
     await browserContext?.closeAll().catch(() => undefined);
     workspaceIdentities.close();
+    pushStore.close();
     store.close();
     throw error;
   }
@@ -343,7 +354,11 @@ export async function startRepositoryEngineeringRuntime(
               reason: command.reason,
             },
             GIT_PUSH: {
-              granted: false, denied: true, grantable: false, requires_human: true, reason: 'REMOTE_EFFECT_NOT_GRANTED',
+              granted: false,
+              denied: true,
+              grantable: true,
+              requires_human: true,
+              reason: executionEnabled ? 'REMOTE_EFFECT_GRANT_REQUIRED' : 'KILL_SWITCH_ENGAGED',
             },
           },
         };
@@ -372,6 +387,24 @@ export async function startRepositoryEngineeringRuntime(
 
         let commitCoordinator: DurableCommitCoordinator | undefined;
 
+        const remotePushCoordinator = new DurableRemoteGitPushCoordinator({
+          store: pushStore,
+          workspaceStore: store,
+          backend: new LocalRemoteGitPushBackend({
+            hooksDir: mutationSettings.statePath + '.remote-git-hooks',
+          }),
+          killSwitch,
+          effectBoundary: {
+            async revalidateWorkspace(workspaceId, canonicalRoot) {
+              const workspace = store.getWorkspace(workspaceId);
+              if (!workspace || workspace.canonicalRoot !== canonicalRoot) {
+                throw new Error('Gateway denied remote Git push workspace drift');
+              }
+              await freshWorkspaceFingerprint(workspaceId);
+            },
+          },
+        });
+        await remotePushCoordinator.reconcile();
 
         if (gitCommitSettings) {
           commitCoordinator = new DurableCommitCoordinator({
@@ -412,10 +445,12 @@ export async function startRepositoryEngineeringRuntime(
         operator = await (options.startOperatorServer ?? startOperatorServer)({
           coordinator,
           ...(commitCoordinator === undefined ? {} : { commitCoordinator }),
+          pushCoordinator: remotePushCoordinator,
         });
         if (commitCoordinator) {
           runtime.gitCommitContext = { callerContext, coordinator: commitCoordinator, autonomous: true };
         }
+        runtime.remoteGitPushContext = { callerContext, coordinator: remotePushCoordinator };
         // The single-use bootstrap token is written beside the state database rather than
         // printed, because a stdio gateway's stderr belongs to whatever spawned it — for the
         // supported deployment that is the remote-facing tunnel client, which is permitted to
@@ -450,6 +485,7 @@ export async function startRepositoryEngineeringRuntime(
         failure ??= error;
       } finally {
         workspaceIdentities.close();
+        pushStore.close();
         store.close();
       }
       if (failure) throw failure;

@@ -7,6 +7,7 @@ import {
   type GatewayApi,
   type GitCommitMcpContext,
   type MutationMcpContext,
+  type RemoteGitPushMcpContext,
 } from './server.js';
 import type { LocalMachineContext } from './local-machine-runtime.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
@@ -20,6 +21,7 @@ export interface GatewayStdioServerOptions {
   inspect?: boolean;
   mutationContext?: MutationMcpContext;
   gitCommitContext?: GitCommitMcpContext;
+  remoteGitPushContext?: RemoteGitPushMcpContext;
   commandContext?: CommandMcpContext;
   capabilityContext?: CapabilityMcpContext;
   machineContext?: LocalMachineContext;
@@ -39,6 +41,7 @@ export async function startGatewayStdioServer(
     inspect: options.inspect,
     mutationContext: options.mutationContext,
     gitCommitContext: options.gitCommitContext,
+    remoteGitPushContext: options.remoteGitPushContext,
     commandContext: options.commandContext,
     capabilityContext: options.capabilityContext,
     machineContext: options.machineContext,

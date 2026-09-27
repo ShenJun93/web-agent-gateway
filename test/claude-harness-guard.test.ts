@@ -89,6 +89,7 @@ test('the operator credential and decision routes are refused where they are act
   const reaching: ReadonlyArray<readonly [string, unknown]> = [
     ['Bash', { command: 'curl -s http://127.0.0.1:52341/bootstrap > /tmp/b' }],
     ['Bash', { command: 'curl -X POST http://localhost:52341/mutations/mut_abc/approve' }],
+    ['Bash', { command: 'curl -X POST http://localhost:52341/pushes/push_abc/approve' }],
     ['PowerShell', { command: 'Invoke-WebRequest http://127.0.0.1:52341/verifications/vr_1/approve -Method POST' }],
     ['PowerShell', { command: 'Get-Content $env:LOCALAPPDATA\\WebAgentGateway\\browser-operator-v4.sqlite.operator-url' }],
     ['Bash', { command: "sqlite3 browser-operator-v4.sqlite \"update mutations set state='approved'\"" }],

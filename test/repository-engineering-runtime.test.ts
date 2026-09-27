@@ -334,6 +334,8 @@ test('stdio git commit inherits the configured mutation review TTL', async () =>
     await runtime.close();
     await rm(statePath, { force: true });
     await rm(`${statePath}.operator-url`, { force: true });
+    await rm(`${statePath}.remote-git-push.sqlite`, { force: true });
+    await rm(`${statePath}.remote-git-hooks`, { recursive: true, force: true });
   }
 });
 
@@ -444,9 +446,9 @@ test('private-stdio authority is autonomous-local without any per-goal authority
     assert.deepEqual(authority.capabilities.GIT_PUSH, {
       granted: false,
       denied: true,
-      grantable: false,
+      grantable: true,
       requires_human: true,
-      reason: 'REMOTE_EFFECT_NOT_GRANTED',
+      reason: 'REMOTE_EFFECT_GRANT_REQUIRED',
     });
   } finally {
     await runtime.close();

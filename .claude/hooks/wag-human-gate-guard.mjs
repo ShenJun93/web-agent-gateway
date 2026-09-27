@@ -87,7 +87,7 @@ const PROTECTED_DIR = '.claude/hooks/';
 /** The operator's single-use bootstrap credential, as an actual file name. Matching the bare
  *  word refused `rg operator-url src/`, which is reading, not reaching. */
 const OPERATOR_URL_FILE = /[\w.-]+\.operator-url\b/i;
-const OPERATOR_ROUTE = /\/(?:mutations|commits|verifications)\/[A-Za-z0-9_.:-]{1,64}\/(?:approve|reject)\b/i;
+const OPERATOR_ROUTE = /\/(?:mutations|commits|verifications|pushes)\/[A-Za-z0-9_.:-]{1,64}\/(?:approve|reject)\b/i;
 const OPERATOR_BOOTSTRAP = /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d{1,5})?\/bootstrap\b/i;
 const OPERATOR_ORIGIN = /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}\b/i;
 const WAG_STATE_FILE = 'browser-operator-v4.sqlite';

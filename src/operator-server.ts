@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { BrowserVerifyLocalReviewView } from './browser-verify-request.js';
 import type { MutationLocalReviewView } from './durable-mutation.js';
 import type { GitCommitLocalReviewView } from './git-commit.js';
+import type { RemoteGitPushLocalReviewView } from './remote-git-push.js';
 
 interface OperatorMutationCoordinator {
   listPendingLocal(limit?: number): MutationLocalReviewView[];
@@ -25,6 +26,13 @@ interface OperatorVerifyCoordinator {
   rejectLocal(requestId: string): boolean;
 }
 
+interface OperatorRemotePushCoordinator {
+  listPendingLocal(limit?: number): RemoteGitPushLocalReviewView[];
+  reviewLocal(pushId: string): RemoteGitPushLocalReviewView | undefined;
+  approveLocal(pushId: string): Promise<boolean>;
+  rejectLocal(pushId: string): boolean;
+}
+
 export interface OperatorServer {
   origin: string;
   bootstrapUrl: string;
@@ -35,6 +43,7 @@ export async function startOperatorServer(options: {
   coordinator?: OperatorMutationCoordinator;
   verifyCoordinator?: OperatorVerifyCoordinator;
   commitCoordinator?: OperatorCommitCoordinator;
+  pushCoordinator?: OperatorRemotePushCoordinator;
   host?: string;
   port?: number;
   /**
@@ -44,7 +53,7 @@ export async function startOperatorServer(options: {
    */
   onDeny?: (event: { status: number; code: OperatorDenialCode; path: string }) => void;
 }): Promise<OperatorServer> {
-  if (!options.coordinator && !options.verifyCoordinator && !options.commitCoordinator) {
+  if (!options.coordinator && !options.verifyCoordinator && !options.commitCoordinator && !options.pushCoordinator) {
     throw new Error('Operator server requires a review coordinator');
   }
   const host = options.host ?? '127.0.0.1';
@@ -85,6 +94,7 @@ export async function startOperatorServer(options: {
           options.coordinator?.listPendingLocal(20) ?? [],
           options.verifyCoordinator?.listPendingLocal(20) ?? [],
           options.commitCoordinator?.listPendingLocal(20) ?? [],
+          options.pushCoordinator?.listPendingLocal(20) ?? [],
           session.csrf,
         ));
       }
@@ -131,6 +141,26 @@ export async function startOperatorServer(options: {
         const ok = commitAction[2] === 'approve'
           ? await options.commitCoordinator.approveLocal(commitId)
           : options.commitCoordinator.rejectLocal(commitId);
+        if (!ok) return refuse(res, 409, 'NOT_ACTIONABLE', url.pathname);
+        res.writeHead(303, { location: '/' }).end();
+        return;
+      }
+
+      const pushDetail = /^\/pushes\/([^/]+)$/.exec(url.pathname);
+      if (req.method === 'GET' && pushDetail && options.pushCoordinator) {
+        const review = options.pushCoordinator.reviewLocal(decodeURIComponent(pushDetail[1]!));
+        if (!review) return refuse(res, 404, 'NOT_FOUND', url.pathname);
+        return html(res, renderRemotePushReview(review, session.csrf));
+      }
+
+      const pushAction = /^\/pushes\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
+      if (req.method === 'POST' && pushAction && options.pushCoordinator) {
+        const failure = await postFailure(req, session.csrf, origin);
+        if (failure) return refuse(res, 403, failure, url.pathname);
+        const pushId = decodeURIComponent(pushAction[1]!);
+        const ok = pushAction[2] === 'approve'
+          ? await options.pushCoordinator.approveLocal(pushId)
+          : options.pushCoordinator.rejectLocal(pushId);
         if (!ok) return refuse(res, 409, 'NOT_ACTIONABLE', url.pathname);
         res.writeHead(303, { location: '/' }).end();
         return;
@@ -289,12 +319,14 @@ function renderList(
   mutations: MutationLocalReviewView[],
   verifications: BrowserVerifyLocalReviewView[],
   commits: GitCommitLocalReviewView[],
+  pushes: RemoteGitPushLocalReviewView[],
   csrf: string,
 ): string {
   const mutationItems = mutations.map((review) => renderMutationReview(review, csrf)).join('');
   const verifyItems = verifications.map((review) => renderVerifyReview(review, csrf)).join('');
   const commitItems = commits.map((review) => renderCommitReview(review, csrf)).join('');
-  const hasPending = mutations.length > 0 || verifications.length > 0 || commits.length > 0;
+  const pushItems = pushes.map((review) => renderRemotePushReview(review, csrf)).join('');
+  const hasPending = mutations.length > 0 || verifications.length > 0 || commits.length > 0 || pushes.length > 0;
   // When the queue is empty, keep the already-authenticated operator page alive as a passive
   // waiter. As soon as a proposal appears the next response omits Refresh, so the page stops
   // moving while the operator is reviewing it. No script is added and the CSP stays unchanged.
@@ -303,7 +335,8 @@ function renderList(
     + '<title>WAG Review</title><h1>Pending reviews</h1>'
     + '<h2>Mutations</h2>' + (mutationItems || '<p>None</p>')
     + '<h2>Verifications</h2>' + (verifyItems || '<p>None</p>')
-    + '<h2>Commits</h2>' + (commitItems || '<p>None</p>');
+    + '<h2>Commits</h2>' + (commitItems || '<p>None</p>')
+    + '<h2>Remote Git Pushes</h2>' + (pushItems || '<p>None</p>');
 }
 
 function renderMutationReview(review: MutationLocalReviewView, csrf: string): string {
@@ -373,7 +406,35 @@ function renderCommitReview(review: GitCommitLocalReviewView, csrf: string): str
     + '</article>';
 }
 
-function actionForm(kind: 'mutations' | 'verifications' | 'commits', id: string, action: 'approve' | 'reject', csrf: string): string {
+function renderRemotePushReview(review: RemoteGitPushLocalReviewView, csrf: string): string {
+  const actionId = encodeURIComponent(review.pushId);
+  const expected = review.expectedRemoteState.kind === 'ABSENT'
+    ? 'ABSENT'
+    : review.expectedRemoteState.oid;
+  return '<article>'
+    + '<h2>REMOTE GIT PUSH</h2>'
+    + `<p>Repository identity: ${escapeHtml(review.repositoryIdentity)}</p>`
+    + `<p>Workspace: ${escapeHtml(review.workspaceRoot)}</p>`
+    + `<p>Effective push URL: ${escapeHtml(review.resolvedPushUrl)}</p>`
+    + `<p>Remote display name: ${escapeHtml(review.remoteDisplayName)}</p>`
+    + `<p>Exact source OID: ${escapeHtml(review.sourceOid)}</p>`
+    + `<p>Commit subject: ${escapeHtml(review.commitSubject)}</p>`
+    + `<p>Changed-file summary: ${escapeHtml(review.changedFilesSummary)}</p>`
+    + `<p>Destination ref: ${escapeHtml(review.destinationRef)}</p>`
+    + `<p>Expected remote state: ${escapeHtml(expected)}</p>`
+    + (review.aheadCommitCount === undefined ? '' : `<p>Ahead commits: ${review.aheadCommitCount}</p>`)
+    + (review.reviewedCommitOid === undefined ? '' : `<p>Reviewed OID: ${escapeHtml(review.reviewedCommitOid)}</p>`)
+    + (review.reviewReceiptDigest === undefined ? '' : `<p>Review receipt SHA-256: ${escapeHtml(review.reviewReceiptDigest)}</p>`)
+    + '<p>Force: NO</p><p>Delete: NO</p><p>Tags: NO</p><p>Uses: 1</p>'
+    + `<p>Grant TTL after approval: ${review.activeGrantTtlMs} ms</p>`
+    + `<p>Review deadline: ${escapeHtml(new Date(review.reviewDeadline).toISOString())}</p>`
+    + '<p>Approval activates one exact, short-lived grant. It does not execute the push; the exact MCP request must return to consume it once.</p>'
+    + actionForm('pushes', actionId, 'approve', csrf)
+    + actionForm('pushes', actionId, 'reject', csrf)
+    + '</article>';
+}
+
+function actionForm(kind: 'mutations' | 'verifications' | 'commits' | 'pushes', id: string, action: 'approve' | 'reject', csrf: string): string {
   return `<form method="post" action="/${kind}/${id}/${action}">`
     + `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">`
     + `<button type="submit">${action === 'approve' ? 'Approve' : 'Reject'}</button></form>`;

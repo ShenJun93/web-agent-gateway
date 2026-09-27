@@ -36,6 +36,7 @@ export class RemoteEffectPolicyError extends Error {
 
 interface ParsedGitInvocation {
   readonly subcommand?: string;
+  readonly subcommandIndex?: number;
   readonly globalArgs: readonly string[];
   readonly ambiguous: boolean;
   readonly injectedAliasConfig: boolean;
@@ -115,7 +116,9 @@ function parseGitInvocation(argv: readonly string[]): ParsedGitInvocation {
     return { globalArgs, ambiguous: true, injectedAliasConfig };
   }
   return {
-    ...(subcommand === undefined ? {} : { subcommand: subcommand.toLowerCase() }),
+    ...(subcommand === undefined
+      ? {}
+      : { subcommand: subcommand.toLowerCase(), subcommandIndex: index }),
     globalArgs,
     ambiguous: false,
     injectedAliasConfig,
@@ -184,7 +187,7 @@ export function assertNoGitOrGhShellText(text: string): void {
   // (`&\"git\"`, `& 'git'`, `(git ...)`). Treat those spellings exactly like an unquoted token.
   // This remains deliberately narrower than general script/network inspection; the residual-risk
   // boundary below this module still applies to interpreters and arbitrary network clients.
-  if (/(^|[\s;&|()])['\"`]?(?:git(?:\.exe)?|git-send-pack(?:\.exe)?|git-http-push(?:\.exe)?|gh(?:\.exe)?)['\"`]?(?=$|[\s;&|()])/i.test(text)) {
+  if (/(^|[\s;&|()])['\"`]?(?:git(?:\.exe)?|git-send-pack(?:\.exe)?|git-http-push(?:\.exe)?|git-remote-[A-Za-z0-9-]+(?:\.exe)?|gh(?:\.exe)?)['\"`]?(?=$|[\s;&|()])/i.test(text)) {
     throw new RemoteEffectPolicyError(
       'Gateway denied Git/GitHub CLI through shell or interactive terminal; use bounded direct argv tools',
     );
@@ -237,7 +240,11 @@ export async function assertGenericExecutionRemoteEffectPolicy(
     throw new RemoteEffectPolicyError('Gateway denied GitHub CLI through generic execution surface');
   }
 
-  if (name === 'git-send-pack' || name === 'git-http-push') {
+  if (
+    name === 'git-send-pack'
+    || name === 'git-http-push'
+    || name.startsWith('git-remote-')
+  ) {
     throw new RemoteEffectPolicyError();
   }
 
@@ -249,6 +256,19 @@ export async function assertGenericExecutionRemoteEffectPolicy(
     const subcommand = parsed.subcommand;
     if (subcommand === undefined) return;
     if (REMOTE_MUTATING_GIT_SUBCOMMANDS.has(subcommand)) throw new RemoteEffectPolicyError();
+
+    const subcommandArgs = parsed.subcommandIndex === undefined
+      ? []
+      : argv.slice(parsed.subcommandIndex + 1);
+    if (
+      (subcommand === 'submodule' && subcommandArgs.some((arg) => arg.toLowerCase() === 'foreach'))
+      || (subcommand === 'bisect' && subcommandArgs.some((arg) => arg.toLowerCase() === 'run'))
+    ) {
+      throw new RemoteEffectPolicyError(
+        'Gateway denied Git nested command execution through generic execution surface',
+      );
+    }
+
     if (ALLOWED_GIT_SUBCOMMANDS.has(subcommand)) return;
 
     // Unknown git subcommands may be aliases or git-<name> executables. Neither receives generic

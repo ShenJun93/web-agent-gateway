@@ -16,6 +16,7 @@ import {
 import { detectRuntimeIdentity } from './runtime-identity.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
 import type { DurableCommitCoordinator } from './git-commit.js';
+import type { DurableRemoteGitPushCoordinator } from './remote-git-push.js';
 import type { BrowserVerifyRequestCoordinator } from './browser-verify-request.js';
 import type { AdmittedWorkspaceService } from './admitted-workspace.js';
 import { resolveVerifyProfile, type VerifyProfile } from './verify-profile.js';
@@ -457,6 +458,11 @@ export interface MutationMcpContext {
   autonomous?: boolean;
 }
 
+export interface RemoteGitPushMcpContext {
+  callerContext: GatewayCallerContext;
+  coordinator: Pick<DurableRemoteGitPushCoordinator, 'request' | 'result'>;
+}
+
 /**
  * Runtime-owned authority for model-chosen argv execution.
  *
@@ -474,10 +480,11 @@ export interface CapabilityMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext, commandContext, capabilityContext, machineContext, diagnosticsContext, browserContext, desktopContext }: {
+  { inspect, mutationContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, browserContext, desktopContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     gitCommitContext?: GitCommitMcpContext;
+    remoteGitPushContext?: RemoteGitPushMcpContext;
     commandContext?: CommandMcpContext;
     capabilityContext?: CapabilityMcpContext;
     machineContext?: LocalMachineContext;
@@ -1274,6 +1281,53 @@ export function createGatewayMcpServer(
       inputSchema: z.object({ commit_id: z.string().min(1).max(256) }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ commit_id }) => toolResult(gitCommitContext.coordinator.result(gitCommitContext.callerContext, commit_id)));
+  }
+
+  if (remoteGitPushContext) {
+    registerTool('git.push', {
+      description: 'Request one exact remote feature-branch push. Without a matching Human-issued one-shot grant this creates an inert proposal; only an exact active grant can execute the bound push.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        remote: z.string().min(1).max(128),
+        source_oid: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+        destination_ref: z.string().min(1).max(256),
+        reviewed_oid: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/).optional(),
+        review_receipt_sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+      }).strict(),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    }, async ({ workspace_id, remote, source_oid, destination_ref, reviewed_oid, review_receipt_sha256 }) => toolResult(
+      await remoteGitPushContext.coordinator.request(
+        remoteGitPushContext.callerContext,
+        workspace_id,
+        {
+          remote,
+          sourceOid: source_oid,
+          destinationRef: destination_ref,
+          ...(reviewed_oid === undefined ? {} : { reviewedOid: reviewed_oid }),
+          ...(review_receipt_sha256 === undefined ? {} : { reviewReceiptDigest: review_receipt_sha256 }),
+        },
+      ),
+    ));
+
+    registerTool('git.push.result', {
+      description: 'Read the caller-owned durable state/result of one bounded remote Git push proposal/grant.',
+      inputSchema: z.object({
+        push_id: z.string().min(1).max(256).regex(/^push_[A-Za-z0-9-]+$/),
+      }).strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    }, async ({ push_id }) => toolResult(
+      remoteGitPushContext.coordinator.result(remoteGitPushContext.callerContext, push_id),
+    ));
   }
 
   if (diagnosticsContext) {

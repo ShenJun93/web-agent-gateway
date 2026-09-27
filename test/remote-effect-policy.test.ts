@@ -27,6 +27,11 @@ test('generic argv policy denies direct Git remote mutations and GitHub CLI', as
     ['git', 'send-pack', 'origin'],
     ['git-send-pack', 'origin'],
     ['git-http-push', 'origin'],
+    ['git-remote-http', 'origin', 'https://example.invalid/repo.git'],
+    ['git-remote-https', 'origin', 'https://example.invalid/repo.git'],
+    ['git', 'submodule', 'foreach', 'git push origin HEAD'],
+    ['git', '-C', '.', 'submodule', 'foreach', 'git push origin HEAD'],
+    ['git', 'bisect', 'run', 'git', 'push', 'origin', 'HEAD'],
     ['gh', 'pr', 'create'],
     ['gh.exe', 'repo', 'view'],
   ];
@@ -45,6 +50,8 @@ test('generic argv policy parses global Git options before allowing local/read o
     ['git', '-C', '.', 'rev-parse', 'HEAD'],
     ['git', '-c', 'core.fsmonitor=false', 'diff', '--stat'],
     ['git', '--git-dir=.git', '--work-tree=.', 'status', '--short'],
+    ['git', 'submodule', 'status'],
+    ['git', 'bisect', 'log'],
     ['git', 'ls-remote', '--heads', 'https://example.invalid/repo.git'],
   ]) {
     await assert.doesNotReject(
@@ -88,6 +95,8 @@ test('shell indirection is fail-closed for Git and GitHub CLI', async () => {
     ['powershell.exe', '-EncodedCommand', encoded],
     ['cmd.exe', '/c', '\"git.exe\" push origin HEAD'],
     ['bash', '-c', "'git' push origin HEAD"],
+    ['bash', '-c', 'git-remote-https origin https://example.invalid/repo.git'],
+    ['cmd.exe', '/c', 'git-remote-http', 'origin', 'https://example.invalid/repo.git'],
     ['bash', '-c', 'gh pr create'],
   ]) {
     await assert.rejects(
@@ -112,6 +121,14 @@ test('interactive terminal gate catches commands split across input chunks', () 
   assert.equal(state, 'gi');
   assert.throws(
     () => nextTerminalRemoteEffectPolicyBuffer(state, 't push\n'),
+    /Git\/GitHub CLI/,
+  );
+
+  assert.throws(
+    () => nextTerminalRemoteEffectPolicyBuffer(
+      '',
+      'git-remote-https origin https://example.invalid/repo.git\n',
+    ),
     /Git\/GitHub CLI/,
   );
 

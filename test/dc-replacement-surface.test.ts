@@ -15,14 +15,15 @@ const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', '
 const MUTATION_TOOLS = [...DEFAULT_TOOLS, 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result'];
 const FULL_TOOLS = [...INSPECT_TOOLS, 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result'];
 const COMMIT_TOOLS = [...INSPECT_TOOLS, 'command.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result'];
+const PUSH_TOOLS = [...COMMIT_TOOLS, 'git.push', 'git.push.result'];
 
 /**
  * Repository-only profiles stay narrow. Full local-computer/DC-parity operations are exposed only
  * when the production runtime wires a LocalMachineContext. This guard prevents a repository-only
  * profile from accidentally acquiring process/terminal or broad filesystem verbs.
- * git.commit and git.commit.result remain the only repository Git mutation tools.
+ * Git mutations are limited to exact commit plus the separate Human-gated remote push surface.
  */
-const ACCEPTED_GIT_TOOLS = new Set(['git.commit', 'git.commit.result']);
+const ACCEPTED_GIT_TOOLS = new Set(['git.commit', 'git.commit.result', 'git.push', 'git.push.result']);
 const FORBIDDEN_TOOL_FRAGMENTS = [
   'verify.preview', 'verify.result', 'job.', 'shell', 'process', 'terminal', 'pty', 'exec',
   'git.', 'commit', 'push', 'fetch', 'pull', 'merge', 'amend', 'reset', 'checkout', 'branch',
@@ -196,7 +197,7 @@ test('workspace.open embeds capability preflight and capabilities.describe retur
     capabilities: {
       FILE_READ: { granted: true, denied: false, grantable: true, requires_human: false, reason: 'WORKSPACE_OWNED' },
       LOCAL_COMMAND: { granted: false, denied: true, grantable: true, requires_human: true, reason: 'WORKSPACE_NOT_GRANTED' },
-      GIT_PUSH: { granted: false, denied: true, grantable: false, requires_human: true, reason: 'REMOTE_EFFECT_NOT_GRANTED' },
+      GIT_PUSH: { granted: false, denied: true, grantable: true, requires_human: true, reason: 'REMOTE_EFFECT_GRANT_REQUIRED' },
     },
   };
   const capabilityContext = {
@@ -445,6 +446,36 @@ test('repository-only stdio profiles compose independently and do not expose mac
       commit: async () => { throw new Error('unused'); },
     },
   });
+  const remotePushCoordinator = {
+    async request() {
+      return {
+        pushId: 'push_fixture',
+        status: 'approval_required' as const,
+        state: 'PENDING' as const,
+        sourceOid: 'a'.repeat(40),
+        destinationRef: 'refs/heads/feat/fixture',
+        remoteDisplayName: 'origin',
+        resolvedPushUrl: 'https://github.com/example/repo.git',
+        expectedRemoteState: { kind: 'ABSENT' as const },
+        grantFingerprint: 'b'.repeat(64),
+        reviewDeadline: 2_000,
+      };
+    },
+    result() {
+      return {
+        pushId: 'push_fixture',
+        status: 'approval_required' as const,
+        state: 'PENDING' as const,
+        sourceOid: 'a'.repeat(40),
+        destinationRef: 'refs/heads/feat/fixture',
+        remoteDisplayName: 'origin',
+        resolvedPushUrl: 'https://github.com/example/repo.git',
+        expectedRemoteState: { kind: 'ABSENT' as const },
+        grantFingerprint: 'b'.repeat(64),
+        reviewDeadline: 2_000,
+      };
+    },
+  };
 
   for (const [options, expected] of [
     [{ mutationContext: { callerContext, coordinator } }, MUTATION_TOOLS],
@@ -455,6 +486,13 @@ test('repository-only stdio profiles compose independently and do not expose mac
       gitCommitContext: { callerContext, coordinator: commitCoordinator },
       commandContext: { authorize: async () => undefined },
     }, COMMIT_TOOLS],
+    [{
+      inspect: true,
+      mutationContext: { callerContext, coordinator },
+      gitCommitContext: { callerContext, coordinator: commitCoordinator },
+      remoteGitPushContext: { callerContext, coordinator: remotePushCoordinator },
+      commandContext: { authorize: async () => undefined },
+    }, PUSH_TOOLS],
   ] as const) {
     const { executor } = stubExecutor({ output: '', exitCode: 0, running: false });
     const client = await connect(t, createGatewayMcpServer(gatewayWith(executor), options));

@@ -129,6 +129,7 @@ export async function main(
       inspect: engineering.profile.inspect,
       mutationContext: engineering.mutationContext,
       gitCommitContext: engineering.gitCommitContext,
+      remoteGitPushContext: engineering.remoteGitPushContext,
       commandContext: engineering.commandContext,
       capabilityContext: engineering.capabilityContext,
       machineContext: engineering.machineContext,
