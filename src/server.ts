@@ -6,7 +6,7 @@ import { NOOP_TELEMETRY, startTrace, type TelemetrySink } from './telemetry.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
 import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
-import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import type { ToolUsageCorrelation, ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
 import type { DesktopMcpContext } from './desktop-harness/desktop-mcp-runtime.js';
 import {
@@ -502,7 +502,7 @@ export function createGatewayMcpServer(
       const finish = diagnosticsContext?.begin(name);
       try {
         const value = await handler(...args);
-        finish?.(true, undefined, harnessEffectCorrelationFromToolResult(value));
+        finish?.(true, undefined, toolUsageCorrelationFromToolResult(value));
         return value;
       } catch (error) {
         finish?.(false, error, harnessEffectCorrelationFromError(error));
@@ -1400,6 +1400,22 @@ function directMutationToolResult<T extends object & { baseSha256: string; resul
     before_sha256: value.baseSha256,
     after_sha256: value.resultSha256,
   });
+}
+
+function toolUsageCorrelationFromToolResult(value: unknown): ToolUsageCorrelation | undefined {
+  const effect = harnessEffectCorrelationFromToolResult(value);
+  if (!value || typeof value !== 'object') return effect;
+  const structured = (value as { structuredContent?: unknown }).structuredContent;
+  if (!structured || typeof structured !== 'object') return effect;
+  const row = structured as { mutationId?: unknown; commitId?: unknown };
+  const mutationId = typeof row.mutationId === 'string' ? row.mutationId : undefined;
+  const commitId = typeof row.commitId === 'string' ? row.commitId : undefined;
+  if (!effect && mutationId === undefined && commitId === undefined) return undefined;
+  return {
+    ...(effect ?? {}),
+    ...(mutationId === undefined ? {} : { mutationId }),
+    ...(commitId === undefined ? {} : { commitId }),
+  };
 }
 
 function toolResult(value: object) {

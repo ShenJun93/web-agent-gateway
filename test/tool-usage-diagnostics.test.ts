@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 
+import { createGatewayCallerContext } from '../src/caller-context.js';
+import { DurableMutationCoordinator } from '../src/durable-mutation.js';
+import { SqliteDurableStore } from '../src/durable-store.js';
+import { DurableCommitCoordinator } from '../src/git-commit.js';
+import { PRIVATE_STDIO_ADAPTER_ID } from '../src/repository-engineering-runtime.js';
 import { createGatewayMcpServer } from '../src/server.js';
 import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 
 const EFFECT_ID = 'effect_00000000-0000-4000-8000-000000000901';
 const ATTEMPT_ID = 'attempt_00000000-0000-4000-8000-000000000902';
+const MUTATION_ID = 'mut_00000000-0000-4000-8000-000000000903';
+const COMMIT_ID = 'cmt_00000000-0000-4000-8000-000000000904';
 
 test('tool usage diagnostics is bounded, sanitized and groups outcomes by tool', () => {
   const diagnostics = new ToolUsageDiagnostics(16);
@@ -73,6 +81,155 @@ test('diagnostics exposes in-flight request identity then durable effect correla
   assert.equal(after.events[0]?.request_id, finish.requestId);
   assert.equal(after.events[0]?.effect_id, EFFECT_ID);
   assert.equal(after.events[0]?.attempt_id, ATTEMPT_ID);
+});
+
+test('diagnostics retains only opaque mutation and commit ids from correlation', () => {
+  const diagnostics = new ToolUsageDiagnostics(16);
+  diagnostics.begin('mutation.preview')(true, undefined, {
+    mutationId: MUTATION_ID,
+    commitId: COMMIT_ID,
+  });
+
+  const [event] = diagnostics.recent().events;
+  assert.equal(event?.mutation_id, MUTATION_ID);
+  assert.equal(event?.commit_id, COMMIT_ID);
+  assert.equal('mutationId' in (event ?? {}), false);
+  assert.equal('commitId' in (event ?? {}), false);
+});
+
+test('an interrupted turn recovers mutation_id and commit_id from diagnostics and reads durable state', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-diagnostics-recovery-'));
+  const original = 'alpha\n';
+  await writeFile(join(root, 'note.txt'), original);
+  const store = new SqliteDurableStore(':memory:');
+  t.after(async () => {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const callerContext = createGatewayCallerContext({
+    ownerId: 'local.private.stdio',
+    sessionId: 'session_diagnostics_recovery',
+    adapterId: PRIVATE_STDIO_ADAPTER_ID,
+  });
+  const workspace = store.openWorkspaceRecord({
+    ownerId: callerContext.ownerId,
+    sessionId: callerContext.sessionId,
+    adapterId: callerContext.adapterId,
+    canonicalRoot: root,
+    backendKind: 'fake',
+    createdAt: Date.now(),
+  });
+
+  const mutationCoordinator = new DurableMutationCoordinator({
+    store,
+    backends: [{
+      kind: 'fake',
+      readExact: async () => original,
+      readExactIfPresent: async () => original,
+      createNew: async () => undefined,
+      updateExisting: async () => undefined,
+    }],
+  });
+  const commitCoordinator = new DurableCommitCoordinator({
+    store,
+    backend: {
+      kind: 'fake',
+      plan: async () => ({
+        branch: 'work',
+        ref: 'refs/heads/work',
+        head: '1'.repeat(40),
+        tree: '2'.repeat(40),
+        changes: [{ status: 'M' as const, path: 'note.txt' }],
+        author: 'WAG Test <wag@example.invalid>',
+        committer: 'WAG Test <wag@example.invalid>',
+        gitDir: join(root, '.git'),
+        commonDir: join(root, '.git'),
+        eolNormalized: [],
+      }),
+      commit: async () => { throw new Error('not exercised'); },
+    },
+  });
+  const diagnostics = new ToolUsageDiagnostics();
+  const gateway = {
+    async health() { return { status: 'ok', executor: 'devspace', protocolVersion: 'test', toolCount: 6 }; },
+    async openWorkspace() { throw new Error('not used'); },
+    async readFile() { throw new Error('not used'); },
+    async verifyRun() { throw new Error('not used'); },
+    async commandRun() { throw new Error('not used'); },
+    async repoSnapshot() { throw new Error('not used'); },
+    async repoList() { throw new Error('not used'); },
+    async repoDiff() { throw new Error('not used'); },
+    async repoSearch() { throw new Error('not used'); },
+  } as never;
+
+  const server = createGatewayMcpServer(gateway, {
+    mutationContext: { callerContext, coordinator: mutationCoordinator },
+    gitCommitContext: { callerContext, coordinator: commitCoordinator },
+    diagnosticsContext: diagnostics,
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'diagnostics-recovery', version: '1.0.0' }, { capabilities: {} });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+
+  const baseSha256 = createHash('sha256').update(original, 'utf8').digest('hex');
+
+  // The caller deliberately discards the proposal response, simulating a response-stream interruption.
+  void await client.callTool({
+    name: 'mutation.preview',
+    arguments: {
+      workspace_id: workspace.workspaceId,
+      path: 'note.txt',
+      base_sha256: baseSha256,
+      before: 'alpha',
+      after: 'beta',
+    },
+  });
+
+  const mutationRecent = await client.callTool({ name: 'diagnostics.recent', arguments: { limit: 20 } });
+  const mutationEvents = (mutationRecent.structuredContent as {
+    events: Array<{ tool: string; mutation_id?: string }>;
+  }).events;
+  const mutationId = mutationEvents.find((event) => event.tool === 'mutation.preview')?.mutation_id;
+  assert.match(mutationId ?? '', /^mut_[A-Za-z0-9-]+$/);
+
+  const mutationState = await client.callTool({
+    name: 'mutation.result',
+    arguments: { mutation_id: mutationId },
+  });
+  assert.equal((mutationState.structuredContent as { state?: string }).state, 'PENDING_APPROVAL');
+
+  void await client.callTool({
+    name: 'git.commit',
+    arguments: {
+      workspace_id: workspace.workspaceId,
+      paths: ['note.txt'],
+      message: 'test: diagnostics recovery',
+    },
+  });
+
+  const commitRecent = await client.callTool({ name: 'diagnostics.recent', arguments: { limit: 20 } });
+  const recentContent = commitRecent.structuredContent as {
+    events: Array<{ tool: string; mutation_id?: string; commit_id?: string }>;
+  };
+  const commitId = recentContent.events.find((event) => event.tool === 'git.commit')?.commit_id;
+  assert.match(commitId ?? '', /^cmt_[A-Za-z0-9-]+$/);
+
+  const commitState = await client.callTool({
+    name: 'git.commit.result',
+    arguments: { commit_id: commitId },
+  });
+  assert.equal((commitState.structuredContent as { state?: string }).state, 'PENDING_APPROVAL');
+
+  const serialized = JSON.stringify(recentContent);
+  for (const forbidden of ['note.txt', 'alpha', 'beta', 'diagnostics recovery']) {
+    assert.equal(serialized.includes(forbidden), false, `diagnostics must not retain ${forbidden}`);
+  }
 });
 
 test('tool usage diagnostics retains only the configured rolling window', () => {

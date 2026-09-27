@@ -12,6 +12,8 @@ export interface ToolUsageEvent {
   error_class?: string;
   effect_id?: string;
   attempt_id?: string;
+  mutation_id?: string;
+  commit_id?: string;
 }
 
 export interface InFlightToolUsage {
@@ -43,6 +45,8 @@ export interface RecentToolUsage {
 export interface ToolUsageCorrelation {
   readonly effectId?: string;
   readonly attemptId?: string;
+  readonly mutationId?: string;
+  readonly commitId?: string;
 }
 
 export interface ToolUsageCompletion {
@@ -79,6 +83,8 @@ const MAX_RECENT = 100;
 const REQUEST_ID = /^request_[0-9a-f-]{36}$/;
 const EFFECT_ID = /^effect_[0-9a-f-]{36}$/;
 const ATTEMPT_ID = /^attempt_[0-9a-f-]{36}$/;
+const MUTATION_ID = /^mut_[A-Za-z0-9-]+$/;
+const COMMIT_ID = /^cmt_[A-Za-z0-9-]+$/;
 
 /**
  * Bounded MCP usage diagnostics.
@@ -86,7 +92,8 @@ const ATTEMPT_ID = /^attempt_[0-9a-f-]{36}$/;
  * Deliberately stores no arguments, paths, command text, file contents, output, owner/session ids,
  * credentials, idempotency keys, or exception messages. Completed calls can retain only opaque
  * WAG request/effect identities so a lost ChatGPT response stream can be reconciled without
- * replaying a consequential effect blindly.
+ * replaying a consequential effect blindly. Mutation and commit correlations retain only their
+ * opaque durable ids so interrupted callers can recover state through the existing result tools.
  */
 export class ToolUsageDiagnostics {
   private readonly capacity: number;
@@ -133,6 +140,8 @@ export class ToolUsageDiagnostics {
         }),
         ...(safeCorrelation.effectId === undefined ? {} : { effect_id: safeCorrelation.effectId }),
         ...(safeCorrelation.attemptId === undefined ? {} : { attempt_id: safeCorrelation.attemptId }),
+        ...(safeCorrelation.mutationId === undefined ? {} : { mutation_id: safeCorrelation.mutationId }),
+        ...(safeCorrelation.commitId === undefined ? {} : { commit_id: safeCorrelation.commitId }),
       };
       this.events.push(event);
       if (this.events.length > this.capacity) {
@@ -267,9 +276,17 @@ function sanitizeCorrelation(value: ToolUsageCorrelation | undefined): ToolUsage
     && ATTEMPT_ID.test(value.attemptId)
     ? value.attemptId
     : undefined;
+  const mutationId = typeof value.mutationId === 'string' && MUTATION_ID.test(value.mutationId)
+    ? value.mutationId
+    : undefined;
+  const commitId = typeof value.commitId === 'string' && COMMIT_ID.test(value.commitId)
+    ? value.commitId
+    : undefined;
   return {
     ...(effectId === undefined ? {} : { effectId }),
     ...(attemptId === undefined ? {} : { attemptId }),
+    ...(mutationId === undefined ? {} : { mutationId }),
+    ...(commitId === undefined ? {} : { commitId }),
   };
 }
 
@@ -297,7 +314,11 @@ function isPersistedToolUsage(value: unknown): value is PersistedToolUsage {
         && (typeof candidate.effect_id !== 'string' || !EFFECT_ID.test(candidate.effect_id)))
       || (candidate.attempt_id !== undefined
         && (typeof candidate.attempt_id !== 'string' || !ATTEMPT_ID.test(candidate.attempt_id)))
-      || (candidate.attempt_id !== undefined && candidate.effect_id === undefined)) {
+      || (candidate.attempt_id !== undefined && candidate.effect_id === undefined)
+      || (candidate.mutation_id !== undefined
+        && (typeof candidate.mutation_id !== 'string' || !MUTATION_ID.test(candidate.mutation_id)))
+      || (candidate.commit_id !== undefined
+        && (typeof candidate.commit_id !== 'string' || !COMMIT_ID.test(candidate.commit_id)))) {
       return false;
     }
     previous = candidate.sequence!;
