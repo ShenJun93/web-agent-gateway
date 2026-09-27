@@ -1,4 +1,5 @@
 import type { PrivateGatewayConfig } from './private-config.js';
+import { SqliteRemoteRelayCallStore } from './remote-relay-call-store.js';
 import type { PrivateGatewayRuntime } from './private-runtime.js';
 import type { RepositoryEngineeringRuntime } from './repository-engineering-runtime.js';
 import { createPrivateGatewayMcpServer } from './stdio-server.js';
@@ -50,6 +51,13 @@ export async function startRemoteRelayDeviceRuntime(
   const secret = decodeRemoteRelayDeviceSecret(encodedSecret);
   delete env[settings.secretEnv];
 
+  const statePath = options.config.repositoryEngineering?.mutation?.statePath;
+  if (!statePath) {
+    secret.fill(0);
+    throw new Error('remote relay device requires mutation state for durable call recovery');
+  }
+  const callStore = new SqliteRemoteRelayCallStore(statePath, { secret });
+
   const execution = new McpRemoteRelayExecutionPort(() => createPrivateGatewayMcpServer({
     gateway: options.gatewayRuntime.gateway,
     inspect: options.engineering.profile.inspect,
@@ -77,6 +85,7 @@ export async function startRemoteRelayDeviceRuntime(
       toolManifest,
       executor: execution,
       transport,
+      callStore,
       ...(options.onMetadata === undefined ? {} : { onMetadata: options.onMetadata }),
     });
     let closed = false;
@@ -88,11 +97,13 @@ export async function startRemoteRelayDeviceRuntime(
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
+        callStore.close();
         secret.fill(0);
         await execution.close();
       },
     };
   } catch (error) {
+    callStore.close();
     secret.fill(0);
     await execution.close();
     throw error;

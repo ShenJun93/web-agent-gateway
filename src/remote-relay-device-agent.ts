@@ -3,6 +3,7 @@ import {
   type RemoteRelayToolExecutionPort,
 } from './remote-relay-device-session.js';
 import { remoteRelayTopic } from './remote-relay-protocol.js';
+import type { RemoteRelayCallStore } from './remote-relay-call-store.js';
 import type {
   RemoteRelayConnection,
   RemoteRelayTransport,
@@ -39,6 +40,7 @@ export interface RemoteRelayDeviceAgentOptions {
   toolManifest: unknown;
   executor: RemoteRelayToolExecutionPort;
   transport: RemoteRelayTransport;
+  callStore?: RemoteRelayCallStore;
   now?: () => number;
   random?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -52,6 +54,7 @@ export class RemoteRelayDeviceAgent {
   readonly #toolManifest: unknown;
   readonly #executor: RemoteRelayToolExecutionPort;
   readonly #transport: RemoteRelayTransport;
+  readonly #callStore: RemoteRelayCallStore | undefined;
   readonly #now: () => number;
   readonly #random: () => number;
   readonly #sleep: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -64,6 +67,7 @@ export class RemoteRelayDeviceAgent {
     this.#toolManifest = options.toolManifest;
     this.#executor = options.executor;
     this.#transport = options.transport;
+    this.#callStore = options.callStore;
     this.#now = options.now ?? Date.now;
     this.#random = options.random ?? Math.random;
     this.#sleep = options.sleep ?? sleepWithAbort;
@@ -85,6 +89,7 @@ export class RemoteRelayDeviceAgent {
         agentVersion: this.#agentVersion,
         toolManifest: this.#toolManifest,
         executor: this.#executor,
+        ...(this.#callStore === undefined ? {} : { callStore: this.#callStore }),
         now: this.#now,
         sendFrame: async (frame) => {
           if (!connection) throw new Error('remote relay transport not connected');

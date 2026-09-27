@@ -10,6 +10,7 @@ import {
   encodeRemoteRelayMessage,
   type RemoteRelayFrame,
 } from '../src/remote-relay-protocol.js';
+import { InMemoryRemoteRelayCallStore } from '../src/remote-relay-call-store.js';
 
 const SECRET = Buffer.alloc(32, 0x33);
 const DEVICE = 'device_primary';
@@ -157,14 +158,11 @@ test('same call_id in a new authenticated message is never executed twice', asyn
 
   assert.equal(f.executor.calls.length, 1);
   const responses = decodeSent(f.sent);
-  assert.deepEqual(responses.at(-1)?.value, {
-    kind: 'tool.result',
-    ok: false,
-    error_class: 'DUPLICATE_CALL_NOT_REEXECUTED',
-  });
+  assert.deepEqual(responses.at(-1)?.value, responses[0]?.value,
+    'duplicate call returns the locally durable original result without re-execution');
 });
 
-test('transport failure after dispatch is not retried and a later duplicate is reported without re-execution', async () => {
+test('transport failure after dispatch is recovered from local result state without re-execution', async () => {
   const f = fixture();
   f.setFailSend(true);
   const frames = requestFrames('call_uncertain', {
@@ -193,8 +191,11 @@ test('transport failure after dispatch is not retried and a later duplicate is r
   assert.equal(f.executor.calls.length, 1, 'uncertain remote effect must never be blindly retried');
   assert.deepEqual(decodeSent(f.sent).at(-1)?.value, {
     kind: 'tool.result',
-    ok: false,
-    error_class: 'DUPLICATE_CALL_NOT_REEXECUTED',
+    ok: true,
+    result: {
+      content: [{ type: 'text', text: '{\"status\":\"ok\"}' }],
+      structuredContent: { status: 'ok' },
+    },
   });
 });
 
@@ -242,4 +243,86 @@ test('unexpected oversized executor result becomes a small RESULT_BOUND_REQUIRED
     ok: false,
     error_class: 'RESULT_BOUND_REQUIRED',
   });
+});
+
+test('relay.call.get recovers a completed result through a new device session without tool re-execution', async () => {
+  const store = new InMemoryRemoteRelayCallStore();
+  const executor = new FakeExecutor();
+  const firstSent: RemoteRelayFrame[] = [];
+  const first = new RemoteRelayDeviceSession({
+    secret: SECRET,
+    deviceId: DEVICE,
+    sessionId: 'session_first',
+    agentVersion: '1.2.3',
+    toolManifest: [{ name: 'health' }],
+    executor,
+    callStore: store,
+    sendFrame: async (frame) => { firstSent.push(frame); },
+    now: () => NOW,
+  });
+  for (const frame of encodeRemoteRelayMessage({
+    secret: SECRET,
+    deviceId: DEVICE,
+    sessionId: 'session_first',
+    callId: 'call_recover_target',
+    direction: 'relay_to_device',
+    payload: JSON.stringify({ kind: 'tool.call', tool: 'health', arguments: {} }),
+    expiresAt: NOW + 30_000,
+    messageId: 'message_recover_target',
+  })) {
+    await first.receive(frame);
+  }
+  assert.equal(executor.calls.length, 1);
+
+  const secondSent: RemoteRelayFrame[] = [];
+  const second = new RemoteRelayDeviceSession({
+    secret: SECRET,
+    deviceId: DEVICE,
+    sessionId: 'session_second',
+    agentVersion: '1.2.3',
+    toolManifest: [{ name: 'health' }],
+    executor,
+    callStore: store,
+    sendFrame: async (frame) => { secondSent.push(frame); },
+    now: () => NOW + 1_000,
+  });
+  for (const frame of encodeRemoteRelayMessage({
+    secret: SECRET,
+    deviceId: DEVICE,
+    sessionId: 'session_second',
+    callId: 'poll_recover_target',
+    direction: 'relay_to_device',
+    payload: JSON.stringify({
+      kind: 'relay.call.get',
+      target_call_id: 'call_recover_target',
+    }),
+    expiresAt: NOW + 31_000,
+    messageId: 'message_poll_recover_target',
+  })) {
+    const outcome = await second.receive(frame);
+    if (outcome.state !== 'PARTIAL') assert.equal(outcome.state, 'RECOVERED_CALL');
+  }
+
+  assert.equal(executor.calls.length, 1, 'poll recovery must not execute the original tool again');
+  const receiver = new RemoteRelayReassembler({
+    secret: SECRET,
+    deviceId: DEVICE,
+    sessionId: 'session_second',
+    expectedDirection: 'device_to_relay',
+    now: () => NOW + 1_000,
+  });
+  let recovered: unknown;
+  for (const frame of secondSent) {
+    const message = receiver.accept(frame);
+    if (message) recovered = JSON.parse(message.payload.toString('utf8'));
+  }
+  assert.deepEqual(recovered, {
+    kind: 'tool.result',
+    ok: true,
+    result: {
+      content: [{ type: 'text', text: '{\"status\":\"ok\"}' }],
+      structuredContent: { status: 'ok' },
+    },
+  });
+  store.close();
 });
