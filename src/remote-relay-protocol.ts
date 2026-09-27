@@ -45,6 +45,18 @@ const frameSchema = z.object({
 
 export type RemoteRelayFrame = z.infer<typeof frameSchema>;
 
+const devicePresenceSchema = z.object({
+  kind: z.literal('device.session'),
+  protocol_version: z.literal(REMOTE_RELAY_PROTOCOL_VERSION),
+  device_id_hash: hexHash,
+  session_id: opaqueId,
+  agent_version: z.string().min(1).max(64).regex(/^[A-Za-z0-9._+-]+$/),
+  catalog_hash: hexHash,
+  connected_at: z.number().int().positive(),
+}).strict();
+
+export type RemoteRelayDevicePresence = z.infer<typeof devicePresenceSchema>;
+
 function secretBuffer(secret: Uint8Array): Buffer {
   const value = Buffer.from(secret);
   if (value.length < 32 || value.length > 128) {
@@ -68,6 +80,29 @@ export function remoteRelayDeviceIdHash(secret: Uint8Array, deviceId: string): s
     .update('wag-relay-v1:device:')
     .update(deviceId, 'utf8')
     .digest('hex');
+}
+
+export function createRemoteRelayDevicePresence(input: {
+  secret: Uint8Array;
+  deviceId: string;
+  sessionId: string;
+  agentVersion: string;
+  catalogHash: string;
+  connectedAt: number;
+}): RemoteRelayDevicePresence {
+  return devicePresenceSchema.parse({
+    kind: 'device.session',
+    protocol_version: REMOTE_RELAY_PROTOCOL_VERSION,
+    device_id_hash: remoteRelayDeviceIdHash(input.secret, input.deviceId),
+    session_id: exactOpaqueId(input.sessionId, 'session id'),
+    agent_version: input.agentVersion,
+    catalog_hash: input.catalogHash,
+    connected_at: input.connectedAt,
+  });
+}
+
+export function parseRemoteRelayDevicePresence(raw: unknown): RemoteRelayDevicePresence {
+  return devicePresenceSchema.parse(raw);
 }
 
 export function remoteRelayTopic(secret: Uint8Array, deviceId: string): string {

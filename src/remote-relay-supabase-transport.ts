@@ -1,6 +1,9 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 
-import type { RemoteRelayFrame } from './remote-relay-protocol.js';
+import type {
+  RemoteRelayDevicePresence,
+  RemoteRelayFrame,
+} from './remote-relay-protocol.js';
 
 export type RemoteRelayConnectionClosedReason = 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT';
 
@@ -14,6 +17,7 @@ export interface RemoteRelayTransport {
   connect(input: {
     topic: string;
     onFrame(frame: unknown): void | Promise<void>;
+    presence?: RemoteRelayDevicePresence;
   }): Promise<RemoteRelayConnection>;
 }
 
@@ -104,6 +108,7 @@ export class SupabaseRemoteRelayTransport implements RemoteRelayTransport {
   async connect(input: {
     topic: string;
     onFrame(frame: unknown): void | Promise<void>;
+    presence?: RemoteRelayDevicePresence;
   }): Promise<RemoteRelayConnection> {
     if (!/^wag:[A-Za-z0-9_-]{40,}$/.test(input.topic)) {
       throw new Error('remote relay topic is invalid');
@@ -116,6 +121,9 @@ export class SupabaseRemoteRelayTransport implements RemoteRelayTransport {
           ack: true,
           self: false,
         },
+        ...(input.presence === undefined ? {} : {
+          presence: { key: input.presence.device_id_hash },
+        }),
       },
     });
     channel.on('broadcast', { event: 'frame' }, (event) => {
@@ -164,6 +172,12 @@ export class SupabaseRemoteRelayTransport implements RemoteRelayTransport {
 
     try {
       await connected;
+      if (input.presence !== undefined) {
+        const presenceStatus = await channel.track(input.presence);
+        if (presenceStatus !== 'ok') {
+          throw new Error('Supabase Realtime presence track failed');
+        }
+      }
     } catch (error) {
       await closeSupabaseChannel(client, channel);
       throw error;
@@ -185,6 +199,9 @@ export class SupabaseRemoteRelayTransport implements RemoteRelayTransport {
         if (closedByCaller) return;
         closedByCaller = true;
         subscribed = false;
+        if (input.presence !== undefined) {
+          await channel.untrack().catch(() => undefined);
+        }
         await closeSupabaseChannel(client, channel);
         resolveClosed('CLOSED');
       },

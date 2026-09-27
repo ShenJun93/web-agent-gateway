@@ -5,7 +5,9 @@ import {
   REMOTE_RELAY_LOGICAL_MESSAGE_MAX_BYTES,
   REMOTE_RELAY_SERIALIZED_FRAME_MAX_BYTES,
   RemoteRelayReassembler,
+  createRemoteRelayDevicePresence,
   encodeRemoteRelayMessage,
+  parseRemoteRelayDevicePresence,
   remoteRelayCatalogHash,
   remoteRelayDeviceIdHash,
   remoteRelayTopic,
@@ -37,6 +39,24 @@ test('remote relay derives stable opaque topic/device identifiers without exposi
   assert.equal(hash, remoteRelayDeviceIdHash(SECRET, DEVICE));
   assert.equal(topic.includes(DEVICE), false);
   assert.equal(hash.includes(DEVICE), false);
+});
+
+test('device Presence exposes only bounded session-discovery metadata and validates strictly', () => {
+  const presence = createRemoteRelayDevicePresence({
+    secret: SECRET,
+    deviceId: DEVICE,
+    sessionId: SESSION,
+    agentVersion: '1.2.3',
+    catalogHash: 'a'.repeat(64),
+    connectedAt: NOW,
+  });
+  assert.deepEqual(parseRemoteRelayDevicePresence(presence), presence);
+  assert.equal(presence.device_id_hash, remoteRelayDeviceIdHash(SECRET, DEVICE));
+  assert.equal(JSON.stringify(presence).includes(SECRET.toString('base64url')), false);
+  assert.throws(
+    () => parseRemoteRelayDevicePresence({ ...presence, session_id: 'bad session' }),
+    /invalid|parse|regex/i,
+  );
 });
 
 test('single-frame relay message authenticates metadata and round-trips exactly', () => {

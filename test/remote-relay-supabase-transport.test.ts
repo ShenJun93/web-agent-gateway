@@ -44,6 +44,8 @@ test('Supabase adapter subscribes public Broadcast, sends only frame events, and
   let subscribeCallback: ((status: string) => void) | null = null;
   let disconnectCalls = 0;
   let removeCalls = 0;
+  const tracked: unknown[] = [];
+  let untrackCalls = 0;
 
   const channel = {
     on(type: string, filter: { event: string }, callback: (event: { payload: unknown }) => void) {
@@ -61,6 +63,14 @@ test('Supabase adapter subscribes public Broadcast, sends only frame events, and
       sent.push(value);
       return 'ok';
     },
+    async track(value: unknown) {
+      tracked.push(value);
+      return 'ok';
+    },
+    async untrack() {
+      untrackCalls += 1;
+      return 'ok';
+    },
   } as unknown as RealtimeChannel;
 
   const client = {
@@ -70,6 +80,7 @@ test('Supabase adapter subscribes public Broadcast, sends only frame events, and
         config: {
           private: false,
           broadcast: { ack: true, self: false },
+          presence: { key: 'f'.repeat(64) },
         },
       });
       return channel;
@@ -93,12 +104,23 @@ test('Supabase adapter subscribes public Broadcast, sends only frame events, and
     clientFactory: () => client,
   });
   const topic = remoteRelayTopic(Buffer.alloc(32, 4), 'device_transport');
+  const presence = {
+    kind: 'device.session' as const,
+    protocol_version: 'wag-relay-v1' as const,
+    device_id_hash: 'f'.repeat(64),
+    session_id: 'session_transport',
+    agent_version: '1.0.0',
+    catalog_hash: 'e'.repeat(64),
+    connected_at: Date.now(),
+  };
   const connection = await transport.connect({
     topic,
+    presence,
     onFrame(frame) {
       received.push(frame);
     },
   });
+  assert.deepEqual(tracked, [presence]);
 
   assert.ok(subscribeCallback, 'channel subscription callback is installed');
   const [frame] = encodeRemoteRelayMessage({
@@ -125,6 +147,7 @@ test('Supabase adapter subscribes public Broadcast, sends only frame events, and
   assert.deepEqual(received, [frame]);
 
   await connection.close();
+  assert.equal(untrackCalls, 1);
   assert.equal(removeCalls, 1);
   assert.equal(disconnectCalls, 1);
   assert.equal(await connection.closed, 'CLOSED');

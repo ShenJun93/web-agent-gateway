@@ -28,6 +28,10 @@ const callGetSchema = z.object({
   target_call_id: z.string().min(8).max(160).regex(/^[A-Za-z0-9._:-]+$/),
 }).strict();
 
+const sessionProbeSchema = z.object({
+  kind: z.literal('relay.session.probe'),
+}).strict();
+
 export interface RemoteRelayToolExecutionPort {
   callTool(input: {
     tool: string;
@@ -58,6 +62,7 @@ export type RemoteRelayDeviceReceiveOutcome =
   | { state: 'INVALID_REQUEST'; callId: string }
   | { state: 'DUPLICATE_CALL'; callId: string }
   | { state: 'RECOVERED_CALL'; callId: string }
+  | { state: 'SESSION_PROBED'; callId: string }
   | { state: 'EXECUTED'; callId: string; resultSent: boolean };
 
 export class RemoteRelayDeviceSession {
@@ -92,13 +97,7 @@ export class RemoteRelayDeviceSession {
   }
 
   async announce(): Promise<void> {
-    await this.#sendJson('session_hello', {
-      kind: 'device.hello',
-      protocol_version: REMOTE_RELAY_PROTOCOL_VERSION,
-      agent_version: this.#agentVersion,
-      catalog_hash: this.catalogHash,
-      session_id: this.sessionId,
-    });
+    await this.#sendHello('session_hello');
   }
 
   async receive(frame: unknown): Promise<RemoteRelayDeviceReceiveOutcome> {
@@ -112,6 +111,12 @@ export class RemoteRelayDeviceSession {
     } catch {
       await this.#sendBoundedError(callId, 'INVALID_REQUEST');
       return { state: 'INVALID_REQUEST', callId };
+    }
+
+    const probe = sessionProbeSchema.safeParse(parsed);
+    if (probe.success) {
+      await this.#sendHello(callId);
+      return { state: 'SESSION_PROBED', callId };
     }
 
     const poll = callGetSchema.safeParse(parsed);
@@ -211,6 +216,16 @@ export class RemoteRelayDeviceSession {
       state: stored.state === 'UNKNOWN' ? 'UNKNOWN' : 'RUNNING',
     });
     return { state: 'RECOVERED_CALL', callId: pollCallId };
+  }
+
+  async #sendHello(callId: string): Promise<void> {
+    await this.#sendJson(callId, {
+      kind: 'device.hello',
+      protocol_version: REMOTE_RELAY_PROTOCOL_VERSION,
+      agent_version: this.#agentVersion,
+      catalog_hash: this.catalogHash,
+      session_id: this.sessionId,
+    });
   }
 
   async #sendBoundedError(callId: string, errorClass: string): Promise<void> {

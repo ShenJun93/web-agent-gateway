@@ -42,12 +42,11 @@ class FakeConnection implements RemoteRelayConnection {
 class FakeTransport implements RemoteRelayTransport {
   readonly connections: FakeConnection[] = [];
   readonly topics: string[] = [];
+  readonly presences: unknown[] = [];
 
-  async connect(input: {
-    topic: string;
-    onFrame(frame: unknown): void | Promise<void>;
-  }): Promise<RemoteRelayConnection> {
+  async connect(input: Parameters<RemoteRelayTransport['connect']>[0]): Promise<RemoteRelayConnection> {
     this.topics.push(input.topic);
+    this.presences.push(input.presence);
     const connection = new FakeConnection();
     this.connections.push(connection);
     return connection;
@@ -109,6 +108,12 @@ test('device agent creates a new cryptographic session after channel loss and ne
   assert.notEqual(connected[0]!.sessionId, connected[1]!.sessionId);
   assert.deepEqual(delays, [500]);
   assert.equal(transport.topics[0], transport.topics[1], 'topic stays device-bound while session id rotates');
+  const firstPresence = transport.presences[0] as { session_id?: string; catalog_hash?: string };
+  const secondPresence = transport.presences[1] as { session_id?: string; catalog_hash?: string };
+  assert.equal(firstPresence.session_id, connected[0]!.sessionId);
+  assert.equal(secondPresence.session_id, connected[1]!.sessionId);
+  assert.notEqual(firstPresence.session_id, secondPresence.session_id);
+  assert.equal(firstPresence.catalog_hash, secondPresence.catalog_hash);
   assert.ok(transport.connections[0]!.sent.length > 0, 'first session announces after subscribe');
   assert.ok(transport.connections[1]!.sent.length > 0, 'replacement session announces after reconnect');
 

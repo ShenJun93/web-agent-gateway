@@ -110,6 +110,26 @@ test('device session announces version, protocol session and catalog hash over e
   });
 });
 
+test('encrypted session probe returns authenticated hello without invoking a tool', async () => {
+  const f = fixture();
+  for (const frame of requestFrames('probe_session', {
+    kind: 'relay.session.probe',
+  }, 'message_probe_session')) {
+    const outcome = await f.session.receive(frame);
+    if (outcome.state !== 'PARTIAL') {
+      assert.deepEqual(outcome, { state: 'SESSION_PROBED', callId: 'probe_session' });
+    }
+  }
+  assert.equal(f.executor.calls.length, 0);
+  assert.deepEqual(decodeSent(f.sent).at(-1)?.value, {
+    kind: 'device.hello',
+    protocol_version: 'wag-relay-v1',
+    agent_version: '1.2.3',
+    catalog_hash: f.session.catalogHash,
+    session_id: SESSION,
+  });
+});
+
 test('authenticated tool call dispatches exactly once and returns bounded structured result', async () => {
   const f = fixture();
   const frames = requestFrames('call_health', {

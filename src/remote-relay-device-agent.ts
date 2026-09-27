@@ -2,7 +2,10 @@ import {
   RemoteRelayDeviceSession,
   type RemoteRelayToolExecutionPort,
 } from './remote-relay-device-session.js';
-import { remoteRelayTopic } from './remote-relay-protocol.js';
+import {
+  createRemoteRelayDevicePresence,
+  remoteRelayTopic,
+} from './remote-relay-protocol.js';
 import type { RemoteRelayCallStore } from './remote-relay-call-store.js';
 import type {
   RemoteRelayConnection,
@@ -100,6 +103,14 @@ export class RemoteRelayDeviceAgent {
       try {
         connection = await this.#transport.connect({
           topic,
+          presence: createRemoteRelayDevicePresence({
+            secret: this.#secret,
+            deviceId: this.#deviceId,
+            sessionId: session.sessionId,
+            agentVersion: this.#agentVersion,
+            catalogHash: session.catalogHash,
+            connectedAt: this.#now(),
+          }),
           onFrame: (frame) => {
             if (receiveFrame) {
               receiveFrame(frame);
