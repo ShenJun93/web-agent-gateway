@@ -11,7 +11,13 @@ param(
 
     if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt 7) {
         $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
-        $forward = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-Case',$Case,'-RecoveryTimeoutSeconds',$RecoveryTimeoutSeconds,'-InitialDelaySeconds',$InitialDelaySeconds)
+        $forward = @(
+            '-NoLogo','-NoProfile','-ExecutionPolicy','Bypass',
+            '-File',$PSCommandPath,
+            '-Case',$Case,
+            '-RecoveryTimeoutSeconds',$RecoveryTimeoutSeconds,
+            '-InitialDelaySeconds',$InitialDelaySeconds
+        )
         if ($Output) { $forward += @('-Output',$Output) }
         & $pwsh @forward
         exit $LASTEXITCODE
@@ -38,7 +44,9 @@ param(
             $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2
             return $r.StatusCode -ge 200 -and $r.StatusCode -lt 300
         }
-        catch { return $false }
+        catch {
+            return $false
+        }
     }
 
     function Test-StackReady {
@@ -60,14 +68,38 @@ param(
         if (-not (Test-Path -LiteralPath $supervisorPidFile -PathType Leaf)) {
             throw 'M1_SUPERVISOR_NOT_RUNNING: pid file missing'
         }
+
         $pidValue = 0
         if (-not [int]::TryParse((Get-Content -LiteralPath $supervisorPidFile -Raw).Trim(), [ref]$pidValue)) {
             throw 'M1_SUPERVISOR_NOT_RUNNING: pid invalid'
         }
-        if (-not (Get-Process -Id $pidValue -ErrorAction SilentlyContinue)) {
+
+        $proc = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $pidValue) -ErrorAction SilentlyContinue
+        if ($null -eq $proc) {
             throw 'M1_SUPERVISOR_NOT_RUNNING: process missing'
         }
+        if ([string]$proc.CommandLine -notmatch 'Start-WagLocalSupervisor\.ps1') {
+            throw 'M1_SUPERVISOR_NOT_RUNNING: pid is not the WAG supervisor'
+        }
+
         return $pidValue
+    }
+
+    function Find-TunnelPid {
+        $lines = @(& wsl.exe -e pgrep -f tunnel-client 2>$null)
+        foreach ($line in $lines) {
+            $candidate = 0
+            if (-not [int]::TryParse(([string]$line).Trim(), [ref]$candidate)) {
+                continue
+            }
+            if ($candidate -le 0) { continue }
+
+            $argsText = ((@(& wsl.exe -e ps -p $candidate -o args= 2>$null)) -join ' ').Trim()
+            if ($argsText -eq '/home/pacmap/tools/openai-tunnel-client/v0.0.14/tunnel-client run --profile web-agent-gateway') {
+                return $candidate
+            }
+        }
+        return 0
     }
 
     $results = New-Object System.Collections.Generic.List[object]
@@ -107,16 +139,25 @@ param(
         Invoke-Case 'stale-pid-reconciliation' {
             Set-Content -LiteralPath $launcherPidFile -Value '2147483001' -NoNewline
             Set-Content -LiteralPath $devspacePidFile -Value '2147483002' -NoNewline
-            $out1 = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tunnelLauncher -EnsureDevSpaceOnly 2>&1
+
+            & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tunnelLauncher -EnsureDevSpaceOnly | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'DevSpace reconciliation failed' }
-            $out2 = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $starter 2>&1
+
+            & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $starter | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'starter stale-pid recovery failed' }
+
             $devPid = [int](Get-Content -LiteralPath $devspacePidFile -Raw)
-            if (-not (Get-Process -Id $devPid -ErrorAction SilentlyContinue)) { throw 'DevSpace pid receipt not reconciled' }
+            if (-not (Get-Process -Id $devPid -ErrorAction SilentlyContinue)) {
+                throw 'DevSpace pid receipt not reconciled'
+            }
+
             if (Test-Path -LiteralPath $launcherPidFile) {
                 $launcherPid = [int](Get-Content -LiteralPath $launcherPidFile -Raw)
-                if (-not (Get-Process -Id $launcherPid -ErrorAction SilentlyContinue)) { throw 'stale launcher pid remained' }
+                if (-not (Get-Process -Id $launcherPid -ErrorAction SilentlyContinue)) {
+                    throw 'stale launcher pid remained'
+                }
             }
+
             'Stale WAG-owned PID receipts were cleared/reconciled without killing unknown processes.'
         }
 
@@ -125,9 +166,11 @@ param(
             Add-Content -LiteralPath $installed -Value '# m1 drift fixture'
             & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installer -NoAutostart -NoStart | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'installer repair failed' }
+
             $expected = (Get-FileHash -LiteralPath (Join-Path $repo 'scripts\wag-local-start.ps1') -Algorithm SHA256).Hash
             $actual = (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash
             if ($expected -ne $actual) { throw 'launcher drift not repaired' }
+
             'Canonical installer repaired a modified WAG-owned launcher.'
         }
 
@@ -135,19 +178,29 @@ param(
             $startup = [Environment]::GetFolderPath('Startup')
             $shortcut = Join-Path $startup 'WAG Local.lnk'
             $backup = Join-Path $startup 'WAG Local.m1-backup.lnk'
+
             Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
-            if (Test-Path -LiteralPath $shortcut) { Move-Item -LiteralPath $shortcut -Destination $backup -Force }
+            if (Test-Path -LiteralPath $shortcut) {
+                Move-Item -LiteralPath $shortcut -Destination $backup -Force
+            }
+
             try {
                 & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installer -NoStart | Out-Null
                 if ($LASTEXITCODE -ne 0) { throw 'autostart repair installer failed' }
-                if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { throw 'startup shortcut not restored' }
+                if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
+                    throw 'startup shortcut not restored'
+                }
+
                 $shell = New-Object -ComObject WScript.Shell
                 $link = $shell.CreateShortcut($shortcut)
-                if ($link.Arguments -notmatch 'Start-WagLocalSupervisor\.ps1') { throw 'startup target is not supervisor' }
+                if ($link.Arguments -notmatch 'Start-WagLocalSupervisor\.ps1') {
+                    throw 'startup target is not supervisor'
+                }
             }
             finally {
                 Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
             }
+
             'Per-user autostart registration was restored to the recovery supervisor.'
         }
     }
@@ -155,15 +208,20 @@ param(
     function Run-TunnelCrash {
         Invoke-Case 'live-tunnel-crash-recovery' {
             $supervisorPid = Assert-Supervisor
-            $probe = & wsl.exe -e bash -lc 'ss -ltnp 2>/dev/null | grep -E "127\.0\.0\.1:8080[[:space:]]" || true'
-            $m = [regex]::Match(($probe -join "`n"), 'pid=(\d+)')
-            if (-not $m.Success) { throw 'owned tunnel listener pid not found' }
-            $tunnelPid = [int]$m.Groups[1].Value
-            $cmd = (& wsl.exe -e bash -lc ("tr '\0' ' ' < /proc/" + $tunnelPid + "/cmdline 2>/dev/null")) -join ''
-            if ($cmd -notmatch 'tunnel-client' -or $cmd -notmatch 'web-agent-gateway') { throw '8080 listener is not the expected WAG tunnel-client' }
+            $tunnelPid = Find-TunnelPid
+            if ($tunnelPid -le 0) {
+                throw 'owned tunnel-client pid not found'
+            }
+
             & wsl.exe -e kill -TERM $tunnelPid
-            if ($LASTEXITCODE -ne 0) { throw 'failed to terminate owned tunnel-client' }
-            if (-not (Wait-StackReady $RecoveryTimeoutSeconds)) { throw 'supervisor did not restore tunnel within timeout' }
+            if ($LASTEXITCODE -ne 0) {
+                throw 'failed to terminate owned tunnel-client'
+            }
+
+            if (-not (Wait-StackReady $RecoveryTimeoutSeconds)) {
+                throw 'supervisor did not restore tunnel within timeout'
+            }
+
             "supervisorPid=$supervisorPid tunnelPid=$tunnelPid recovered=true"
         }
     }
@@ -171,32 +229,51 @@ param(
     function Run-DevSpaceCrash {
         Invoke-Case 'live-devspace-crash-recovery' {
             $supervisorPid = Assert-Supervisor
-            $listener = Get-NetTCPConnection -State Listen -LocalPort 7677 -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($null -eq $listener) { throw 'DevSpace listener missing before injection' }
+            $listener = Get-NetTCPConnection -State Listen -LocalPort 7677 -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($null -eq $listener) {
+                throw 'DevSpace listener missing before injection'
+            }
+
             $devPid = [int]$listener.OwningProcess
-            $proc = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $devPid)
+            $proc = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $devPid) -ErrorAction Stop
             $cmd = [string]$proc.CommandLine
-            if ($cmd -notmatch 'DevSpace-Pin-33d6d0b' -or $cmd -notmatch 'dist[/\\]cli\.js' -or $cmd -notmatch 'serve') {
+            if ($cmd -notmatch 'DevSpace-Pin-33d6d0b' -or
+                $cmd -notmatch 'dist[/\\]cli\.js' -or
+                $cmd -notmatch 'serve') {
                 throw '7677 listener is not the expected managed DevSpace process'
             }
+
             Stop-Process -Id $devPid -Force
-            if (-not (Wait-StackReady $RecoveryTimeoutSeconds)) { throw 'supervisor did not restore DevSpace+tunnel within timeout' }
+
+            if (-not (Wait-StackReady $RecoveryTimeoutSeconds)) {
+                throw 'supervisor did not restore DevSpace+tunnel within timeout'
+            }
+
             "supervisorPid=$supervisorPid devspacePid=$devPid recovered=true"
         }
     }
 
-    if (-not (Test-StackReady)) { throw 'M1_PRECONDITION_FAILED: WAG stack is not Ready before injection' }
-    if ($InitialDelaySeconds -gt 0) { Start-Sleep -Seconds $InitialDelaySeconds }
+    if (-not (Test-StackReady)) {
+        throw 'M1_PRECONDITION_FAILED: WAG stack is not Ready before injection'
+    }
+    if ($InitialDelaySeconds -gt 0) {
+        Start-Sleep -Seconds $InitialDelaySeconds
+    }
 
     switch ($Case) {
         'AllSafe' { Run-SafeBatch }
         'TunnelCrash' { Run-TunnelCrash }
         'DevSpaceCrash' { Run-DevSpaceCrash }
-        'AllDestructive' { Run-TunnelCrash; Run-DevSpaceCrash }
+        'AllDestructive' {
+            Run-TunnelCrash
+            Run-DevSpaceCrash
+        }
     }
 
     $failedCount = ($results | Where-Object { -not $_.pass } | Measure-Object).Count
     $pass = $failedCount -eq 0
+
     $receipt = [ordered]@{
         schema = 'WAG_LOCAL_M1_RECOVERY_V1'
         generatedAtUtc = [DateTime]::UtcNow.ToString('o')
@@ -204,8 +281,12 @@ param(
         pass = $pass
         results = $results.ToArray()
     }
+
     $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Output -Encoding utf8
     Write-Output "M1_RECEIPT=$Output"
     Write-Output "M1_PASS=$pass"
-    if (-not $pass) { exit 2 }
+
+    if (-not $pass) {
+        exit 2
+    }
 }
