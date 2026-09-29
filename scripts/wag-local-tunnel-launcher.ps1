@@ -238,7 +238,7 @@ param(
             'fi'
             'echo "STARTING_WAG_TUNNEL_FOREGROUND=True"'
             'exec "$exe" run --profile "$profile"'
-        ) -join [Environment]::NewLine
+        ) -join "`n"
 
         $bash | wsl.exe bash -s
         if ($LASTEXITCODE -ne 0) { throw "STOP: tunnel-client exited with code $LASTEXITCODE" }

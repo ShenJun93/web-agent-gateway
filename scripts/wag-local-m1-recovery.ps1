@@ -2,7 +2,8 @@ param(
     [ValidateSet('AllSafe','TunnelCrash','DevSpaceCrash','AllDestructive')]
     [string]$Case = 'AllSafe',
     [string]$Output = '',
-    [int]$RecoveryTimeoutSeconds = 120
+    [int]$RecoveryTimeoutSeconds = 120,
+    [int]$InitialDelaySeconds = 0
 )
 
 & {
@@ -10,7 +11,7 @@ param(
 
     if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt 7) {
         $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
-        $forward = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-Case',$Case,'-RecoveryTimeoutSeconds',$RecoveryTimeoutSeconds)
+        $forward = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-Case',$Case,'-RecoveryTimeoutSeconds',$RecoveryTimeoutSeconds,'-InitialDelaySeconds',$InitialDelaySeconds)
         if ($Output) { $forward += @('-Output',$Output) }
         & $pwsh @forward
         exit $LASTEXITCODE
@@ -185,6 +186,7 @@ param(
     }
 
     if (-not (Test-StackReady)) { throw 'M1_PRECONDITION_FAILED: WAG stack is not Ready before injection' }
+    if ($InitialDelaySeconds -gt 0) { Start-Sleep -Seconds $InitialDelaySeconds }
 
     switch ($Case) {
         'AllSafe' { Run-SafeBatch }
