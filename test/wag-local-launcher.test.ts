@@ -27,6 +27,10 @@ test('local tunnel launcher is self-healing and exact-pinned', () => {
   assert.ok(tunnel.includes(pin.revision), 'launcher DevSpace revision must match devspace-pin.json');
   assert.match(tunnel, /port 7677 is already owned/);
   assert.match(tunnel, /WAG_TUNNEL_RECOVERY=NOT_NEEDED/);
+  assert.match(tunnel, /ToBase64String/);
+  assert.match(tunnel, /base64 -d \| bash/);
+  assert.doesNotMatch(tunnel, /wslpath/);
+  assert.doesNotMatch(tunnel, /\$bash \| wsl\.exe bash -s/);
 });
 
 test('one-click starter re-enters PowerShell 7 and waits for tunnel health', () => {

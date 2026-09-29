@@ -240,8 +240,24 @@ param(
             'exec "$exe" run --profile "$profile"'
         ) -join "`n"
 
-        $bash | wsl.exe bash -s
-        if ($LASTEXITCODE -ne 0) { throw "STOP: tunnel-client exited with code $LASTEXITCODE" }
+        $bashLf = $bash.Replace("`r`n", "`n").Replace("`r", '') + "`n"
+
+        $utf8 = [Text.UTF8Encoding]::new($false)
+
+        $bashB64 = [Convert]::ToBase64String(
+            $utf8.GetBytes($bashLf)
+        )
+
+        $runBash =
+            "printf '%s' '$bashB64' | base64 -d | bash"
+
+        & wsl.exe --exec bash -lc $runBash
+
+        $tunnelExit = $LASTEXITCODE
+
+        if ($tunnelExit -ne 0) {
+            throw "STOP: tunnel-client exited with code $tunnelExit"
+        }
     }
     finally {
         Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
