@@ -1,5 +1,6 @@
 param(
-    [int]$StartupTimeoutSeconds = 45
+    [int]$StartupTimeoutSeconds = 60,
+    [int]$Attempts = 4
 )
 
 & {
@@ -7,7 +8,7 @@ param(
 
     if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt 7) {
         $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
-        & $pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -StartupTimeoutSeconds $StartupTimeoutSeconds
+        & $pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -StartupTimeoutSeconds $StartupTimeoutSeconds -Attempts $Attempts
         exit $LASTEXITCODE
     }
 
@@ -18,6 +19,13 @@ param(
     $stderr = Join-Path $logs 'wag-local.stderr.log'
     $pidFile = Join-Path $logs 'wag-local-launcher.pid'
 
+    New-Item -ItemType Directory -Path $logs -Force | Out-Null
+
+    function Write-Diagnostic([string]$Code, [string]$Message) {
+        Write-Output "WAG_DIAGNOSTIC_CODE=$Code"
+        Write-Output "WAG_DIAGNOSTIC_MESSAGE=$Message"
+    }
+
     function Test-HttpOk([string]$Url) {
         try {
             $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2
@@ -26,47 +34,101 @@ param(
         catch { return $false }
     }
 
-    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { throw "STOP: missing WAG tunnel launcher: $launcher" }
+    function Test-Ready {
+        return (Test-HttpOk 'http://127.0.0.1:8080/readyz') -and
+            (Test-HttpOk 'http://127.0.0.1:7677/.well-known/oauth-authorization-server')
+    }
 
-    if (Test-HttpOk 'http://127.0.0.1:8080') {
+    function Read-LivePid([string]$Path) {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+        $value = 0
+        if (-not [int]::TryParse((Get-Content -LiteralPath $Path -Raw).Trim(), [ref]$value)) {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+            Write-Output 'WAG_STALE_PID_CLEARED=launcher-invalid'
+            return $null
+        }
+        if (Get-Process -Id $value -ErrorAction SilentlyContinue) { return $value }
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        Write-Output "WAG_STALE_PID_CLEARED=launcher-$value"
+        return $null
+    }
+
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+        Write-Diagnostic 'WAG_LAUNCHER_MISSING' 'The canonical local tunnel launcher is missing.'
+        throw "STOP: missing WAG tunnel launcher: $launcher"
+    }
+
+    $existingPid = Read-LivePid $pidFile
+
+    if (Test-Ready) {
         Write-Output 'WAG_LOCAL_READY=True'
         Write-Output 'WAG_LOCAL_RECOVERY=NOT_NEEDED'
         return
     }
 
-    New-Item -ItemType Directory -Path $logs -Force | Out-Null
-    Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(10, $StartupTimeoutSeconds))
 
-    $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
-    $startArgs = @{
-        FilePath = $pwsh
-        ArgumentList = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$launcher)
-        WindowStyle = 'Hidden'
-        RedirectStandardOutput = $stdout
-        RedirectStandardError = $stderr
-        PassThru = $true
+    if ($existingPid) {
+        Write-Output "WAG_LOCAL_EXISTING_LAUNCHER_PID=$existingPid"
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if (Test-Ready) {
+                Write-Output 'WAG_LOCAL_READY=True'
+                Write-Output 'WAG_LOCAL_RECOVERY=EXISTING_LAUNCHER'
+                return
+            }
+            if (-not (Get-Process -Id $existingPid -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
     }
-    $process = Start-Process @startArgs
-    [IO.File]::WriteAllText($pidFile, [string]$process.Id)
 
-    $deadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if (Test-HttpOk 'http://127.0.0.1:8080') {
-            Write-Output 'WAG_LOCAL_READY=True'
-            Write-Output "WAG_LOCAL_LAUNCHER_PID=$($process.Id)"
-            if (Test-HttpOk 'http://127.0.0.1:7677/.well-known/oauth-authorization-server') { Write-Output 'DEVSPACE_READY=True' }
-            return
+    $attemptCount = [Math]::Max(1, $Attempts)
+    for ($attempt = 1; $attempt -le $attemptCount; $attempt++) {
+        if ([DateTime]::UtcNow -ge $deadline) { break }
+
+        Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+        $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
+        $startArgs = @{
+            FilePath = $pwsh
+            ArgumentList = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$launcher)
+            WindowStyle = 'Hidden'
+            RedirectStandardOutput = $stdout
+            RedirectStandardError = $stderr
+            PassThru = $true
         }
-        if ($process.HasExited) {
-            Write-Output 'WAG_LOCAL_READY=False'
-            Write-Output "WAG_LOCAL_EXIT_CODE=$($process.ExitCode)"
-            Get-Content -LiteralPath $stderr -Tail 30 -ErrorAction SilentlyContinue
-            throw 'STOP: WAG local launcher exited before tunnel became ready'
+        $process = Start-Process @startArgs
+        [IO.File]::WriteAllText($pidFile, [string]$process.Id)
+        Write-Output "WAG_LOCAL_START_ATTEMPT=$attempt"
+        Write-Output "WAG_LOCAL_LAUNCHER_PID=$($process.Id)"
+
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if (Test-Ready) {
+                Write-Output 'WAG_LOCAL_READY=True'
+                Write-Output "WAG_LOCAL_RECOVERY=STARTED_ATTEMPT_$attempt"
+                return
+            }
+            if ($process.HasExited) { break }
+            Start-Sleep -Milliseconds 500
         }
-        Start-Sleep -Milliseconds 500
+
+        if (-not $process.HasExited) {
+            Write-Diagnostic 'WAG_START_TIMEOUT' 'The local launcher stayed alive but WAG did not become executable before the deadline.'
+            break
+        }
+
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        Write-Output "WAG_LOCAL_EXIT_CODE=$($process.ExitCode)"
+        Get-Content -LiteralPath $stderr -Tail 30 -ErrorAction SilentlyContinue
+
+        if ($attempt -lt $attemptCount -and [DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Seconds ([Math]::Min(8, 1 + ($attempt * 2)))
+        }
     }
 
     Write-Output 'WAG_LOCAL_READY=False'
+    Write-Diagnostic 'WAG_TUNNEL_START_FAILED' 'WAG Local could not restore an executable DevSpace+tunnel path within the bounded retry window.'
     Get-Content -LiteralPath $stderr -Tail 30 -ErrorAction SilentlyContinue
     throw "STOP: WAG local did not become ready within $StartupTimeoutSeconds seconds"
 }

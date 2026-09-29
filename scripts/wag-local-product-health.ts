@@ -240,10 +240,12 @@ export async function collectReceipt() {
   const expectedLaunchers = {
     tunnel: join(repoRoot, 'scripts', 'wag-local-tunnel-launcher.ps1'),
     start: join(repoRoot, 'scripts', 'wag-local-start.ps1'),
+    supervisor: join(repoRoot, 'scripts', 'wag-local-supervisor.ps1'),
   };
   const installedLaunchers = {
     tunnel: join(wagLocal, 'Start-WagLocalTunnel.ps1'),
     start: join(wagLocal, 'Start-WagLocal.ps1'),
+    supervisor: join(wagLocal, 'Start-WagLocalSupervisor.ps1'),
   };
   const launcherHashes = {
     tunnel: {
@@ -254,12 +256,18 @@ export async function collectReceipt() {
       expected: sha256File(expectedLaunchers.start),
       installed: sha256File(installedLaunchers.start),
     },
+    supervisor: {
+      expected: sha256File(expectedLaunchers.supervisor),
+      installed: sha256File(installedLaunchers.supervisor),
+    },
   };
   const launchersMatch =
     launcherHashes.tunnel.expected !== null
     && launcherHashes.tunnel.expected === launcherHashes.tunnel.installed
     && launcherHashes.start.expected !== null
-    && launcherHashes.start.expected === launcherHashes.start.installed;
+    && launcherHashes.start.expected === launcherHashes.start.installed
+    && launcherHashes.supervisor.expected !== null
+    && launcherHashes.supervisor.expected === launcherHashes.supervisor.installed;
   if (!launchersMatch) diagnostics.push({
     code: 'WAG_LAUNCHER_DRIFT',
     severity: 'ERROR',
@@ -272,13 +280,51 @@ export async function collectReceipt() {
     '-Command',
     "[Environment]::GetFolderPath('Startup')",
   ]);
-  const startupShortcutPresent = startupDir.ok
-    && startupDir.stdout.length > 0
-    && existsSync(join(startupDir.stdout, 'WAG Local.lnk'));
+  const startupShortcut = startupDir.ok && startupDir.stdout.length > 0
+    ? join(startupDir.stdout, 'WAG Local.lnk')
+    : null;
+  const startupShortcutPresent = startupShortcut !== null && existsSync(startupShortcut);
   if (!startupShortcutPresent) diagnostics.push({
     code: 'WAG_AUTOSTART_MISSING',
     severity: 'WARN',
     message: 'The per-user WAG Local Startup shortcut is missing.',
+  });
+
+  let startupTargetsSupervisor = false;
+  if (startupShortcutPresent && startupShortcut) {
+    const shortcut = runOptional('pwsh.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-Command',
+      "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('" + startupShortcut.replaceAll("'", "''") + "');$s.TargetPath; $s.Arguments",
+    ]);
+    startupTargetsSupervisor = shortcut.ok && shortcut.stdout.includes('Start-WagLocalSupervisor.ps1');
+    if (!startupTargetsSupervisor) diagnostics.push({
+      code: 'WAG_AUTOSTART_TARGET_DRIFT',
+      severity: 'ERROR',
+      message: 'The WAG Local Startup shortcut does not target the supervisor.',
+    });
+  }
+
+  const supervisorPidPath = join(wagLocal, 'logs', 'wag-local-supervisor.pid');
+  let supervisorPid: number | null = null;
+  let supervisorRunning = false;
+  if (existsSync(supervisorPidPath)) {
+    const parsed = Number(readFileSync(supervisorPidPath, 'utf8').trim());
+    if (Number.isSafeInteger(parsed) && parsed > 0) {
+      supervisorPid = parsed;
+      supervisorRunning = runOptional('pwsh.exe', [
+        '-NoLogo',
+        '-NoProfile',
+        '-Command',
+        "if(Get-Process -Id " + String(parsed) + " -ErrorAction SilentlyContinue){exit 0}else{exit 1}",
+      ]).ok;
+    }
+  }
+  if (!supervisorRunning) diagnostics.push({
+    code: 'WAG_SUPERVISOR_NOT_RUNNING',
+    severity: 'WARN',
+    message: 'The WAG Local recovery supervisor is not currently running.',
   });
 
   const devspaceDir = join(wagLocal, 'DevSpace-Pin-' + pin.revision.slice(0, 7));
@@ -395,6 +441,9 @@ export async function collectReceipt() {
       matchCanonical: launchersMatch,
       hashes: launcherHashes,
       startupShortcutPresent,
+      startupTargetsSupervisor,
+      supervisorPid,
+      supervisorRunning,
     },
     devspace: {
       expectedRevision: pin.revision,

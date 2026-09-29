@@ -24,8 +24,10 @@ const Wrapper = '/home/pacmap/bin/wag-mcp-stdio.sh';
 const LocalBase = join(process.env.LOCALAPPDATA ?? '', 'WAG-Local');
 const Launcher = join(LocalBase, 'Start-WagLocalTunnel.ps1');
 const Starter = join(LocalBase, 'Start-WagLocal.ps1');
+const Supervisor = join(LocalBase, 'Start-WagLocalSupervisor.ps1');
 const LauncherSource = join(Repo, 'scripts', 'wag-local-tunnel-launcher.ps1');
 const StarterSource = join(Repo, 'scripts', 'wag-local-start.ps1');
+const SupervisorSource = join(Repo, 'scripts', 'wag-local-supervisor.ps1');
 const UrlFile = 'E:\\AI-BROWSER\\wag-acceptance\\devspace-state\\wag-mutation.sqlite.operator-url';
 const Capability = 'autonomous-local-runtime-v1';
 
@@ -156,7 +158,7 @@ function windowsPidAlive(pid: number): boolean {
 
 function syncLocalLaunchers(): void {
   if (!process.env.LOCALAPPDATA) throw new Error('LOCALAPPDATA is required for WAG launchers');
-  for (const [source, target] of [[LauncherSource, Launcher], [StarterSource, Starter]] as const) {
+  for (const [source, target] of [[LauncherSource, Launcher], [StarterSource, Starter], [SupervisorSource, Supervisor]] as const) {
     if (!existsSync(source)) throw new Error('Canonical WAG launcher missing: ' + source);
     mkdirSync(dirname(target), { recursive: true });
     cpSync(source, target);

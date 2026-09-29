@@ -31,7 +31,7 @@ param(
     $devspaceRepo = 'https://github.com/Waishnav/devspace.git'
     $pnpmVersion = '11.25.0'
     $devspaceDiscovery = 'http://127.0.0.1:7677/.well-known/oauth-authorization-server'
-    $tunnelHealth = 'http://127.0.0.1:8080'
+    $tunnelHealth = 'http://127.0.0.1:8080/readyz'
 
     New-Item -ItemType Directory -Path $logs -Force | Out-Null
 
@@ -40,6 +40,11 @@ param(
     }
     if (-not (Test-Path -LiteralPath (Join-Path $devspaceConfig 'config.jsonc') -PathType Leaf)) {
         throw "STOP: missing DevSpace config: $devspaceConfig"
+    }
+
+    function Write-Diagnostic([string]$Code, [string]$Message) {
+        Write-Output "WAG_DIAGNOSTIC_CODE=$Code"
+        Write-Output "WAG_DIAGNOSTIC_MESSAGE=$Message"
     }
 
     function Reveal-SecureString([Security.SecureString]$Secure) {
@@ -105,13 +110,18 @@ param(
 
     function Ensure-DevSpace {
         if (Test-HttpOk $devspaceDiscovery) {
+            $observedPid = Get-ListeningPid 7677
+            if ($observedPid) { [IO.File]::WriteAllText($devspacePidFile, [string]$observedPid) }
             Write-Output 'DEVSPACE_READY=True'
             Write-Output 'DEVSPACE_RECOVERY=NOT_NEEDED'
             return
         }
 
         $existingPid = Get-ListeningPid 7677
-        if ($existingPid) { throw "STOP: port 7677 is already owned by PID $existingPid but DevSpace OAuth discovery is unhealthy" }
+        if ($existingPid) {
+            Write-Diagnostic 'WAG_DEVSPACE_PORT_COLLISION' "Port 7677 is occupied by PID $existingPid while DevSpace discovery is unhealthy."
+            throw "STOP: port 7677 is already owned by PID $existingPid but DevSpace OAuth discovery is unhealthy"
+        }
 
         Ensure-DevSpacePin
 
@@ -169,7 +179,22 @@ param(
             return
         }
         $existingTunnelPid = Get-ListeningPid 8080
-        if ($existingTunnelPid) { throw "STOP: port 8080 is already owned by PID $existingTunnelPid but WAG tunnel health is unavailable" }
+        if ($existingTunnelPid) {
+            Write-Diagnostic 'WAG_TUNNEL_PORT_COLLISION' "Port 8080 is occupied by PID $existingTunnelPid while tunnel readiness is unavailable."
+            throw "STOP: port 8080 is already owned by PID $existingTunnelPid but WAG tunnel health is unavailable"
+        }
+    }
+
+    & wsl.exe -e true
+    if ($LASTEXITCODE -ne 0) {
+        Write-Diagnostic 'WAG_WSL_UNAVAILABLE' 'WSL could not execute the WAG tunnel preflight.'
+        throw 'STOP: WSL unavailable'
+    }
+
+    & wsl.exe -e bash -lc 'test -x /home/pacmap/tools/openai-tunnel-client/v0.0.14/tunnel-client'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Diagnostic 'WAG_TUNNEL_CLIENT_MISSING' 'The pinned tunnel-client binary is missing or not executable.'
+        throw 'STOP: tunnel-client missing or not executable'
     }
 
     $controlSecure = ConvertTo-SecureString (Get-Content -LiteralPath $controlFile -Raw)
