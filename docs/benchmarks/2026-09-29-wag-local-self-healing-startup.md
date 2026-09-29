@@ -44,7 +44,9 @@ The local launch path is now repository-owned instead of an unversioned machine-
   - otherwise starts the tunnel launcher and waits for `:8080` health.
 
 - `scripts/install-wag-local-launchers.ps1`
-  - installs the canonical scripts into `%LOCALAPPDATA%\WAG-Local`.
+  - installs the canonical scripts into `%LOCALAPPDATA%\WAG-Local`;
+  - creates a per-user Windows Startup shortcut to the idempotent self-healing starter by default;
+  - supports `-NoAutostart` for environments that do not want login startup.
 
 - runtime promotion scripts now refresh the local launcher copies before starting a promoted
   runtime, preventing machine-local launcher drift.

@@ -8,11 +8,13 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tunnelPath = join(root, 'scripts', 'wag-local-tunnel-launcher.ps1');
 const starterPath = join(root, 'scripts', 'wag-local-start.ps1');
+const installerPath = join(root, 'scripts', 'install-wag-local-launchers.ps1');
 const pin = JSON.parse(readFileSync(join(root, 'docs', 'benchmarks', 'devspace-pin.json'), 'utf8')) as {
   revision: string;
 };
 const tunnel = readFileSync(tunnelPath, 'utf8');
 const starter = readFileSync(starterPath, 'utf8');
+const installer = readFileSync(installerPath, 'utf8');
 
 test('local tunnel launcher is self-healing and exact-pinned', () => {
   assert.match(tunnel, /Get-Command pwsh\.exe/);
@@ -32,8 +34,15 @@ test('one-click starter re-enters PowerShell 7 and waits for tunnel health', () 
   assert.match(starter, /WAG_LOCAL_READY=True/);
 });
 
+test('installer wires user-login autostart to the self-healing starter', () => {
+  assert.match(installer, /GetFolderPath\('Startup'\)/);
+  assert.match(installer, /WAG Local\.lnk/);
+  assert.match(installer, /Start-WagLocal\.ps1/);
+  assert.match(installer, /WScript\.Shell/);
+});
+
 test('PowerShell launchers parse', { skip: process.platform !== 'win32' }, () => {
-  for (const path of [tunnelPath, starterPath]) {
+  for (const path of [tunnelPath, starterPath, installerPath]) {
     const script = "$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile('" +
       path.replaceAll("'", "''") +
       "',[ref]$t,[ref]$e)|Out-Null;if($e.Count){$e|ForEach-Object{$_.Message};exit 1}";
