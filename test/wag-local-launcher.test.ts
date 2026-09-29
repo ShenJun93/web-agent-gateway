@@ -39,6 +39,11 @@ test('one-click starter re-enters PowerShell 7 and waits for tunnel health', () 
   assert.match(starter, /Start-WagLocalTunnel\.ps1/);
   assert.match(starter, /http:\/\/127\.0\.0\.1:8080/);
   assert.match(starter, /WAG_LOCAL_READY=True/);
+  assert.match(starter, /Write-Host 'WAG_STALE_PID_CLEARED=launcher-invalid'/);
+  assert.ok(starter.includes('Write-Host "WAG_STALE_PID_CLEARED=launcher-$value"'));
+  assert.doesNotMatch(starter, /Write-Output ['\"]WAG_STALE_PID_CLEARED=/);
+  assert.match(starter, /-EnsureDevSpaceOnly/);
+  assert.match(starter, /WAG_LOCAL_RECOVERY=DEVSPACE_REPAIRED/);
 });
 
 test('installer wires user-login autostart to the recovery supervisor', () => {

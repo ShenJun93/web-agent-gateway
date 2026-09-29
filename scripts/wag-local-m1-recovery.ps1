@@ -236,11 +236,18 @@ param(
             }
 
             $devPid = [int]$listener.OwningProcess
+            $receiptPid = 0
+            if (-not (Test-Path -LiteralPath $devspacePidFile -PathType Leaf) -or
+                -not [int]::TryParse((Get-Content -LiteralPath $devspacePidFile -Raw).Trim(), [ref]$receiptPid) -or
+                $receiptPid -ne $devPid) {
+                throw '7677 listener does not match the WAG-owned DevSpace pid receipt'
+            }
+
             $proc = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $devPid) -ErrorAction Stop
             $cmd = [string]$proc.CommandLine
-            if ($cmd -notmatch 'DevSpace-Pin-33d6d0b' -or
+            if ([string]$proc.Name -ne 'node.exe' -or
                 $cmd -notmatch 'dist[/\\]cli\.js' -or
-                $cmd -notmatch 'serve') {
+                $cmd -notmatch '\bserve\b') {
                 throw '7677 listener is not the expected managed DevSpace process'
             }
 

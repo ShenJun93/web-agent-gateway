@@ -34,8 +34,12 @@ param(
         catch { return $false }
     }
 
+    function Test-TunnelReady {
+        return Test-HttpOk 'http://127.0.0.1:8080/readyz'
+    }
+
     function Test-Ready {
-        return (Test-HttpOk 'http://127.0.0.1:8080/readyz') -and
+        return (Test-TunnelReady) -and
             (Test-HttpOk 'http://127.0.0.1:7677/.well-known/oauth-authorization-server')
     }
 
@@ -44,12 +48,12 @@ param(
         $value = 0
         if (-not [int]::TryParse((Get-Content -LiteralPath $Path -Raw).Trim(), [ref]$value)) {
             Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-            Write-Output 'WAG_STALE_PID_CLEARED=launcher-invalid'
+            Write-Host 'WAG_STALE_PID_CLEARED=launcher-invalid'
             return $null
         }
         if (Get-Process -Id $value -ErrorAction SilentlyContinue) { return $value }
         Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-        Write-Output "WAG_STALE_PID_CLEARED=launcher-$value"
+        Write-Host "WAG_STALE_PID_CLEARED=launcher-$value"
         return $null
     }
 
@@ -64,6 +68,19 @@ param(
         Write-Output 'WAG_LOCAL_READY=True'
         Write-Output 'WAG_LOCAL_RECOVERY=NOT_NEEDED'
         return
+    }
+
+    if ($existingPid -and (Test-TunnelReady)) {
+        Write-Output "WAG_LOCAL_DEVSPACE_REPAIR_WITH_EXISTING_TUNNEL=$existingPid"
+        $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
+        & $pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcher -EnsureDevSpaceOnly
+        $repairExit = $LASTEXITCODE
+        if ($repairExit -eq 0 -and (Test-Ready)) {
+            Write-Output 'WAG_LOCAL_READY=True'
+            Write-Output 'WAG_LOCAL_RECOVERY=DEVSPACE_REPAIRED'
+            return
+        }
+        Write-Diagnostic 'WAG_DEVSPACE_REPAIR_FAILED' "Existing tunnel stayed ready but DevSpace repair exited $repairExit."
     }
 
     $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(10, $StartupTimeoutSeconds))
