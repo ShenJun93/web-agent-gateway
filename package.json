@@ -26,7 +26,9 @@
     "test:delegation-mutations": "tsx scripts/delegation-mutation-battery.ts",
     "test:delegation-e2e": "npm run build && tsx --test --test-concurrency=1 test/delegated-dispatch-e2e.acceptance.ts",
     "mcp:tunnel-profile": "tsx scripts/prepare-direct-mcp-tunnel.ts",
-    "wag:install-local": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/install-wag-local-launchers.ps1"
+    "wag:install-local": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/install-wag-local-launchers.ps1",
+    "wag:health": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/wag-local-product-health.ps1",
+    "test:wag-product": "tsx --test test/wag-local-product-health.test.ts test/wag-local-launcher.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
