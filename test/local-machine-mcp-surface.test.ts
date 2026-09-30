@@ -33,6 +33,16 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
       data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
     }),
     extractPdf: async (id, path, options) => record('extractPdf', id, path, options),
+    inspectDocx: async (id, path, options) => record('inspectDocx', id, path, options),
+    createDocx: async (id, path, paragraphs) => record('createDocx', id, path, paragraphs),
+    replaceDocxText: async (id, path, sha, find, replacement, replaceAll) =>
+      record('replaceDocxText', id, path, sha, find, replacement, replaceAll),
+    inspectXlsx: async (id, path, options) => record('inspectXlsx', id, path, options),
+    createXlsx: async (id, path, sheets) => record('createXlsx', id, path, sheets),
+    setXlsxCells: async (id, path, sha, sheet, cells) =>
+      record('setXlsxCells', id, path, sha, sheet, cells),
+    createPdf: async (id, path, pages, options) => record('createPdf', id, path, pages, options),
+    overlayPdfText: async (id, path, sha, options) => record('overlayPdfText', id, path, sha, options),
     mkdir: async (id, path) => record('mkdir', id, path),
     move: async (id, from, to) => record('move', id, from, to),
     delete: async (id, path, recursive) => record('delete', id, path, recursive),
@@ -111,6 +121,63 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     max_pages: 4,
     max_chars: 12000,
   })).name, 'extractPdf');
+
+  const sha = 'a'.repeat(64);
+  assert.equal((await invoke('machine.docx.inspect', {
+    workspace_id: workspaceId,
+    path: 'document.docx',
+    max_paragraphs: 10,
+    max_chars: 2048,
+  })).name, 'inspectDocx');
+  assert.equal((await invoke('machine.docx.create', {
+    workspace_id: workspaceId,
+    path: 'new.docx',
+    paragraphs: ['one', 'two'],
+  })).name, 'createDocx');
+  assert.equal((await invoke('machine.docx.replace_text', {
+    workspace_id: workspaceId,
+    path: 'document.docx',
+    expected_sha256: sha,
+    find: 'old',
+    replacement: 'new',
+    replace_all: false,
+  })).name, 'replaceDocxText');
+  assert.equal((await invoke('machine.xlsx.inspect', {
+    workspace_id: workspaceId,
+    path: 'sheet.xlsx',
+    max_cells: 20,
+    max_chars: 4096,
+  })).name, 'inspectXlsx');
+  assert.equal((await invoke('machine.xlsx.create', {
+    workspace_id: workspaceId,
+    path: 'new.xlsx',
+    sheets: [{ name: 'Data', cells: [{ cell: 'A1', value: 'x' }] }],
+  })).name, 'createXlsx');
+  assert.equal((await invoke('machine.xlsx.set_cells', {
+    workspace_id: workspaceId,
+    path: 'sheet.xlsx',
+    expected_sha256: sha,
+    sheet: 'Data',
+    cells: [{ cell: 'B2', value: 42 }],
+  })).name, 'setXlsxCells');
+  assert.equal((await invoke('machine.pdf.create', {
+    workspace_id: workspaceId,
+    path: 'new.pdf',
+    pages: ['page one'],
+    font_size: 12,
+    margin: 54,
+  })).name, 'createPdf');
+  assert.equal((await invoke('machine.pdf.overlay_text', {
+    workspace_id: workspaceId,
+    path: 'document.pdf',
+    expected_sha256: sha,
+    page: 1,
+    text: 'overlay',
+    x: 72,
+    y: 700,
+    font_size: 12,
+  })).name, 'overlayPdfText');
+
   assert.equal((await invoke('machine.search', {
     workspace_id: workspaceId,
     query: 'needle',

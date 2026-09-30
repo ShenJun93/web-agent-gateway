@@ -22,6 +22,10 @@ import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
 import { sanitizeLocalMachineEnvironment } from './environment-policy.js';
 import { describeReadableUtf8Text } from './file-read-metadata.js';
 import {
+  createLocalMachineDocumentContext,
+  type LocalMachineDocumentContext,
+} from './local-machine-document-runtime.js';
+import {
   assertGenericExecutionRemoteEffectPolicy,
   nextTerminalRemoteEffectPolicyBuffer,
 } from './remote-effect-policy.js';
@@ -316,7 +320,7 @@ interface PersistentTerminalStatus {
   port: number;
 }
 
-export interface LocalMachineContext {
+export interface LocalMachineContext extends LocalMachineDocumentContext {
   open(path: string): Promise<object>;
   describe(workspaceId: string): Promise<object>;
   list(workspaceId: string, path?: string, maxEntries?: number, depth?: number): Promise<object>;
@@ -962,6 +966,11 @@ export function createLocalMachineContext(options: {
 
 
   return {
+    ...createLocalMachineDocumentContext({
+      resolveRoot: async (workspaceId) => (await ownedWorkspace(workspaceId)).workspace.canonicalRoot,
+      assertEffectAllowed,
+    }),
+
     async open(path) {
       const requested = path.trim();
       if (!requested || !isAbsolute(requested) || requested.includes('\0')) {

@@ -679,6 +679,147 @@ export function createGatewayMcpServer(
       }),
     ));
 
+    registerTool('machine.docx.inspect', {
+      description: 'Inspect bounded DOCX text and structure inside one caller-owned local-machine workspace with secret redaction.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        max_paragraphs: z.number().int().min(1).max(1_000).optional(),
+        max_chars: z.number().int().min(1).max(256 * 1024).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path, max_paragraphs, max_chars }) => toolResult(
+      await machineContext.inspectDocx(workspace_id, path, {
+        ...(max_paragraphs === undefined ? {} : { maxParagraphs: max_paragraphs }),
+        ...(max_chars === undefined ? {} : { maxChars: max_chars }),
+      }),
+    ));
+
+    registerTool('machine.docx.create', {
+      description: 'Create one bounded DOCX at a new path inside a caller-owned local-machine workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        paragraphs: z.array(z.string().max(64 * 1024)).min(1).max(1_000),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, paragraphs }) => toolResult(
+      await machineContext.createDocx(workspace_id, path, paragraphs),
+    ));
+
+    registerTool('machine.docx.replace_text', {
+      description: 'Replace bounded text in one DOCX using an exact SHA-256 precondition and atomic same-path replacement.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        expected_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        find: z.string().min(1).max(8 * 1024),
+        replacement: z.string().max(64 * 1024),
+        replace_all: z.boolean().optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, expected_sha256, find, replacement, replace_all }) => toolResult(
+      await machineContext.replaceDocxText(
+        workspace_id,
+        path,
+        expected_sha256,
+        find,
+        replacement,
+        replace_all,
+      ),
+    ));
+
+    registerTool('machine.xlsx.inspect', {
+      description: 'Inspect bounded XLSX sheets/cells inside one caller-owned local-machine workspace with secret redaction.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        max_cells: z.number().int().min(1).max(5_000).optional(),
+        max_chars: z.number().int().min(1).max(256 * 1024).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path, max_cells, max_chars }) => toolResult(
+      await machineContext.inspectXlsx(workspace_id, path, {
+        ...(max_cells === undefined ? {} : { maxCells: max_cells }),
+        ...(max_chars === undefined ? {} : { maxChars: max_chars }),
+      }),
+    ));
+
+    registerTool('machine.xlsx.create', {
+      description: 'Create one bounded XLSX at a new path inside a caller-owned local-machine workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        sheets: z.array(z.object({
+          name: z.string().min(1).max(31),
+          cells: z.array(z.object({
+            cell: z.string().min(2).max(10),
+            value: z.union([z.string().max(32 * 1024), z.number().finite(), z.boolean(), z.null()]),
+          }).strict()).max(5_000).optional(),
+        }).strict()).min(1).max(100),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, sheets }) => toolResult(
+      await machineContext.createXlsx(workspace_id, path, sheets),
+    ));
+
+    registerTool('machine.xlsx.set_cells', {
+      description: 'Set bounded XLSX cell values using an exact SHA-256 precondition and atomic same-path replacement.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        expected_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        sheet: z.string().min(1).max(31),
+        cells: z.array(z.object({
+          cell: z.string().min(2).max(10),
+          value: z.union([z.string().max(32 * 1024), z.number().finite(), z.boolean(), z.null()]),
+        }).strict()).min(1).max(5_000),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, expected_sha256, sheet, cells }) => toolResult(
+      await machineContext.setXlsxCells(workspace_id, path, expected_sha256, sheet, cells),
+    ));
+
+    registerTool('machine.pdf.create', {
+      description: 'Create one bounded text PDF at a new path inside a caller-owned local-machine workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        pages: z.array(z.string().max(1024 * 1024)).min(1).max(100),
+        font_size: z.number().min(6).max(48).optional(),
+        margin: z.number().min(18).max(144).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, pages, font_size, margin }) => toolResult(
+      await machineContext.createPdf(workspace_id, path, pages, {
+        ...(font_size === undefined ? {} : { fontSize: font_size }),
+        ...(margin === undefined ? {} : { margin }),
+      }),
+    ));
+
+    registerTool('machine.pdf.overlay_text', {
+      description: 'Overlay bounded text onto one PDF using an exact SHA-256 precondition and atomic same-path replacement.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        expected_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        page: z.number().int().min(1).max(1_000_000),
+        text: z.string().max(64 * 1024),
+        x: z.number().finite().optional(),
+        y: z.number().finite().optional(),
+        font_size: z.number().min(6).max(48).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    }, async ({ workspace_id, path, expected_sha256, page, text, x, y, font_size }) => toolResult(
+      await machineContext.overlayPdfText(workspace_id, path, expected_sha256, {
+        page,
+        text,
+        ...(x === undefined ? {} : { x }),
+        ...(y === undefined ? {} : { y }),
+        ...(font_size === undefined ? {} : { fontSize: font_size }),
+      }),
+    ));
+
     registerTool('machine.search', {
       description: 'Search bounded UTF-8 files recursively inside one caller-owned local-machine workspace.',
       inputSchema: z.object({

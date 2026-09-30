@@ -571,6 +571,14 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
       };
     },
     async extractPdf() { throw new Error('not used'); },
+    async inspectDocx() { throw new Error('not used'); },
+    async createDocx() { throw new Error('not used'); },
+    async replaceDocxText() { throw new Error('not used'); },
+    async inspectXlsx() { throw new Error('not used'); },
+    async createXlsx() { throw new Error('not used'); },
+    async setXlsxCells() { throw new Error('not used'); },
+    async createPdf() { throw new Error('not used'); },
+    async overlayPdfText() { throw new Error('not used'); },
     async commandRun(workspaceId, argv) {
       assert.equal(workspaceId, machineWorkspaceId);
       machineCalls.push('command:' + JSON.stringify(argv));
