@@ -65,7 +65,13 @@ Receipts are stored under:
 
 M1_SERVICE_AND_LOCAL_DESTRUCTIVE_RECOVERY = PASS
 M1_PROCESS_ISOLATED_NETWORK_AND_AUTH_FAILURES = PASS
+M1_FULL_COLD_START_RECOVERY = PASS
 
-M1_FULL_COLD_START_RECOVERY = NOT_MEASURED
+Real Windows reboot acceptance passed on 2026-09-30 with receipt:
+`%LOCALAPPDATA%\WAG-Local\receipts\wag-local-m1-reboot-v1.json`
 
-Do not promote this to full M1 acceptance until a real Windows reboot/cold-boot receipt passes. The process-isolated network/auth evidence does not by itself prove host-wide network-loss recovery.
+The passing receipt observed a new Windows boot and verified the login startup shortcut, DevSpace discovery on 7677, tunnel readiness and health on 8080, exact supervisor identity, exact DevSpace pin, expected acceptance-repo HEAD, and zero leftover DevSpace backup directories.
+
+The one-shot verifier first auto-launched after login but hit a locale-sensitive DateTime parsing defect in the verifier itself. WAG had already recovered and was reachable with the full 53-tool MCP surface before that verifier defect was repaired. The parser was changed to accept a deserialized DateTime directly or use invariant round-trip parsing, then the verifier was rerun against the same observed reboot and passed all checks. No user shell intervention was required for WAG recovery; the user action was only Restart and normal login.
+
+The process-isolated network/auth evidence remains scoped as stated above; it does not claim a host-wide network outage was induced.

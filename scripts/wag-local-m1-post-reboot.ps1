@@ -69,7 +69,17 @@ param(
         }
 
         $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
-        $preBoot = [DateTime]::Parse([string]$marker.preBootTimeUtc).ToUniversalTime()
+        $preBootValue = $marker.preBootTimeUtc
+        if ($preBootValue -is [DateTime]) {
+            $preBoot = ([DateTime]$preBootValue).ToUniversalTime()
+        }
+        else {
+            $preBoot = [DateTime]::Parse(
+                [string]$preBootValue,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind
+            ).ToUniversalTime()
+        }
         $postBoot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
         $rebootObserved = $postBoot -gt $preBoot.AddSeconds(5)
 
