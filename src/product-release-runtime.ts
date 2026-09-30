@@ -309,10 +309,12 @@ function switchLegacyBaseline(releaseRoot: string, marker: LegacyBaselineMarker)
   if (!existsSync(wrapperSnapshot)) throw new Error('WAG_LEGACY_BASELINE_WRAPPER_MISSING');
 
   const tunnelClient = readTunnelClientPath();
+  stopOwnedSupervisor();
   restoreLegacyLaunchers(releaseRoot);
   writeWrapperAtomic(marker.wrapperPath, readFileSync(wrapperSnapshot, 'utf8'));
   stopExactTunnel(tunnelClient);
   startInstalledStack();
+  startOwnedSupervisor();
 }
 
 function installLaunchersFrom(releaseRoot: string): void {
@@ -323,6 +325,25 @@ function installLaunchersFrom(releaseRoot: string): void {
     '-File', installer, '-NoStart',
   ], releaseRoot, 60_000)) {
     throw new Error('WAG_RELEASE_LAUNCHER_INSTALL_FAILED');
+  }
+}
+
+
+function startOwnedSupervisor(): void {
+  const supervisor = join(installRoot, 'Start-WagLocalSupervisor.ps1');
+  if (!existsSync(supervisor)) throw new Error('WAG_RELEASE_SUPERVISOR_MISSING');
+
+  const escaped = supervisor.replaceAll("'", "''");
+  const command = [
+    "$p=Start-Process -FilePath 'pwsh.exe' -ArgumentList @(",
+    "'-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File','" + escaped + "'",
+    ') -WindowStyle Hidden -PassThru;',
+    'if($null -eq $p){exit 2};',
+    'Start-Sleep -Milliseconds 500;',
+    'if($p.HasExited -and $p.ExitCode -ne 0){exit $p.ExitCode}',
+  ].join('');
+  if (!runOptional('pwsh.exe', ['-NoLogo', '-NoProfile', '-Command', command]).ok) {
+    throw new Error('WAG_RELEASE_SUPERVISOR_START_FAILED');
   }
 }
 
@@ -353,10 +374,12 @@ function switchInstalledRuntime(releaseRoot: string | null): Promise<void> {
 
   const binding = loadBinding();
   const tunnelClient = readTunnelClientPath();
+  stopOwnedSupervisor();
   installLaunchersFrom(releaseRoot);
   writeWrapperAtomic(binding.wrapperPath, buildWrapper(releaseRoot, binding.configPath));
   stopExactTunnel(tunnelClient);
   startInstalledStack();
+  startOwnedSupervisor();
   return Promise.resolve();
 }
 

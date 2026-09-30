@@ -106,10 +106,12 @@ The Windows runtime adapter additionally:
 
 - validates the currently bound WSL profile/wrapper;
 - requires the pinned exact tunnel-client path;
+- stops only the exact WAG recovery supervisor before a switch so it cannot race the updater;
 - installs launchers from the candidate;
 - writes the WSL wrapper through a unique `mktemp` file followed by atomic rename;
 - stops only the exact matching WAG tunnel-client process;
 - uses the bounded installed starter;
+- restarts the exact WAG recovery supervisor after the stack is Ready;
 - requires the product doctor to report `READY` after switching.
 
 ## Explicit rollback
