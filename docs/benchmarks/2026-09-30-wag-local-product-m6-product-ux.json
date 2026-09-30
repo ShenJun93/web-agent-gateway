@@ -1,0 +1,61 @@
+{
+  "schema": "WAG_LOCAL_M6_PRODUCT_UX_V1",
+  "generatedAtUtc": "2026-09-30T09:21:00Z",
+  "branch": "feat/wag-local-m6-product-ux-v1",
+  "baseHead": "dba8406087a4574f18499b2c7774097b19149ef3",
+  "pass": true,
+  "verdict": {
+    "productUx": "PASS",
+    "livePromotion": "NOT_EXECUTED"
+  },
+  "surface": {
+    "addedTools": [
+      "product.config.get",
+      "product.config.update",
+      "product.activity.recent",
+      "product.usage",
+      "product.help"
+    ],
+    "expectedFullLiveToolCountAfterPromotion": 68,
+    "currentPrimaryLiveToolCount": 53
+  },
+  "safeSettings": {
+    "writableKeys": [
+      "update_channel",
+      "auto_check_updates"
+    ],
+    "casRevision": true,
+    "crossProcessLock": true,
+    "atomicSiblingRename": true,
+    "authorityConfigMutation": false,
+    "unknownSettingsFailClosed": true
+  },
+  "privacy": {
+    "exposesAllowedRootPaths": false,
+    "exposesCredentials": false,
+    "exposesSecretEnvNames": false,
+    "exposesGitPushUrls": false,
+    "activityStoresArguments": false,
+    "activityStoresPaths": false,
+    "activityStoresContent": false,
+    "activityStoresOutput": false
+  },
+  "acceptance": {
+    "productUxTests": "5/5 PASS",
+    "directMcpReadiness": "10/10 PASS",
+    "wagProduct": "49/49 PASS",
+    "dcReplacementAcceptance": "1/1 PASS",
+    "projectedToolCount": 68,
+    "typecheck": "PASS",
+    "build": "PASS",
+    "packageDryRun": "PASS",
+    "diffCheck": "PASS"
+  },
+  "remainingM6": [
+    "update-discovery"
+  ],
+  "deferred": [
+    "bounded-in-memory-execution",
+    "hosted-multi-device-management"
+  ]
+}

@@ -96,6 +96,7 @@ export async function projectedTools(
       capabilityContext: refusing(),
       machineContext: refusing(),
       diagnosticsContext: new ToolUsageDiagnostics(),
+      productContext: refusing(),
       ...(engineering.browser === undefined ? {} : { browserContext: refusing() }),
       ...(engineering.desktop === undefined ? {} : { desktopContext: refusing() }),
       ...(engineering.gitCommit === undefined

@@ -100,6 +100,11 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['result.chunk', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['diagnostics.recent', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['diagnostics.usage', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.config.get', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.config.update', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['product.activity.recent', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.usage', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.help', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
 ];
 
 /** Names WAG derives locally and must never accept from a tool argument (ADR-0015, ADR-0020). */
@@ -158,6 +163,13 @@ async function openDirectSurface(t: TestContext) {
       get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
     }) as never,
     diagnosticsContext: new ToolUsageDiagnostics(),
+    productContext: {
+      configGet: () => ({}),
+      configUpdate: () => ({}),
+      activityRecent: () => ({}),
+      usage: () => ({}),
+      help: () => ({}),
+    },
   });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

@@ -11,6 +11,7 @@ import {
 } from './server.js';
 import type { LocalMachineContext } from './local-machine-runtime.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import type { ProductMcpContext } from './product-ux.js';
 import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
 import type { DesktopMcpContext } from './desktop-harness/desktop-mcp-runtime.js';
 
@@ -26,6 +27,7 @@ export interface GatewayStdioServerOptions {
   capabilityContext?: CapabilityMcpContext;
   machineContext?: LocalMachineContext;
   diagnosticsContext?: ToolUsageDiagnostics;
+  productContext?: ProductMcpContext;
   browserContext?: BrowserMcpContext;
   desktopContext?: DesktopMcpContext;
 }
@@ -46,6 +48,7 @@ export function createPrivateGatewayMcpServer(
     capabilityContext: options.capabilityContext,
     machineContext: options.machineContext,
     diagnosticsContext: options.diagnosticsContext,
+    productContext: options.productContext,
     browserContext: options.browserContext,
     desktopContext: options.desktopContext,
   });

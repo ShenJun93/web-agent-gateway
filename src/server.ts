@@ -7,6 +7,7 @@ import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-p
 import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageCorrelation, ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import type { ProductMcpContext } from './product-ux.js';
 import { RelayResultChunkStore } from './relay-result-chunks.js';
 import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
 import type { DesktopMcpContext } from './desktop-harness/desktop-mcp-runtime.js';
@@ -481,7 +482,7 @@ export interface CapabilityMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, browserContext, desktopContext }: {
+  { inspect, mutationContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, productContext, browserContext, desktopContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     gitCommitContext?: GitCommitMcpContext;
@@ -490,6 +491,7 @@ export function createGatewayMcpServer(
     capabilityContext?: CapabilityMcpContext;
     machineContext?: LocalMachineContext;
     diagnosticsContext?: ToolUsageDiagnostics;
+    productContext?: ProductMcpContext;
     browserContext?: BrowserMcpContext;
     desktopContext?: DesktopMcpContext;
   } = {},
@@ -1529,6 +1531,57 @@ export function createGatewayMcpServer(
       inputSchema: z.object({}).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async () => toolResult(diagnosticsContext.usage()));
+  }
+
+  if (productContext) {
+    registerTool('product.config.get', {
+      description: 'Return safe WAG product settings and capability summaries without paths, credentials, secret references, or raw authority configuration.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async () => toolResult(productContext.configGet()));
+
+    registerTool('product.config.update', {
+      description: 'CAS-update only safe WAG product preferences. This cannot widen roots, execution, Git, browser, credential, or remote authority.',
+      inputSchema: z.object({
+        expected_revision: z.string().regex(/^[a-f0-9]{64}$/),
+        update_channel: z.enum(['stable', 'beta', 'development']).optional(),
+        auto_check_updates: z.boolean().optional(),
+      }).strict().refine(
+        (value) => value.update_channel !== undefined || value.auto_check_updates !== undefined,
+        { message: 'At least one product setting change is required' },
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ expected_revision, update_channel, auto_check_updates }) => toolResult(
+      productContext.configUpdate({
+        expectedRevision: expected_revision,
+        ...(update_channel === undefined ? {} : { updateChannel: update_channel }),
+        ...(auto_check_updates === undefined ? {} : { autoCheckUpdates: auto_check_updates }),
+      }),
+    ));
+
+    registerTool('product.activity.recent', {
+      description: 'Return bounded sanitized recent WAG tool activity. Arguments, paths, file content, command text, output, and credentials are not retained.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+        after_sequence: z.number().int().min(0).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ limit, after_sequence }) => toolResult(productContext.activityRecent({
+      ...(limit === undefined ? {} : { limit }),
+      ...(after_sequence === undefined ? {} : { afterSequence: after_sequence }),
+    })));
+
+    registerTool('product.usage', {
+      description: 'Return bounded sanitized rolling WAG usage totals grouped by tool name.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async () => toolResult(productContext.usage()));
+
+    registerTool('product.help', {
+      description: 'Return concise WAG Local workflow discovery without performing any local, remote, browser, process, Git, or filesystem action.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async () => toolResult(productContext.help()));
   }
 
   return server;

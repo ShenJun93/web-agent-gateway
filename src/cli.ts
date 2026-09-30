@@ -9,6 +9,7 @@ import {
   type BrowserOperatorRuntime,
 } from './browser-operator-runtime.js';
 import { loadPrivateGatewayConfig, type PrivateGatewayConfig } from './private-config.js';
+import { createProductMcpContext } from './product-ux.js';
 import {
   runProductRollback,
   runProductUninstall,
@@ -197,6 +198,14 @@ export async function main(
     return serveRemoteRelayDevice(deps, config, runtime, engineering);
   }
 
+  const productContext = engineering.diagnosticsContext === undefined
+    ? undefined
+    : createProductMcpContext({
+        configPath: parsed.configPath,
+        config,
+        diagnostics: engineering.diagnosticsContext,
+      });
+
   let stdio: GatewayStdioServer;
   try {
     stdio = await deps.startStdio({
@@ -211,6 +220,7 @@ export async function main(
       capabilityContext: engineering.capabilityContext,
       machineContext: engineering.machineContext,
       diagnosticsContext: engineering.diagnosticsContext,
+      productContext,
       browserContext: engineering.browserContext,
       desktopContext: engineering.desktopContext,
     });

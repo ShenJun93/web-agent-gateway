@@ -82,6 +82,11 @@ const EXTENDED_TOOLS = [
   'result.chunk',
   'diagnostics.recent',
   'diagnostics.usage',
+  'product.config.get',
+  'product.config.update',
+  'product.activity.recent',
+  'product.usage',
+  'product.help',
 ];
 
 /**
