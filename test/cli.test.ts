@@ -82,7 +82,24 @@ test('setup dispatches without --config and maps only bounded installer argument
   assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
 });
 
-test('doctor emits only health JSON and closes the private runtime', async () => {
+test('product doctor dispatches without --config and maps only bounded arguments', async () => {
+  const h = makeCliHarness();
+  let observed: string[] | undefined;
+  h.deps.runDoctor = async (args) => { observed = args; return 0; };
+  const output = resolve('doctor.json');
+  assert.equal(await main(['doctor', '--repair', '--output', output], h.deps), 0);
+  assert.deepEqual(observed, ['-Repair', '-Output', output]);
+  assert.equal(h.stderr.text(), '');
+
+  const bad = makeCliHarness();
+  let called = 0;
+  bad.deps.runDoctor = async () => { called += 1; return 0; };
+  assert.equal(await main(['doctor', '--unknown'], bad.deps), 1);
+  assert.equal(called, 0);
+  assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
+});
+
+test('doctor --config preserves the legacy runtime preflight', async () => {
   const h = makeCliHarness();
   const code = await main(['doctor', '--config', resolve('private.json')], h.deps);
   assert.equal(code, 0);

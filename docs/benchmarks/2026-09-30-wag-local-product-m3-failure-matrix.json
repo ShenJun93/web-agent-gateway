@@ -1,0 +1,122 @@
+{
+  "schema": "WAG_LOCAL_M3_FAILURE_MATRIX_V1",
+  "generatedAtUtc": "2026-09-30T03:50:00Z",
+  "pass": true,
+  "basis": {
+    "m1RecoveryEvidence": "docs/benchmarks/2026-09-30-wag-local-product-m1-local-destructive.md",
+    "destructiveReplayInM3": false,
+    "note": "M3 maps the already-accepted M1 failure families to stable diagnosis/remediation paths; destructive failures were not re-injected through the live ChatGPT connector."
+  },
+  "cases": [
+    {
+      "case": "normal-windows-login",
+      "diagnostic": "READY",
+      "remediation": "none"
+    },
+    {
+      "case": "tunnel-stopped-devspace-alive",
+      "diagnostic": "WAG_TUNNEL_NOT_READY",
+      "remediation": "wag doctor --repair starts WAG-owned local stack when external prerequisites are healthy"
+    },
+    {
+      "case": "devspace-stopped",
+      "diagnostic": "WAG_DEVSPACE_DISCOVERY_DOWN",
+      "remediation": "wag doctor --repair invokes exact managed DevSpace repair when port 7677 is free"
+    },
+    {
+      "case": "devspace-and-tunnel-stopped",
+      "diagnostic": "WAG_DEVSPACE_DISCOVERY_DOWN + WAG_TUNNEL_NOT_READY",
+      "remediation": "bounded DevSpace repair then WAG-owned stack recovery"
+    },
+    {
+      "case": "managed-devspace-checkout-deleted",
+      "diagnostic": "WAG_DEVSPACE_PIN_MISSING",
+      "remediation": "wag doctor --repair restores exact managed checkout when port 7677 is free"
+    },
+    {
+      "case": "stale-launcher-pid",
+      "diagnostic": "WAG_STALE_LAUNCHER_PID",
+      "remediation": "remove exact stale WAG-owned PID receipt"
+    },
+    {
+      "case": "stale-devspace-pid",
+      "diagnostic": "WAG_STALE_DEVSPACE_PID",
+      "remediation": "remove exact stale WAG-owned PID receipt; never kill unrelated process"
+    },
+    {
+      "case": "stale-supervisor-pid",
+      "diagnostic": "WAG_STALE_SUPERVISOR_PID",
+      "remediation": "remove exact stale WAG-owned PID receipt and restart exact supervisor when safe"
+    },
+    {
+      "case": "powershell-5-entry",
+      "diagnostic": "wrapper re-entry",
+      "remediation": "doctor wrapper re-enters PowerShell 7"
+    },
+    {
+      "case": "powershell-7-entry",
+      "diagnostic": "host.pwshSupported",
+      "remediation": "none when supported"
+    },
+    {
+      "case": "wsl-unavailable",
+      "diagnostic": "WAG_WSL_UNAVAILABLE",
+      "remediation": "external action: restore/start supported WSL, then rerun doctor"
+    },
+    {
+      "case": "tunnel-client-pin-missing-but-running",
+      "diagnostic": "WAG_TUNNEL_CLIENT_PIN_MISSING",
+      "remediation": "discover exact running WAG tunnel-client and persist pin"
+    },
+    {
+      "case": "tunnel-client-missing-non-executable",
+      "diagnostic": "WAG_TUNNEL_CLIENT_MISSING",
+      "remediation": "external/setup action: restore supported pinned tunnel-client; no arbitrary binary replacement"
+    },
+    {
+      "case": "tunnel-profile-missing",
+      "diagnostic": "WAG_TUNNEL_PROFILE_MISSING",
+      "remediation": "external/setup action: rerun supported provisioning flow"
+    },
+    {
+      "case": "port-7677-unrelated-collision",
+      "diagnostic": "WAG_PORT_7677_COLLISION_UNRELATED",
+      "remediation": "external action: resolve reported unrelated owner; WAG does not kill it"
+    },
+    {
+      "case": "port-8080-unrelated-collision",
+      "diagnostic": "WAG_PORT_8080_COLLISION_UNRELATED",
+      "remediation": "external action: resolve reported unrelated owner; WAG does not kill it"
+    },
+    {
+      "case": "network-offline-during-startup",
+      "diagnostic": "WAG_CONTROL_PLANE_NETWORK_UNREACHABLE",
+      "remediation": "external action: restore network, then rerun doctor/repair"
+    },
+    {
+      "case": "network-returns-after-startup-failure",
+      "diagnostic": "controlPlaneReachable=true with local readiness diagnostics if any",
+      "remediation": "wag doctor --repair starts WAG-owned stack once external prerequisites are healthy"
+    },
+    {
+      "case": "control-plane-authorization-expired",
+      "diagnostic": "WAG_CONTROL_PLANE_AUTHORIZATION_FAILED",
+      "remediation": "external action: reauthorize/replace runtime credential through supported flow; doctor never rotates credentials"
+    },
+    {
+      "case": "launcher-drift",
+      "diagnostic": "WAG_LAUNCHER_DRIFT",
+      "remediation": "installed wag doctor --repair restores packaged canonical per-user launchers"
+    },
+    {
+      "case": "autostart-missing",
+      "diagnostic": "WAG_AUTOSTART_MISSING",
+      "remediation": "installed wag doctor --repair restores per-user Startup registration"
+    },
+    {
+      "case": "autostart-target-drift",
+      "diagnostic": "WAG_AUTOSTART_TARGET_DRIFT",
+      "remediation": "installed wag doctor --repair restores canonical supervisor target"
+    }
+  ]
+}

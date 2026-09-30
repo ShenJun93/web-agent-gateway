@@ -350,6 +350,7 @@ param(
                 'wag-local-tunnel-launcher.ps1',
                 'wag-local-start.ps1',
                 'wag-local-supervisor.ps1',
+                'wag-local-doctor.ps1',
                 'wag-local-product-health.ps1',
                 'wag-local-provision.ps1',
                 'wag-local-setup.ps1'

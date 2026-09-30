@@ -40,6 +40,8 @@ export interface CliDependencies {
   telemetry: TelemetrySink;
   /** Per-user installer bootstrap; injected by setup tests. */
   runSetup?: (argv: string[]) => Promise<number>;
+  /** Product doctor entrypoint; injected by doctor tests. */
+  runDoctor?: (argv: string[]) => Promise<number>;
   /** Defaults to the real assembly; injected only by tests. */
   startRepositoryEngineering?: typeof startRepositoryEngineeringRuntime;
   /** Defaults to the real assembly; injected only by tests. */
@@ -62,6 +64,15 @@ export async function main(
   if (argv.length === 1 && argv[0] === '--help') {
     deps.stdout.write(usageText());
     return 0;
+  }
+  if (argv[0] === 'doctor' && !(argv.length === 3 && argv[1] === '--config')) {
+    try {
+      const doctorArgs = mapDoctorArgs(argv.slice(1));
+      return await (deps.runDoctor ?? ((args) => runDoctorPowerShell(args, deps.stdout, deps.stderr)))(doctorArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'DOCTOR_FAILED', error);
+      return 1;
+    }
   }
   if (argv[0] === 'setup') {
     try {
@@ -388,6 +399,34 @@ function telemetryToStderr(stderr: Writable): TelemetrySink {
   };
 }
 
+function mapDoctorArgs(argv: string[]): string[] {
+  const mapped: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--repair') { mapped.push('-Repair'); continue; }
+    if (arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError('Missing value after --output');
+      mapped.push('-Output', value);
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown doctor argument: ${arg}`);
+  }
+  return mapped;
+}
+
+async function runDoctorPowerShell(argv: string[], stdout: Writable, stderr: Writable): Promise<number> {
+  const script = fileURLToPath(new URL('../scripts/wag-local-doctor.ps1', import.meta.url));
+  const result = spawnSync('pwsh.exe', [
+    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...argv,
+  ], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.error) throw result.error;
+  if (result.stdout) stdout.write(result.stdout);
+  if (result.stderr) stderr.write(result.stderr);
+  return result.status ?? 1;
+}
+
 function mapSetupArgs(argv: string[]): string[] {
   const mapped: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -431,7 +470,8 @@ function usageText(): string {
   return [
     'Usage:',
     '  web-agent-gateway setup [--check-only] [--tunnel-id <tunnel_...>] [--runtime-key-ref env:CONTROL_PLANE_API_KEY] [--connector-confirmed] [--allowed-root <absolute-path>] [--no-start] [--no-autostart]',
-    '  web-agent-gateway doctor --config <absolute-path>',
+    '  web-agent-gateway doctor [--repair] [--output <absolute-path>]',
+    '  web-agent-gateway doctor --config <absolute-path>  # legacy runtime preflight',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
     '  web-agent-gateway serve-browser-operator --config <absolute-path>',
     '  web-agent-gateway serve-remote-relay-device --config <absolute-path>',

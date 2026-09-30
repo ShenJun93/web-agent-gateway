@@ -14,6 +14,7 @@ const recoveryPath = join(root, 'scripts', 'wag-local-m1-recovery.ps1');
 const rebootPreparePath = join(root, 'scripts', 'prepare-wag-local-m1-reboot.ps1');
 const rebootVerifyPath = join(root, 'scripts', 'wag-local-m1-post-reboot.ps1');
 const setupPath = join(root, 'scripts', 'wag-local-setup.ps1');
+const doctorPath = join(root, 'scripts', 'wag-local-doctor.ps1');
 const provisionPath = join(root, 'scripts', 'wag-local-provision.ps1');
 const m2FixturePath = join(root, 'scripts', 'wag-local-m2-installer-fixture.ps1');
 const m2ProvisionFixturePath = join(root, 'scripts', 'wag-local-m2-provision-fixture.ps1');
@@ -77,7 +78,7 @@ test('supervisor is single-instance and invokes the idempotent starter', () => {
 });
 
 test('PowerShell launchers parse', { skip: process.platform !== 'win32' }, () => {
-  for (const path of [tunnelPath, starterPath, installerPath, supervisorPath, recoveryPath, rebootPreparePath, rebootVerifyPath, setupPath, provisionPath, m2FixturePath, m2ProvisionFixturePath]) {
+  for (const path of [tunnelPath, starterPath, installerPath, supervisorPath, recoveryPath, rebootPreparePath, rebootVerifyPath, setupPath, doctorPath, provisionPath, m2FixturePath, m2ProvisionFixturePath]) {
     const script = "$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile('" +
       path.replaceAll("'", "''") +
       "',[ref]$t,[ref]$e)|Out-Null;if($e.Count){$e|ForEach-Object{$_.Message};exit 1}";
