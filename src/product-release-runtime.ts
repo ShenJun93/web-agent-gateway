@@ -1,8 +1,11 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -13,6 +16,7 @@ import {
   transactionalUpdate,
   uninstallOwnedArtifacts,
   type ReleaseManifest,
+  type ReleaseState,
 } from './product-release.js';
 import { parseTunnelProfile, parseWrapper } from './product-health.js';
 
@@ -30,7 +34,19 @@ export interface ProductUninstallArgs {
 
 interface Binding {
   wrapperPath: string;
+  wrapperText: string;
+  cliPath: string;
   configPath: string;
+}
+
+interface LegacyBaselineMarker {
+  schema: 'WAG_LOCAL_LEGACY_BASELINE_V1';
+  releaseId: string;
+  cliPath: string;
+  configPath: string;
+  wrapperPath: string;
+  sourceHead: string | null;
+  createdAtUtc: string;
 }
 
 const localAppData = process.env.LOCALAPPDATA ?? '';
@@ -72,7 +88,19 @@ function loadBinding(): Binding {
   const wrapperPath = parseTunnelProfile(profileText);
   const wrapperText = runText('wsl.exe', ['-e', 'cat', wrapperPath]);
   const binding = parseWrapper(wrapperText);
-  return { wrapperPath, configPath: binding.configPath };
+  return {
+    wrapperPath,
+    wrapperText,
+    cliPath: binding.cliPath,
+    configPath: binding.configPath,
+  };
+}
+
+function writeJsonAtomic(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const temp = path + '.tmp-' + randomUUID();
+  writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', 'utf8');
+  renameSync(temp, path);
 }
 
 function buildWrapper(releaseRoot: string, configPath: string): string {
@@ -144,6 +172,149 @@ function stopExactTunnel(path: string): void {
   if (exactTunnelPids(path).length !== 0) throw new Error('WAG_TUNNEL_STOP_FAILED');
 }
 
+
+function httpOkSync(url: string): boolean {
+  const escaped = url.replaceAll("'", "''");
+  const script = [
+    "try{$r=Invoke-WebRequest -Uri '" + escaped + "' -UseBasicParsing -TimeoutSec 5;",
+    'if($r.StatusCode -ge 200 -and $r.StatusCode -lt 300){exit 0}}catch{};exit 2',
+  ].join('');
+  return runOptional('pwsh.exe', ['-NoLogo', '-NoProfile', '-Command', script]).ok;
+}
+
+function localStackReadySync(): boolean {
+  return httpOkSync('http://127.0.0.1:7677/.well-known/oauth-authorization-server')
+    && httpOkSync('http://127.0.0.1:8080/readyz')
+    && httpOkSync('http://127.0.0.1:8080/healthz');
+}
+
+function readLegacyMarker(releaseRoot: string): LegacyBaselineMarker | null {
+  const path = join(releaseRoot, 'LEGACY-BASELINE.json');
+  if (!existsSync(path)) return null;
+  const value = JSON.parse(readFileSync(path, 'utf8')) as Partial<LegacyBaselineMarker>;
+  if (value.schema !== 'WAG_LOCAL_LEGACY_BASELINE_V1'
+      || typeof value.releaseId !== 'string'
+      || typeof value.cliPath !== 'string'
+      || typeof value.configPath !== 'string'
+      || typeof value.wrapperPath !== 'string'
+      || typeof value.createdAtUtc !== 'string') {
+    throw new Error('WAG_LEGACY_BASELINE_INVALID');
+  }
+  return value as LegacyBaselineMarker;
+}
+
+function discoverLegacySourceHead(cliPath: string): string | null {
+  try {
+    const runtimeRoot = dirname(dirname(resolve(cliPath)));
+    const marker = JSON.parse(readFileSync(join(runtimeRoot, 'RUNTIME.json'), 'utf8')) as {
+      sourceHead?: unknown;
+      source_head?: unknown;
+    };
+    const value = typeof marker.sourceHead === 'string'
+      ? marker.sourceHead
+      : typeof marker.source_head === 'string'
+        ? marker.source_head
+        : '';
+    return /^[a-f0-9]{40}$/.test(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function captureLegacyBaseline(): ReleaseState {
+  const existing = readReleaseState(installRoot);
+  if (existing) return existing;
+  if (!localStackReadySync()) throw new Error('WAG_LEGACY_BASELINE_NOT_READY');
+
+  const binding = loadBinding();
+  if (!existsSync(binding.cliPath)) throw new Error('WAG_LEGACY_BASELINE_CLI_MISSING');
+
+  const sourceHead = discoverLegacySourceHead(binding.cliPath);
+  const identity = sourceHead
+    ?? createHash('sha256').update(binding.cliPath).update('\0').update(binding.wrapperText).digest('hex');
+  const releaseId = 'legacy-' + identity.slice(0, 12);
+  const baselineRoot = join(installRoot, 'runtime', releaseId);
+  const baselineMarker = join(baselineRoot, 'LEGACY-BASELINE.json');
+
+  if (!existsSync(baselineMarker)) {
+    const staging = baselineRoot + '.staging-' + randomUUID();
+    try {
+      mkdirSync(join(staging, 'launchers'), { recursive: true });
+      for (const name of [
+        'Start-WagLocal.ps1',
+        'Start-WagLocalTunnel.ps1',
+        'Start-WagLocalSupervisor.ps1',
+      ]) {
+        const source = join(installRoot, name);
+        if (!existsSync(source)) throw new Error('WAG_LEGACY_BASELINE_LAUNCHER_MISSING');
+        copyFileSync(source, join(staging, 'launchers', name));
+      }
+      writeFileSync(join(staging, 'wrapper.sh'), binding.wrapperText, 'utf8');
+      const marker: LegacyBaselineMarker = {
+        schema: 'WAG_LOCAL_LEGACY_BASELINE_V1',
+        releaseId,
+        cliPath: resolve(binding.cliPath),
+        configPath: resolve(binding.configPath),
+        wrapperPath: binding.wrapperPath,
+        sourceHead,
+        createdAtUtc: new Date().toISOString(),
+      };
+      writeFileSync(
+        join(staging, 'LEGACY-BASELINE.json'),
+        JSON.stringify(marker, null, 2) + '\n',
+        'utf8',
+      );
+      mkdirSync(dirname(baselineRoot), { recursive: true });
+      renameSync(staging, baselineRoot);
+    } finally {
+      rmSync(staging, { recursive: true, force: true });
+    }
+  } else {
+    const marker = readLegacyMarker(baselineRoot);
+    if (!marker || marker.releaseId !== releaseId || resolve(marker.cliPath) !== resolve(binding.cliPath)) {
+      throw new Error('WAG_LEGACY_BASELINE_CONFLICT');
+    }
+  }
+
+  const state: ReleaseState = {
+    schema: 'WAG_LOCAL_RELEASE_STATE_V1',
+    activeReleaseId: releaseId,
+    previousReleaseId: null,
+    channel: 'development',
+    migrationVersion: 1,
+    updatedAtUtc: new Date().toISOString(),
+  };
+  writeJsonAtomic(join(installRoot, 'state', 'release-state.json'), state);
+  return state;
+}
+
+function restoreLegacyLaunchers(releaseRoot: string): void {
+  for (const name of [
+    'Start-WagLocal.ps1',
+    'Start-WagLocalTunnel.ps1',
+    'Start-WagLocalSupervisor.ps1',
+  ]) {
+    const source = join(releaseRoot, 'launchers', name);
+    const target = join(installRoot, name);
+    if (!existsSync(source)) throw new Error('WAG_LEGACY_BASELINE_LAUNCHER_MISSING');
+    const temp = target + '.tmp-' + randomUUID();
+    copyFileSync(source, temp);
+    renameSync(temp, target);
+  }
+}
+
+function switchLegacyBaseline(releaseRoot: string, marker: LegacyBaselineMarker): void {
+  if (!existsSync(marker.cliPath)) throw new Error('WAG_LEGACY_BASELINE_CLI_MISSING');
+  const wrapperSnapshot = join(releaseRoot, 'wrapper.sh');
+  if (!existsSync(wrapperSnapshot)) throw new Error('WAG_LEGACY_BASELINE_WRAPPER_MISSING');
+
+  const tunnelClient = readTunnelClientPath();
+  restoreLegacyLaunchers(releaseRoot);
+  writeWrapperAtomic(marker.wrapperPath, readFileSync(wrapperSnapshot, 'utf8'));
+  stopExactTunnel(tunnelClient);
+  startInstalledStack();
+}
+
 function installLaunchersFrom(releaseRoot: string): void {
   const installer = join(releaseRoot, 'scripts', 'install-wag-local-launchers.ps1');
   if (!existsSync(installer)) throw new Error('WAG_RELEASE_LAUNCHER_INSTALLER_MISSING');
@@ -170,6 +341,13 @@ function startInstalledStack(): void {
 
 function switchInstalledRuntime(releaseRoot: string | null): Promise<void> {
   if (!releaseRoot) return Promise.reject(new Error('WAG_RELEASE_SWITCH_TARGET_MISSING'));
+
+  const legacy = readLegacyMarker(releaseRoot);
+  if (legacy) {
+    switchLegacyBaseline(releaseRoot, legacy);
+    return Promise.resolve();
+  }
+
   const cli = join(releaseRoot, 'dist', 'cli.js');
   if (!existsSync(cli)) return Promise.reject(new Error('WAG_RELEASE_SWITCH_CLI_MISSING'));
 
@@ -225,6 +403,10 @@ async function acceptCandidate(releaseRoot: string, manifest: ReleaseManifest): 
 }
 
 async function postSwitchHealth(releaseRoot: string): Promise<boolean> {
+  if (readLegacyMarker(releaseRoot)) {
+    return localStackReadySync();
+  }
+
   const doctor = join(releaseRoot, 'scripts', 'wag-local-doctor.ps1');
   if (!existsSync(doctor)) return false;
   const receipt = join(receiptsRoot, 'wag-local-update-post-switch-doctor.json');
@@ -261,6 +443,9 @@ export async function runProductUpdate(args: ProductReleaseArgs): Promise<number
   const packageRoot = resolve(args.packageRoot);
   const manifestPath = resolve(args.manifestPath ?? join(packageRoot, 'RELEASE.json'));
   const manifest = loadManifest(manifestPath);
+  if (!readReleaseState(installRoot)) {
+    captureLegacyBaseline();
+  }
   let activeRoot = '';
 
   const receipt = await transactionalUpdate({

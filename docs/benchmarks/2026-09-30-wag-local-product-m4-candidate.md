@@ -217,9 +217,27 @@ Final pre-commit verification:
 - dirty-development provenance is explicitly marked `+dirty:<payload-prefix>`;
 - stable manifest generation from a dirty tree without explicit provenance: **REFUSED AS DESIGNED**.
 
+## Legacy live-runtime adoption
+
+The primary live WAG instance predates the M2/M3 managed release-state format and currently runs from
+an external legacy runtime root. M4 now handles that upgrade boundary before the first transactional
+update:
+
+- if no release state exists, the updater requires the current local stack to be Ready;
+- it snapshots the exact live WSL wrapper plus the three installed WAG launcher scripts;
+- it records the current legacy CLI path and source revision in `WAG_LOCAL_LEGACY_BASELINE_V1`;
+- it seeds `release-state.json` with a synthetic `legacy-<source-prefix>` active release;
+- this adoption step does **not** restart or switch the live tunnel;
+- a later failed M4 switch can restore the captured wrapper and launcher bytes, restart the exact WAG
+  stack, and health-check the legacy baseline through the accepted local readiness endpoints.
+
+This closes the rollback gap for dogfooding from the already-running pre-product WAG runtime without
+pretending that the legacy runtime itself was originally installed by M4.
+
 ## Remaining M4 acceptance boundary
 
-The transactional implementation is ready for commit and clean-source package verification.
+The transactional implementation plus legacy-baseline adoption are ready for committed-package
+verification.
 
 Full live acceptance still needs an explicitly disruptive dogfood operation:
 
