@@ -59,8 +59,19 @@ test('setup dispatches without --config and maps only bounded installer argument
   let observed: string[] | undefined;
   h.deps.runSetup = async (args) => { observed = args; return 0; };
   const root = resolve('wag-user-workspace');
-  assert.equal(await main(['setup', '--check-only', '--no-start', '--allowed-root', root], h.deps), 0);
-  assert.deepEqual(observed, ['-CheckOnly', '-NoStart', '-AllowedRoot', root]);
+  const tunnel = 'tunnel_0123456789abcdef0123456789abcdef';
+  assert.equal(await main([
+    'setup', '--check-only', '--no-start', '--connector-confirmed',
+    '--tunnel-id', tunnel,
+    '--runtime-key-ref', 'env:CONTROL_PLANE_API_KEY',
+    '--allowed-root', root,
+  ], h.deps), 0);
+  assert.deepEqual(observed, [
+    '-CheckOnly', '-NoStart', '-ConnectorConfirmed',
+    '-TunnelId', tunnel,
+    '-RuntimeKeyRef', 'env:CONTROL_PLANE_API_KEY',
+    '-AllowedRoot', root,
+  ]);
   assert.equal(h.stderr.text(), '');
 
   const bad = makeCliHarness();

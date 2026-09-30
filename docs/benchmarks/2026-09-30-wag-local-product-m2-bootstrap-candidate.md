@@ -10,6 +10,10 @@ Base: `122564a051077ce317932a3d90e037aaa7135802` (M1 full reboot acceptance clos
 
 `M2_ISOLATED_PACKAGED_INSTALL_MUTATION = PASS`
 
+`M2_FIRST_TIME_PROVISIONING_WIZARD = PASS`
+
+`M2_REAL_CLOUD_PROVISIONING = NOT_EXECUTED`
+
 `M2_EXTERNAL_CLEAN_WINDOWS_ACCEPTANCE = NOT_MEASURED`
 
 This batch proves that the package/bootstrap shape is buildable and consumable from an unpacked npm
@@ -57,13 +61,18 @@ once distribution/publication is explicitly approved.
 - generic per-user `tunnel-client-path.txt` pin;
 - migration away from a developer-specific hard-coded tunnel-client path;
 - concise first-run fields: Version / Device / Status / Client / Doctor;
-- machine-readable `WAG_LOCAL_SETUP_V1` receipt shape.
+- machine-readable `WAG_LOCAL_SETUP_V1` receipt shape;
+- first-time provisioning wrapper with bounded `ACTION_REQUIRED_*` states;
+- existing-tunnel provisioning without persistent admin credentials;
+- DPAPI-protected runtime-key storage without raw secret CLI arguments;
+- local ChatGPT-connector confirmation checkpoint.
 
 ## Verification
 
 Source candidate:
 
-- `npm run test:wag-product` = **15/15 PASS**
+- `npm run test:wag-product` = **16/16 PASS**
+- `npx tsx --test test/cli.test.ts` = **8/8 PASS**
 - `npm run typecheck` = **PASS**
 - `npm run build` = **PASS**
 - `git diff --check` = **PASS**
@@ -125,33 +134,44 @@ root; consumer packages therefore use the stable package-version runtime tag.
 The fixture profile override is environment-only (`WAG_SETUP_PROFILE_FILE`), validated as an absolute
 WSL path without traversal, and is not exposed as a public CLI credential argument.
 
+### First-time provisioning wizard fixture
+
+The packaged first-time wizard was also exercised with an isolated user root, isolated WSL profile,
+synthetic tunnel id, and non-real runtime value. Receipt:
+
+`docs/benchmarks/2026-09-30-wag-local-product-m2-first-time-provision-fixture.json`
+
+Result: **PASS**. The first run reached `ACTION_REQUIRED_CHATGPT_CONNECTOR`; the second run with the
+local connector-confirmation checkpoint reached `READY`. The runtime value was protected through the
+local DPAPI path and did not appear in fixture output. Live WAG launcher hashes and live readiness were
+unchanged before/after the fixture. No real tunnel, API key, organization/workspace attachment, or
+ChatGPT connector was created.
+
 ## Scope / limitations
 
 Not measured yet:
 
 1. a truly clean Windows user profile with no previous WAG state;
-2. first-time tunnel/control-plane provisioning for a user who has no existing client profile;
-3. actual install mutation on a separate disposable/clean Windows environment;
-4. first useful local list/read workflow from that fresh install;
-5. reboot + repeat workflow from that fresh install.
+2. real tunnel/runtime-key provisioning against legitimate account/control-plane resources;
+3. actual ChatGPT connector creation/verification and a successful connector call;
+4. actual install mutation on a separate disposable/clean Windows environment;
+5. first useful local list/read workflow from that fresh install;
+6. reboot + repeat workflow from that fresh install.
 
 The current machine already has a production WAG Local installation and live ChatGPT connector.
 Therefore the real packaged mutation used a fixture-only per-user install root and fixture WSL profile,
 not the live WAG root. This proves installer mutation behavior and live-state non-interference, but is
 not a substitute for a separate clean-Windows external-user acceptance run.
 
-## Product gap discovered
+## Remaining product gap
 
-The installer can consume/migrate an existing valid tunnel-client profile and credential into the
-per-user WAG store, but a completely new user still needs a supported first-time control-plane
-provisioning path. Until that path is implemented or explicitly delegated to a supported official
-flow, M2 must not be marked fully accepted.
+The local first-time provisioning wizard is now implemented and fixture-accepted. It deliberately
+stops before creating real account/cloud resources. The remaining gap is external acceptance using a
+legitimate tunnel/runtime key plus actual ChatGPT connector verification, followed by a fresh-user
+list/read workflow and reboot repeat.
 
 ## Next M2 task
 
-The bounded fixture install lane is now complete. The next unresolved product requirement is the
-first-time control-plane/client provisioning path for a user with no existing WAG/tunnel profile.
-That path may create account/cloud state or require a browser authorization flow, so it is the next
-roadmap STOP-point review before implementation. A later external acceptance run still needs a
-separate clean/disposable Windows environment; do not enable Windows Sandbox, create system users,
-or make other machine-wide changes implicitly.
+The next execution boundary is real account/cloud or clean-environment mutation. Do not create a real
+tunnel, API key, organization/workspace attachment, ChatGPT connector, Windows Sandbox environment,
+or system user implicitly. Full M2 acceptance requires an explicitly approved external run.

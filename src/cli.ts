@@ -395,10 +395,13 @@ function mapSetupArgs(argv: string[]): string[] {
     if (arg === '--check-only') { mapped.push('-CheckOnly'); continue; }
     if (arg === '--no-start') { mapped.push('-NoStart'); continue; }
     if (arg === '--no-autostart') { mapped.push('-NoAutostart'); continue; }
+    if (arg === '--connector-confirmed') { mapped.push('-ConnectorConfirmed'); continue; }
     const names: Record<string, string> = {
       '--allowed-root': '-AllowedRoot',
       '--output': '-Output',
       '--tunnel-client-path': '-TunnelClientPath',
+      '--tunnel-id': '-TunnelId',
+      '--runtime-key-ref': '-RuntimeKeyRef',
     };
     const mappedName = names[arg];
     if (mappedName) {
@@ -414,10 +417,10 @@ function mapSetupArgs(argv: string[]): string[] {
 }
 
 async function runSetupPowerShell(argv: string[], stdout: Writable, stderr: Writable): Promise<number> {
-  const script = fileURLToPath(new URL('../scripts/wag-local-setup.ps1', import.meta.url));
+  const script = fileURLToPath(new URL('../scripts/wag-local-provision.ps1', import.meta.url));
   const result = spawnSync('pwsh.exe', [
     '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...argv,
-  ], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  ], { encoding: 'utf8', windowsHide: true, stdio: ['inherit', 'pipe', 'pipe'] });
   if (result.error) throw result.error;
   if (result.stdout) stdout.write(result.stdout);
   if (result.stderr) stderr.write(result.stderr);
@@ -427,7 +430,7 @@ async function runSetupPowerShell(argv: string[], stdout: Writable, stderr: Writ
 function usageText(): string {
   return [
     'Usage:',
-    '  web-agent-gateway setup [--check-only] [--allowed-root <absolute-path>] [--no-start] [--no-autostart]',
+    '  web-agent-gateway setup [--check-only] [--tunnel-id <tunnel_...>] [--runtime-key-ref env:CONTROL_PLANE_API_KEY] [--connector-confirmed] [--allowed-root <absolute-path>] [--no-start] [--no-autostart]',
     '  web-agent-gateway doctor --config <absolute-path>',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
     '  web-agent-gateway serve-browser-operator --config <absolute-path>',

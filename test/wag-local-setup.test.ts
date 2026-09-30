@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const setupPath = join(root, 'scripts', 'wag-local-setup.ps1');
+const provisionPath = join(root, 'scripts', 'wag-local-provision.ps1');
 const setup = readFileSync(setupPath, 'utf8');
+const provision = readFileSync(provisionPath, 'utf8');
 
 test('packaged runtime lock stays synchronized with the project lock', () => {
   assert.equal(
@@ -59,4 +61,20 @@ test('setup owns the generic tunnel client pin and wrapper migration path', () =
   assert.match(setup, /\$HOME\/tools\/openai-tunnel-client\/v0\.0\.14\/tunnel-client/);
   assert.match(setup, /web-agent-gateway\.yaml/);
   assert.match(setup, /base64 -d/);
+});
+
+test('first-time provisioning wizard is bounded and never accepts persistent admin credentials', () => {
+  assert.match(provision, /ACTION_REQUIRED_TUNNEL/);
+  assert.match(provision, /ACTION_REQUIRED_RUNTIME_KEY/);
+  assert.match(provision, /ACTION_REQUIRED_CHATGPT_CONNECTOR/);
+  assert.match(provision, /'READY'/);
+  assert.match(provision, /WAG_LOCAL_PROVISION_V1/);
+  assert.match(provision, /WAG_SETUP_RUNTIME_API_KEY/);
+  assert.match(provision, /Read-Host .* -AsSecureString/);
+  assert.match(provision, /ConvertFrom-SecureString/);
+  assert.match(provision, /sample_mcp_stdio_local/);
+  assert.match(provision, /--control-plane-api-key-ref \$RuntimeKeyRef/);
+  assert.match(provision, /chatgpt-connector\.confirmed/);
+  assert.doesNotMatch(provision, /\[string\]\$(?:ApiKey|AdminKey|Secret|Token)\b/i);
+  assert.doesNotMatch(provision, /OPENAI_ADMIN_KEY/);
 });

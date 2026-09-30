@@ -351,6 +351,7 @@ param(
                 'wag-local-start.ps1',
                 'wag-local-supervisor.ps1',
                 'wag-local-product-health.ps1',
+                'wag-local-provision.ps1',
                 'wag-local-setup.ps1'
             )) {
                 $targetScripts = Join-Path $staging 'scripts'
