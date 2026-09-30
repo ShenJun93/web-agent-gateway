@@ -17,6 +17,8 @@ param(
     $logs = Join-Path $base 'logs'
     $stdout = Join-Path $logs 'wag-local.stdout.log'
     $stderr = Join-Path $logs 'wag-local.stderr.log'
+    $repairStdout = Join-Path $logs 'wag-local-devspace-repair.stdout.log'
+    $repairStderr = Join-Path $logs 'wag-local-devspace-repair.stderr.log'
     $pidFile = Join-Path $logs 'wag-local-launcher.pid'
 
     New-Item -ItemType Directory -Path $logs -Force | Out-Null
@@ -70,20 +72,41 @@ param(
         return
     }
 
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(10, $StartupTimeoutSeconds))
+
     if ($existingPid -and (Test-TunnelReady)) {
         Write-Output "WAG_LOCAL_DEVSPACE_REPAIR_WITH_EXISTING_TUNNEL=$existingPid"
         $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
-        & $pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcher -EnsureDevSpaceOnly
-        $repairExit = $LASTEXITCODE
-        if ($repairExit -eq 0 -and (Test-Ready)) {
-            Write-Output 'WAG_LOCAL_READY=True'
-            Write-Output 'WAG_LOCAL_RECOVERY=DEVSPACE_REPAIRED'
-            return
-        }
-        Write-Diagnostic 'WAG_DEVSPACE_REPAIR_FAILED' "Existing tunnel stayed ready but DevSpace repair exited $repairExit."
-    }
+        Remove-Item -LiteralPath $repairStdout, $repairStderr -Force -ErrorAction SilentlyContinue
+        $repair = Start-Process -FilePath $pwsh -ArgumentList @(
+            '-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$launcher,'-EnsureDevSpaceOnly'
+        ) -WindowStyle Hidden -RedirectStandardOutput $repairStdout -RedirectStandardError $repairStderr -PassThru
 
-    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(10, $StartupTimeoutSeconds))
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if (Test-Ready) {
+                if (-not $repair.HasExited) {
+                    Stop-Process -Id $repair.Id -Force -ErrorAction SilentlyContinue
+                    try { $repair.WaitForExit(5000) | Out-Null } catch {}
+                }
+                Write-Output 'WAG_LOCAL_READY=True'
+                Write-Output 'WAG_LOCAL_RECOVERY=DEVSPACE_REPAIRED'
+                return
+            }
+            if ($repair.HasExited) {
+                $repairExit = $repair.ExitCode
+                Write-Diagnostic 'WAG_DEVSPACE_REPAIR_FAILED' "Existing tunnel stayed ready but DevSpace repair exited $repairExit."
+                Get-Content -LiteralPath $repairStderr -Tail 30 -ErrorAction SilentlyContinue
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
+
+        if (-not $repair.HasExited) {
+            Stop-Process -Id $repair.Id -Force -ErrorAction SilentlyContinue
+            try { $repair.WaitForExit(5000) | Out-Null } catch {}
+            Write-Diagnostic 'WAG_DEVSPACE_REPAIR_TIMEOUT' 'Existing tunnel stayed ready but bounded DevSpace repair did not complete before the startup deadline.'
+        }
+    }
 
     if ($existingPid) {
         Write-Output "WAG_LOCAL_EXISTING_LAUNCHER_PID=$existingPid"
@@ -132,6 +155,16 @@ param(
 
         if (-not $process.HasExited) {
             Write-Diagnostic 'WAG_START_TIMEOUT' 'The local launcher stayed alive but WAG did not become executable before the deadline.'
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            try { $process.WaitForExit(5000) | Out-Null } catch {}
+            if (Test-Path -LiteralPath $pidFile -PathType Leaf) {
+                $recordedPid = 0
+                if ([int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recordedPid) -and
+                    $recordedPid -eq $process.Id) {
+                    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Write-Output "WAG_LOCAL_LAUNCHER_TIMEOUT_CLEANUP=$($process.Id)"
             break
         }
 

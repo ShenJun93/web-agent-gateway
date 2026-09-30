@@ -24,6 +24,8 @@ param(
     $logs = Join-Path $base 'logs'
     $starter = Join-Path $base 'Start-WagLocal.ps1'
     $logFile = Join-Path $logs 'wag-local-supervisor.log'
+    $starterStdout = Join-Path $logs 'wag-local-supervisor-starter.stdout.log'
+    $starterStderr = Join-Path $logs 'wag-local-supervisor-starter.stderr.log'
     $pidFile = Join-Path $logs 'wag-local-supervisor.pid'
     $mutexName = 'Local\WAG-Local-Supervisor-v1'
 
@@ -83,14 +85,43 @@ param(
                     '-File',$starter,
                     '-StartupTimeoutSeconds',$RecoveryTimeoutSeconds
                 )
-                $output = & $pwsh @starterArgs 2>&1
-                $code = $LASTEXITCODE
-                foreach ($line in @($output)) {
-                    Write-SupervisorLog 'WAG_STARTER_OUTPUT' ([string]$line)
+                Remove-Item -LiteralPath $starterStdout, $starterStderr -Force -ErrorAction SilentlyContinue
+                $starterProcess = Start-Process -FilePath $pwsh -ArgumentList $starterArgs `
+                    -WindowStyle Hidden -RedirectStandardOutput $starterStdout `
+                    -RedirectStandardError $starterStderr -PassThru
+                $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(10, $RecoveryTimeoutSeconds))
+                $ready = $false
+                while ([DateTime]::UtcNow -lt $deadline) {
+                    if (Test-WagReady) {
+                        $ready = $true
+                        break
+                    }
+                    if ($starterProcess.HasExited) {
+                        $ready = Test-WagReady
+                        break
+                    }
+                    Start-Sleep -Milliseconds 500
                 }
 
-                if ($code -eq 0 -and (Test-WagReady)) {
-                    Write-SupervisorLog 'WAG_SUPERVISOR_RECOVERY_OK' 'local stack ready'
+                if ($ready -and -not $starterProcess.HasExited) {
+                    Stop-Process -Id $starterProcess.Id -Force -ErrorAction SilentlyContinue
+                    try { $starterProcess.WaitForExit(5000) | Out-Null } catch {}
+                }
+                elseif (-not $ready -and -not $starterProcess.HasExited) {
+                    Stop-Process -Id $starterProcess.Id -Force -ErrorAction SilentlyContinue
+                    try { $starterProcess.WaitForExit(5000) | Out-Null } catch {}
+                }
+
+                foreach ($line in @(Get-Content -LiteralPath $starterStdout -ErrorAction SilentlyContinue)) {
+                    Write-SupervisorLog 'WAG_STARTER_OUTPUT' ([string]$line)
+                }
+                foreach ($line in @(Get-Content -LiteralPath $starterStderr -ErrorAction SilentlyContinue)) {
+                    Write-SupervisorLog 'WAG_STARTER_STDERR' ([string]$line)
+                }
+
+                $code = if ($starterProcess.HasExited) { $starterProcess.ExitCode } else { 124 }
+                if ($ready) {
+                    Write-SupervisorLog 'WAG_SUPERVISOR_RECOVERY_OK' "local stack ready starterExit=$code"
                     Write-Output 'WAG_SUPERVISOR_RECOVERY=SUCCEEDED'
                 }
                 else {

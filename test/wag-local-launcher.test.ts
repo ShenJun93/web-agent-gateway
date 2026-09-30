@@ -44,6 +44,11 @@ test('one-click starter re-enters PowerShell 7 and waits for tunnel health', () 
   assert.doesNotMatch(starter, /Write-Output ['\"]WAG_STALE_PID_CLEARED=/);
   assert.match(starter, /-EnsureDevSpaceOnly/);
   assert.match(starter, /WAG_LOCAL_RECOVERY=DEVSPACE_REPAIRED/);
+  assert.match(starter, /WAG_DEVSPACE_REPAIR_TIMEOUT/);
+  assert.match(starter, /RedirectStandardOutput \$repairStdout/);
+  assert.match(starter, /WAG_START_TIMEOUT/);
+  assert.match(starter, /Stop-Process -Id \$process\.Id -Force/);
+  assert.match(starter, /WAG_LOCAL_LAUNCHER_TIMEOUT_CLEANUP/);
 });
 
 test('installer wires user-login autostart to the recovery supervisor', () => {

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('AllSafe','TunnelCrash','DevSpaceCrash','AllDestructive')]
+    [ValidateSet('AllSafe','TunnelCrash','DevSpaceCrash','StackCrash','DevSpaceCheckoutDeleted','WslUnavailable','TunnelClientMissing','Port7677Collision','Port8080Collision','AllLocalDestructive')]
     [string]$Case = 'AllSafe',
     [string]$Output = '',
     [int]$RecoveryTimeoutSeconds = 120,
@@ -30,9 +30,12 @@ param(
     $installer = Join-Path $repo 'scripts\install-wag-local-launchers.ps1'
     $starter = Join-Path $base 'Start-WagLocal.ps1'
     $tunnelLauncher = Join-Path $base 'Start-WagLocalTunnel.ps1'
+    $supervisorScript = Join-Path $base 'Start-WagLocalSupervisor.ps1'
     $supervisorPidFile = Join-Path $logs 'wag-local-supervisor.pid'
     $launcherPidFile = Join-Path $logs 'wag-local-launcher.pid'
     $devspacePidFile = Join-Path $logs 'devspace-wag-7677.pid'
+    $devspacePinDir = Join-Path $base 'DevSpace-Pin-33d6d0b'
+    $tunnelClientWsl = '/home/pacmap/tools/openai-tunnel-client/v0.0.14/tunnel-client'
 
     New-Item -ItemType Directory -Path $receipts -Force | Out-Null
     if (-not $Output) {
@@ -95,11 +98,121 @@ param(
             if ($candidate -le 0) { continue }
 
             $argsText = ((@(& wsl.exe -e ps -p $candidate -o args= 2>$null)) -join ' ').Trim()
-            if ($argsText -eq '/home/pacmap/tools/openai-tunnel-client/v0.0.14/tunnel-client run --profile web-agent-gateway') {
+            if ($argsText -eq ($tunnelClientWsl + ' run --profile web-agent-gateway')) {
                 return $candidate
             }
         }
         return 0
+    }
+
+    function Get-OwnedDevSpacePid {
+        $listener = Get-NetTCPConnection -State Listen -LocalPort 7677 -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($null -eq $listener) { return 0 }
+
+        $devPid = [int]$listener.OwningProcess
+        $receiptPid = 0
+        if (-not (Test-Path -LiteralPath $devspacePidFile -PathType Leaf) -or
+            -not [int]::TryParse((Get-Content -LiteralPath $devspacePidFile -Raw).Trim(), [ref]$receiptPid) -or
+            $receiptPid -ne $devPid) {
+            throw '7677 listener does not match the WAG-owned DevSpace pid receipt'
+        }
+
+        $proc = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $devPid) -ErrorAction Stop
+        $cmd = [string]$proc.CommandLine
+        if ([string]$proc.Name -ne 'node.exe' -or
+            $cmd -notmatch 'dist[/\\]cli\.js' -or
+            $cmd -notmatch '\bserve\b') {
+            throw '7677 listener is not the expected managed DevSpace process'
+        }
+        return $devPid
+    }
+
+    function Stop-OwnedTunnel {
+        $tunnelPid = Find-TunnelPid
+        if ($tunnelPid -le 0) { return 0 }
+        & wsl.exe -e kill -TERM $tunnelPid
+        if ($LASTEXITCODE -ne 0) { throw 'failed to terminate owned tunnel-client' }
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if ((Find-TunnelPid) -le 0) { return $tunnelPid }
+            Start-Sleep -Milliseconds 250
+        }
+        & wsl.exe -e kill -KILL $tunnelPid 2>$null
+        return $tunnelPid
+    }
+
+    function Stop-OwnedDevSpace {
+        $devPid = Get-OwnedDevSpacePid
+        if ($devPid -le 0) { return 0 }
+        Stop-Process -Id $devPid -Force
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            $listener = Get-NetTCPConnection -State Listen -LocalPort 7677 -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($null -eq $listener) { return $devPid }
+            Start-Sleep -Milliseconds 250
+        }
+        throw 'DevSpace listener did not stop'
+    }
+
+    function Stop-OwnedSupervisor {
+        $supervisorPid = 0
+        try { $supervisorPid = Assert-Supervisor }
+        catch {
+            Remove-Item -LiteralPath $supervisorPidFile -Force -ErrorAction SilentlyContinue
+            return 0
+        }
+        Stop-Process -Id $supervisorPid -Force
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if (-not (Get-Process -Id $supervisorPid -ErrorAction SilentlyContinue)) { break }
+            Start-Sleep -Milliseconds 250
+        }
+        if (Test-Path -LiteralPath $supervisorPidFile -PathType Leaf) {
+            $recorded = 0
+            if ([int]::TryParse((Get-Content -LiteralPath $supervisorPidFile -Raw).Trim(), [ref]$recorded) -and
+                $recorded -eq $supervisorPid) {
+                Remove-Item -LiteralPath $supervisorPidFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+        return $supervisorPid
+    }
+
+    function Start-OwnedSupervisor {
+        try {
+            return Assert-Supervisor
+        }
+        catch {}
+
+        Remove-Item -LiteralPath $supervisorPidFile -Force -ErrorAction SilentlyContinue
+        $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
+        $process = Start-Process -FilePath $pwsh -ArgumentList @(
+            '-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$supervisorScript
+        ) -WindowStyle Hidden -PassThru
+
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            try {
+                $observed = Assert-Supervisor
+                if ($observed -eq $process.Id) { return $observed }
+            }
+            catch {}
+            if ($process.HasExited) { throw "supervisor exited early code=$($process.ExitCode)" }
+            Start-Sleep -Milliseconds 250
+        }
+        throw 'supervisor did not start within timeout'
+    }
+
+    function Restore-ReadyStack {
+        $supervisorPid = Start-OwnedSupervisor
+        if (Wait-StackReady $RecoveryTimeoutSeconds) { return $supervisorPid }
+
+        & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $starter -StartupTimeoutSeconds $RecoveryTimeoutSeconds -Attempts 2 | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Wait-StackReady $RecoveryTimeoutSeconds)) {
+            throw 'failed to restore WAG stack after M1 injection'
+        }
+        return $supervisorPid
     }
 
     $results = New-Object System.Collections.Generic.List[object]
@@ -134,6 +247,13 @@ param(
             if ($LASTEXITCODE -ne 0) { throw "starter exit=$LASTEXITCODE" }
             if (-not (@($out) -match 'WAG_LOCAL_READY=True')) { throw 'ready sentinel missing' }
             'Windows PowerShell invocation re-entered supported PowerShell and returned Ready.'
+        }
+
+        Invoke-Case 'powershell7-direct' {
+            $out = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $starter 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "starter exit=$LASTEXITCODE" }
+            if (-not (@($out) -match 'WAG_LOCAL_READY=True')) { throw 'ready sentinel missing' }
+            'PowerShell 7 invocation returned Ready directly.'
         }
 
         Invoke-Case 'stale-pid-reconciliation' {
@@ -203,6 +323,37 @@ param(
 
             'Per-user autostart registration was restored to the recovery supervisor.'
         }
+
+        Invoke-Case 'login-startup-shortcut-execution' {
+            $startup = [Environment]::GetFolderPath('Startup')
+            $shortcut = Join-Path $startup 'WAG Local.lnk'
+            if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
+                throw 'startup shortcut missing'
+            }
+
+            $oldSupervisor = Stop-OwnedSupervisor
+            $newSupervisor = 0
+            try {
+                Start-Process -FilePath $shortcut | Out-Null
+                $deadline = [DateTime]::UtcNow.AddSeconds(15)
+                while ([DateTime]::UtcNow -lt $deadline) {
+                    try {
+                        $newSupervisor = Assert-Supervisor
+                        if ($newSupervisor -gt 0) { break }
+                    }
+                    catch {}
+                    Start-Sleep -Milliseconds 250
+                }
+                if ($newSupervisor -le 0) { throw 'startup shortcut did not launch supervisor' }
+                if ($newSupervisor -eq $oldSupervisor) { throw 'startup shortcut reused terminated supervisor pid' }
+                if (-not (Wait-StackReady 15)) { throw 'stack not Ready after startup shortcut execution' }
+            }
+            finally {
+                try { Assert-Supervisor | Out-Null } catch { Start-OwnedSupervisor | Out-Null }
+            }
+
+            "oldSupervisorPid=$oldSupervisor newSupervisorPid=$newSupervisor ready=true"
+        }
     }
 
     function Run-TunnelCrash {
@@ -229,35 +380,211 @@ param(
     function Run-DevSpaceCrash {
         Invoke-Case 'live-devspace-crash-recovery' {
             $supervisorPid = Assert-Supervisor
-            $listener = Get-NetTCPConnection -State Listen -LocalPort 7677 -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-            if ($null -eq $listener) {
-                throw 'DevSpace listener missing before injection'
-            }
-
-            $devPid = [int]$listener.OwningProcess
-            $receiptPid = 0
-            if (-not (Test-Path -LiteralPath $devspacePidFile -PathType Leaf) -or
-                -not [int]::TryParse((Get-Content -LiteralPath $devspacePidFile -Raw).Trim(), [ref]$receiptPid) -or
-                $receiptPid -ne $devPid) {
-                throw '7677 listener does not match the WAG-owned DevSpace pid receipt'
-            }
-
-            $proc = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $devPid) -ErrorAction Stop
-            $cmd = [string]$proc.CommandLine
-            if ([string]$proc.Name -ne 'node.exe' -or
-                $cmd -notmatch 'dist[/\\]cli\.js' -or
-                $cmd -notmatch '\bserve\b') {
-                throw '7677 listener is not the expected managed DevSpace process'
-            }
-
-            Stop-Process -Id $devPid -Force
+            $devPid = Stop-OwnedDevSpace
+            if ($devPid -le 0) { throw 'owned DevSpace pid not found' }
 
             if (-not (Wait-StackReady $RecoveryTimeoutSeconds)) {
                 throw 'supervisor did not restore DevSpace+tunnel within timeout'
             }
 
             "supervisorPid=$supervisorPid devspacePid=$devPid recovered=true"
+        }
+    }
+
+    function Run-StackCrash {
+        Invoke-Case 'live-devspace-and-tunnel-crash-recovery' {
+            $supervisorPid = Assert-Supervisor
+            $devPid = Stop-OwnedDevSpace
+            if ($devPid -le 0) { throw 'owned DevSpace pid not found' }
+            $tunnelPid = Stop-OwnedTunnel
+            if ($tunnelPid -le 0) { throw 'owned tunnel-client pid not found' }
+
+            if (-not (Wait-StackReady $RecoveryTimeoutSeconds)) {
+                throw 'supervisor did not restore DevSpace+tunnel after both were stopped'
+            }
+
+            "supervisorPid=$supervisorPid devspacePid=$devPid tunnelPid=$tunnelPid recovered=true"
+        }
+    }
+
+    function Run-DevSpaceCheckoutDeleted {
+        Invoke-Case 'devspace-checkout-deleted-recovery' {
+            Stop-OwnedSupervisor | Out-Null
+            $devPid = Stop-OwnedDevSpace
+            if ($devPid -le 0) { throw 'owned DevSpace pid not found' }
+
+            if (-not (Test-Path -LiteralPath $devspacePinDir -PathType Container)) {
+                throw 'managed DevSpace checkout missing before injection'
+            }
+
+            $backup = $devspacePinDir + '.m1-backup-' + [Guid]::NewGuid().ToString('N')
+            Move-Item -LiteralPath $devspacePinDir -Destination $backup
+            try {
+                Start-OwnedSupervisor | Out-Null
+                if (-not (Wait-StackReady $RecoveryTimeoutSeconds)) {
+                    throw 'supervisor did not restore stack after DevSpace checkout deletion'
+                }
+
+                $head = (& git.exe -C $devspacePinDir rev-parse HEAD 2>$null).Trim()
+                if ($LASTEXITCODE -ne 0 -or $head -ne '33d6d0bcc2256024484d2456da924af8afd814ed') {
+                    throw "restored DevSpace checkout has unexpected HEAD: $head"
+                }
+            }
+            finally {
+                $cleanupBackup = $false
+                if (-not (Test-Path -LiteralPath $devspacePinDir -PathType Container) -and
+                    (Test-Path -LiteralPath $backup -PathType Container)) {
+                    Move-Item -LiteralPath $backup -Destination $devspacePinDir
+                }
+                elseif (Test-Path -LiteralPath $backup -PathType Container) {
+                    $cleanupBackup = $true
+                }
+
+                Restore-ReadyStack | Out-Null
+
+                if ($cleanupBackup -and (Test-Path -LiteralPath $backup -PathType Container)) {
+                    $cleanupCommand = 'rmdir /s /q "' + $backup + '"'
+                    Start-Process -FilePath $env:ComSpec -ArgumentList @('/d','/c',$cleanupCommand) -WindowStyle Hidden | Out-Null
+                    Write-Output "M1_BACKUP_CLEANUP_SCHEDULED=$backup"
+                }
+            }
+
+            'Deleted managed DevSpace checkout was restored to the exact accepted revision.'
+        }
+    }
+
+    function Run-WslUnavailable {
+        Invoke-Case 'wsl-temporarily-unavailable-fails-closed' {
+            Stop-OwnedSupervisor | Out-Null
+            Stop-OwnedTunnel | Out-Null
+
+            $shimDir = Join-Path $base ('m1-wsl-shim-' + [Guid]::NewGuid().ToString('N'))
+            $oldPath = $env:PATH
+            New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32\where.exe') -Destination (Join-Path $shimDir 'wsl.exe')
+            try {
+                $env:PATH = $shimDir + ';' + $oldPath
+                $out = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tunnelLauncher 2>&1
+                $code = $LASTEXITCODE
+                if ($code -eq 0) { throw 'launcher unexpectedly succeeded with WSL shim failure' }
+                if (-not (@($out) -match 'WAG_DIAGNOSTIC_CODE=WAG_WSL_UNAVAILABLE')) {
+                    throw 'WAG_WSL_UNAVAILABLE diagnostic missing'
+                }
+            }
+            finally {
+                $env:PATH = $oldPath
+                Remove-Item -LiteralPath $shimDir -Recurse -Force -ErrorAction SilentlyContinue
+                Restore-ReadyStack | Out-Null
+            }
+
+            'WSL unavailability failed closed with a stable diagnostic and the stack recovered after restoration.'
+        }
+    }
+
+    function Run-TunnelClientMissing {
+        Invoke-Case 'tunnel-client-missing-fails-closed' {
+            Stop-OwnedSupervisor | Out-Null
+            Stop-OwnedTunnel | Out-Null
+
+            $backup = $tunnelClientWsl + '.m1-backup-' + [Guid]::NewGuid().ToString('N')
+            & wsl.exe -e mv -- $tunnelClientWsl $backup
+            if ($LASTEXITCODE -ne 0) { throw 'failed to move tunnel-client for injection' }
+            try {
+                $out = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tunnelLauncher 2>&1
+                $code = $LASTEXITCODE
+                if ($code -eq 0) { throw 'launcher unexpectedly succeeded without tunnel-client' }
+                if (-not (@($out) -match 'WAG_DIAGNOSTIC_CODE=WAG_TUNNEL_CLIENT_MISSING')) {
+                    throw 'WAG_TUNNEL_CLIENT_MISSING diagnostic missing'
+                }
+            }
+            finally {
+                & wsl.exe -e mv -- $backup $tunnelClientWsl 2>$null
+                if ($LASTEXITCODE -ne 0) { throw 'failed to restore tunnel-client after injection' }
+                Restore-ReadyStack | Out-Null
+            }
+
+            'Missing tunnel-client failed closed and recovery succeeded after the binary was restored.'
+        }
+    }
+
+    function Run-Port7677Collision {
+        Invoke-Case 'port-7677-unrelated-listener-fails-closed' {
+            Stop-OwnedSupervisor | Out-Null
+            Stop-OwnedDevSpace | Out-Null
+
+            $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 7677)
+            $listener.Start()
+            try {
+                $owner = Get-NetTCPConnection -State Listen -LocalPort 7677 -ErrorAction Stop |
+                    Select-Object -First 1
+                if ([int]$owner.OwningProcess -ne $PID) { throw 'collision listener ownership mismatch' }
+
+                $out = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tunnelLauncher -EnsureDevSpaceOnly 2>&1
+                $code = $LASTEXITCODE
+                if ($code -eq 0) { throw 'launcher unexpectedly adopted unrelated 7677 listener' }
+                if (-not (@($out) -match 'WAG_DIAGNOSTIC_CODE=WAG_DEVSPACE_PORT_COLLISION')) {
+                    throw 'WAG_DEVSPACE_PORT_COLLISION diagnostic missing'
+                }
+
+                $ownerAfter = Get-NetTCPConnection -State Listen -LocalPort 7677 -ErrorAction Stop |
+                    Select-Object -First 1
+                if ([int]$ownerAfter.OwningProcess -ne $PID) {
+                    throw 'launcher killed or replaced unrelated 7677 listener'
+                }
+            }
+            finally {
+                $listener.Stop()
+                Restore-ReadyStack | Out-Null
+            }
+
+            'Unrelated 7677 listener was preserved and WAG failed closed.'
+        }
+    }
+
+    function Run-Port8080Collision {
+        Invoke-Case 'port-8080-unrelated-listener-fails-closed' {
+            Stop-OwnedSupervisor | Out-Null
+            Stop-OwnedTunnel | Out-Null
+
+            $portDeadline = [DateTime]::UtcNow.AddSeconds(10)
+            while ([DateTime]::UtcNow -lt $portDeadline) {
+                $existing = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                if ($null -eq $existing) { break }
+                Start-Sleep -Milliseconds 250
+            }
+            $existing = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($null -ne $existing) {
+                throw "port 8080 did not become free after owned tunnel stop; pid=$($existing.OwningProcess)"
+            }
+
+            $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 8080)
+            $listener.Start()
+            try {
+                $owner = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction Stop |
+                    Select-Object -First 1
+                if ([int]$owner.OwningProcess -ne $PID) { throw 'collision listener ownership mismatch' }
+
+                $out = & pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tunnelLauncher 2>&1
+                $code = $LASTEXITCODE
+                if ($code -eq 0) { throw 'launcher unexpectedly adopted unrelated 8080 listener' }
+                if (-not (@($out) -match 'WAG_DIAGNOSTIC_CODE=WAG_TUNNEL_PORT_COLLISION')) {
+                    throw 'WAG_TUNNEL_PORT_COLLISION diagnostic missing'
+                }
+
+                $ownerAfter = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction Stop |
+                    Select-Object -First 1
+                if ([int]$ownerAfter.OwningProcess -ne $PID) {
+                    throw 'launcher killed or replaced unrelated 8080 listener'
+                }
+            }
+            finally {
+                $listener.Stop()
+                Restore-ReadyStack | Out-Null
+            }
+
+            'Unrelated 8080 listener was preserved and WAG failed closed.'
         }
     }
 
@@ -272,9 +599,21 @@ param(
         'AllSafe' { Run-SafeBatch }
         'TunnelCrash' { Run-TunnelCrash }
         'DevSpaceCrash' { Run-DevSpaceCrash }
-        'AllDestructive' {
+        'StackCrash' { Run-StackCrash }
+        'DevSpaceCheckoutDeleted' { Run-DevSpaceCheckoutDeleted }
+        'WslUnavailable' { Run-WslUnavailable }
+        'TunnelClientMissing' { Run-TunnelClientMissing }
+        'Port7677Collision' { Run-Port7677Collision }
+        'Port8080Collision' { Run-Port8080Collision }
+        'AllLocalDestructive' {
             Run-TunnelCrash
             Run-DevSpaceCrash
+            Run-StackCrash
+            Run-DevSpaceCheckoutDeleted
+            Run-WslUnavailable
+            Run-TunnelClientMissing
+            Run-Port7677Collision
+            Run-Port8080Collision
         }
     }
 
