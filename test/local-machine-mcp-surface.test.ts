@@ -20,6 +20,8 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     list: async (id, path, maxEntries, depth) => record('list', id, path, maxEntries, depth),
     search: async (id, query, options) => record('search', id, query, options),
     searchContinue: async (id, cursor, maxResults) => record('searchContinue', id, cursor, maxResults),
+    searchList: async (id) => record('searchList', id),
+    searchCancel: async (id, searchId) => record('searchCancel', id, searchId),
     info: async (id, path) => record('info', id, path),
     read: async (id, path, options) => record('read', id, path, options),
     readMany: async (id, paths, options) => record('readMany', id, paths, options),
@@ -124,6 +126,15 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
     max_results: 9,
   })).name, 'searchContinue');
 
+  assert.equal((await invoke('machine.search_list', {
+    workspace_id: workspaceId,
+  })).name, 'searchList');
+
+  assert.equal((await invoke('machine.search_cancel', {
+    workspace_id: workspaceId,
+    search_id: 'search_12345678',
+  })).name, 'searchCancel');
+
   assert.equal((await invoke('machine.info', {
     workspace_id: workspaceId,
     path: 'note.txt',
@@ -205,6 +216,12 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
 
   const continued = calls.find((call) => call.name === 'searchContinue');
   assert.deepEqual(continued?.args, [workspaceId, 'cursor_opaque', 9]);
+
+  const searchList = calls.find((call) => call.name === 'searchList');
+  assert.deepEqual(searchList?.args, [workspaceId]);
+
+  const searchCancel = calls.find((call) => call.name === 'searchCancel');
+  assert.deepEqual(searchCancel?.args, [workspaceId, 'search_12345678']);
 
   const injected = await client.callTool({
     name: 'machine.process.terminate',

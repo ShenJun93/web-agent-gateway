@@ -584,6 +584,8 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
       };
     },
     async searchContinue() { throw new Error('not used'); },
+    async searchList() { throw new Error('not used'); },
+    async searchCancel() { throw new Error('not used'); },
     async search(workspaceId, query) {
       assert.equal(workspaceId, machineWorkspaceId);
       assert.equal(query, 'needle');

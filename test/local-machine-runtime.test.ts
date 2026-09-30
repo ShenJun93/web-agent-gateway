@@ -215,3 +215,149 @@ test('local-machine workspace ownership prevents a second session from inheritin
 
   await assert.rejects(() => other.read(opened.workspace_id, 'note.txt'), /workspace/);
 });
+
+
+test('search lifecycle lists paused sessions, cancels them, and invalidates cancelled cursors', async (t) => {
+  const { root, context } = await fixture(t);
+  await writeFile(join(root, 'search-a.txt'), 'needle one\nneedle two\n', 'utf8');
+  await writeFile(join(root, 'search-b.txt'), 'needle three\nneedle four\n', 'utf8');
+  const opened = await context.open(root) as { workspace_id: string };
+
+  const first = await context.search(opened.workspace_id, 'needle', { maxResults: 1 }) as {
+    search_id: string; cursor: string; truncated: boolean;
+  };
+  const second = await context.search(opened.workspace_id, 'needle', {
+    maxResults: 1,
+  }) as { search_id: string; cursor: string; truncated: boolean };
+
+  assert.equal(first.truncated, true);
+  assert.equal(second.truncated, true);
+  assert.notEqual(first.search_id, second.search_id);
+
+  const listed = await context.searchList(opened.workspace_id) as {
+    active_count: number; max_active: number; paused_ttl_ms: number;
+    searches: Array<{ search_id: string; state: string; query: string }>;
+  };
+  assert.equal(listed.active_count, 2);
+  assert.equal(listed.max_active, 32);
+  assert.equal(listed.paused_ttl_ms, 10 * 60_000);
+  assert.deepEqual(listed.searches.map((item) => item.state), ['PAUSED', 'PAUSED']);
+  assert.ok(listed.searches.every((item) => item.query === 'needle'));
+
+  const cancelled = await context.searchCancel(opened.workspace_id, first.search_id);
+  assert.deepEqual(cancelled, { search_id: first.search_id, cancelled: true, state: 'CANCELLED' });
+  await assert.rejects(
+    () => context.searchContinue(opened.workspace_id, first.cursor, 1),
+    /search session/,
+  );
+
+  const after = await context.searchList(opened.workspace_id) as {
+    active_count: number; searches: Array<{ search_id: string }>;
+  };
+  assert.equal(after.active_count, 1);
+  assert.equal(after.searches[0]!.search_id, second.search_id);
+});
+
+test('search lifecycle rejects cursor replay and isolates sessions by workspace', async (t) => {
+  const { root, context } = await fixture(t);
+  await writeFile(join(root, 'replay.txt'), 'needle a\nneedle b\nneedle c\n', 'utf8');
+  const firstWorkspace = await context.open(root) as { workspace_id: string };
+
+  const otherDir = await mkdtemp(join(tmpdir(), 'wag-search-other-'));
+  t.after(() => rm(otherDir, { recursive: true, force: true }));
+  await writeFile(join(otherDir, 'other.txt'), 'needle x\nneedle y\n', 'utf8');
+  const otherWorkspace = await context.open(otherDir) as { workspace_id: string };
+
+  const first = await context.search(firstWorkspace.workspace_id, 'needle', {
+    maxResults: 1,
+  }) as { search_id: string; cursor: string };
+
+  const wrongWorkspace = await context.searchCancel(otherWorkspace.workspace_id, first.search_id) as {
+    cancelled: boolean; state: string;
+  };
+  assert.equal(wrongWorkspace.cancelled, false);
+  assert.equal(wrongWorkspace.state, 'NOT_FOUND');
+  assert.equal(
+    (await context.searchList(otherWorkspace.workspace_id) as { active_count: number }).active_count,
+    0,
+  );
+
+  const continued = await context.searchContinue(firstWorkspace.workspace_id, first.cursor, 1) as {
+    search_id: string; cursor: string; truncated: boolean;
+  };
+  assert.equal(continued.search_id, first.search_id);
+  assert.equal(continued.truncated, true);
+  assert.notEqual(continued.cursor, first.cursor);
+
+  await assert.rejects(
+    () => context.searchContinue(firstWorkspace.workspace_id, first.cursor, 1),
+    /search session/,
+  );
+  await context.searchCancel(firstWorkspace.workspace_id, first.search_id);
+});
+
+test('search lifecycle can cancel a currently running owned search without leaving a session', async (t) => {
+  const { root, context } = await fixture(t);
+  const payload = ('haystack '.repeat(1024)) + '\n';
+  await Promise.all(Array.from({ length: 256 }, (_, index) =>
+    writeFile(join(root, `running-${String(index).padStart(3, '0')}.txt`), payload, 'utf8')));
+  const opened = await context.open(root) as { workspace_id: string };
+
+  const pending = context.search(opened.workspace_id, 'needle-never-present', { maxResults: 50 });
+  let searchId = '';
+  for (let attempt = 0; attempt < 100 && !searchId; attempt += 1) {
+    const listed = await context.searchList(opened.workspace_id) as {
+      searches: Array<{ search_id: string; state: string }>;
+    };
+    const running = listed.searches.find((item) => item.state === 'RUNNING');
+    if (running) {
+      searchId = running.search_id;
+      break;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1));
+  }
+
+  assert.ok(searchId, 'expected to observe the caller-owned RUNNING search session');
+  const cancelled = await context.searchCancel(opened.workspace_id, searchId) as {
+    cancelled: boolean; state: string;
+  };
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(cancelled.state, 'CANCELLING');
+  await assert.rejects(() => pending, /cancelled search/);
+  assert.equal(
+    (await context.searchList(opened.workspace_id) as { active_count: number }).active_count,
+    0,
+  );
+});
+
+test('search lifecycle enforces a bounded active-session capacity', async (t) => {
+  const { root, context } = await fixture(t);
+  await writeFile(join(root, 'capacity.txt'), 'needle a\nneedle b\n', 'utf8');
+  const opened = await context.open(root) as { workspace_id: string };
+  const ids: string[] = [];
+
+  for (let index = 0; index < 32; index += 1) {
+    const result = await context.search(opened.workspace_id, 'needle', {
+      maxResults: 1,
+    }) as { search_id: string; truncated: boolean };
+    assert.equal(result.truncated, true);
+    ids.push(result.search_id);
+  }
+
+  assert.equal(
+    (await context.searchList(opened.workspace_id) as { active_count: number }).active_count,
+    32,
+  );
+  await assert.rejects(
+    () => context.search(opened.workspace_id, 'needle', {
+      maxResults: 1,
+    }),
+    /search session capacity/,
+  );
+
+  for (const searchId of ids) await context.searchCancel(opened.workspace_id, searchId);
+  assert.equal(
+    (await context.searchList(opened.workspace_id) as { active_count: number }).active_count,
+    0,
+  );
+});

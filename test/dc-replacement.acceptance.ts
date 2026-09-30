@@ -38,6 +38,8 @@ const EXTENDED_TOOLS = [
   'machine.pdf.extract',
   'machine.search',
   'machine.search_continue',
+  'machine.search_list',
+  'machine.search_cancel',
   'machine.info',
   'machine.mkdir',
   'machine.move',

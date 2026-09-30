@@ -89,6 +89,8 @@ function machineContext(): LocalMachineContext {
     extractPdf: async () => hugePdf(),
     search: async () => hugeSearch(),
     searchContinue: async () => hugeSearch(),
+    searchList: async () => ({ searches: [], active_count: 0, max_active: 32, paused_ttl_ms: 600000 }),
+    searchCancel: async (_workspaceId, searchId) => ({ search_id: searchId, cancelled: false, state: 'NOT_FOUND' }),
     info: async () => ({ path: '.', type: 'directory' }),
     mkdir: async () => ({ created: true }),
     move: async () => ({ moved: true }),

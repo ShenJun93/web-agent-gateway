@@ -711,6 +711,27 @@ export function createGatewayMcpServer(
       await machineContext.searchContinue(workspace_id, cursor, max_results),
     ));
 
+    registerTool('machine.search_list', {
+      description: 'List bounded active/paused search sessions owned by one caller-owned local-machine workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id }) => toolResult(
+      await machineContext.searchList(workspace_id),
+    ));
+
+    registerTool('machine.search_cancel', {
+      description: 'Cancel one caller-owned local-machine search session without touching filesystem or external process authority.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        search_id: z.string().min(8).max(128),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, search_id }) => toolResult(
+      await machineContext.searchCancel(workspace_id, search_id),
+    ));
+
     registerTool('machine.info', {
       description: 'Read bounded filesystem metadata for one local-machine path.',
       inputSchema: z.object({

@@ -1,0 +1,48 @@
+{
+  "schema": "WAG_LOCAL_M6_SEARCH_LIFECYCLE_V1",
+  "generatedAtUtc": "2026-09-30T07:25:00Z",
+  "branch": "feat/wag-local-m6-search-lifecycle-v1",
+  "baseHead": "e80fbe9ed172ef0b955f34e9ddfd16f331f25a83",
+  "pass": true,
+  "verdict": {
+    "searchLifecycleCandidate": "PASS",
+    "livePromotion": "NOT_EXECUTED"
+  },
+  "surface": {
+    "addedTools": [
+      "machine.search_list",
+      "machine.search_cancel"
+    ],
+    "expectedFullLiveToolCountAfterPromotion": 55,
+    "currentLiveToolCountBeforePromotion": 53
+  },
+  "bounds": {
+    "maxSearchSessions": 32,
+    "pausedTtlMs": 600000,
+    "maxSearchResultsPerPage": 50,
+    "legacyCursorV1Compatibility": true
+  },
+  "acceptance": {
+    "pausedSessionListAndCancel": true,
+    "runningSessionCancel": true,
+    "cancelledCursorInvalidation": true,
+    "cursorReplayRejected": true,
+    "workspaceIsolation": true,
+    "boundedSessionCapacity": true,
+    "noOrphanSessionAfterRunningCancel": true,
+    "relayBoundRegression": true,
+    "directMcpSchemaHints": true,
+    "dcReplacementAcceptance": true
+  },
+  "verification": {
+    "affectedSurfaceTests": "26/26 PASS",
+    "localMachineRuntime": "9/9 PASS",
+    "directMcpReadiness": "10/10 PASS",
+    "relayMessageBound": "1/1 PASS",
+    "wagProduct": "34/34 PASS",
+    "dcReplacementAcceptance": "1/1 PASS",
+    "typecheck": "PASS",
+    "build": "PASS",
+    "diffCheck": "PASS"
+  }
+}
