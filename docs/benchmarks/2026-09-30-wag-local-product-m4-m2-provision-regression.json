@@ -1,0 +1,32 @@
+{
+  "schema": "WAG_LOCAL_M2_FIRST_TIME_PROVISION_FIXTURE_V1",
+  "generatedAtUtc": "2026-09-30T05:08:35.1817176Z",
+  "pass": true,
+  "error": null,
+  "firstRun": {
+    "exit": 2,
+    "status": "ACTION_REQUIRED_CHATGPT_CONNECTOR"
+  },
+  "secondRun": {
+    "exit": 0,
+    "status": "READY"
+  },
+  "checks": {
+    "firstExitRequestsNextAction": true,
+    "firstStatusConnector": true,
+    "secondExitReady": true,
+    "secondStatusReady": true,
+    "profileCreated": true,
+    "runtimeSecretProtected": true,
+    "connectorMarkerWritten": true,
+    "runtimeInstalled": true,
+    "secretNotPrintedFirst": true,
+    "secretNotPrintedSecond": true,
+    "liveStartupUnchanged": true,
+    "liveStarterUnchanged": true,
+    "liveSupervisorUnchanged": true,
+    "liveTunnelLauncherUnchanged": true,
+    "liveStackReadyBefore": true,
+    "liveStackReadyAfter": true
+  }
+}

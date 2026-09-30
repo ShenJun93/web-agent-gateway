@@ -142,6 +142,13 @@ param(
 
     & wsl.exe -e test -f $profilePath 2>$null
     $profilePresent = $LASTEXITCODE -eq 0
+    $setupReceiptPath = Join-Path $fakeBase 'receipts\wag-local-setup.json'
+    $installedRuntimeTag = if (Test-Path -LiteralPath $setupReceiptPath -PathType Leaf) {
+        [string](Get-Content -LiteralPath $setupReceiptPath -Raw | ConvertFrom-Json).runtimeTag
+    } else { '' }
+    $installedRuntimeCli = if ($installedRuntimeTag) {
+        Join-Path (Join-Path $fakeBase ('runtime\' + $installedRuntimeTag)) 'dist\cli.js'
+    } else { '' }
 
     $checks = [ordered]@{
         firstExitRequestsNextAction = $firstExit -eq 2
@@ -151,7 +158,7 @@ param(
         profileCreated = $profilePresent
         runtimeSecretProtected = Test-Path -LiteralPath (Join-Path $fakeBase 'secrets\control-plane.dpapi') -PathType Leaf
         connectorMarkerWritten = Test-Path -LiteralPath (Join-Path $fakeBase 'state\chatgpt-connector.confirmed') -PathType Leaf
-        runtimeInstalled = Test-Path -LiteralPath (Join-Path $fakeBase 'runtime\0.1.0\dist\cli.js') -PathType Leaf
+        runtimeInstalled = [bool]$installedRuntimeCli -and (Test-Path -LiteralPath $installedRuntimeCli -PathType Leaf)
         secretNotPrintedFirst = -not $firstOutput.Contains($fixtureRuntimeValue)
         secretNotPrintedSecond = -not $secondOutput.Contains($fixtureRuntimeValue)
         liveStartupUnchanged = $before.startup -eq $after.startup

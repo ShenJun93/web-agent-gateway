@@ -9,6 +9,7 @@
   },
   "files": [
     "dist/",
+    "RELEASE.json",
     "scripts/install-wag-local-launchers.ps1",
     "scripts/wag-local-doctor.ps1",
     "scripts/wag-local-product-health.ps1",
@@ -27,7 +28,7 @@
   },
   "scripts": {
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",
-    "prepack": "npm run build",
+    "prepack": "npm run build && tsx scripts/generate-wag-local-release-manifest.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "build:native-host": "tsx scripts/build-native-host.ts",
@@ -49,7 +50,7 @@
     "wag:setup": "tsx src/cli.ts setup",
     "wag:doctor": "npm run build && node dist/cli.js doctor",
     "wag:health": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/wag-local-product-health.ps1",
-    "test:wag-product": "tsx --test test/wag-local-product-health.test.ts test/wag-local-doctor.test.ts test/wag-local-launcher.test.ts test/wag-local-setup.test.ts"
+    "test:wag-product": "tsx --test test/wag-local-product-health.test.ts test/wag-local-doctor.test.ts test/wag-local-release.test.ts test/wag-local-launcher.test.ts test/wag-local-setup.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",

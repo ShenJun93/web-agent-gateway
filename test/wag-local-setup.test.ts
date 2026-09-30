@@ -36,6 +36,21 @@ test('setup bootstrap is per-user, supports read-only preflight, and never accep
   assert.doesNotMatch(setup, /\[string\]\$(?:ApiKey|Secret|Token)\b/i);
 });
 
+test('setup consumes a verified RELEASE manifest, seeds release state, and refuses bypass updates', () => {
+  assert.match(setup, /RELEASE\.json/);
+  assert.match(setup, /dist\\product-release\.js/);
+  assert.match(setup, /hashReleasePayload/);
+  assert.match(setup, /Packaged release payload hash does not match RELEASE\.json/);
+  assert.match(setup, /WAG_LOCAL_RELEASE_STATE_V1/);
+  assert.match(setup, /activeReleaseId = \$runtimeTag/);
+  assert.match(setup, /previousReleaseId = \$null/);
+  assert.match(setup, /channel = \$releaseChannel/);
+  assert.match(setup, /migrationVersion = \$releaseMigrationVersion/);
+  assert.match(setup, /releaseChannel = \$releaseChannel/);
+  assert.match(setup, /releaseProvenance = \$releaseProvenance/);
+  assert.match(setup, /use the supported update command instead of setup/);
+});
+
 test('setup generates a narrow per-user runtime/config and does not enable remote push by default', () => {
   assert.match(setup, /\$installOptions\.NoAutostart = \$true/);
   assert.match(setup, /\$installOptions\.NoStart = \$true/);

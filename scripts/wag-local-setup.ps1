@@ -32,6 +32,8 @@ param(
     $packageJsonPath = Join-Path $packageRoot 'package.json'
     $runtimeLockPath = Join-Path $packageRoot 'packaging\runtime-package-lock.json'
     $distCli = Join-Path $packageRoot 'dist\cli.js'
+    $releaseModule = Join-Path $packageRoot 'dist\product-release.js'
+    $releaseManifestPath = Join-Path $packageRoot 'RELEASE.json'
     $pinSource = Join-Path $packageRoot 'docs\benchmarks\devspace-pin.json'
     $base = Join-Path $env:LOCALAPPDATA 'WAG-Local'
     $secrets = Join-Path $base 'secrets'
@@ -39,6 +41,7 @@ param(
     $receipts = Join-Path $base 'receipts'
     $configDir = Join-Path $base 'config'
     $stateDir = Join-Path $base 'state'
+    $releaseStateFile = Join-Path $stateDir 'release-state.json'
     $runtimeBase = Join-Path $base 'runtime'
     $devspaceConfigDir = Join-Path $base 'DevSpace'
     $tunnelClientPinFile = Join-Path $base 'tunnel-client-path.txt'
@@ -89,6 +92,7 @@ param(
         pwsh7 = $PSVersionTable.PSVersion.Major -ge 7
         wsl = $false
         dist = (Test-Path -LiteralPath $distCli -PathType Leaf)
+        releaseModule = (Test-Path -LiteralPath $releaseModule -PathType Leaf)
         runtimeLock = (Test-Path -LiteralPath $runtimeLockPath -PathType Leaf)
         devspacePin = (Test-Path -LiteralPath $pinSource -PathType Leaf)
     }
@@ -334,10 +338,69 @@ param(
             }
         }
     } catch { $sourceHead = '' }
+
     $runtimeTag = if ($sourceHead) { $version + '-dev-' + $sourceHead.Substring(0,12) } else { $version }
+    $releaseChannel = 'development'
+    $releaseMigrationVersion = 1
+    $releaseProvenance = if ($sourceHead) { 'git:' + $sourceHead } else { 'package:web-agent-gateway@' + $version }
+
+    if (Test-Path -LiteralPath $releaseManifestPath -PathType Leaf) {
+        $releaseManifest = Get-Content -LiteralPath $releaseManifestPath -Raw | ConvertFrom-Json
+        $releaseId = [string]$releaseManifest.releaseId
+        $releaseVersion = [string]$releaseManifest.version
+        $releaseChannelValue = [string]$releaseManifest.channel
+        $releasePayloadSha = [string]$releaseManifest.payloadSha256
+        $releaseProvenanceValue = [string]$releaseManifest.sourceProvenance
+        $releaseMigrationValue = [int]$releaseManifest.migrationVersion
+
+        if ([string]$releaseManifest.schema -ne 'WAG_LOCAL_RELEASE_V1' -or
+            $releaseVersion -ne $version -or
+            $releaseId.Length -lt 1 -or
+            $releaseId.Length -gt 128 -or
+            $releaseId[0] -notmatch '[A-Za-z0-9]' -or
+            $releaseId -match '[^A-Za-z0-9._-]' -or
+            $releaseChannelValue -notin @('stable','beta','development') -or
+            $releasePayloadSha.Length -ne 64 -or
+            $releasePayloadSha -match '[^a-f0-9]' -or
+            $releaseMigrationValue -lt 0 -or
+            $releaseMigrationValue -gt 1 -or
+            -not $releaseProvenanceValue) {
+            throw 'Packaged release manifest is invalid or incompatible'
+        }
+
+        $moduleUri = ([Uri]::new([IO.Path]::GetFullPath($releaseModule))).AbsoluteUri
+        $verifyJs = 'const a=process.argv.slice(-3);const m=await import(a[0]);const h=m.hashReleasePayload(a[1]);if(h!==a[2])process.exit(2);process.stdout.write(h);'
+        $observedPayloadSha = (& node.exe --input-type=module -e $verifyJs $moduleUri $packageRoot $releasePayloadSha).Trim()
+        if ($LASTEXITCODE -ne 0 -or $observedPayloadSha -ne $releasePayloadSha) {
+            throw 'Packaged release payload hash does not match RELEASE.json'
+        }
+
+        $runtimeTag = $releaseId
+        $releaseChannel = $releaseChannelValue
+        $releaseMigrationVersion = $releaseMigrationValue
+        $releaseProvenance = $releaseProvenanceValue
+        if ($releaseProvenance.StartsWith('git:')) {
+            $releaseHead = $releaseProvenance.Substring(4)
+            if ($releaseHead.Length -eq 40 -and $releaseHead -notmatch '[^a-f0-9]') {
+                $sourceHead = $releaseHead
+            } else {
+                $sourceHead = ''
+            }
+        } else {
+            $sourceHead = ''
+        }
+    }
+
     $runtimeRoot = Join-Path $runtimeBase $runtimeTag
     $runtimeCli = Join-Path $runtimeRoot 'dist\cli.js'
 
+    if (Test-Path -LiteralPath $releaseStateFile -PathType Leaf) {
+        $existingReleaseState = Get-Content -LiteralPath $releaseStateFile -Raw | ConvertFrom-Json
+        $existingActiveRelease = [string]$existingReleaseState.activeReleaseId
+        if ($existingActiveRelease -and $existingActiveRelease -ne $runtimeTag) {
+            throw "Existing WAG Local release '$existingActiveRelease' is active; use the supported update command instead of setup"
+        }
+    }
     if (-not (Test-Path -LiteralPath $runtimeCli -PathType Leaf)) {
         $staging = $runtimeRoot + '.staging-' + [Guid]::NewGuid().ToString('N')
         try {
@@ -345,6 +408,12 @@ param(
             Copy-Item -LiteralPath (Join-Path $packageRoot 'dist') -Destination (Join-Path $staging 'dist') -Recurse -Force
             Copy-Item -LiteralPath $packageJsonPath -Destination (Join-Path $staging 'package.json') -Force
             Copy-Item -LiteralPath $runtimeLockPath -Destination (Join-Path $staging 'package-lock.json') -Force
+            $targetPackaging = Join-Path $staging 'packaging'
+            New-Item -ItemType Directory -Path $targetPackaging -Force | Out-Null
+            Copy-Item -LiteralPath $runtimeLockPath -Destination (Join-Path $targetPackaging 'runtime-package-lock.json') -Force
+            if (Test-Path -LiteralPath $releaseManifestPath -PathType Leaf) {
+                Copy-Item -LiteralPath $releaseManifestPath -Destination (Join-Path $staging 'RELEASE.json') -Force
+            }
             foreach ($name in @(
                 'install-wag-local-launchers.ps1',
                 'wag-local-tunnel-launcher.ps1',
@@ -374,6 +443,10 @@ param(
 
             $marker = [ordered]@{
                 packageVersion = $version
+                releaseId = $runtimeTag
+                channel = $releaseChannel
+                migrationVersion = $releaseMigrationVersion
+                sourceProvenance = $releaseProvenance
                 capability = 'autonomous-local-runtime-v1'
                 installedAtUtc = [DateTime]::UtcNow.ToString('o')
             }
@@ -431,6 +504,23 @@ param(
         $doctor = 'DEFERRED'
     }
 
+    if ($clientReady -and $productStatus -ne 'DEGRADED' -and -not (Test-Path -LiteralPath $releaseStateFile -PathType Leaf)) {
+        New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+        $releaseState = [ordered]@{
+            schema = 'WAG_LOCAL_RELEASE_STATE_V1'
+            activeReleaseId = $runtimeTag
+            previousReleaseId = $null
+            channel = $releaseChannel
+            migrationVersion = $releaseMigrationVersion
+            updatedAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+        [IO.File]::WriteAllText(
+            $releaseStateFile,
+            ($releaseState | ConvertTo-Json -Depth 4),
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
+
     $finalActions = @()
     if (-not $clientReady) {
         $finalActions = $actions
@@ -446,6 +536,9 @@ param(
         doctor = $doctor
         allowedRoot = $AllowedRoot
         runtimeTag = $runtimeTag
+        releaseChannel = $releaseChannel
+        releaseMigrationVersion = $releaseMigrationVersion
+        releaseProvenance = $releaseProvenance
         autostart = -not ($NoAutostart -or -not $clientReady)
         actions = $finalActions
     }

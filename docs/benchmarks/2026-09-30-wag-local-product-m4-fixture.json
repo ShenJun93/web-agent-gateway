@@ -1,0 +1,96 @@
+{
+  "schema": "WAG_LOCAL_M4_RELEASE_FIXTURE_V1",
+  "generatedAtUtc": "2026-09-30T05:08:53.978Z",
+  "pass": true,
+  "release": {
+    "success": {
+      "schema": "WAG_LOCAL_UPDATE_V1",
+      "generatedAtUtc": "2026-09-30T05:08:53.943Z",
+      "releaseId": "release-2",
+      "previousReleaseId": "release-1",
+      "channel": "beta",
+      "staged": true,
+      "candidateAccepted": true,
+      "switched": true,
+      "healthPassed": true,
+      "rolledBack": false,
+      "state": "SUCCEEDED",
+      "failureCode": null
+    },
+    "failed": {
+      "schema": "WAG_LOCAL_UPDATE_V1",
+      "generatedAtUtc": "2026-09-30T05:08:53.964Z",
+      "releaseId": "release-3",
+      "previousReleaseId": "release-2",
+      "channel": "beta",
+      "staged": true,
+      "candidateAccepted": true,
+      "switched": true,
+      "healthPassed": false,
+      "rolledBack": true,
+      "state": "FAILED_ROLLED_BACK",
+      "failureCode": "WAG_RELEASE_POST_SWITCH_HEALTH_FAILED"
+    },
+    "explicitRollback": {
+      "schema": "WAG_LOCAL_ROLLBACK_V1",
+      "generatedAtUtc": "2026-09-30T05:08:53.968Z",
+      "fromReleaseId": "release-2",
+      "toReleaseId": "release-1",
+      "switched": true,
+      "healthPassed": true,
+      "restoredOriginal": false,
+      "state": "SUCCEEDED",
+      "failureCode": null
+    },
+    "manifest": {
+      "schema": "WAG_LOCAL_RELEASE_V1",
+      "releaseId": "release-2",
+      "version": "1.1.0",
+      "channel": "beta",
+      "sourceProvenance": "git:1111111111111111111111111111111111111111",
+      "compatibility": {
+        "nodeMinMajor": 22,
+        "nodeMaxMajor": 26
+      },
+      "migrationVersion": 1,
+      "rollbackTarget": "previous-active",
+      "payloadSha256": "a04678a01acbccfa129c29988cffa1e9c479afff5af67f67b5b6d1285c575e92"
+    },
+    "switchSequence": [
+      "C:\\Users\\PACMAP\\AppData\\Local\\Temp\\wag-m4-release-6vM2Vs\\install\\runtime\\release-2",
+      "C:\\Users\\PACMAP\\AppData\\Local\\Temp\\wag-m4-release-6vM2Vs\\install\\runtime\\release-3",
+      "C:\\Users\\PACMAP\\AppData\\Local\\Temp\\wag-m4-release-6vM2Vs\\install\\runtime\\release-2",
+      "C:\\Users\\PACMAP\\AppData\\Local\\Temp\\wag-m4-release-6vM2Vs\\install\\runtime\\release-1"
+    ]
+  },
+  "uninstall": {
+    "rootRemoved": false,
+    "removedEntries": [
+      "runtime",
+      "logs",
+      "state",
+      "secrets",
+      "receipts",
+      "DevSpace-State",
+      "DevSpace-Pin-fixture"
+    ],
+    "preservedEntries": [
+      "unknown-tool"
+    ],
+    "preservedExternalWorkspaces": [
+      "C:\\Users\\PACMAP\\AppData\\Local\\Temp\\wag-m4-release-6vM2Vs\\user-workspace"
+    ]
+  },
+  "checks": {
+    "updateSucceeded": true,
+    "previousReleasePreserved": true,
+    "automaticRollbackSucceeded": true,
+    "explicitRollbackSucceeded": true,
+    "atomicPointerUsed": true,
+    "manifestCarriesReleaseMetadata": true,
+    "uninstallPreservedUnknown": true,
+    "uninstallPreservedUserWorkspace": true,
+    "uninstallRemovedRuntime": true,
+    "uninstallRemovedManagedDevspace": true
+  }
+}

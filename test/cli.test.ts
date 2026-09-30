@@ -99,6 +99,63 @@ test('product doctor dispatches without --config and maps only bounded arguments
   assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
 });
 
+test('product update, rollback, and uninstall dispatch only bounded lifecycle arguments', async () => {
+  const update = makeCliHarness();
+  let updateObserved: unknown;
+  update.deps.runUpdate = async (args) => { updateObserved = args; return 0; };
+  const packageRoot = resolve('candidate-package');
+  const manifestPath = resolve('candidate-release.json');
+  const updateOutput = resolve('update-receipt.json');
+  assert.equal(await main([
+    'update',
+    '--package-root', packageRoot,
+    '--manifest', manifestPath,
+    '--output', updateOutput,
+  ], update.deps), 0);
+  assert.deepEqual(updateObserved, { packageRoot, manifestPath, output: updateOutput });
+
+  const rollback = makeCliHarness();
+  let rollbackObserved: unknown;
+  rollback.deps.runRollback = async (args) => { rollbackObserved = args; return 0; };
+  const rollbackOutput = resolve('rollback-receipt.json');
+  assert.equal(await main(['rollback', '--output', rollbackOutput], rollback.deps), 0);
+  assert.deepEqual(rollbackObserved, { output: rollbackOutput });
+
+  const uninstall = makeCliHarness();
+  let uninstallObserved: unknown;
+  uninstall.deps.runUninstall = async (args) => { uninstallObserved = args; return 0; };
+  const uninstallOutput = resolve('uninstall-receipt.json');
+  assert.equal(await main([
+    'uninstall',
+    '--keep-state',
+    '--remove-managed-devspace',
+    '--output', uninstallOutput,
+  ], uninstall.deps), 0);
+  assert.deepEqual(uninstallObserved, {
+    keepState: true,
+    removeManagedDevspace: true,
+    output: uninstallOutput,
+  });
+
+  const embeddedManifest = makeCliHarness();
+  let embeddedObserved: unknown;
+  embeddedManifest.deps.runUpdate = async (args) => { embeddedObserved = args; return 0; };
+  assert.equal(await main(['update', '--package-root', packageRoot], embeddedManifest.deps), 0);
+  assert.deepEqual(embeddedObserved, { packageRoot });
+
+  const bad = makeCliHarness();
+  let called = 0;
+  bad.deps.runUpdate = async () => { called += 1; return 0; };
+  assert.equal(await main(['update', '--manifest', manifestPath], bad.deps), 1);
+  assert.equal(called, 0);
+  assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
+
+  const relative = makeCliHarness();
+  relative.deps.runRollback = async () => 0;
+  assert.equal(await main(['rollback', '--output', 'relative.json'], relative.deps), 1);
+  assert.match(relative.stderr.text(), /"code":"CLI_USAGE"/);
+});
+
 test('doctor --config preserves the legacy runtime preflight', async () => {
   const h = makeCliHarness();
   const code = await main(['doctor', '--config', resolve('private.json')], h.deps);

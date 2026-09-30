@@ -141,7 +141,10 @@ param(
         tunnelHealth = Test-HttpOk 'http://127.0.0.1:8080/healthz'
     }
 
-    $fixtureRuntimeCli = Join-Path $fixtureBase 'runtime\0.1.0\dist\cli.js'
+    $fixtureRuntimeTag = if ($setupReceipt) { [string]$setupReceipt.runtimeTag } else { '' }
+    $fixtureRuntimeCli = if ($fixtureRuntimeTag) {
+        Join-Path (Join-Path $fixtureBase ('runtime\' + $fixtureRuntimeTag)) 'dist\cli.js'
+    } else { '' }
     & wsl.exe -e test -x $fixtureWrapper 2>$null
     $fixtureWrapperExecutable = $LASTEXITCODE -eq 0
 

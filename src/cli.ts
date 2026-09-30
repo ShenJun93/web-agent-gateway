@@ -10,6 +10,12 @@ import {
 } from './browser-operator-runtime.js';
 import { loadPrivateGatewayConfig, type PrivateGatewayConfig } from './private-config.js';
 import {
+  runProductRollback,
+  runProductUninstall,
+  runProductUpdate,
+  type ProductUninstallArgs,
+} from './product-release-runtime.js';
+import {
   bootstrapPrivateGateway,
   PrivateRuntimeError,
   type PrivateGatewayRuntime,
@@ -42,6 +48,12 @@ export interface CliDependencies {
   runSetup?: (argv: string[]) => Promise<number>;
   /** Product doctor entrypoint; injected by doctor tests. */
   runDoctor?: (argv: string[]) => Promise<number>;
+  /** Transactional product update; injected by product lifecycle tests. */
+  runUpdate?: (args: ProductUpdateArgs) => Promise<number>;
+  /** Explicit rollback; injected by product lifecycle tests. */
+  runRollback?: (args: ProductRollbackArgs) => Promise<number>;
+  /** Supported uninstall; injected by product lifecycle tests. */
+  runUninstall?: (args: ProductUninstallArgs) => Promise<number>;
   /** Defaults to the real assembly; injected only by tests. */
   startRepositoryEngineering?: typeof startRepositoryEngineeringRuntime;
   /** Defaults to the real assembly; injected only by tests. */
@@ -53,6 +65,8 @@ export interface CliDependencies {
 }
 type CliCommand = 'doctor' | 'serve-stdio' | 'serve-browser-operator' | 'serve-remote-relay-device';
 interface ParsedCli { command: CliCommand; configPath: string; }
+interface ProductUpdateArgs { packageRoot: string; manifestPath?: string; output?: string; }
+interface ProductRollbackArgs { output?: string; }
 
 class CliUsageError extends Error {}
 
@@ -64,6 +78,33 @@ export async function main(
   if (argv.length === 1 && argv[0] === '--help') {
     deps.stdout.write(usageText());
     return 0;
+  }
+  if (argv[0] === 'update') {
+    try {
+      const updateArgs = parseProductUpdateArgs(argv.slice(1));
+      return await (deps.runUpdate ?? runProductUpdate)(updateArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'UPDATE_FAILED', error);
+      return 1;
+    }
+  }
+  if (argv[0] === 'rollback') {
+    try {
+      const rollbackArgs = parseProductRollbackArgs(argv.slice(1));
+      return await (deps.runRollback ?? runProductRollback)(rollbackArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'ROLLBACK_FAILED', error);
+      return 1;
+    }
+  }
+  if (argv[0] === 'uninstall') {
+    try {
+      const uninstallArgs = parseProductUninstallArgs(argv.slice(1));
+      return await (deps.runUninstall ?? runProductUninstall)(uninstallArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'UNINSTALL_FAILED', error);
+      return 1;
+    }
   }
   if (argv[0] === 'doctor' && !(argv.length === 3 && argv[1] === '--config')) {
     try {
@@ -399,6 +440,77 @@ function telemetryToStderr(stderr: Writable): TelemetrySink {
   };
 }
 
+function requireAbsoluteCliPath(value: string, flag: string): string {
+  if (!isAbsolute(value)) throw new CliUsageError(`${flag} must be an absolute path`);
+  return resolve(value);
+}
+
+function parseProductUpdateArgs(argv: string[]): ProductUpdateArgs {
+  let packageRoot = '';
+  let manifestPath = '';
+  let output: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--package-root' || arg === '--manifest' || arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError(`Missing value after ${arg}`);
+      const absolute = requireAbsoluteCliPath(value, arg);
+      if (arg === '--package-root') packageRoot = absolute;
+      else if (arg === '--manifest') manifestPath = absolute;
+      else output = absolute;
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown update argument: ${arg}`);
+  }
+  if (!packageRoot) throw new CliUsageError('update requires --package-root');
+  return {
+    packageRoot,
+    ...(manifestPath ? { manifestPath } : {}),
+    ...(output ? { output } : {}),
+  };
+}
+
+function parseProductRollbackArgs(argv: string[]): ProductRollbackArgs {
+  let output: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError('Missing value after --output');
+      output = requireAbsoluteCliPath(value, '--output');
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown rollback argument: ${arg}`);
+  }
+  return output ? { output } : {};
+}
+
+function parseProductUninstallArgs(argv: string[]): ProductUninstallArgs {
+  let output: string | undefined;
+  let keepState = false;
+  let removeManagedDevspace = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--keep-state') { keepState = true; continue; }
+    if (arg === '--remove-managed-devspace') { removeManagedDevspace = true; continue; }
+    if (arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError('Missing value after --output');
+      output = requireAbsoluteCliPath(value, '--output');
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown uninstall argument: ${arg}`);
+  }
+  return {
+    keepState,
+    removeManagedDevspace,
+    ...(output ? { output } : {}),
+  };
+}
+
 function mapDoctorArgs(argv: string[]): string[] {
   const mapped: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -470,6 +582,9 @@ function usageText(): string {
   return [
     'Usage:',
     '  web-agent-gateway setup [--check-only] [--tunnel-id <tunnel_...>] [--runtime-key-ref env:CONTROL_PLANE_API_KEY] [--connector-confirmed] [--allowed-root <absolute-path>] [--no-start] [--no-autostart]',
+    '  web-agent-gateway update --package-root <absolute-path> [--manifest <absolute-path>] [--output <absolute-path>]',
+    '  web-agent-gateway rollback [--output <absolute-path>]',
+    '  web-agent-gateway uninstall [--keep-state] [--remove-managed-devspace] [--output <absolute-path>]',
     '  web-agent-gateway doctor [--repair] [--output <absolute-path>]',
     '  web-agent-gateway doctor --config <absolute-path>  # legacy runtime preflight',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
