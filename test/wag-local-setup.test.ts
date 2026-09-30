@@ -23,8 +23,13 @@ test('setup bootstrap is per-user, supports read-only preflight, and never accep
   assert.match(setup, /ACTION_REQUIRED/);
   assert.match(setup, /WAG_SETUP_CLIENT_PROFILE_REQUIRED/);
   assert.match(setup, /WAG_SETUP_TUNNEL_CLIENT_REQUIRED/);
+  assert.match(setup, /WAG_SETUP_PROFILE_FILE/);
+  assert.match(setup, /absolute WSL path without traversal/);
+  assert.match(setup, /Invoke-Wsl @\('-e','cat',\$profileFileOverride\)/);
   assert.match(setup, /ConvertFrom-SecureString/);
   assert.match(setup, /npm\.cmd ci --omit=dev --ignore-scripts/);
+  assert.match(setup, /rev-parse --show-toplevel/);
+  assert.match(setup, /OrdinalIgnoreCase/);
   assert.doesNotMatch(setup, /HKLM|schtasks|Register-ScheduledTask/i);
   assert.doesNotMatch(setup, /\[string\]\$(?:ApiKey|Secret|Token)\b/i);
 });

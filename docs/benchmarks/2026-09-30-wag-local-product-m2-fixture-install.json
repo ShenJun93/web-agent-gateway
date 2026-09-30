@@ -1,0 +1,53 @@
+{
+  "schema": "WAG_LOCAL_M2_FIXTURE_INSTALL_V1",
+  "generatedAtUtc": "2026-09-30T02:38:05.9772737Z",
+  "pass": true,
+  "setupExit": 0,
+  "error": null,
+  "setup": {
+    "status": "INSTALLED",
+    "client": "connected",
+    "doctor": "DEFERRED",
+    "autostart": false,
+    "runtimeTag": "0.1.0"
+  },
+  "checks": {
+    "setupExitZero": true,
+    "receiptPresent": true,
+    "receiptInstalled": true,
+    "receiptClientConnected": true,
+    "receiptDoctorDeferred": true,
+    "receiptAutostartFalse": true,
+    "runtimeCliPresent": true,
+    "gatewayConfigPresent": true,
+    "devspaceConfigPresent": true,
+    "starterInstalled": true,
+    "supervisorInstalled": true,
+    "tunnelPinPresent": true,
+    "fixtureWrapperExecutable": true,
+    "fixtureWrapperUsesFixtureRuntime": true,
+    "liveStartupUnchanged": true,
+    "liveStarterUnchanged": true,
+    "liveSupervisorUnchanged": true,
+    "liveTunnelLauncherUnchanged": true,
+    "liveProfileUnchanged": true,
+    "liveStackReadyBefore": true,
+    "liveStackReadyAfter": true
+  },
+  "liveHashes": {
+    "before": {
+      "startup": "c4424f205a91b4aa7107e10d7a09f4e678d06141804840ec41e4b77692737094",
+      "starter": "a9a2cce724a1aa1711337553eeccfb94e7fd47c79a35a83f87efcaf4b3d41597",
+      "supervisor": "59ae89bbee6aae828b8a26d970387dc76c69a23dc95ba8c6fca2ea37264b8166",
+      "tunnelLauncher": "485901ceb0f5800a0637119992f8184879eedcc8dbfa077b1bb2f2339ca44369",
+      "profile": "0bc2c01a41a08b8faf622c60461dc8e0775662191b75789cc157f95834702df5"
+    },
+    "after": {
+      "startup": "c4424f205a91b4aa7107e10d7a09f4e678d06141804840ec41e4b77692737094",
+      "starter": "a9a2cce724a1aa1711337553eeccfb94e7fd47c79a35a83f87efcaf4b3d41597",
+      "supervisor": "59ae89bbee6aae828b8a26d970387dc76c69a23dc95ba8c6fca2ea37264b8166",
+      "tunnelLauncher": "485901ceb0f5800a0637119992f8184879eedcc8dbfa077b1bb2f2339ca44369",
+      "profile": "0bc2c01a41a08b8faf622c60461dc8e0775662191b75789cc157f95834702df5"
+    }
+  }
+}

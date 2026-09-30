@@ -106,12 +106,28 @@ param(
         $requirements.wsl = $LASTEXITCODE -eq 0
     }
 
+    $profileFileOverride = ([string]$env:WAG_SETUP_PROFILE_FILE).Trim()
+    if ($profileFileOverride) {
+        $profileSegments = @($profileFileOverride -split '/')
+        if (-not $profileFileOverride.StartsWith('/') -or
+            $profileSegments -contains '..' -or
+            $profileFileOverride.Contains("`r") -or
+            $profileFileOverride.Contains("`n")) {
+            throw 'WAG_SETUP_PROFILE_FILE must be an absolute WSL path without traversal'
+        }
+    }
+
     $profileText = ''
     $profilePresent = $false
     $wrapperPath = ''
     $profileApiKey = ''
     if ($requirements.wsl) {
-        $profileText = Invoke-Wsl @('-e','sh','-lc','cat "$HOME/.config/tunnel-client/web-agent-gateway.yaml" 2>/dev/null')
+        if ($profileFileOverride) {
+            $profileText = Invoke-Wsl @('-e','cat',$profileFileOverride)
+        }
+        else {
+            $profileText = Invoke-Wsl @('-e','sh','-lc','cat "$HOME/.config/tunnel-client/web-agent-gateway.yaml" 2>/dev/null')
+        }
         $profilePresent = -not [string]::IsNullOrWhiteSpace($profileText)
         if ($profilePresent) {
             $commandLines = @($profileText -split '[\r\n]+' | Where-Object { $_ -match '^\s*command:\s*' })
@@ -307,8 +323,16 @@ param(
 
     $sourceHead = ''
     try {
-        $sourceHead = (& git.exe -C $packageRoot rev-parse HEAD 2>$null).Trim()
-        if ($LASTEXITCODE -ne 0 -or $sourceHead.Length -ne 40 -or $sourceHead -match '[^a-f0-9]') { $sourceHead = '' }
+        $gitTop = (& git.exe -C $packageRoot rev-parse --show-toplevel 2>$null).Trim()
+        $gitTopExit = $LASTEXITCODE
+        if ($gitTopExit -eq 0 -and $gitTop) {
+            $packageRootFull = [IO.Path]::GetFullPath($packageRoot).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+            $gitTopFull = [IO.Path]::GetFullPath($gitTop).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+            if ([string]::Equals($packageRootFull, $gitTopFull, [StringComparison]::OrdinalIgnoreCase)) {
+                $sourceHead = (& git.exe -C $packageRoot rev-parse HEAD 2>$null).Trim()
+                if ($LASTEXITCODE -ne 0 -or $sourceHead.Length -ne 40 -or $sourceHead -match '[^a-f0-9]') { $sourceHead = '' }
+            }
+        }
     } catch { $sourceHead = '' }
     $runtimeTag = if ($sourceHead) { $version + '-dev-' + $sourceHead.Substring(0,12) } else { $version }
     $runtimeRoot = Join-Path $runtimeBase $runtimeTag

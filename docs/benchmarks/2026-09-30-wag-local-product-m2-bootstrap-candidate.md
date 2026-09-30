@@ -8,6 +8,8 @@ Base: `122564a051077ce317932a3d90e037aaa7135802` (M1 full reboot acceptance clos
 
 `M2_BOOTSTRAP_CANDIDATE = PASS`
 
+`M2_ISOLATED_PACKAGED_INSTALL_MUTATION = PASS`
+
 `M2_EXTERNAL_CLEAN_WINDOWS_ACCEPTANCE = NOT_MEASURED`
 
 This batch proves that the package/bootstrap shape is buildable and consumable from an unpacked npm
@@ -95,19 +97,48 @@ Machine-readable result had:
 The packed artifact contained the compiled runtime, setup/health/launcher scripts, DevSpace pin,
 runtime package lock, LICENSE and notices.
 
+### Isolated packaged install mutation
+
+A bounded fixture lane then performed a real packaged `setup` mutation without touching the live WAG
+installation. It used a fixture `LOCALAPPDATA`, a fixture WSL tunnel profile, `--no-start`, and
+`--no-autostart`. Receipt:
+
+`docs/benchmarks/2026-09-30-wag-local-product-m2-fixture-install.json`
+
+Result: **PASS**. The receipt proves:
+
+- packaged setup exited 0;
+- setup receipt reported `INSTALLED`, client `connected`, doctor `DEFERRED`, autostart `false`;
+- packaged runtime CLI was installed under the fixture root;
+- gateway and DevSpace configs were created under the fixture root;
+- canonical starter/supervisor/tunnel-client pin were installed under the fixture root;
+- the fixture WSL wrapper was executable and pointed at the fixture packaged runtime;
+- the live WAG Startup shortcut and installed launchers were byte-for-byte unchanged;
+- the live tunnel-client profile hash was unchanged;
+- the live 7677/8080 stack was Ready before and after the fixture install.
+
+The fixture also found and closed a packaging defect: an npm package installed inside a Git working
+tree could incorrectly inherit the ancestor repository HEAD and label itself as a development runtime.
+Setup now accepts a source HEAD only when `git rev-parse --show-toplevel` exactly matches the package
+root; consumer packages therefore use the stable package-version runtime tag.
+
+The fixture profile override is environment-only (`WAG_SETUP_PROFILE_FILE`), validated as an absolute
+WSL path without traversal, and is not exposed as a public CLI credential argument.
+
 ## Scope / limitations
 
 Not measured yet:
 
 1. a truly clean Windows user profile with no previous WAG state;
 2. first-time tunnel/control-plane provisioning for a user who has no existing client profile;
-3. actual install mutation from the packaged tarball on a separate disposable Windows environment;
+3. actual install mutation on a separate disposable/clean Windows environment;
 4. first useful local list/read workflow from that fresh install;
 5. reboot + repeat workflow from that fresh install.
 
 The current machine already has a production WAG Local installation and live ChatGPT connector.
-Running the full M2 installer against that live profile would overwrite product config/runtime state,
-so this batch intentionally used `--check-only` for the packaged consumer smoke.
+Therefore the real packaged mutation used a fixture-only per-user install root and fixture WSL profile,
+not the live WAG root. This proves installer mutation behavior and live-state non-interference, but is
+not a substitute for a separate clean-Windows external-user acceptance run.
 
 ## Product gap discovered
 
@@ -118,7 +149,9 @@ flow, M2 must not be marked fully accepted.
 
 ## Next M2 task
 
-Add a bounded installer acceptance lane that can perform real install mutation without touching the
-live WAG profile. Prefer a disposable Windows/user environment or a fixture-only install root/client
-profile. Do not enable Windows Sandbox, create system users, or make other machine-wide changes
-without the roadmap STOP-point review.
+The bounded fixture install lane is now complete. The next unresolved product requirement is the
+first-time control-plane/client provisioning path for a user with no existing WAG/tunnel profile.
+That path may create account/cloud state or require a browser authorization flow, so it is the next
+roadmap STOP-point review before implementation. A later external acceptance run still needs a
+separate clean/disposable Windows environment; do not enable Windows Sandbox, create system users,
+or make other machine-wide changes implicitly.
