@@ -7,12 +7,12 @@ Base before this batch: e3392cf3a8e5e18ccf76184e50e876c696d5dafb
 ## Verdict
 
 LOCAL_DESTRUCTIVE_BATCH = PASS
+PROCESS_ISOLATED_EXTERNAL_FAILURE_BATCH = PASS
 
-This is not full M1 acceptance. The following remain NOT_MEASURED:
-- network offline during startup
-- network returns after startup failure
-- connector/account authorization expired while local stack is otherwise healthy
-- real Windows reboot / cold boot
+This is not full M1 acceptance. The only remaining acceptance item is:
+- real Windows reboot / cold boot = NOT_MEASURED
+
+The network/auth rows below are process-isolated synthetic acceptance, not a claim that the entire Windows host lost network connectivity. They exercise the real tunnel-client against the real control-plane endpoint while leaving the live WAG tunnel untouched.
 
 ## Passing receipts
 
@@ -27,6 +27,11 @@ This is not full M1 acceptance. The following remain NOT_MEASURED:
 | tunnel-client missing | wag-local-m1-tunnel-client-missing-v1.json | PASS | 15.768 s |
 | unrelated listener collision on 7677 | wag-local-m1-port7677-collision-v1.json | PASS | 16.672 s |
 | unrelated listener collision on 8080 | wag-local-m1-port8080-collision-v3.json | PASS | 17.727 s |
+| process-isolated network offline during startup | wag-local-m1-network-offline-v1.json | PASS | 8.608 s |
+| process-isolated network returns after startup failure | wag-local-m1-network-return-v1.json | PASS | 16.760 s |
+| synthetic expired/invalid control-plane authorization | wag-local-m1-external-synthetic-v1.json | PASS | 8.541 s |
+
+The combined external receipt `wag-local-m1-external-synthetic-v1.json` contains all three external synthetic cases and passed 3/3.
 
 Receipts are stored under:
 `%LOCALAPPDATA%\WAG-Local\receipts`
@@ -59,7 +64,8 @@ Receipts are stored under:
 ## Full M1 status
 
 M1_SERVICE_AND_LOCAL_DESTRUCTIVE_RECOVERY = PASS
+M1_PROCESS_ISOLATED_NETWORK_AND_AUTH_FAILURES = PASS
 
 M1_FULL_COLD_START_RECOVERY = NOT_MEASURED
 
-Do not promote this to full M1 acceptance until the remaining network/auth cases and a real Windows reboot/cold-boot receipt pass.
+Do not promote this to full M1 acceptance until a real Windows reboot/cold-boot receipt passes. The process-isolated network/auth evidence does not by itself prove host-wide network-loss recovery.

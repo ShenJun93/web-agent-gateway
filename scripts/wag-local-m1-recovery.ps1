@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('AllSafe','TunnelCrash','DevSpaceCrash','StackCrash','DevSpaceCheckoutDeleted','WslUnavailable','TunnelClientMissing','Port7677Collision','Port8080Collision','AllLocalDestructive')]
+    [ValidateSet('AllSafe','TunnelCrash','DevSpaceCrash','StackCrash','DevSpaceCheckoutDeleted','WslUnavailable','TunnelClientMissing','Port7677Collision','Port8080Collision','NetworkOffline','NetworkReturn','AuthExpired','AllLocalDestructive','AllExternalSynthetic')]
     [string]$Case = 'AllSafe',
     [string]$Output = '',
     [int]$RecoveryTimeoutSeconds = 120,
@@ -588,6 +588,165 @@ param(
         }
     }
 
+    function New-ExternalProbeFixture {
+        $liveProfile = '/home/pacmap/.config/tunnel-client/web-agent-gateway.yaml'
+        $probeKey = '/tmp/wag-m1-invalid-key'
+        $probeProfile = '/tmp/wag-m1-probe.yaml'
+
+        $liveText = ((@(& wsl.exe -e cat $liveProfile 2>$null)) -join "`n")
+        if ($LASTEXITCODE -ne 0 -or -not $liveText) {
+            throw 'failed to read live tunnel profile metadata'
+        }
+
+        $match = [regex]::Match($liveText, '(?m)^\s*tunnel_id:\s*"?([^"\r\n]+)"?')
+        if (-not $match.Success) {
+            throw 'live tunnel profile tunnel_id not found'
+        }
+        $tunnelId = $match.Groups[1].Value.Trim()
+
+        $yaml = @(
+            'config_version: 1'
+            'control_plane:'
+            '  base_url: "https://api.openai.com"'
+            ('  tunnel_id: "' + $tunnelId + '"')
+            ('  api_key: "file:' + $probeKey + '"')
+            'health:'
+            '  listen_addr: "127.0.0.1:0"'
+            'admin_ui:'
+            '  open_browser: false'
+            'log:'
+            '  level: info'
+            '  format: json'
+        ) -join "`n"
+        $yaml += "`n"
+
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        $yamlB64 = [Convert]::ToBase64String($utf8.GetBytes($yaml))
+        $setup = "umask 077; printf 'm1-invalid-auth\n' > '$probeKey'; printf '%s' '$yamlB64' | base64 -d > '$probeProfile'"
+        & wsl.exe -e bash -lc $setup
+        if ($LASTEXITCODE -ne 0) {
+            throw 'failed to create disposable external probe fixture'
+        }
+
+        return [pscustomobject]@{
+            profile = $probeProfile
+            key = $probeKey
+        }
+    }
+
+    function Remove-ExternalProbeFixture([object]$Fixture) {
+        if ($null -eq $Fixture) { return }
+        & wsl.exe -e rm -f -- ([string]$Fixture.profile) ([string]$Fixture.key) 2>$null
+    }
+
+    function Invoke-ExternalProbe([object]$Fixture, [switch]$Offline) {
+        $filter = '401|unauthor|network is unreachable|metadata fetch failed|poll failed|startup summary|failed to connect to mcp|api.openai.com'
+        $command = "set -o pipefail; HOME=/home/pacmap timeout 8s '$tunnelClientWsl' run --profile-file '$($Fixture.profile)' --embedded-mcp-stub --log.level info 2>&1 | grep -Eai '$filter' | tail -n 80"
+
+        if ($Offline) {
+            $lines = @(& wsl.exe -u root --exec unshare -n -- bash -lc $command 2>&1)
+        }
+        else {
+            $lines = @(& wsl.exe -e bash -lc $command 2>&1)
+        }
+        $code = $LASTEXITCODE
+
+        return [pscustomobject]@{
+            exitCode = $code
+            output = (($lines | ForEach-Object { [string]$_ }) -join "`n")
+        }
+    }
+
+    function Assert-BoundedProbe([object]$Probe, [string]$Label) {
+        if ($Probe.exitCode -ne 124) {
+            throw "$Label probe exit=$($Probe.exitCode); expected bounded timeout exit 124"
+        }
+    }
+
+    function Run-NetworkOffline {
+        Invoke-Case 'network-offline-during-startup-process-isolated' {
+            $fixture = $null
+            try {
+                $fixture = New-ExternalProbeFixture
+                $probe = Invoke-ExternalProbe $fixture -Offline
+                Assert-BoundedProbe $probe 'offline'
+
+                if ($probe.output -notmatch 'api\.openai\.com') {
+                    throw 'offline probe did not target the OpenAI control plane'
+                }
+                if ($probe.output -notmatch 'network is unreachable') {
+                    throw 'offline probe did not observe network-unreachable control-plane failure'
+                }
+                if (-not (Test-StackReady)) {
+                    throw 'live WAG stack was disturbed by process-isolated offline probe'
+                }
+
+                'Process-isolated WSL network namespace produced network-unreachable control-plane startup failure while live WAG remained Ready.'
+            }
+            finally {
+                Remove-ExternalProbeFixture $fixture
+            }
+        }
+    }
+
+    function Run-NetworkReturn {
+        Invoke-Case 'network-returns-after-startup-failure-process-isolated' {
+            $fixture = $null
+            try {
+                $fixture = New-ExternalProbeFixture
+
+                $offline = Invoke-ExternalProbe $fixture -Offline
+                Assert-BoundedProbe $offline 'offline-before-return'
+                if ($offline.output -notmatch 'network is unreachable') {
+                    throw 'pre-return probe did not observe network-unreachable failure'
+                }
+
+                $online = Invoke-ExternalProbe $fixture
+                Assert-BoundedProbe $online 'online-after-return'
+                if ($online.output -match 'network is unreachable') {
+                    throw 'online probe still reported network-unreachable after namespace restoration'
+                }
+                if ($online.output -notmatch '401 Unauthorized') {
+                    throw 'online probe did not reach the control plane after network restoration'
+                }
+                if (-not (Test-StackReady)) {
+                    throw 'live WAG stack was disturbed by network-return probe'
+                }
+
+                'The same disposable probe moved from network-unreachable to control-plane reachable after leaving the isolated network namespace.'
+            }
+            finally {
+                Remove-ExternalProbeFixture $fixture
+            }
+        }
+    }
+
+    function Run-AuthExpired {
+        Invoke-Case 'connector-control-plane-authorization-expired-synthetic' {
+            $fixture = $null
+            try {
+                $fixture = New-ExternalProbeFixture
+                $probe = Invoke-ExternalProbe $fixture
+                Assert-BoundedProbe $probe 'auth-expired'
+
+                if ($probe.output -match 'network is unreachable') {
+                    throw 'auth probe could not distinguish authorization failure from network failure'
+                }
+                if ($probe.output -notmatch '401 Unauthorized') {
+                    throw 'invalid disposable credential did not produce 401 Unauthorized'
+                }
+                if (-not (Test-StackReady)) {
+                    throw 'live WAG stack was disturbed by auth-expired probe'
+                }
+
+                'Disposable invalid control-plane credential produced 401 Unauthorized while the live local WAG stack remained Ready.'
+            }
+            finally {
+                Remove-ExternalProbeFixture $fixture
+            }
+        }
+    }
+
     if (-not (Test-StackReady)) {
         throw 'M1_PRECONDITION_FAILED: WAG stack is not Ready before injection'
     }
@@ -605,6 +764,9 @@ param(
         'TunnelClientMissing' { Run-TunnelClientMissing }
         'Port7677Collision' { Run-Port7677Collision }
         'Port8080Collision' { Run-Port8080Collision }
+        'NetworkOffline' { Run-NetworkOffline }
+        'NetworkReturn' { Run-NetworkReturn }
+        'AuthExpired' { Run-AuthExpired }
         'AllLocalDestructive' {
             Run-TunnelCrash
             Run-DevSpaceCrash
@@ -614,6 +776,11 @@ param(
             Run-TunnelClientMissing
             Run-Port7677Collision
             Run-Port8080Collision
+        }
+        'AllExternalSynthetic' {
+            Run-NetworkOffline
+            Run-NetworkReturn
+            Run-AuthExpired
         }
     }
 
