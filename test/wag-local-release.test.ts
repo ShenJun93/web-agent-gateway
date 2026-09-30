@@ -75,6 +75,14 @@ test('runtime wrapper replacement uses a unique atomic temp file', () => {
   assert.doesNotMatch(source, /tmp=\"\$2\.tmp\.\$\"/);
 });
 
+test('Windows command shims are invoked through PowerShell rather than direct spawn', () => {
+  const source = readFileSync(resolve('src/product-release-runtime.ts'), 'utf8');
+  assert.match(source, /isWindowsCommandShim/);
+  assert.match(source, /WAG_RELEASE_COMMAND/);
+  assert.match(source, /'pwsh\.exe'/);
+  assert.match(source, /'--'/);
+});
+
 test('release payload hash is deterministic and excludes RELEASE.json', (t) => {
   const root = tempRoot(t);
   writePayload(root, '1.2.3');

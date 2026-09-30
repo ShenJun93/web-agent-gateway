@@ -241,6 +241,12 @@ pretending that the legacy runtime itself was originally installed by M4.
 The transactional implementation plus legacy-baseline adoption are ready for committed-package
 verification.
 
+A first live dogfood attempt was rejected **before runtime switch** because Node's direct Windows
+`spawnSync('npm.cmd', ...)` path returned `EINVAL`. The legacy baseline had already been adopted,
+but the running WAG runtime, wrapper, tunnel, and supervisor remained unchanged. M4 now executes
+Windows `.cmd` shims through PowerShell with arguments passed via `$args`, and a regression locks
+that invocation path.
+
 Full live acceptance still needs an explicitly disruptive dogfood operation:
 
 1. package the committed candidate;

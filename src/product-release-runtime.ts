@@ -71,8 +71,25 @@ function runOptional(file: string, args: string[], cwd?: string): { ok: boolean;
 }
 
 function runLong(file: string, args: string[], cwd?: string, timeout = 190_000): boolean {
-  const result = spawnSync(file, args, {
+  const isWindowsCommandShim = process.platform === 'win32' && /\.cmd$/i.test(file);
+  const executable = isWindowsCommandShim ? 'pwsh.exe' : file;
+  const spawnArgs = isWindowsCommandShim
+    ? [
+        '-NoLogo',
+        '-NoProfile',
+        '-Command',
+        '& $env:WAG_RELEASE_COMMAND @args; exit $LASTEXITCODE',
+        '--',
+        ...args,
+      ]
+    : args;
+  const env = isWindowsCommandShim
+    ? { ...process.env, WAG_RELEASE_COMMAND: file }
+    : process.env;
+
+  const result = spawnSync(executable, spawnArgs, {
     cwd,
+    env,
     encoding: 'utf8',
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
