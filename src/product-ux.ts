@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { PrivateGatewayConfig } from './private-config.js';
+import { checkProductUpdate } from './product-update-discovery.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 
 export type ProductUpdateChannel = 'stable' | 'beta' | 'development';
@@ -29,6 +30,7 @@ export interface ProductMcpContext {
   configUpdate(input: ProductConfigUpdate): object;
   activityRecent(options?: { limit?: number; afterSequence?: number }): object;
   usage(): object;
+  updateCheck(): Promise<object>;
   help(): object;
 }
 
@@ -169,6 +171,7 @@ function safeConfigSummary(config: PrivateGatewayConfig): object {
 export function createProductMcpContext(options: ProductUxOptions): ProductMcpContext {
   const configPath = resolve(options.configPath);
   const settingsPath = join(dirname(configPath), SETTINGS_FILE);
+  const installRoot = dirname(dirname(configPath));
   const lockPath = settingsPath + '.lock';
   const fallback = defaultSettings(configPath);
   const diagnostics = options.diagnostics;
@@ -266,6 +269,10 @@ export function createProductMcpContext(options: ProductUxOptions): ProductMcpCo
       return diagnostics.usage();
     },
 
+    async updateCheck() {
+      return checkProductUpdate({ installRoot, respectAutoCheck: false });
+    },
+
     help() {
       return {
         schema: 'WAG_LOCAL_PRODUCT_HELP_V1',
@@ -277,7 +284,7 @@ export function createProductMcpContext(options: ProductUxOptions): ProductMcpCo
           { id: 'repository', description: 'Inspect repositories, apply reviewed mutations, verify, commit and use bounded remote push.' },
           { id: 'browser', description: 'Use the BrowserPort surface when the local browser harness is configured.' },
           { id: 'diagnostics', description: 'Use product activity/usage plus wag doctor for product health and repair.' },
-          { id: 'lifecycle', description: 'Use update/rollback/uninstall lifecycle commands for installed releases.' },
+          { id: 'lifecycle', description: 'Check signed update metadata, then use explicit update/rollback/uninstall lifecycle commands for installed releases.' },
         ],
       };
     },

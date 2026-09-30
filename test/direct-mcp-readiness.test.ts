@@ -104,6 +104,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['product.config.update', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['product.activity.recent', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['product.usage', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.update.check', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
   ['product.help', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
 ];
 
@@ -168,6 +169,7 @@ async function openDirectSurface(t: TestContext) {
       configUpdate: () => ({}),
       activityRecent: () => ({}),
       usage: () => ({}),
+      updateCheck: async () => ({}),
       help: () => ({}),
     },
   });

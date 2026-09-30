@@ -10,6 +10,11 @@ import {
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectReceipt, type Diagnostic } from './product-health.js';
+import {
+  checkProductUpdate,
+  isProductUpdateSourceConfigured,
+  type ProductUpdateCheck,
+} from './product-update-discovery.js';
 
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
 const localAppData = process.env.LOCALAPPDATA ?? '';
@@ -306,6 +311,41 @@ export function classifyDoctorDiagnostics(signals: DoctorSignals): Diagnostic[] 
   return diagnostics;
 }
 
+export function classifyProductUpdateDiagnostic(update: ProductUpdateCheck): Diagnostic[] {
+  const diagnostic = (code: string, severity: Diagnostic['severity'], message: string): Diagnostic[] => [
+    { code, severity, message },
+  ];
+  switch (update.status) {
+    case 'UNCONFIGURED':
+    case 'CURRENT':
+      return [];
+    case 'DISABLED':
+      return diagnostic('WAG_UPDATE_CHECK_DISABLED', 'INFO',
+        'Automatic update checks are disabled by the local product preference.');
+    case 'OFFLINE':
+      return diagnostic('WAG_UPDATE_FEED_UNREACHABLE', 'WARN',
+        'The configured signed update feed could not be reached; the installed runtime was not changed.');
+    case 'INVALID_CONFIG':
+      return diagnostic('WAG_UPDATE_CONFIG_INVALID', 'WARN',
+        'The local update source/settings configuration is invalid; update discovery failed closed.');
+    case 'INVALID_METADATA':
+      return diagnostic('WAG_UPDATE_METADATA_INVALID', 'WARN',
+        'Update metadata failed signature/schema validation; no package was downloaded or staged.');
+    case 'EXPIRED':
+      return diagnostic('WAG_UPDATE_METADATA_EXPIRED', 'WARN',
+        'The signed update metadata is expired; no package was downloaded or staged.');
+    case 'NO_COMPATIBLE_RELEASE':
+      return diagnostic('WAG_UPDATE_NO_COMPATIBLE_RELEASE', 'INFO',
+        'The configured channel has no signed release compatible with this installed runtime.');
+    case 'CURRENT_VERSION_UNKNOWN':
+      return diagnostic('WAG_UPDATE_CURRENT_VERSION_UNKNOWN', 'INFO',
+        'Signed update metadata is valid, but the installed version cannot be compared safely.');
+    case 'UPDATE_AVAILABLE':
+      return diagnostic('WAG_UPDATE_AVAILABLE', 'INFO',
+        'A signed compatible update is available; WAG will not download, stage, or switch it automatically.');
+  }
+}
+
 function dedupeDiagnostics(values: Diagnostic[]): Diagnostic[] {
   const seen = new Set<string>();
   return values.filter((value) => {
@@ -363,7 +403,7 @@ async function collectSignals(health: Awaited<ReturnType<typeof collectReceipt>>
     controlPlaneReachable: reachable,
     controlPlaneAuthorizationFailed,
     stackReady,
-    updateConfigured: false,
+    updateConfigured: isProductUpdateSourceConfigured(wagLocal),
   };
 
   return {
@@ -578,13 +618,15 @@ function normalizeHealthDiagnostic(
 async function collectDoctorState() {
   const health = await collectReceipt();
   const observed = await collectSignals(health);
+  const update = await checkProductUpdate({ installRoot: wagLocal, respectAutoCheck: true });
   const healthDiagnostics = health.diagnostics.map((item) =>
     normalizeHealthDiagnostic(item, health.source.mode));
   const diagnostics = dedupeDiagnostics([
     ...healthDiagnostics,
     ...classifyDoctorDiagnostics(observed.signals),
+    ...classifyProductUpdateDiagnostic(update),
   ]);
-  return { health, observed, diagnostics };
+  return { health, observed, update, diagnostics };
 }
 
 export async function runProductDoctorCli(argv = process.argv.slice(2)): Promise<number> {
@@ -631,10 +673,7 @@ export async function runProductDoctorCli(argv = process.argv.slice(2)): Promise
       controlPlaneReachable: after.observed.signals.controlPlaneReachable,
       authorizationFailed: after.observed.signals.controlPlaneAuthorizationFailed,
     },
-    update: {
-      status: 'UNCONFIGURED',
-      available: null,
-    },
+    update: after.update,
     lastMeaningfulFailure: after.observed.lastFailure,
     diagnostics: after.diagnostics,
     repairs: actions,

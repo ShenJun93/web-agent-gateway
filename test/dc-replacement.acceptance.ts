@@ -86,6 +86,7 @@ const EXTENDED_TOOLS = [
   'product.config.update',
   'product.activity.recent',
   'product.usage',
+  'product.update.check',
   'product.help',
 ];
 

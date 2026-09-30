@@ -1577,6 +1577,12 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async () => toolResult(productContext.usage()));
 
+    registerTool('product.update.check', {
+      description: 'Check the configured signed WAG update feed without downloading, staging, switching, or mutating the installed runtime.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async () => toolResult(await productContext.updateCheck()));
+
     registerTool('product.help', {
       description: 'Return concise WAG Local workflow discovery without performing any local, remote, browser, process, Git, or filesystem action.',
       inputSchema: z.object({}).strict(),

@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyDoctorDiagnostics, type DoctorSignals } from '../src/product-doctor.js';
+import {
+  classifyDoctorDiagnostics,
+  classifyProductUpdateDiagnostic,
+  type DoctorSignals,
+} from '../src/product-doctor.js';
+import type { ProductUpdateCheck, ProductUpdateStatus } from '../src/product-update-discovery.js';
 
 function healthy(): DoctorSignals {
   return {
@@ -74,4 +79,43 @@ test('doctor distinguishes a missing client pin from a non-executable pinned cli
   missingPin.tunnelClientExecutable = false;
   assert.ok(codes(missingPin).includes('WAG_TUNNEL_CLIENT_PIN_MISSING'));
   assert.equal(codes(missingPin).includes('WAG_TUNNEL_CLIENT_MISSING'), false);
+});
+
+function update(status: ProductUpdateStatus): ProductUpdateCheck {
+  return {
+    schema: 'WAG_LOCAL_UPDATE_CHECK_V1',
+    checked_at_utc: '2026-09-30T09:30:00.000Z',
+    status,
+    configured: status !== 'UNCONFIGURED',
+    channel: 'stable',
+    auto_check_updates: true,
+    available: status === 'UPDATE_AVAILABLE' ? true : status === 'CURRENT' ? false : null,
+    current: null,
+    candidate: null,
+    feed: null,
+    failure_code: null,
+  };
+}
+
+test('doctor maps update discovery failures to non-destructive diagnostics', () => {
+  assert.deepEqual(
+    classifyProductUpdateDiagnostic(update('OFFLINE')).map((item) => [item.code, item.severity]),
+    [['WAG_UPDATE_FEED_UNREACHABLE', 'WARN']],
+  );
+  assert.deepEqual(
+    classifyProductUpdateDiagnostic(update('INVALID_METADATA')).map((item) => [item.code, item.severity]),
+    [['WAG_UPDATE_METADATA_INVALID', 'WARN']],
+  );
+  assert.deepEqual(
+    classifyProductUpdateDiagnostic(update('EXPIRED')).map((item) => [item.code, item.severity]),
+    [['WAG_UPDATE_METADATA_EXPIRED', 'WARN']],
+  );
+});
+
+test('doctor reports available updates without treating them as a health failure', () => {
+  assert.deepEqual(
+    classifyProductUpdateDiagnostic(update('UPDATE_AVAILABLE')).map((item) => [item.code, item.severity]),
+    [['WAG_UPDATE_AVAILABLE', 'INFO']],
+  );
+  assert.deepEqual(classifyProductUpdateDiagnostic(update('CURRENT')), []);
 });
