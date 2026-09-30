@@ -79,8 +79,9 @@ test('Windows command shims are invoked through PowerShell rather than direct sp
   const source = readFileSync(resolve('src/product-release-runtime.ts'), 'utf8');
   assert.match(source, /isWindowsCommandShim/);
   assert.match(source, /WAG_RELEASE_COMMAND/);
+  assert.match(source, /WAG_RELEASE_ARGS/);
+  assert.match(source, /ConvertFrom-Json/);
   assert.match(source, /'pwsh\.exe'/);
-  assert.match(source, /'--'/);
 });
 
 test('release payload hash is deterministic and excludes RELEASE.json', (t) => {

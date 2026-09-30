@@ -78,13 +78,15 @@ function runLong(file: string, args: string[], cwd?: string, timeout = 190_000):
         '-NoLogo',
         '-NoProfile',
         '-Command',
-        '& $env:WAG_RELEASE_COMMAND @args; exit $LASTEXITCODE',
-        '--',
-        ...args,
+        '$argv = @(ConvertFrom-Json -InputObject $env:WAG_RELEASE_ARGS); & $env:WAG_RELEASE_COMMAND @argv; exit $LASTEXITCODE',
       ]
     : args;
   const env = isWindowsCommandShim
-    ? { ...process.env, WAG_RELEASE_COMMAND: file }
+    ? {
+        ...process.env,
+        WAG_RELEASE_COMMAND: file,
+        WAG_RELEASE_ARGS: JSON.stringify(args),
+      }
     : process.env;
 
   const result = spawnSync(executable, spawnArgs, {
