@@ -12,15 +12,22 @@ Base: `99cebd15ed3be9c2913c4b1bf689deb6a89f07d3` (M3 doctor/bounded repair)
 
 `M4_M2_REGRESSION = PASS`
 
-`M4_LIVE_SELF_UPDATE = NOT_MEASURED`
+`M4_LIVE_SELF_UPDATE = PASS`
 
-`M4_LIVE_UNINSTALL = NOT_EXECUTED`
+`M4_LIVE_ROLLBACK = PASS`
 
-This batch implements and fixture-accepts the transactional lifecycle substrate without disrupting
-the currently connected WAG Local instance. A real self-update would intentionally replace the
-running WSL wrapper and restart the exact tunnel process, which can terminate the active ChatGPT MCP
-session. A real uninstall would intentionally remove the live WAG installation. Those are separate
-disruptive acceptance boundaries.
+`M4_UNINSTALL_SEMANTICS = PASS (FIXTURE)`
+
+`M4_PRIMARY_LIVE_UNINSTALL = NOT_EXECUTED`
+
+`M4_TRANSACTIONAL_LIFECYCLE_ACCEPTANCE = PASS`
+
+This batch implements and accepts the transactional lifecycle substrate. Live self-update and live
+rollback were exercised against the primary WAG instance under explicit approval. Both operations
+completed with healthy post-switch checks and the ChatGPT MCP surface returned with 53 tools after
+each switch. A real uninstall of the primary WAG installation was intentionally not performed;
+destructive uninstall semantics are accepted through the isolated fixture that preserves external
+user workspaces.
 
 ## Product surface
 
@@ -205,12 +212,12 @@ Immediately before commit, refresh:
 
 Final pre-commit verification:
 
-- `npm run test:wag-product`: **33/33 PASS**;
-- lifecycle core subset: **11/11 PASS**;
+- `npm run test:wag-product`: **34/34 PASS**;
+- lifecycle core subset: **12/12 PASS**;
 - `npx tsx --test test/cli.test.ts`: **10/10 PASS**;
 - `npm run typecheck`: **PASS**;
 - `npm run build`: **PASS**;
-- `npm pack --dry-run`: **PASS** and includes `RELEASE.json`, release runtime modules and lifecycle scripts;
+- `npm pack --dry-run`: **PASS** and includes `RELEASE.json`, release runtime modules and lifecycle scripts; when run with uncommitted acceptance docs it correctly marks development provenance as dirty;
 - `git diff --check`: **PASS**;
 - M4 transactional fixture: **PASS**;
 - M2 installer regression: **PASS**;
@@ -236,33 +243,62 @@ update:
 This closes the rollback gap for dogfooding from the already-running pre-product WAG runtime without
 pretending that the legacy runtime itself was originally installed by M4.
 
-## Remaining M4 acceptance boundary
+## Live transactional acceptance
 
-The transactional implementation plus legacy-baseline adoption are ready for committed-package
-verification.
+Receipt:
 
-A first live dogfood attempt was rejected **before runtime switch** because Node's direct Windows
-`spawnSync('npm.cmd', ...)` path returned `EINVAL`. The legacy baseline had already been adopted,
-but the running WAG runtime, wrapper, tunnel, and supervisor remained unchanged. M4 now executes
-Windows `.cmd` shims through PowerShell with argv serialized through JSON, and a regression locks
-that invocation path.
+`docs/benchmarks/2026-09-30-wag-local-product-m4-live-acceptance.json`
 
-A second live attempt switched successfully to the candidate runtime and preserved the live 53-tool
-ChatGPT round-trip, but the transaction then blocked before writing release state because a detached
-starter/tunnel descendant retained inherited stdout/stderr pipe handles from `spawnSync`. The hung
-updater was terminated by exact process identity and the accepted legacy snapshot restored the prior
-wrapper, launchers, tunnel and supervisor with 7677/8080 all returning HTTP 200. Long-lived lifecycle
-children now use ignored stdio so descendant handles cannot keep the direct child wait open.
+Result: **PASS**.
 
-Full live acceptance still needs one final explicitly disruptive dogfood operation:
+The accepted live sequence was:
 
-1. package the committed candidate;
-2. update the currently running WAG Local through the new lifecycle path;
-3. reconnect ChatGPT if the tunnel restart terminates this session;
-4. verify WAG health/tool round-trip and release state;
-5. exercise rollback to the previous known-good runtime;
-6. verify WAG health/tool round-trip again.
+1. adopt the known-good legacy runtime as `legacy-12ea8315b650` without switching it;
+2. stage committed release `0.1.0-dev-18ce4e57123d`;
+3. candidate acceptance passes;
+4. switch live WAG to the candidate;
+5. post-switch product health passes;
+6. ChatGPT reconnects to the candidate with `status=ok` and 53 tools;
+7. explicit rollback targets `legacy-12ea8315b650`;
+8. rollback health passes;
+9. ChatGPT reconnects to legacy WAG with `status=ok` and 53 tools.
 
-Live uninstall should **not** be required on the primary machine merely to prove deletion. The fixture
-covers destructive deletion semantics. If a real uninstall acceptance is desired, use a disposable
-install root/environment rather than intentionally removing the user's primary WAG connection.
+Update receipt state:
+
+```text
+candidateAccepted = true
+switched          = true
+healthPassed      = true
+state             = SUCCEEDED
+```
+
+Rollback receipt state:
+
+```text
+from              = 0.1.0-dev-18ce4e57123d
+to                = legacy-12ea8315b650
+switched          = true
+healthPassed      = true
+state             = SUCCEEDED
+```
+
+After rollback, the live WSL wrapper hash matches the captured legacy baseline snapshot exactly, and
+all three installed lifecycle launchers (`Start-WagLocal.ps1`, `Start-WagLocalTunnel.ps1`, and
+`Start-WagLocalSupervisor.ps1`) match their captured baseline hashes exactly. The exact tunnel-client
+and WAG supervisor are running.
+
+Earlier dogfood attempts exposed and closed three lifecycle defects before this final PASS:
+
+- direct Windows `spawnSync('npm.cmd', ...)` returned `EINVAL`;
+- shell-based `.cmd` invocation needed argv-safe serialization;
+- long-lived descendants inherited stdio pipe handles and could keep the updater waiting after the
+  direct child had completed.
+
+The final committed implementation uses the corrected Windows command path and lifecycle stdio
+handling.
+
+Primary live uninstall remains intentionally **NOT EXECUTED** because removing the user's working WAG
+connection adds no unique product evidence beyond the already-passing isolated uninstall fixture.
+The fixture proves WAG-owned artifact deletion, optional managed-DevSpace deletion, unknown-entry
+preservation, and external user-workspace preservation. A future disposable-machine beta may perform
+an end-to-end uninstall/reinstall without risking the primary connection.

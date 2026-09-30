@@ -1,0 +1,52 @@
+{
+  "schema": "WAG_LOCAL_M4_LIVE_ACCEPTANCE_V1",
+  "generatedAtUtc": "2026-09-30T07:15:13.1470345Z",
+  "pass": true,
+  "update": {
+    "releaseId": "0.1.0-dev-18ce4e57123d",
+    "previousReleaseId": "legacy-12ea8315b650",
+    "candidateAccepted": true,
+    "switched": true,
+    "healthPassed": true,
+    "rolledBack": false,
+    "state": "SUCCEEDED",
+    "receipt": "%LOCALAPPDATA%\\WAG-Local\\receipts\\wag-local-m4-live-update-v1.json"
+  },
+  "rollback": {
+    "fromReleaseId": "0.1.0-dev-18ce4e57123d",
+    "toReleaseId": "legacy-12ea8315b650",
+    "switched": true,
+    "healthPassed": true,
+    "restoredOriginal": false,
+    "state": "SUCCEEDED",
+    "receipt": "%LOCALAPPDATA%\\WAG-Local\\receipts\\wag-local-m4-live-rollback-v1.json"
+  },
+  "finalLiveState": {
+    "status": "ok",
+    "mcpToolCount": 53,
+    "authorityMode": "AUTONOMOUS_LOCAL",
+    "runtimeRoot": "E:\\WAG-Runtime\\12ea8315b650",
+    "sourceHead": "12ea8315b650e8df11ddc1483c4ee4d2e764a48e",
+    "releaseState": {
+      "activeReleaseId": "legacy-12ea8315b650",
+      "previousReleaseId": "0.1.0-dev-18ce4e57123d"
+    }
+  },
+  "baselineRestore": {
+    "wrapperSha256": "4b892df3853f2cab965de6eb5827ca2ee81e1157b775f32365beccd3fc8358ab",
+    "wrapperMatchesSnapshot": true,
+    "launchers": {
+      "Start-WagLocal.ps1": true,
+      "Start-WagLocalTunnel.ps1": true,
+      "Start-WagLocalSupervisor.ps1": true
+    },
+    "exactTunnelProcessRunning": true,
+    "supervisorRunning": true
+  },
+  "uninstall": {
+    "primaryLiveUninstallExecuted": false,
+    "fixtureSemanticsPassed": true,
+    "externalUserWorkspacePreserved": true,
+    "note": "Primary live uninstall intentionally not executed; destructive deletion semantics are covered by isolated M4 fixture acceptance."
+  }
+}
