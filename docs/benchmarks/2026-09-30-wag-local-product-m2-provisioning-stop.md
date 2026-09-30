@@ -13,6 +13,8 @@ Wizard implementation base: `0a101c087267c9ff404e6d55324009220f7e5022`
 
 `M2_REAL_CLOUD_PROVISIONING = NOT_EXECUTED`
 
+`M2_EXISTING_CHATGPT_CONNECTOR_WORKFLOW = PASS`
+
 `M2_EXTERNAL_CLEAN_WINDOWS_ACCEPTANCE = NOT_MEASURED`
 
 The user approved implementation of the first-time provisioning wizard. This batch implemented and
@@ -147,10 +149,17 @@ At the wizard acceptance checkpoint:
 
 Full M2 remains **NOT ACCEPTED**.
 
+Measured after wizard acceptance:
+
+- the existing live ChatGPT connector completed a real WAG call from ChatGPT;
+- WAG health returned `ok` with 53 MCP tools;
+- a local Documents test directory was listed and its file read successfully;
+- receipt: `docs/benchmarks/2026-09-30-wag-local-product-m2-live-connector-acceptance.json`.
+
 Still not measured:
 
 1. real first-time account/control-plane provisioning using a legitimate tunnel and runtime key;
-2. actual ChatGPT connector creation/verification and a successful connector call;
+2. creation/verification of a new connector as part of first-time onboarding;
 3. a first useful list/read workflow from a truly fresh external Windows user;
 4. reboot/login on that fresh environment;
 5. repeat of the useful workflow after reboot without repository knowledge or manual tunnel/DevSpace

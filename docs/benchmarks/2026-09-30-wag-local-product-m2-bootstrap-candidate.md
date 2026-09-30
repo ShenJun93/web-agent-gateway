@@ -14,6 +14,8 @@ Base: `122564a051077ce317932a3d90e037aaa7135802` (M1 full reboot acceptance clos
 
 `M2_REAL_CLOUD_PROVISIONING = NOT_EXECUTED`
 
+`M2_EXISTING_CHATGPT_CONNECTOR_WORKFLOW = PASS`
+
 `M2_EXTERNAL_CLEAN_WINDOWS_ACCEPTANCE = NOT_MEASURED`
 
 This batch proves that the package/bootstrap shape is buildable and consumable from an unpacked npm
@@ -166,9 +168,14 @@ not a substitute for a separate clean-Windows external-user acceptance run.
 ## Remaining product gap
 
 The local first-time provisioning wizard is now implemented and fixture-accepted. It deliberately
-stops before creating real account/cloud resources. The remaining gap is external acceptance using a
-legitimate tunnel/runtime key plus actual ChatGPT connector verification, followed by a fresh-user
-list/read workflow and reboot repeat.
+stops before creating real account/cloud resources. The already-configured live ChatGPT connector was
+also verified end-to-end from this ChatGPT session: WAG health returned ok/53 tools, and a local
+Documents test directory was listed and its test file read successfully. Receipt:
+`docs/benchmarks/2026-09-30-wag-local-product-m2-live-connector-acceptance.json`.
+
+This proves the existing connector workflow, not first-time connector creation. The remaining gap is
+external acceptance using a legitimate first-time tunnel/runtime-key path or supported account flow,
+followed by a truly fresh-user install/list/read workflow and reboot repeat.
 
 ## Next M2 task
 

@@ -1,0 +1,29 @@
+{
+  "schema": "WAG_LOCAL_M2_LIVE_CONNECTOR_ACCEPTANCE_V1",
+  "generatedAtUtc": "2026-09-30T03:17:00Z",
+  "pass": true,
+  "client": "ChatGPT",
+  "connector": "WAG Local",
+  "health": {
+    "status": "ok",
+    "executor": "devspace",
+    "protocolVersion": "2026-07-28",
+    "mcpToolCount": 53,
+    "authorityMode": "AUTONOMOUS_LOCAL",
+    "runtimeSourceHead": "12ea8315b650e8df11ddc1483c4ee4d2e764a48e"
+  },
+  "workflow": {
+    "root": "C:\\Users\\PACMAP\\Documents",
+    "directory": "WAG-M2-External-ReadTest",
+    "listed": true,
+    "file": "WAG-M2-External-ReadTest/hello.txt",
+    "read": true,
+    "contentSha256": "865e56bb32f0c177c5467b701648a7a322b4be7c01d5ce07380b4a4fe7fec6aa"
+  },
+  "scope": {
+    "existingConnectorVerified": true,
+    "freshConnectorCreationMeasured": false,
+    "cleanWindowsUserMeasured": false,
+    "postRebootFreshUserMeasured": false
+  }
+}
