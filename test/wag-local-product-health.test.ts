@@ -1,6 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyStatus, parseWrapper } from '../scripts/wag-local-product-health.js';
+import { classifyStatus, isDevelopmentCheckout, parseTunnelProfile, parseWrapper } from '../scripts/wag-local-product-health.js';
+
+test('source checkout detection rejects a consumer repository ancestor', () => {
+  assert.equal(isDevelopmentCheckout('C:\\repo\\wag', 'C:\\repo\\wag'), true);
+  assert.equal(isDevelopmentCheckout('C:\\consumer\\node_modules\\web-agent-gateway', 'C:\\consumer'), false);
+  assert.equal(isDevelopmentCheckout('C:\\consumer\\node_modules\\web-agent-gateway', null), false);
+});
+
+test('parseTunnelProfile resolves one absolute WSL wrapper command', () => {
+  const wrapper = parseTunnelProfile([
+    'config_version: 1',
+    'mcp:',
+    '  commands:',
+    '    - channel: main',
+    '      command: "/home/alice/.local/bin/wag-mcp-stdio.sh"',
+  ].join('\n'));
+  assert.equal(wrapper, '/home/alice/.local/bin/wag-mcp-stdio.sh');
+  assert.throws(() => parseTunnelProfile('mcp:\n  commands: []\n'), /WAG_TUNNEL_PROFILE_INVALID/);
+});
 
 test('parseWrapper resolves one WAG runtime CLI and private config', () => {
   const binding = parseWrapper([

@@ -4,11 +4,28 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "web-agent-gateway": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "scripts/install-wag-local-launchers.ps1",
+    "scripts/wag-local-product-health.ps1",
+    "scripts/wag-local-setup.ps1",
+    "scripts/wag-local-start.ps1",
+    "scripts/wag-local-supervisor.ps1",
+    "scripts/wag-local-tunnel-launcher.ps1",
+    "docs/benchmarks/devspace-pin.json",
+    "packaging/runtime-package-lock.json",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
   "engines": {
     "node": ">=22.19 <27"
   },
   "scripts": {
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",
+    "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "build:native-host": "tsx scripts/build-native-host.ts",
@@ -27,8 +44,9 @@
     "test:delegation-e2e": "npm run build && tsx --test --test-concurrency=1 test/delegated-dispatch-e2e.acceptance.ts",
     "mcp:tunnel-profile": "tsx scripts/prepare-direct-mcp-tunnel.ts",
     "wag:install-local": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/install-wag-local-launchers.ps1",
+    "wag:setup": "tsx src/cli.ts setup",
     "wag:health": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/wag-local-product-health.ps1",
-    "test:wag-product": "tsx --test test/wag-local-product-health.test.ts test/wag-local-launcher.test.ts"
+    "test:wag-product": "tsx --test test/wag-local-product-health.test.ts test/wag-local-launcher.test.ts test/wag-local-setup.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",

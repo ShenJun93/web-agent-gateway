@@ -15,7 +15,11 @@ param(
 
     Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 
-    $repo = Resolve-Path (Join-Path $PSScriptRoot '..')
+    $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    $healthCli = Join-Path $root 'dist\product-health.js'
+    if (-not (Test-Path -LiteralPath $healthCli -PathType Leaf)) {
+        throw "STOP: missing compiled product health collector: $healthCli"
+    }
     $secretFile = Join-Path $env:LOCALAPPDATA 'WAG-Local\secrets\devspace-owner.dpapi'
     if (-not (Test-Path -LiteralPath $secretFile -PathType Leaf)) {
         throw "STOP: missing DevSpace owner credential store"
@@ -29,16 +33,10 @@ param(
             throw 'STOP: decrypted DevSpace owner credential is empty'
         }
 
-        Push-Location $repo
-        try {
-            $args = @('--no-install','tsx','scripts/wag-local-product-health.ts')
-            if ($Output) { $args += @('--output',$Output) }
-            & npx.cmd @args
-            $code = $LASTEXITCODE
-        }
-        finally {
-            Pop-Location
-        }
+        $args = @($healthCli)
+        if ($Output) { $args += @('--output',$Output) }
+        & node.exe @args
+        $code = $LASTEXITCODE
     }
     finally {
         Remove-Item Env:DEVSPACE_OAUTH_OWNER_TOKEN -ErrorAction SilentlyContinue

@@ -22,6 +22,7 @@ param(
     $logs = Join-Path $base 'logs'
     $controlFile = Join-Path $store 'control-plane.dpapi'
     $devspaceFile = Join-Path $store 'devspace-owner.dpapi'
+    $tunnelClientPinFile = Join-Path $base 'tunnel-client-path.txt'
     $devspaceConfig = Join-Path $base 'DevSpace'
     $devspacePinDir = Join-Path $base 'DevSpace-Pin-33d6d0b'
     $devspacePidFile = Join-Path $logs 'devspace-wag-7677.pid'
@@ -191,7 +192,20 @@ param(
         throw 'STOP: WSL unavailable'
     }
 
-    & wsl.exe -e bash -lc 'test -x /home/pacmap/tools/openai-tunnel-client/v0.0.14/tunnel-client'
+    if (-not (Test-Path -LiteralPath $tunnelClientPinFile -PathType Leaf)) {
+        Write-Diagnostic 'WAG_TUNNEL_CLIENT_PIN_MISSING' 'The per-user tunnel-client path pin is missing.'
+        throw 'STOP: tunnel-client path pin missing'
+    }
+    $tunnelClientPath = (Get-Content -LiteralPath $tunnelClientPinFile -Raw).Trim()
+    $tunnelClientSegments = @($tunnelClientPath -split '/')
+    if (-not $tunnelClientPath.StartsWith('/') -or
+        $tunnelClientSegments -contains '..' -or
+        $tunnelClientPath.Contains("`r") -or
+        $tunnelClientPath.Contains("`n")) {
+        Write-Diagnostic 'WAG_TUNNEL_CLIENT_PIN_INVALID' 'The per-user tunnel-client path pin is invalid.'
+        throw 'STOP: tunnel-client path pin invalid'
+    }
+    & wsl.exe -e test -x $tunnelClientPath
     if ($LASTEXITCODE -ne 0) {
         Write-Diagnostic 'WAG_TUNNEL_CLIENT_MISSING' 'The pinned tunnel-client binary is missing or not executable.'
         throw 'STOP: tunnel-client missing or not executable'
@@ -210,7 +224,8 @@ param(
         $parts = @()
         if ($oldWslenv) { $parts = @($oldWslenv -split ':' | Where-Object { $_ }) }
 
-        foreach ($name in @('CONTROL_PLANE_API_KEY','DEVSPACE_OAUTH_OWNER_TOKEN')) {
+        $env:WAG_TUNNEL_CLIENT_PATH = $tunnelClientPath
+        foreach ($name in @('CONTROL_PLANE_API_KEY','DEVSPACE_OAUTH_OWNER_TOKEN','WAG_TUNNEL_CLIENT_PATH')) {
             $parts = @($parts | Where-Object { (($_ -split '/')[0]) -ne $name })
             $parts += $name
         }
@@ -219,7 +234,7 @@ param(
         $bash = @(
             'set -euo pipefail'
             'set +x'
-            'exe="/home/pacmap/tools/openai-tunnel-client/v0.0.14/tunnel-client"'
+            'exe="${WAG_TUNNEL_CLIENT_PATH:?WAG_TUNNEL_CLIENT_PATH missing}"'
             'profile="web-agent-gateway"'
             '[ -n "${CONTROL_PLANE_API_KEY:-}" ] || { echo "STOP: CONTROL_PLANE_API_KEY missing in WSL"; exit 1; }'
             '[ -n "${DEVSPACE_OAUTH_OWNER_TOKEN:-}" ] || { echo "STOP: DEVSPACE_OAUTH_OWNER_TOKEN missing in WSL"; exit 1; }'
@@ -262,6 +277,7 @@ param(
     finally {
         Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
         Remove-Item Env:DEVSPACE_OAUTH_OWNER_TOKEN -ErrorAction SilentlyContinue
+        Remove-Item Env:WAG_TUNNEL_CLIENT_PATH -ErrorAction SilentlyContinue
         if ($null -eq $oldWslenv) { Remove-Item Env:WSLENV -ErrorAction SilentlyContinue }
         else { $env:WSLENV = $oldWslenv }
     }

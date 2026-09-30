@@ -13,6 +13,7 @@ const supervisorPath = join(root, 'scripts', 'wag-local-supervisor.ps1');
 const recoveryPath = join(root, 'scripts', 'wag-local-m1-recovery.ps1');
 const rebootPreparePath = join(root, 'scripts', 'prepare-wag-local-m1-reboot.ps1');
 const rebootVerifyPath = join(root, 'scripts', 'wag-local-m1-post-reboot.ps1');
+const setupPath = join(root, 'scripts', 'wag-local-setup.ps1');
 const pin = JSON.parse(readFileSync(join(root, 'docs', 'benchmarks', 'devspace-pin.json'), 'utf8')) as {
   revision: string;
 };
@@ -30,6 +31,10 @@ test('local tunnel launcher is self-healing and exact-pinned', () => {
   assert.ok(tunnel.includes(pin.revision), 'launcher DevSpace revision must match devspace-pin.json');
   assert.match(tunnel, /port 7677 is already owned/);
   assert.match(tunnel, /WAG_TUNNEL_RECOVERY=NOT_NEEDED/);
+  assert.match(tunnel, /tunnel-client-path\.txt/);
+  assert.match(tunnel, /WAG_TUNNEL_CLIENT_PIN_MISSING/);
+  assert.match(tunnel, /WAG_TUNNEL_CLIENT_PATH/);
+  assert.doesNotMatch(tunnel, /\/home\/pacmap\/tools\/openai-tunnel-client/);
   assert.match(tunnel, /ToBase64String/);
   assert.match(tunnel, /base64 -d \| bash/);
   assert.doesNotMatch(tunnel, /wslpath/);
@@ -69,7 +74,7 @@ test('supervisor is single-instance and invokes the idempotent starter', () => {
 });
 
 test('PowerShell launchers parse', { skip: process.platform !== 'win32' }, () => {
-  for (const path of [tunnelPath, starterPath, installerPath, supervisorPath, recoveryPath, rebootPreparePath, rebootVerifyPath]) {
+  for (const path of [tunnelPath, starterPath, installerPath, supervisorPath, recoveryPath, rebootPreparePath, rebootVerifyPath, setupPath]) {
     const script = "$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile('" +
       path.replaceAll("'", "''") +
       "',[ref]$t,[ref]$e)|Out-Null;if($e.Count){$e|ForEach-Object{$_.Message};exit 1}";

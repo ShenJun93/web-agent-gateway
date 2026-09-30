@@ -1,6 +1,8 @@
+#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BROWSER_OPERATOR_ADAPTER_ID } from './adapter-admission.js';
 import {
   startBrowserOperatorRuntime,
@@ -36,6 +38,8 @@ export interface CliDependencies {
   startStdio: typeof startGatewayStdioServer;
   waitForShutdown: () => Promise<void>;
   telemetry: TelemetrySink;
+  /** Per-user installer bootstrap; injected by setup tests. */
+  runSetup?: (argv: string[]) => Promise<number>;
   /** Defaults to the real assembly; injected only by tests. */
   startRepositoryEngineering?: typeof startRepositoryEngineeringRuntime;
   /** Defaults to the real assembly; injected only by tests. */
@@ -58,6 +62,15 @@ export async function main(
   if (argv.length === 1 && argv[0] === '--help') {
     deps.stdout.write(usageText());
     return 0;
+  }
+  if (argv[0] === 'setup') {
+    try {
+      const setupArgs = mapSetupArgs(argv.slice(1));
+      return await (deps.runSetup ?? ((args) => runSetupPowerShell(args, deps.stdout, deps.stderr)))(setupArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'SETUP_FAILED', error);
+      return 1;
+    }
   }
 
   let parsed: ParsedCli;
@@ -375,9 +388,46 @@ function telemetryToStderr(stderr: Writable): TelemetrySink {
   };
 }
 
+function mapSetupArgs(argv: string[]): string[] {
+  const mapped: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--check-only') { mapped.push('-CheckOnly'); continue; }
+    if (arg === '--no-start') { mapped.push('-NoStart'); continue; }
+    if (arg === '--no-autostart') { mapped.push('-NoAutostart'); continue; }
+    const names: Record<string, string> = {
+      '--allowed-root': '-AllowedRoot',
+      '--output': '-Output',
+      '--tunnel-client-path': '-TunnelClientPath',
+    };
+    const mappedName = names[arg];
+    if (mappedName) {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError(`Missing value after ${arg}`);
+      mapped.push(mappedName, value);
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown setup argument: ${arg}`);
+  }
+  return mapped;
+}
+
+async function runSetupPowerShell(argv: string[], stdout: Writable, stderr: Writable): Promise<number> {
+  const script = fileURLToPath(new URL('../scripts/wag-local-setup.ps1', import.meta.url));
+  const result = spawnSync('pwsh.exe', [
+    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...argv,
+  ], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.error) throw result.error;
+  if (result.stdout) stdout.write(result.stdout);
+  if (result.stderr) stderr.write(result.stderr);
+  return result.status ?? 1;
+}
+
 function usageText(): string {
   return [
     'Usage:',
+    '  web-agent-gateway setup [--check-only] [--allowed-root <absolute-path>] [--no-start] [--no-autostart]',
     '  web-agent-gateway doctor --config <absolute-path>',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
     '  web-agent-gateway serve-browser-operator --config <absolute-path>',

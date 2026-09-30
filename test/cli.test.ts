@@ -54,6 +54,23 @@ function makeCliHarness() {
     stdioClosed: () => stdioClosed,
   };
 }
+test('setup dispatches without --config and maps only bounded installer arguments', async () => {
+  const h = makeCliHarness();
+  let observed: string[] | undefined;
+  h.deps.runSetup = async (args) => { observed = args; return 0; };
+  const root = resolve('wag-user-workspace');
+  assert.equal(await main(['setup', '--check-only', '--no-start', '--allowed-root', root], h.deps), 0);
+  assert.deepEqual(observed, ['-CheckOnly', '-NoStart', '-AllowedRoot', root]);
+  assert.equal(h.stderr.text(), '');
+
+  const bad = makeCliHarness();
+  let called = 0;
+  bad.deps.runSetup = async () => { called += 1; return 0; };
+  assert.equal(await main(['setup', '--not-a-real-flag'], bad.deps), 1);
+  assert.equal(called, 0);
+  assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
+});
+
 test('doctor emits only health JSON and closes the private runtime', async () => {
   const h = makeCliHarness();
   const code = await main(['doctor', '--config', resolve('private.json')], h.deps);
