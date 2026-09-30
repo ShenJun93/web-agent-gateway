@@ -1,0 +1,51 @@
+{
+  "schema": "WAG_REMOTE_M7_ARCHITECTURE_GATE_V1",
+  "generatedAtUtc": "2026-09-30T10:59:00Z",
+  "branch": "feat/wag-local-m7-remote-architecture-gate-v1",
+  "baseHead": "70a3d0fe7f2a9f079691b9d18d5549764d598032",
+  "verdict": {
+    "architectureGate": "PASS",
+    "localControlPlanePrototype": "PASS",
+    "hostedWagRemote": "NOT_IMPLEMENTED",
+    "realOauthDeviceFlow": "NOT_EXECUTED",
+    "publicInfrastructureDeployed": false
+  },
+  "architecture": {
+    "accountIdentity": "STANDARD_OAUTH_OIDC",
+    "pairing": "OAUTH_DEVICE_AUTHORIZATION_STYLE",
+    "perDeviceAsymmetricCredential": true,
+    "sharedMultiDeviceSecret": false,
+    "explicitDeviceRouting": true,
+    "hostedRelayAsLocalEffectAuthority": false,
+    "duplicateSuppression": "HOSTED_PLUS_LOCAL",
+    "universalExactlyOnceClaim": false,
+    "unknownEffectAutoRetry": false,
+    "offlineImplicitQueue": false,
+    "crossDeviceFailoverForAcceptedEffect": false,
+    "dpopSecureMcpTunnel": "BLOCKED_WITHOUT_COMPATIBILITY_EVIDENCE"
+  },
+  "healthLayers": [
+    "ACCOUNT_AUTH",
+    "HOSTED_RELAY",
+    "DEVICE_SESSION",
+    "DEVICE_TRANSPORT",
+    "LOCAL_EXECUTOR",
+    "TOOL_ROUNDTRIP"
+  ],
+  "acceptance": {
+    "controlPlaneModel": "11/11 PASS",
+    "remoteRelayRegression": "38/38 PASS",
+    "localProductRegression": "58/58 PASS",
+    "typecheck": "PASS",
+    "build": "PASS",
+    "packageDryRun": "PASS",
+    "diffCheck": "PASS"
+  },
+  "externalMutation": {
+    "cloudAccountCreated": false,
+    "oauthClientCreated": false,
+    "publicEndpointDeployed": false,
+    "paidResourceCreated": false,
+    "liveWagTransportChanged": false
+  }
+}
