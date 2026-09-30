@@ -10,6 +10,8 @@ import {
   buildSafeGitEnv,
 } from './safe-git.js';
 import type {
+  RemoteGitInspectInput,
+  RemoteGitInspectObservation,
   RemoteGitPushBackend,
   RemoteGitPushBackendOutcome,
   RemoteGitPushInput,
@@ -70,6 +72,32 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     this.#hooksDir = resolve(options.hooksDir);
     this.#runner = options.runner ?? runGitProcess;
     this.#parentEnv = options.parentEnv ?? process.env;
+  }
+
+  async inspect(
+    workspaceRoot: string,
+    input: RemoteGitInspectInput,
+  ): Promise<RemoteGitInspectObservation> {
+    await this.#ensureHooksDir();
+    const context = await this.#inspectRepository(workspaceRoot, input.remote);
+    for (const ref of input.refs) await this.#assertReadableHeadRef(workspaceRoot, ref);
+    const observed = await this.#observeRemoteRefs(
+      workspaceRoot,
+      context.resolvedPushUrl,
+      input.refs,
+      context.credentialMode,
+    );
+    return {
+      repositoryIdentity: context.repositoryIdentity,
+      effectiveFetchUrl: context.resolvedFetchUrl,
+      effectivePushUrl: context.resolvedPushUrl,
+      defaultBranch: observed.defaultBranch ?? null,
+      refs: input.refs.map((ref) => ({ ref, oid: observed.refs.get(ref) ?? null })),
+      authenticationState:
+        context.resolvedPushUrl.startsWith('https:') && context.credentialMode === 'system-gcm'
+          ? 'AVAILABLE'
+          : 'UNKNOWN',
+    };
   }
 
   async plan(workspaceRoot: string, input: RemoteGitPushInput): Promise<RemoteGitPushPlan> {
@@ -260,6 +288,7 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
 
   async #inspectRepository(workspaceRoot: string, remoteName: string): Promise<{
     repositoryIdentity: string;
+    resolvedFetchUrl: string;
     resolvedPushUrl: string;
     credentialMode: RemoteCredentialMode;
   }> {
@@ -292,21 +321,33 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     const gitDir = await canonicalPath(singleLine(gitDirResult.stdout, 'git dir'));
     const commonDir = await canonicalPath(singleLine(commonDirResult.stdout, 'git common dir'));
 
-    const remoteUrlResult = await this.#run(
+    const fetchUrlResult = await this.#run(
+      workspaceRoot,
+      [...this.#remoteSafeBaseArgs(), 'remote', 'get-url', '--all', remoteName],
+      READ_TIMEOUT_MS,
+    );
+    const fetchLines = nonEmptyLines(fetchUrlResult.stdout);
+    if (fetchLines.length !== 1) {
+      throw new Error('Gateway denied ambiguous remote Git fetch URL');
+    }
+    const resolvedFetchUrl = canonicalRemotePushUrl(fetchLines[0]!);
+
+    const pushUrlResult = await this.#run(
       workspaceRoot,
       [...this.#remoteSafeBaseArgs(), 'remote', 'get-url', '--push', '--all', remoteName],
       READ_TIMEOUT_MS,
     );
-    const remoteLines = nonEmptyLines(remoteUrlResult.stdout);
-    if (remoteLines.length !== 1) {
+    const pushLines = nonEmptyLines(pushUrlResult.stdout);
+    if (pushLines.length !== 1) {
       throw new Error('Gateway denied ambiguous remote Git push URL');
     }
-    const resolvedPushUrl = canonicalRemotePushUrl(remoteLines[0]!);
+    const resolvedPushUrl = canonicalRemotePushUrl(pushLines[0]!);
     const repositoryIdentity = 'repo_' + sha256(
       [foldPath(canonicalWorkspace), foldPath(gitDir), foldPath(commonDir)].join('\0'),
     );
     return {
       repositoryIdentity,
+      resolvedFetchUrl,
       resolvedPushUrl,
       credentialMode: resolvedPushUrl.startsWith('https:') ? credentialMode : 'none',
     };
@@ -391,15 +432,19 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     if (result.exitCode !== 0) throw new Error('Gateway denied remote Git push missing commit');
   }
 
-  async #assertDestinationRef(workspaceRoot: string, ref: string): Promise<void> {
+  async #assertReadableHeadRef(workspaceRoot: string, ref: string): Promise<void> {
     const result = await this.#runAllowExit(
       workspaceRoot,
       [...this.#remoteSafeBaseArgs(), 'check-ref-format', ref],
       READ_TIMEOUT_MS,
     );
     if (result.exitCode !== 0 || !ref.startsWith('refs/heads/')) {
-      throw new Error('Gateway denied remote Git push destination ref');
+      throw new Error('Gateway denied remote Git inspect ref');
     }
+  }
+
+  async #assertDestinationRef(workspaceRoot: string, ref: string): Promise<void> {
+    await this.#assertReadableHeadRef(workspaceRoot, ref);
     const name = ref.slice('refs/heads/'.length).toLowerCase();
     if (name === 'main' || name === 'master') {
       throw new Error('Gateway denied remote Git push protected branch');
@@ -550,6 +595,25 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
     destinationRef: string,
     credentialMode: RemoteCredentialMode,
   ): Promise<{ destinationOid?: string; defaultBranch?: string }> {
+    const observed = await this.#observeRemoteRefs(
+      workspaceRoot,
+      url,
+      [destinationRef],
+      credentialMode,
+    );
+    const destinationOid = observed.refs.get(destinationRef);
+    return {
+      ...(destinationOid === undefined ? {} : { destinationOid }),
+      ...(observed.defaultBranch === undefined ? {} : { defaultBranch: observed.defaultBranch }),
+    };
+  }
+
+  async #observeRemoteRefs(
+    workspaceRoot: string,
+    url: string,
+    refs: readonly string[],
+    credentialMode: RemoteCredentialMode,
+  ): Promise<{ refs: Map<string, string>; defaultBranch?: string }> {
     const result = await this.#run(
       workspaceRoot,
       [
@@ -558,30 +622,36 @@ export class LocalRemoteGitPushBackend implements RemoteGitPushBackend {
         '--symref',
         url,
         'HEAD',
-        destinationRef,
+        ...refs,
       ],
       READ_TIMEOUT_MS,
       true,
     );
-    let destinationOid: string | undefined;
+    const requested = new Set(refs);
+    const observed = new Map<string, string>();
     let defaultBranch: string | undefined;
     for (const line of nonEmptyLines(result.stdout)) {
       const symref = /^ref:\s+(\S+)\s+HEAD$/.exec(line);
       if (symref) {
+        if (defaultBranch !== undefined && defaultBranch !== symref[1]) {
+          throw new Error('Gateway rejected ambiguous remote Git default branch');
+        }
         defaultBranch = symref[1]!;
         continue;
       }
       const direct = /^([0-9a-f]{40}|[0-9a-f]{64})\s+(\S+)$/.exec(line);
       if (!direct) throw new Error('Gateway rejected malformed remote Git observation');
-      if (direct[2] === destinationRef) {
-        if (destinationOid !== undefined && destinationOid !== direct[1]) {
-          throw new Error('Gateway rejected ambiguous remote Git destination state');
-        }
-        destinationOid = direct[1]!;
+      const ref = direct[2]!;
+      if (ref === 'HEAD') continue;
+      if (!requested.has(ref)) throw new Error('Gateway rejected unexpected remote Git ref');
+      const existing = observed.get(ref);
+      if (existing !== undefined && existing !== direct[1]) {
+        throw new Error('Gateway rejected ambiguous remote Git ref state');
       }
+      observed.set(ref, direct[1]!);
     }
     return {
-      ...(destinationOid === undefined ? {} : { destinationOid }),
+      refs: observed,
       ...(defaultBranch === undefined ? {} : { defaultBranch }),
     };
   }

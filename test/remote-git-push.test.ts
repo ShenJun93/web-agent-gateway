@@ -37,6 +37,7 @@ function plan(overrides: Partial<RemoteGitPushPlan> = {}): RemoteGitPushPlan {
 
 class FakeBackend implements RemoteGitPushBackend {
   plans: RemoteGitPushPlan[] = [];
+  inspectCalls = 0;
   planCalls = 0;
   executeCalls = 0;
   reconcileCalls = 0;
@@ -47,6 +48,18 @@ class FakeBackend implements RemoteGitPushBackend {
   reconcileOutcome: Awaited<ReturnType<RemoteGitPushBackend['reconcile']>> = {
     outcome: 'OUTCOME_UNKNOWN',
   };
+
+  async inspect(_workspaceRoot: string, input: { remote: string; refs: string[] }) {
+    this.inspectCalls += 1;
+    return {
+      repositoryIdentity: 'repo_' + '1'.repeat(64),
+      effectiveFetchUrl: URL,
+      effectivePushUrl: URL,
+      defaultBranch: 'refs/heads/main',
+      refs: input.refs.map((ref) => ({ ref, oid: ref === DEST ? OLD : null })),
+      authenticationState: 'UNKNOWN' as const,
+    };
+  }
 
   async plan(): Promise<RemoteGitPushPlan> {
     this.planCalls += 1;
@@ -124,6 +137,39 @@ const input = {
   reviewedOid: SOURCE,
   reviewReceiptDigest: 'c'.repeat(64),
 };
+
+test('remote inspect is read-only, caller-owned and accepts protected branch refs for comparison', async (t) => {
+  const f = await fixture(t);
+  const result = await f.coordinator.inspect(f.caller, f.workspaceId, {
+    remote: 'origin',
+    refs: ['refs/heads/main', DEST],
+  });
+
+  assert.equal(f.backend.inspectCalls, 1);
+  assert.equal(result.remote, 'origin');
+  assert.equal(result.observedAt, new Date(10_000).toISOString());
+  assert.equal(result.defaultBranch, 'refs/heads/main');
+  assert.deepEqual(result.refs, [
+    { ref: 'refs/heads/main', oid: null },
+    { ref: DEST, oid: OLD },
+  ]);
+
+  await assert.rejects(
+    f.coordinator.inspect(f.caller, f.workspaceId, {
+      remote: 'origin',
+      refs: ['refs/tags/v1'],
+    }),
+    /inspect ref/i,
+  );
+  await assert.rejects(
+    f.coordinator.inspect(f.caller, f.workspaceId, {
+      remote: 'origin',
+      refs: [DEST, DEST],
+    }),
+    /duplicate/i,
+  );
+  assert.equal(f.backend.inspectCalls, 1);
+});
 
 test('destination namespace rejects protected branches, tags and delete-shaped refs before planning', async (t) => {
   for (const destinationRef of [

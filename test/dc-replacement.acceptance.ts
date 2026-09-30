@@ -77,6 +77,7 @@ const EXTENDED_TOOLS = [
   'mutation.result',
   'git.commit',
   'git.commit.result',
+  'git.remote.inspect',
   'git.push',
   'git.push.result',
   'result.chunk',

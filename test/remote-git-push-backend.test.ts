@@ -145,6 +145,31 @@ test('remote URL canonicalization accepts only credentialless https or explicit 
   }
 });
 
+test('remote inspect reads exact remote refs without fetch or local ref mutation', async (t) => {
+  const f = await fixture(t);
+  const missing = 'refs/heads/feat/missing';
+  const observation = await f.backend.inspect(f.root, {
+    remote: 'origin',
+    refs: [DEST, missing],
+  });
+
+  assert.match(observation.repositoryIdentity, /^repo_[0-9a-f]{64}$/);
+  assert.equal(observation.effectiveFetchUrl, URL);
+  assert.equal(observation.effectivePushUrl, URL);
+  assert.equal(observation.defaultBranch, 'refs/heads/main');
+  assert.deepEqual(observation.refs, [
+    { ref: DEST, oid: OLD },
+    { ref: missing, oid: null },
+  ]);
+  assert.equal(observation.authenticationState, 'UNKNOWN');
+  assert.equal(f.runner.calls.some((call) => call.args.includes('fetch')), false);
+  assert.equal(f.runner.calls.some((call) => call.args.includes('push')), false);
+  const lsRemote = f.runner.calls.find((call) => call.args.includes('ls-remote'));
+  assert.ok(lsRemote);
+  assert.equal(lsRemote!.args.includes(DEST), true);
+  assert.equal(lsRemote!.args.includes(missing), true);
+});
+
 test('planning binds repository, effective push URL, expected remote OID and fast-forward facts', async (t) => {
   const f = await fixture(t);
   const plan = await f.backend.plan(f.root, {

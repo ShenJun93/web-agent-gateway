@@ -462,7 +462,7 @@ export interface MutationMcpContext {
 
 export interface RemoteGitPushMcpContext {
   callerContext: GatewayCallerContext;
-  coordinator: Pick<DurableRemoteGitPushCoordinator, 'request' | 'result'>;
+  coordinator: Pick<DurableRemoteGitPushCoordinator, 'inspect' | 'request' | 'result'>;
 }
 
 /**
@@ -1453,6 +1453,27 @@ export function createGatewayMcpServer(
   }
 
   if (remoteGitPushContext) {
+    registerTool('git.remote.inspect', {
+      description: 'Read bounded remote Git truth for one configured remote and explicit branch refs without fetching or mutating local refs.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        remote: z.string().min(1).max(128),
+        refs: z.array(z.string().min(1).max(256)).max(32).optional(),
+      }).strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    }, async ({ workspace_id, remote, refs }) => toolResult(
+      await remoteGitPushContext.coordinator.inspect(
+        remoteGitPushContext.callerContext,
+        workspace_id,
+        { remote, refs: refs ?? [] },
+      ),
+    ));
+
     registerTool('git.push', {
       description: 'Request one exact bounded remote feature-branch push. A local standing autonomous policy may execute an allowlisted target immediately; otherwise the request follows the Human-gated proposal path. MCP arguments cannot widen local remote authority.',
       inputSchema: z.object({

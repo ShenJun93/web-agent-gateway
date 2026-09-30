@@ -34,6 +34,27 @@ export interface RemoteGitPushPlan {
   aheadCommitCount?: number;
 }
 
+export interface RemoteGitInspectInput {
+  remote: string;
+  refs: string[];
+}
+
+export type RemoteGitAuthenticationState = 'AVAILABLE' | 'UNKNOWN';
+
+export interface RemoteGitInspectObservation {
+  repositoryIdentity: string;
+  effectiveFetchUrl: string;
+  effectivePushUrl: string;
+  defaultBranch: string | null;
+  refs: Array<{ ref: string; oid: string | null }>;
+  authenticationState: RemoteGitAuthenticationState;
+}
+
+export interface RemoteGitInspectResult extends RemoteGitInspectObservation {
+  remote: string;
+  observedAt: string;
+}
+
 export type RemoteGitPushBackendOutcome =
   | { outcome: 'SUCCEEDED'; observedRemoteOid: string; errorClass?: never }
   | { outcome: 'NOT_OBSERVED'; observedRemoteOid?: string; errorClass?: string }
@@ -41,6 +62,7 @@ export type RemoteGitPushBackendOutcome =
   | { outcome: 'OUTCOME_UNKNOWN'; observedRemoteOid?: string; errorClass?: string };
 
 export interface RemoteGitPushBackend {
+  inspect(workspaceRoot: string, input: RemoteGitInspectInput): Promise<RemoteGitInspectObservation>;
   plan(workspaceRoot: string, input: RemoteGitPushInput): Promise<RemoteGitPushPlan>;
   execute(record: RemoteGitPushRecord): Promise<RemoteGitPushBackendOutcome>;
   reconcile(record: RemoteGitPushRecord): Promise<RemoteGitPushBackendOutcome>;
@@ -115,6 +137,23 @@ export class DurableRemoteGitPushCoordinator {
     this.#now = options.now ?? Date.now;
     this.#reviewTtlMs = boundedTtl(options.reviewTtlMs ?? DEFAULT_REVIEW_TTL_MS);
     this.#activeTtlMs = boundedTtl(options.activeTtlMs ?? DEFAULT_ACTIVE_TTL_MS);
+  }
+
+  async inspect(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    rawInput: RemoteGitInspectInput,
+  ): Promise<RemoteGitInspectResult> {
+    const input = validateInspectInput(rawInput);
+    const workspace = this.#workspaceFor(caller, workspaceId);
+    await this.options.effectBoundary?.revalidateWorkspace(workspaceId, workspace.canonicalRoot);
+    const observation = await this.options.backend.inspect(workspace.canonicalRoot, input);
+    assertInspectMatchesRequest(observation, input);
+    return {
+      ...observation,
+      remote: input.remote,
+      observedAt: new Date(this.#now()).toISOString(),
+    };
   }
 
   async request(
@@ -400,6 +439,20 @@ export class DurableRemoteGitPushCoordinator {
   }
 }
 
+function validateInspectInput(input: RemoteGitInspectInput): RemoteGitInspectInput {
+  if (!REMOTE_NAME.test(input.remote)) throw new Error('Gateway denied remote git inspect remote name');
+  if (!Array.isArray(input.refs) || input.refs.length > 32) {
+    throw new Error('Gateway denied remote git inspect refs');
+  }
+  const seen = new Set<string>();
+  for (const ref of input.refs) {
+    assertReadableHeadRef(ref);
+    if (seen.has(ref)) throw new Error('Gateway denied duplicate remote git inspect ref');
+    seen.add(ref);
+  }
+  return { remote: input.remote, refs: [...input.refs] };
+}
+
 function validateInput(input: RemoteGitPushInput): RemoteGitPushInput {
   if (!REMOTE_NAME.test(input.remote)) throw new Error('Gateway denied remote git push remote name');
   if (!OID.test(input.sourceOid)) throw new Error('Gateway denied remote git push source OID');
@@ -411,6 +464,26 @@ function validateInput(input: RemoteGitPushInput): RemoteGitPushInput {
     throw new Error('Gateway denied remote git push review receipt digest');
   }
   return { ...input };
+}
+
+function assertReadableHeadRef(ref: string): void {
+  if (!ref.startsWith('refs/heads/')) throw new Error('Gateway denied remote git inspect ref');
+  const name = ref.slice('refs/heads/'.length);
+  if (
+    name.length === 0
+    || name.length > 240
+    || name.startsWith('-')
+    || name.startsWith('.')
+    || name.endsWith('/')
+    || name.endsWith('.')
+    || name.endsWith('.lock')
+    || name.includes('..')
+    || name.includes('//')
+    || name.includes('@{')
+    || /[\u0000-\u0020~^:?*\\[\]\\]/.test(name)
+  ) {
+    throw new Error('Gateway denied remote git inspect ref');
+  }
 }
 
 function assertFeatureRef(ref: string): void {
@@ -432,6 +505,42 @@ function assertFeatureRef(ref: string): void {
     || /[\u0000-\u0020~^:?*\\[\]\\]/.test(name)
   ) {
     throw new Error('Gateway denied remote git push destination ref');
+  }
+}
+
+function assertInspectMatchesRequest(
+  observation: RemoteGitInspectObservation,
+  input: RemoteGitInspectInput,
+): void {
+  if (!/^repo_[0-9a-f]{64}$/.test(observation.repositoryIdentity)) {
+    throw new Error('Gateway denied remote git inspect repository identity');
+  }
+  for (const value of [observation.effectiveFetchUrl, observation.effectivePushUrl]) {
+    if (typeof value !== 'string' || value.length === 0 || value.length > 2048) {
+      throw new Error('Gateway denied remote git inspect URL');
+    }
+  }
+  if (
+    observation.defaultBranch !== null
+    && !observation.defaultBranch.startsWith('refs/heads/')
+  ) {
+    throw new Error('Gateway denied remote git inspect default branch');
+  }
+  if (
+    observation.authenticationState !== 'AVAILABLE'
+    && observation.authenticationState !== 'UNKNOWN'
+  ) {
+    throw new Error('Gateway denied remote git inspect authentication state');
+  }
+  if (observation.refs.length !== input.refs.length) {
+    throw new Error('Gateway denied remote git inspect ref result');
+  }
+  for (let index = 0; index < input.refs.length; index += 1) {
+    const expected = input.refs[index]!;
+    const actual = observation.refs[index]!;
+    if (actual.ref !== expected || (actual.oid !== null && !OID.test(actual.oid))) {
+      throw new Error('Gateway denied remote git inspect ref result');
+    }
   }
 }
 

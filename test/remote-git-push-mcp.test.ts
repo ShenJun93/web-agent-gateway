@@ -29,9 +29,23 @@ test('MCP publishes only git.push proposal/consume plus read-only result, never 
     sessionId: 'sid_push_mcp',
     adapterId: 'private.stdio.v1',
   });
+  let inspected: unknown;
   let requested: unknown;
   let resultId = '';
   const coordinator = {
+    async inspect(caller: unknown, workspaceId: string, input: { remote: string; refs: string[] }) {
+      inspected = { caller, workspaceId, input };
+      return {
+        repositoryIdentity: 'repo_' + '1'.repeat(64),
+        effectiveFetchUrl: 'https://github.com/example/repo.git',
+        effectivePushUrl: 'https://github.com/example/repo.git',
+        defaultBranch: 'refs/heads/main',
+        refs: input.refs.map((ref) => ({ ref, oid: ref.endsWith('/main') ? 'd'.repeat(40) : null })),
+        authenticationState: 'AVAILABLE' as const,
+        remote: input.remote,
+        observedAt: '2026-10-01T00:00:00.000Z',
+      };
+    },
     async request(caller: unknown, workspaceId: string, input: unknown) {
       requested = { caller, workspaceId, input };
       return {
@@ -71,6 +85,7 @@ test('MCP publishes only git.push proposal/consume plus read-only result, never 
 
   const tools = await client.listTools();
   const names = tools.tools.map((tool) => tool.name);
+  assert.equal(names.includes('git.remote.inspect'), true);
   assert.equal(names.includes('git.push'), true);
   assert.equal(names.includes('git.push.result'), true);
   for (const forbidden of [
@@ -86,6 +101,36 @@ test('MCP publishes only git.push proposal/consume plus read-only result, never 
   assert.equal(
     names.some((name) => /(?:grant|push).*(?:approve|activate|renew|create)/i.test(name)),
     false,
+  );
+
+  const inspectTool = tools.tools.find((tool) => tool.name === 'git.remote.inspect');
+  assert.deepEqual(inspectTool?.annotations, {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  });
+
+  const inspectResponse = await client.callTool({
+    name: 'git.remote.inspect',
+    arguments: {
+      workspace_id: 'ws_fixture',
+      remote: 'origin',
+      refs: ['refs/heads/main', 'refs/heads/feat/missing'],
+    },
+  });
+  assert.notEqual(inspectResponse.isError, true);
+  assert.deepEqual(inspected, {
+    caller: callerContext,
+    workspaceId: 'ws_fixture',
+    input: {
+      remote: 'origin',
+      refs: ['refs/heads/main', 'refs/heads/feat/missing'],
+    },
+  });
+  assert.equal(
+    (inspectResponse.structuredContent as { defaultBranch?: string }).defaultBranch,
+    'refs/heads/main',
   );
 
   const pushTool = tools.tools.find((tool) => tool.name === 'git.push');
@@ -138,7 +183,12 @@ test('git.push schema refuses symbolic source and unknown authority fields befor
     adapterId: 'private.stdio.v1',
   });
   let calls = 0;
+  let inspectCalls = 0;
   const coordinator = {
+    async inspect() {
+      inspectCalls += 1;
+      throw new Error('must not reach coordinator');
+    },
     async request() {
       calls += 1;
       throw new Error('must not reach coordinator');
@@ -173,4 +223,22 @@ test('git.push schema refuses symbolic source and unknown authority fields befor
     assert.equal(response.isError, true);
   }
   assert.equal(calls, 0);
+
+  for (const arguments_ of [
+    {
+      workspace_id: 'ws_fixture',
+      remote: 'origin',
+      refs: ['refs/heads/main'],
+      url: 'https://attacker.invalid/repo.git',
+    },
+    {
+      workspace_id: 'ws_fixture',
+      remote: 'origin',
+      refs: Array.from({ length: 33 }, (_, index) => 'refs/heads/feat/' + index),
+    },
+  ]) {
+    const response = await client.callTool({ name: 'git.remote.inspect', arguments: arguments_ });
+    assert.equal(response.isError, true);
+  }
+  assert.equal(inspectCalls, 0);
 });

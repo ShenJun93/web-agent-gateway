@@ -15,7 +15,7 @@ const INSPECT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', '
 const MUTATION_TOOLS = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'result.chunk'];
 const FULL_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'result.chunk'];
 const COMMIT_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run', 'command.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result', 'result.chunk'];
-const PUSH_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run', 'command.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result', 'git.push', 'git.push.result', 'result.chunk'];
+const PUSH_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'repo.snapshot', 'repo.diff', 'file.read', 'verify.run', 'command.run', 'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'git.commit', 'git.commit.result', 'git.remote.inspect', 'git.push', 'git.push.result', 'result.chunk'];
 
 /**
  * Repository-only profiles stay narrow. Full local-computer/DC-parity operations are exposed only
@@ -23,7 +23,7 @@ const PUSH_TOOLS = ['health', 'workspace.open', 'repo.list', 'repo.search', 'rep
  * profile from accidentally acquiring process/terminal or broad filesystem verbs.
  * Git mutations are limited to exact commit plus the separate Human-gated remote push surface.
  */
-const ACCEPTED_GIT_TOOLS = new Set(['git.commit', 'git.commit.result', 'git.push', 'git.push.result']);
+const ACCEPTED_GIT_TOOLS = new Set(['git.commit', 'git.commit.result', 'git.remote.inspect', 'git.push', 'git.push.result']);
 const FORBIDDEN_TOOL_FRAGMENTS = [
   'verify.preview', 'verify.result', 'job.', 'shell', 'process', 'terminal', 'pty', 'exec',
   'git.', 'commit', 'push', 'fetch', 'pull', 'merge', 'amend', 'reset', 'checkout', 'branch',
@@ -447,6 +447,18 @@ test('repository-only stdio profiles compose independently and do not expose mac
     },
   });
   const remotePushCoordinator = {
+    async inspect(_caller: unknown, _workspaceId: string, input: { remote: string; refs: string[] }) {
+      return {
+        repositoryIdentity: 'repo_' + '1'.repeat(64),
+        effectiveFetchUrl: 'https://github.com/example/repo.git',
+        effectivePushUrl: 'https://github.com/example/repo.git',
+        defaultBranch: 'refs/heads/main',
+        refs: input.refs.map((ref) => ({ ref, oid: null })),
+        authenticationState: 'UNKNOWN' as const,
+        remote: input.remote,
+        observedAt: '2026-10-01T00:00:00.000Z',
+      };
+    },
     async request() {
       return {
         pushId: 'push_fixture',
