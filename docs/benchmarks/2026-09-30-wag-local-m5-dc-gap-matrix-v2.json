@@ -1,0 +1,288 @@
+{
+  "schema": "WAG_LOCAL_M5_DC_GAP_MATRIX_V2",
+  "checkedAt": "2026-09-30",
+  "scoring": {
+    "scale": "0-4",
+    "meanings": {
+      "0": "absent",
+      "1": "partial or generic workaround only",
+      "2": "usable but materially incomplete/unaccepted",
+      "3": "strong/mature with a notable gap or current reliability caveat",
+      "4": "strong and directly supported/accepted for the measured workflow"
+    },
+    "warning": "Scores are engineering measurement only. A lower WAG score does not automatically authorize implementation."
+  },
+  "evidenceBasis": {
+    "wag": [
+      "live health inventory: 53 MCP tools",
+      "docs/benchmarks/2026-09-30-wag-local-product-m1-local-destructive.md",
+      "docs/benchmarks/2026-09-30-wag-local-product-m2-bootstrap-candidate.md",
+      "docs/benchmarks/2026-09-30-wag-local-product-m3-doctor-candidate.md",
+      "docs/benchmarks/2026-09-30-wag-local-product-m4-candidate.md"
+    ],
+    "desktopCommander": [
+      "wonderwhy-er/DesktopCommanderMCP README (main, checked 2026-09-30)",
+      "wonderwhy-er/DesktopCommanderMCP src/remote-device/README.md (main, checked 2026-09-30)",
+      "desktop-commander/remote-desktop-commander setup/security docs",
+      "recent public Remote MCP OAuth/session issues #600, #622, #698 used only as reliability caveats"
+    ],
+    "limitation": "No live Desktop Commander connector calls were used for this matrix; comparison uses current public product documentation and recent public reliability reports."
+  },
+  "rows": [
+    {
+      "id": "local-setup",
+      "category": "Local setup / first run",
+      "wagScore": 2,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG one-command setup exists, but external clean-Windows acceptance and first-time account provisioning remain incomplete.",
+      "desktopCommanderEvidence": "DC documents npx setup, onboarding, auto-update install modes and broad client setup.",
+      "scoreGap": -2
+    },
+    {
+      "id": "manual-steps-web",
+      "category": "Manual steps to WebChat/remote first use",
+      "wagScore": 2,
+      "desktopCommanderScore": 3,
+      "wagEvidence": "Existing ChatGPT connector workflow passes; clean first-time tunnel/runtime-key/connector flow still crosses external account steps.",
+      "desktopCommanderEvidence": "DC remote uses device OAuth plus separate AI connector OAuth; documented guided flow but still multi-step.",
+      "scoreGap": -1
+    },
+    {
+      "id": "restart-reconnect",
+      "category": "Restart / reconnect recovery",
+      "wagScore": 4,
+      "desktopCommanderScore": 2,
+      "wagEvidence": "M1 real reboot PASS; service, tunnel, DevSpace, WSL and collision failures accepted; M4 update/rollback live PASS.",
+      "desktopCommanderEvidence": "DC documents persisted remote sessions/reconnect, but recent public issues show hosted OAuth/session regressions.",
+      "scoreGap": 2
+    },
+    {
+      "id": "file-rw",
+      "category": "File read/write/move/delete",
+      "wagScore": 4,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG exposes bounded machine read/read_many/list/mkdir/move/delete plus reviewed file create/edit/replace.",
+      "desktopCommanderEvidence": "DC exposes read/write/create/list/move and edit_block.",
+      "scoreGap": 0
+    },
+    {
+      "id": "large-search",
+      "category": "Large-tree search lifecycle",
+      "wagScore": 2,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG has machine.search/search_continue but no product search-cancel or active-search inventory.",
+      "desktopCommanderEvidence": "DC exposes start_search/get_more_search_results/stop_search/list_searches.",
+      "scoreGap": -2
+    },
+    {
+      "id": "terminal-process",
+      "category": "Terminal and process lifecycle",
+      "wagScore": 4,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG exposes process start/list/inspect/terminate and persistent terminal open/input/output/close with identity revalidation.",
+      "desktopCommanderEvidence": "DC exposes interactive processes, session lists, output paging, kill and long-running command control.",
+      "scoreGap": 0
+    },
+    {
+      "id": "documents",
+      "category": "DOCX/XLSX/PDF workflows",
+      "wagScore": 1,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG has PDF text extraction/image read and generic command execution, but no native bounded DOCX/XLSX create/edit surface and no rich PDF create/edit API.",
+      "desktopCommanderEvidence": "DC documents native Excel read/write/edit/search, PDF read/create/modify and DOCX read/create/edit/search.",
+      "scoreGap": -3
+    },
+    {
+      "id": "binary-media",
+      "category": "Binary/media inspection and preview",
+      "wagScore": 3,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG supports images, PDF extraction and browser screenshots; preview UX is client-dependent and format coverage is narrower.",
+      "desktopCommanderEvidence": "DC documents visual file preview plus images, directories, PDF, Excel and DOCX extraction/display.",
+      "scoreGap": -1
+    },
+    {
+      "id": "in-memory-exec",
+      "category": "Bounded in-memory Python/Node/R",
+      "wagScore": 1,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG can use argv/process execution but has no dedicated bounded in-memory analysis tool.",
+      "desktopCommanderEvidence": "DC explicitly supports in-memory Python, Node.js and R execution.",
+      "scoreGap": -3
+    },
+    {
+      "id": "diagnostics",
+      "category": "Diagnostics / doctor / recovery guidance",
+      "wagScore": 4,
+      "desktopCommanderScore": 3,
+      "wagEvidence": "M3 doctor/failure matrix and bounded repair PASS; health and diagnostics usage/recent tools are live.",
+      "desktopCommanderEvidence": "DC exposes recent tool calls/usage/config and debug modes; no equivalent published destructive acceptance matrix found.",
+      "scoreGap": 1
+    },
+    {
+      "id": "update-uninstall",
+      "category": "Update / rollback / uninstall",
+      "wagScore": 4,
+      "desktopCommanderScore": 3,
+      "wagEvidence": "M4 transactional staging, post-switch health, automatic rollback, explicit rollback and fixture uninstall semantics PASS; live update+rollback PASS.",
+      "desktopCommanderEvidence": "DC documents npx auto-update and remove/uninstall flows, but not transactional previous-version rollback semantics.",
+      "scoreGap": 1
+    },
+    {
+      "id": "client-support",
+      "category": "Client breadth",
+      "wagScore": 2,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG existing ChatGPT Web connector works and private MCP/stdio surfaces exist, but broad external client acceptance is not complete.",
+      "desktopCommanderEvidence": "DC documents Claude, Cursor, Windsurf, VS Code/Copilot, Cline, Roo, Claude Code, Codex, JetBrains, Gemini CLI, Augment, Qwen and Remote MCP.",
+      "scoreGap": -2
+    },
+    {
+      "id": "device-management",
+      "category": "Remote device / multi-device management",
+      "wagScore": 1,
+      "desktopCommanderScore": 3,
+      "wagEvidence": "WAG hosted multi-device architecture is intentionally gated to M7; current product is local-first.",
+      "desktopCommanderEvidence": "DC remote documents OAuth device pairing, persisted sessions, dashboard revoke and multi-machine control; current hosted OAuth regressions reduce reliability score.",
+      "scoreGap": -2
+    },
+    {
+      "id": "failure-injection",
+      "category": "Recovery from injected failures",
+      "wagScore": 4,
+      "desktopCommanderScore": 2,
+      "wagEvidence": "WAG M1/M3 carry measured destructive/local synthetic failure evidence plus real reboot.",
+      "desktopCommanderEvidence": "DC docs include troubleshooting and reconnect behavior; no comparable public full failure-injection matrix was found.",
+      "scoreGap": 2
+    },
+    {
+      "id": "authority-secrets",
+      "category": "Authority and secret containment",
+      "wagScore": 4,
+      "desktopCommanderScore": 2,
+      "wagEvidence": "WAG uses bounded roots/effect policy, DPAPI-protected local runtime material and avoids persistent admin credential paths.",
+      "desktopCommanderEvidence": "DC warns allowedDirectories do not constrain terminal commands; remote device credentials persist locally and Windows code does not set a custom owner-only ACL.",
+      "scoreGap": 2
+    },
+    {
+      "id": "effect-correlation",
+      "category": "Effect/result correlation and durable semantics",
+      "wagScore": 4,
+      "desktopCommanderScore": 2,
+      "wagEvidence": "WAG has effect correlation, durable verify/mutation records, result chunks and explicit consequential-effect controls.",
+      "desktopCommanderEvidence": "DC provides local tool-call history/audit previews but no published equivalent exactly-once/durable effect model.",
+      "scoreGap": 2
+    },
+    {
+      "id": "config-ux",
+      "category": "Configuration read/update UX",
+      "wagScore": 1,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG config remains mostly file/setup/doctor driven; no stable user-facing get/set config tool family yet.",
+      "desktopCommanderEvidence": "DC exposes get_config/set_config_value with dynamic changes.",
+      "scoreGap": -3
+    },
+    {
+      "id": "activity-usage",
+      "category": "Recent activity / usage / feedback",
+      "wagScore": 2,
+      "desktopCommanderScore": 4,
+      "wagEvidence": "WAG exposes diagnostics.recent/diagnostics.usage but lacks a product-level feedback/help/config workflow family.",
+      "desktopCommanderEvidence": "DC exposes get_usage_stats, get_recent_tool_calls and feedback flow.",
+      "scoreGap": -2
+    },
+    {
+      "id": "browser",
+      "category": "Native browser automation",
+      "wagScore": 4,
+      "desktopCommanderScore": 1,
+      "wagEvidence": "WAG has 7 BrowserPort tools: open/describe/snapshot/exec/effect.get/screenshot/close.",
+      "desktopCommanderEvidence": "DC core documented tool surface is filesystem/terminal/process/document oriented; no comparable native browser harness is listed.",
+      "scoreGap": 3
+    },
+    {
+      "id": "repo-git",
+      "category": "Bounded repository/Git workflows",
+      "wagScore": 4,
+      "desktopCommanderScore": 2,
+      "wagEvidence": "WAG has repository inspection, durable file mutations, verify, git commit and bounded remote git push with correlation.",
+      "desktopCommanderEvidence": "DC can perform Git through terminal/files but its public tool table does not expose a comparable specialized reviewed Git-effect surface.",
+      "scoreGap": 2
+    }
+  ],
+  "measuredM6Candidates": [
+    {
+      "id": "search-lifecycle",
+      "priority": "P0",
+      "blockedWorkflow": "Long-running/large-tree searches cannot be enumerated or cancelled as a product-level session; continuation exists but lifecycle control is incomplete.",
+      "evidence": "Desktop Commander exposes start/get-more/stop/list search sessions; WAG exposes machine.search/search_continue only.",
+      "existingWagAlternative": "machine.search + machine.search_continue; command/process tools for ad hoc cancellation.",
+      "authorityIncrease": "LOW",
+      "implementationCost": "MEDIUM",
+      "acceptanceTest": "Start multiple large searches; list only active owned searches; cancel one; verify no orphan worker/result leak; continuation tokens remain bounded and invalid after cancellation.",
+      "commercialValue": "HIGH"
+    },
+    {
+      "id": "native-document-ops",
+      "priority": "P0",
+      "blockedWorkflow": "Non-coding users cannot reliably inspect/create/edit XLSX and DOCX or create/modify PDFs without shell/tool-specific glue.",
+      "evidence": "Desktop Commander documents native Excel/PDF/DOCX workflows; WAG currently has PDF extraction/images and generic execution only.",
+      "existingWagAlternative": "machine command execution, PDF extract, image read, external Python/Node libraries.",
+      "authorityIncrease": "MEDIUM_FILE_MUTATION_ONLY",
+      "implementationCost": "HIGH",
+      "acceptanceTest": "Format-specific round trips inside allowed roots; preserve formulas/styles/relationships where promised; reject path traversal, zip bombs, malformed OOXML/PDF; verify atomic writes and rollback.",
+      "commercialValue": "VERY_HIGH"
+    },
+    {
+      "id": "product-config-activity",
+      "priority": "P1",
+      "blockedWorkflow": "Users lack a simple product surface to inspect/update safe settings and review recent activity without reading config files.",
+      "evidence": "DC exposes get/set config, usage stats, recent tool calls and feedback; WAG has diagnostics but not equivalent product UX APIs.",
+      "existingWagAlternative": "setup CLI, doctor, config files, diagnostics.recent/usage.",
+      "authorityIncrease": "LOW",
+      "implementationCost": "MEDIUM",
+      "acceptanceTest": "Schema-bounded config keys only; compare-and-swap writes; secrets never returned; activity pagination bounded; unsupported keys fail closed.",
+      "commercialValue": "HIGH"
+    },
+    {
+      "id": "update-discovery",
+      "priority": "P1",
+      "blockedWorkflow": "Transactional update exists but doctor still reports update channel discovery as unconfigured.",
+      "evidence": "M4 lifecycle accepted; M3 update status remains UNCONFIGURED. DC npx install paths auto-resolve latest on restart.",
+      "existingWagAlternative": "Explicit local release package passed to update command.",
+      "authorityIncrease": "LOW_NETWORK_READ_ONLY",
+      "implementationCost": "MEDIUM",
+      "acceptanceTest": "Signed/channel-pinned metadata fetch; compatible release selection; no auto-switch without lifecycle acceptance; offline/stale metadata deterministic.",
+      "commercialValue": "HIGH"
+    },
+    {
+      "id": "bounded-in-memory-exec",
+      "priority": "P2",
+      "blockedWorkflow": "Short data transformations require generic process/argv execution and may create temporary files or inherit broader environment than necessary.",
+      "evidence": "DC explicitly advertises in-memory Python/Node/R; WAG has generic execution.",
+      "existingWagAlternative": "machine.command.run/process/terminal with explicit argv.",
+      "authorityIncrease": "MEDIUM_EXECUTION",
+      "implementationCost": "MEDIUM",
+      "acceptanceTest": "Strict runtime/output/memory limits; explicit filesystem/network flags; scrubbed credential inheritance; no background child survival.",
+      "commercialValue": "MEDIUM"
+    }
+  ],
+  "deferred": [
+    {
+      "capability": "hosted multi-device management",
+      "reason": "M7 architecture gate required"
+    },
+    {
+      "capability": "broad remote-client commercial service",
+      "reason": "M7/M8; do not mix hosted relay into local plane implicitly"
+    },
+    {
+      "capability": "rich desktop preview/editor UI",
+      "reason": "M9 native desktop experience"
+    },
+    {
+      "capability": "generic raw tool expansion",
+      "reason": "Roadmap explicitly rejects adding large raw-tool batches without measured workflows"
+    }
+  ]
+}
