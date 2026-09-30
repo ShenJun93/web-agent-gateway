@@ -94,7 +94,10 @@ function runLong(file: string, args: string[], cwd?: string, timeout = 190_000):
     env,
     encoding: 'utf8',
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // Lifecycle children may leave detached tunnel/supervisor descendants running.
+    // Ignore stdio so inherited pipe handles cannot keep spawnSync blocked after the
+    // direct child has already exited successfully.
+    stdio: ['ignore', 'ignore', 'ignore'],
     timeout,
   });
   return !result.error && result.status === 0;

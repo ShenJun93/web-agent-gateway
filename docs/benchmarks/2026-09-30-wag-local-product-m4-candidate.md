@@ -244,10 +244,17 @@ verification.
 A first live dogfood attempt was rejected **before runtime switch** because Node's direct Windows
 `spawnSync('npm.cmd', ...)` path returned `EINVAL`. The legacy baseline had already been adopted,
 but the running WAG runtime, wrapper, tunnel, and supervisor remained unchanged. M4 now executes
-Windows `.cmd` shims through PowerShell with arguments passed via `$args`, and a regression locks
+Windows `.cmd` shims through PowerShell with argv serialized through JSON, and a regression locks
 that invocation path.
 
-Full live acceptance still needs an explicitly disruptive dogfood operation:
+A second live attempt switched successfully to the candidate runtime and preserved the live 53-tool
+ChatGPT round-trip, but the transaction then blocked before writing release state because a detached
+starter/tunnel descendant retained inherited stdout/stderr pipe handles from `spawnSync`. The hung
+updater was terminated by exact process identity and the accepted legacy snapshot restored the prior
+wrapper, launchers, tunnel and supervisor with 7677/8080 all returning HTTP 200. Long-lived lifecycle
+children now use ignored stdio so descendant handles cannot keep the direct child wait open.
+
+Full live acceptance still needs one final explicitly disruptive dogfood operation:
 
 1. package the committed candidate;
 2. update the currently running WAG Local through the new lifecycle path;

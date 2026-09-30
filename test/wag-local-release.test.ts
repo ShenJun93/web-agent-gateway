@@ -82,6 +82,7 @@ test('Windows command shims are invoked through PowerShell rather than direct sp
   assert.match(source, /WAG_RELEASE_ARGS/);
   assert.match(source, /ConvertFrom-Json/);
   assert.match(source, /'pwsh\.exe'/);
+  assert.match(source, /stdio: \['ignore', 'ignore', 'ignore'\]/);
 });
 
 test('release payload hash is deterministic and excludes RELEASE.json', (t) => {
