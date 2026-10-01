@@ -70,19 +70,34 @@ function portFixture(mode: BrowserExecutionMode, suffix: string) {
   return { port, calls };
 }
 
-test('BrowserBroker AUTO preserves current headless default and explicit visible routes separately', async () => {
+test('BrowserBroker AUTO uses headless without a target and AI tab group for an exact target', async () => {
   const headless = portFixture('WAG_HEADLESS', '1');
   const visible = portFixture('WAG_VISIBLE', '2');
-  const broker = createBrowserBroker({ headless: headless.port, visible: visible.port });
+  const attached = portFixture('AI_TAB_GROUP', '3');
+  const broker = createBrowserBroker({
+    headless: headless.port,
+    visible: visible.port,
+    attached: attached.port,
+  });
 
   const automatic = await broker.open({ profileId: 'auto', owner: OWNER, mode: 'AUTO' });
   assert.equal(automatic.executionMode, 'WAG_HEADLESS');
   assert.equal(automatic.ownershipMode, 'WAG_OWNED');
   assert.equal(automatic.controlState, 'RUNNING');
 
+  const exactTarget = await broker.open({
+    profileId: 'auto-existing',
+    owner: OWNER,
+    mode: 'AUTO',
+    targetId: 'tab_7',
+  });
+  assert.equal(exactTarget.executionMode, 'AI_TAB_GROUP');
+  assert.equal(exactTarget.ownershipMode, 'ATTACHED_EXISTING');
+
   const observed = await broker.open({ profileId: 'visible', owner: OWNER, mode: 'WAG_VISIBLE' });
   assert.equal(observed.executionMode, 'WAG_VISIBLE');
   assert.deepEqual(headless.calls, ['open:WAG_HEADLESS']);
+  assert.deepEqual(attached.calls, ['open:AI_TAB_GROUP']);
   assert.deepEqual(visible.calls, ['open:WAG_VISIBLE']);
 });
 

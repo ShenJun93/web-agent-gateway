@@ -383,7 +383,7 @@ export function createPrivateBrowserMcpContext(options: {
 
     async open(profileId, mode, targetId, groupTitle) {
       assertEffectAllowed();
-      const resolvedMode = resolveBrowserOpenMode(mode);
+      const resolvedMode = resolveBrowserOpenMode(mode, targetId);
       if ((resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP') && !targetId) {
         throw new Error(resolvedMode + ' requires target_id');
       }

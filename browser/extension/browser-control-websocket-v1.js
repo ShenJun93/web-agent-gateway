@@ -35,6 +35,12 @@ export function createBrowserControlWebSocketV1(options) {
     return value ? validateConfig(value) : null;
   }
 
+  async function clearConfig() {
+    stopping = true;
+    disconnect();
+    await storage.remove(CONFIG_KEY);
+  }
+
   async function start() {
     if (stopping || socket) return;
     const config = await loadConfig();
@@ -147,6 +153,7 @@ export function createBrowserControlWebSocketV1(options) {
 
   return {
     configure,
+    clearConfig,
     start,
     stop,
     isConnected: () => connected,

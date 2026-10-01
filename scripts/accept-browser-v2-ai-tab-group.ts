@@ -293,7 +293,7 @@ void (async () => {
     try {
       opened = await context.open(
         'acceptance',
-        'AI_TAB_GROUP',
+        'AUTO',
         target.targetId,
         'WAG • Acceptance',
       );
@@ -373,6 +373,7 @@ void (async () => {
       status: 'PASS',
       transport: 'LOOPBACK_WEBSOCKET',
       nativeBrowserControlExecutable: false,
+      requestedMode: 'AUTO',
       executionMode: opened.executionMode,
       ownershipMode: opened.ownershipMode,
       groupId: opened.groupId,

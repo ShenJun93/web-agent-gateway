@@ -63,6 +63,7 @@ test('extension WebSocket transport pairs and returns bounded control responses'
     storage: {
       async get(key: string) { return { [key]: values[key] }; },
       async set(value: Record<string, unknown>) { Object.assign(values, value); },
+      async remove(key: string) { delete values[key]; },
     },
     control,
     WebSocketImpl: WebSocketImpl as any,
@@ -98,12 +99,15 @@ test('extension WebSocket transport pairs and returns bounded control responses'
   assert.equal(response.requestId, 'bctl_00000000-0000-4000-8000-000000000001');
   assert.equal(response.result[0].targetId, 'tab_7');
   assert.equal(response.result[0].attached, false);
-  transport.stop();
+
+  await transport.clearConfig();
+  assert.equal(transport.isConnected(), false);
+  assert.equal(await transport.loadConfig(), null);
 });
 
 test('extension WebSocket config refuses non-loopback endpoints', async () => {
   const transport = createBrowserControlWebSocketV1({
-    storage: { async get() { return {}; }, async set() {} },
+    storage: { async get() { return {}; }, async set() {}, async remove() {} },
     control: {},
     WebSocketImpl: FakeSocket as any,
   });

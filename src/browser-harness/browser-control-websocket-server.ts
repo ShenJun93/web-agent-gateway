@@ -37,13 +37,19 @@ export interface BrowserControlWebSocketServer {
   close(): Promise<void>;
 }
 
+export async function readBrowserControlPairingState(
+  statePath: string,
+): Promise<BrowserControlPairingState> {
+  const value = JSON.parse(await readFile(statePath, 'utf8')) as unknown;
+  return parsePairingState(value);
+}
+
 export async function loadOrCreateBrowserControlPairingState(
   statePath: string,
   port = DEFAULT_PORT,
 ): Promise<BrowserControlPairingState> {
   try {
-    const value = JSON.parse(await readFile(statePath, 'utf8')) as unknown;
-    return parsePairingState(value);
+    return await readBrowserControlPairingState(statePath);
   } catch {
     const state: BrowserControlPairingState = {
       version: STATE_VERSION,

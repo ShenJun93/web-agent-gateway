@@ -99,6 +99,47 @@ test('product doctor dispatches without --config and maps only bounded arguments
   assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
 });
 
+test('browser-pairing reads the existing private pairing state without starting a runtime', async () => {
+  const h = makeCliHarness();
+  const statePath = resolve('browser-pairing-state.sqlite');
+  const configPath = resolve('private.json');
+  h.deps.loadConfig = async () => ({
+    ...config(),
+    repositoryEngineering: {
+      inspect: true,
+      mutation: { statePath, ownerId: 'local.private.stdio' },
+      browser: {
+        edgeExecutablePath: resolve('msedge.exe'),
+        profileRoot: resolve('browser-profiles'),
+      },
+    },
+  });
+  let readPath: string | undefined;
+  h.deps.readBrowserPairing = async (path) => {
+    readPath = path;
+    return {
+      version: 1,
+      endpoint: 'ws://127.0.0.1:17841/browser-control',
+      pairingToken: 'pairing-token-' + 'x'.repeat(32),
+    };
+  };
+
+  assert.equal(await main(['browser-pairing', '--config', configPath], h.deps), 0);
+  assert.equal(readPath, statePath + '.browser-control-pairing.json');
+  const payload = JSON.parse(h.stdout.text()) as Record<string, unknown>;
+  assert.equal(payload.version, 1);
+  assert.equal(payload.endpoint, 'ws://127.0.0.1:17841/browser-control');
+  assert.equal(typeof payload.pairingToken, 'string');
+  assert.equal(h.stderr.text(), '');
+  assert.equal(h.runtimeClosed(), 0, 'pairing read must not bootstrap the private runtime');
+  assert.equal(h.stdioClosed(), 0);
+
+  const unavailable = makeCliHarness();
+  assert.equal(await main(['browser-pairing', '--config', configPath], unavailable.deps), 1);
+  assert.match(unavailable.stderr.text(), /"code":"BROWSER_PAIRING_UNAVAILABLE"/);
+  assert.equal(unavailable.stdout.text(), '');
+});
+
 test('product update, rollback, and uninstall dispatch only bounded lifecycle arguments', async () => {
   const update = makeCliHarness();
   let updateObserved: unknown;

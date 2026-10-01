@@ -39,11 +39,16 @@ export interface BrowserBroker extends BrowserPort {
   resumeAutomation(owner: GatewayAuthority, browserSessionId: string): Promise<BrowserSessionHandle>;
 }
 
-export function resolveBrowserOpenMode(mode: BrowserOpenMode | undefined): BrowserExecutionMode {
-  // AUTO intentionally remains conservative in Task 1. Existing-session detection belongs to
-  // target discovery/attach Tasks 2-3; human-observation heuristics require caller intent. Until
-  // those signals exist, AUTO preserves the production BrowserPort behavior.
-  return mode === undefined || mode === 'AUTO' ? 'WAG_HEADLESS' : mode;
+export function resolveBrowserOpenMode(
+  mode: BrowserOpenMode | undefined,
+  targetId?: string,
+): BrowserExecutionMode {
+  const requested = mode ?? 'AUTO';
+  // AUTO is deterministic and never guesses a tab. Once the caller has selected an exact target
+  // from browser.targets, use the visible AI tab group so the user can observe/take over without
+  // foreground focus or OS-pointer ownership. With no exact target, preserve isolated headless.
+  if (requested === 'AUTO') return targetId === undefined ? 'WAG_HEADLESS' : 'AI_TAB_GROUP';
+  return requested;
 }
 
 function decorate(handle: BrowserSessionHandle, route: RoutedSession): BrowserSessionHandle {
@@ -130,7 +135,7 @@ export function createBrowserBroker(options: {
     },
 
     async open(request: BrowserOpenRequest) {
-      const executionMode = resolveBrowserOpenMode(request.mode);
+      const executionMode = resolveBrowserOpenMode(request.mode, request.targetId);
       const selected = portFor(executionMode);
       const handle = await selected.port.open({ ...request, mode: executionMode });
       const route: RoutedSession = {

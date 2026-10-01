@@ -121,6 +121,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'browser.control.clear') {
+    if (actor !== 'sidepanel') { sendResponse({ cleared: false }); return false; }
+    void browserControlWebSocket.clearConfig()
+      .then(() => sendResponse({ cleared: true }))
+      .catch(() => sendResponse({ cleared: false }));
+    return true;
+  }
+
   if (message?.type === 'provider.observed_text') {
     const tabId = sender.tab?.id;
     const senderUrl = sender.url;

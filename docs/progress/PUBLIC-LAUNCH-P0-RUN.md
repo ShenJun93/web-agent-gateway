@@ -651,3 +651,82 @@ Known remaining risk:
 Next:
 - commit STOP 8;
 - continue to Browser v2 final public-launch gate without public push or live promotion.
+
+
+Task: Browser v2 STOP 9 — AUTO + first-time pairing + final technical precheck
+State: DONE / BRANCH ACCEPTED / USER PROFILE GATE PENDING
+Evidence:
+- AUTO routing finalized:
+  - AUTO without exact target_id -> WAG_HEADLESS;
+  - AUTO with exact target_id -> AI_TAB_GROUP;
+  - no cookie/token inspection is used to infer authentication.
+- real Microsoft Edge AUTO acceptance PASS:
+  - requestedMode=AUTO;
+  - executionMode=AI_TAB_GROUP;
+  - ownershipMode=ATTACHED_EXISTING;
+  - authenticated fixture session preserved;
+  - target initially inactive;
+  - user active tab stable;
+  - semantic snapshot/fill/click PASS;
+  - release kept target and browser open;
+  - no Windows UI Automation or OS pointer injection.
+- first-time pairing implementation added:
+  - read-only `browser-pairing --config <absolute-path>` CLI;
+  - side-panel Pair / state / Forget flow;
+  - configure/state/clear restricted to derived sidepanel actor;
+  - loopback-only endpoint validation retained;
+  - pasted pairing payload cleared from DOM after Pair;
+  - token not rendered back in status/result UI;
+  - pairing CLI does not bootstrap a second runtime.
+- focused AUTO/pairing gate = 35/35 PASS.
+- latest broad Browser/runtime regression = 162/162 PASS:
+  - 81/81 Browser/extension/WebSocket/broker;
+  - 17/17 Browser MCP/CDP/owned Edge;
+  - 32/32 profile/semantic/fencing/recovery;
+  - 32/32 protocol/runtime assembly.
+- WAG product/non-browser suite = 58/58 PASS.
+- pre-existing packaged runtime lock drift was repaired and committed separately:
+  - `57a4fea7896fe9a0213b0af36cf5b35047cc4ffc chore: sync packaged runtime lock`;
+  - focused setup after repair = 7/7 PASS.
+- real Edge managed-mode smoke PASS:
+  - WAG_HEADLESS PASS;
+  - WAG_VISIBLE PASS;
+  - Pause -> Take Control -> Resume PASS.
+- real Edge framework-safe fill PASS:
+  - plain input/textarea replacement;
+  - React controlled DOM/state/validation/submit state;
+  - no append-instead-of-replace.
+- real Edge rich-text PASS:
+  - contenteditable;
+  - ProseMirror;
+  - TipTap.
+- real Edge OAuth continuity PASS:
+  - stable logical session;
+  - successor observed and returned to root;
+  - authenticated state preserved;
+  - user active tab stable.
+- real Edge runtime recovery/exact-once PASS:
+  - claim epoch 1 -> 2;
+  - extension reconnect;
+  - durable receipt preserved;
+  - completed effect replay blocked;
+  - consequential click count exactly 1.
+- legacy dedicated Browser Control native-host acceptance remains historically Code-Integrity blocked;
+  STOP 2B replaced it with the accepted loopback WebSocket product path, so it is not treated as a
+  current Browser v2 WebSocket failure.
+- typecheck PASS.
+- build PASS.
+- git diff --check PASS.
+- receipt:
+  `docs/benchmarks/2026-10-01-wag-browser-v2-stop9-auto-pairing-final-precheck.md`.
+Not claimed:
+- USER_DAILY_EDGE_PROFILE_ACCEPTANCE = NOT_EXECUTED;
+- LIVE_FIRST_TIME_PAIRING_BY_REAL_USER = NOT_EXECUTED;
+- PUBLIC_LAUNCH = NO;
+- LIVE_RUNTIME_PROMOTION = NO;
+- PUBLIC_PUSH = NO.
+Next:
+- commit STOP 9 AUTO/pairing implementation + receipt;
+- perform bounded user-daily-profile pairing/attach/release acceptance;
+- only after that evidence decide final public-launch/promotion steps.
+- DC replacement production-local acceptance = 1 / 1 PASS; operatorApprovals=0; autonomousLocalEffects=true; prior 30-second wrapper timeouts occurred before verdict and are not test failures.

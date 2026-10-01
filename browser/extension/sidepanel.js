@@ -1,11 +1,20 @@
 const statusEl = document.querySelector('#status');
 const pendingEl = document.querySelector('#pending');
 const resultEl = document.querySelector('#result');
+const browserControlStatusEl = document.querySelector('#browser-control-status');
+const browserControlEndpointEl = document.querySelector('#browser-control-endpoint');
+const browserPairingEl = document.querySelector('#browser-pairing');
+const browserPairEl = document.querySelector('#browser-pair');
+const browserForgetEl = document.querySelector('#browser-forget');
+const browserPairingResultEl = document.querySelector('#browser-pairing-result');
 
 async function refresh() {
   // `panel.state` re-attaches the bridge to open conversations and rescans before answering,
   // so opening the panel is enough — the user never has to reload the page by hand.
-  const state = await chrome.runtime.sendMessage({ type: 'panel.state' });
+  const [state] = await Promise.all([
+    chrome.runtime.sendMessage({ type: 'panel.state' }),
+    refreshBrowserControl(),
+  ]);
   statusEl.textContent = state.nativeConnected
     ? 'Native host connected'
     : 'Native host idle; it connects when you run a proposal';
@@ -13,16 +22,89 @@ async function refresh() {
   for (const item of state.pending ?? []) pendingEl.append(renderPending(item));
 }
 
+async function refreshBrowserControl() {
+  const state = await chrome.runtime.sendMessage({ type: 'browser.control.state' });
+  if (state?.connected === true) {
+    browserControlStatusEl.textContent = 'Connected to WAG Local';
+    browserControlStatusEl.className = 'ok';
+  } else if (state?.configured === true) {
+    browserControlStatusEl.textContent = 'Paired; waiting for WAG Local';
+    browserControlStatusEl.className = '';
+  } else {
+    browserControlStatusEl.textContent = 'Not paired';
+    browserControlStatusEl.className = '';
+  }
+  browserControlEndpointEl.textContent = state?.configured === true && typeof state.endpoint === 'string'
+    ? state.endpoint
+    : '';
+  browserForgetEl.disabled = state?.configured !== true;
+}
+
+function parsePairingPayload(text) {
+  const value = JSON.parse(text);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Pairing payload must be a JSON object');
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.join(',') !== 'endpoint,pairingToken,version' || value.version !== 1) {
+    throw new Error('Pairing payload shape is invalid');
+  }
+  if (typeof value.endpoint !== 'string' || typeof value.pairingToken !== 'string') {
+    throw new Error('Pairing payload fields are invalid');
+  }
+  return { endpoint: value.endpoint, pairingToken: value.pairingToken };
+}
+
+browserPairEl.addEventListener('click', async () => {
+  browserPairingResultEl.textContent = '';
+  try {
+    const config = parsePairingPayload(browserPairingEl.value.trim());
+    const result = await chrome.runtime.sendMessage({
+      type: 'browser.control.configure',
+      endpoint: config.endpoint,
+      pairingToken: config.pairingToken,
+    });
+    // Never leave the pairing token rendered after the configure attempt.
+    browserPairingEl.value = '';
+    if (result?.configured !== true) throw new Error('WAG rejected the pairing payload');
+    browserPairingResultEl.textContent = 'Pairing saved.';
+    await refreshBrowserControl();
+  } catch {
+    browserPairingEl.value = '';
+    browserPairingResultEl.textContent = 'Pairing failed. Generate a fresh local pairing payload and try again.';
+    browserPairingResultEl.className = 'error';
+  }
+});
+
+browserForgetEl.addEventListener('click', async () => {
+  browserPairingResultEl.textContent = '';
+  const result = await chrome.runtime.sendMessage({ type: 'browser.control.clear' });
+  if (result?.cleared === true) {
+    browserPairingResultEl.textContent = 'Pairing removed.';
+    browserPairingResultEl.className = 'muted';
+  } else {
+    browserPairingResultEl.textContent = 'Could not remove pairing.';
+    browserPairingResultEl.className = 'error';
+  }
+  await refreshBrowserControl();
+});
+
 function renderPending(item) {
   const wrapper = document.createElement('div');
   const pre = document.createElement('pre');
   pre.textContent = JSON.stringify({ tool: item.request.tool, arguments: item.request.arguments }, null, 2);
   const run = document.createElement('button');
   run.textContent = 'Run';
-  run.addEventListener('click', async () => { await chrome.runtime.sendMessage({ type: 'panel.execute', requestId: item.requestId }); await refresh(); });
+  run.addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'panel.execute', requestId: item.requestId });
+    await refresh();
+  });
   const dismiss = document.createElement('button');
   dismiss.textContent = 'Dismiss';
-  dismiss.addEventListener('click', async () => { await chrome.runtime.sendMessage({ type: 'panel.dismiss', requestId: item.requestId }); await refresh(); });
+  dismiss.addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'panel.dismiss', requestId: item.requestId });
+    await refresh();
+  });
   wrapper.append(pre, run, dismiss);
   return wrapper;
 }
@@ -46,4 +128,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') refresh().catch(() => undefined);
 });
 
-refresh().catch(() => { statusEl.textContent = 'Adapter unavailable'; });
+refresh().catch(() => {
+  statusEl.textContent = 'Adapter unavailable';
+  browserControlStatusEl.textContent = 'Browser control unavailable';
+});

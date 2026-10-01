@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BROWSER_OPERATOR_ADAPTER_ID } from './adapter-admission.js';
+import { readBrowserControlPairingState } from './browser-harness/browser-control-websocket-server.js';
 import {
   startBrowserOperatorRuntime,
   type BrowserOperatorRuntime,
@@ -63,6 +64,8 @@ export interface CliDependencies {
   startRemoteRelayDevice?: typeof startRemoteRelayDeviceRuntime;
   /** Remote-device service lifetime is signal-driven and must not depend on stdin staying open. */
   waitForRemoteShutdown?: () => Promise<void>;
+  /** Read-only first-time Browser v2 pairing payload; injected only by CLI tests. */
+  readBrowserPairing?: typeof readBrowserControlPairingState;
 }
 type CliCommand = 'doctor' | 'serve-stdio' | 'serve-browser-operator' | 'serve-remote-relay-device';
 interface ParsedCli { command: CliCommand; configPath: string; }
@@ -79,6 +82,30 @@ export async function main(
   if (argv.length === 1 && argv[0] === '--help') {
     deps.stdout.write(usageText());
     return 0;
+  }
+  if (argv[0] === 'browser-pairing') {
+    try {
+      if (argv.length !== 3 || argv[1] !== '--config' || !isAbsolute(argv[2]!)) {
+        throw new CliUsageError('browser-pairing requires --config <absolute-path>');
+      }
+      const config = await deps.loadConfig(argv[2]!);
+      const mutation = config.repositoryEngineering?.mutation;
+      const browser = config.repositoryEngineering?.browser;
+      if (!mutation || !browser) {
+        throw new Error('Browser pairing requires repositoryEngineering.browser and mutation');
+      }
+      const statePath = mutation.statePath + '.browser-control-pairing.json';
+      const pairing = await (deps.readBrowserPairing ?? readBrowserControlPairingState)(statePath);
+      deps.stdout.write(`${JSON.stringify(pairing)}\n`);
+      return 0;
+    } catch (error) {
+      emitError(
+        deps.stderr,
+        error instanceof CliUsageError ? 'CLI_USAGE' : 'BROWSER_PAIRING_UNAVAILABLE',
+        error,
+      );
+      return 1;
+    }
   }
   if (argv[0] === 'update') {
     try {
@@ -597,6 +624,7 @@ function usageText(): string {
     '  web-agent-gateway uninstall [--keep-state] [--remove-managed-devspace] [--output <absolute-path>]',
     '  web-agent-gateway doctor [--repair] [--output <absolute-path>]',
     '  web-agent-gateway doctor --config <absolute-path>  # legacy runtime preflight',
+    '  web-agent-gateway browser-pairing --config <absolute-path>',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
     '  web-agent-gateway serve-browser-operator --config <absolute-path>',
     '  web-agent-gateway serve-remote-relay-device --config <absolute-path>',
