@@ -217,6 +217,7 @@ export async function startRepositoryEngineeringRuntime(
       profileRoot: browserSettings.profileRoot,
       effectStatePath: mutationSettings.statePath + '.harness-effects.sqlite',
       targetClaimStatePath: mutationSettings.statePath + '.browser-target-claims.sqlite',
+      attachedSessionStatePath: mutationSettings.statePath + '.browser-attached-sessions.sqlite',
       killSwitch,
       ...(browserControlServer === undefined ? {} : { control: browserControlServer.client }),
     });
@@ -511,7 +512,7 @@ export async function startRepositoryEngineeringRuntime(
         failure = error;
       }
       try {
-        await browserContext?.closeAll();
+        await browserContext?.suspendForRestart();
       } catch (error) {
         failure ??= error;
       }

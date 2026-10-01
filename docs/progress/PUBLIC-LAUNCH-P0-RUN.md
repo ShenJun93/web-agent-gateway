@@ -537,3 +537,60 @@ Known remaining risk:
 Next:
 - commit STOP 6;
 - proceed to Browser v2 runtime/session recovery without public push or live promotion.
+
+---
+
+Task: Browser v2 STOP 7 — runtime/session recovery
+State: DONE / BRANCH ACCEPTED
+Evidence:
+- added durable attached-browser session store keyed by logical browser_session_id;
+- persisted execution mode, control state, root/current target, target_generation, claim epochs, retained OAuth target claims, AI tab group metadata and lifecycle state;
+- graceful restart uses suspendForRestart: detach target, release retained claims, mark session RECOVERABLE, close runtime-local stores;
+- successor runtime recovers the same browser_session_id at fresh claim epochs and restores target/group/continuity binding;
+- second runtime is blocked while the prior lease is still live and cannot steal/detach the target;
+- crash semantics fail closed until lease expiry; exact stale epoch is fenced after a successor claim;
+- multi-target OAuth recovery is atomic in one SQLite transaction so partial epoch advancement cannot occur;
+- prior durable exact-once receipts survive restart and completed consequential effects are not replayed;
+- real Edge runtime/control-plane recovery acceptance PASS: browser_session_id stable, epoch 1->2, extension reconnect PASS, old effect replay blocked, consequential click count remained exactly 1, active tab stable, target/browser preserved;
+- real Edge AI_TAB_GROUP regression PASS after recovery changes;
+- real Edge OAuth continuity regression PASS after recovery changes;
+- broad Browser/runtime regression = 152/152 PASS;
+- focused recovery suite = 19/19 PASS;
+- typecheck/build/diff-check PASS.
+Files changed:
+- src/browser-harness/browser-attached-session-store.ts
+- src/browser-harness/browser-target-claim-store.ts
+- src/browser-harness/attached-existing-browser-port.ts
+- src/browser-harness/browser-broker.ts
+- src/browser-harness/browser-mcp-runtime.ts
+- src/repository-engineering-runtime.ts
+- scripts/accept-browser-v2-runtime-recovery.ts
+- test/browser-attached-session-store.test.ts
+- test/browser-runtime-session-recovery.test.ts
+- test/browser-target-claim-store.test.ts
+- test/browser-harness-attached-existing-port.test.ts
+- test/browser-harness-mcp-runtime.test.ts
+- test/browser-harness-mcp-surface.test.ts
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop7-runtime-recovery.md
+Tests:
+- Browser/extension/WebSocket batch A = 77/77 PASS
+- Browser MCP/semantic/recovery batch B = 43/43 PASS
+- control/private-runtime/assembly batch C = 32/32 PASS
+- total broad Browser/runtime = 152/152 PASS
+- focused recovery = 19/19 PASS
+- real Edge runtime recovery = PASS
+- real Edge AI_TAB_GROUP = PASS
+- real Edge OAuth continuity = PASS
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+Known remaining risk:
+- user daily Edge profile recovery NOT EXECUTED;
+- real OS-process SIGKILL recovery NOT EXECUTED;
+- AUTO authenticated-target selection NOT FINALIZED;
+- production pairing UX NOT COMPLETE;
+- P2 diagnostics/resource bounds PENDING;
+- live runtime remains older and is not promoted from this branch.
+Next:
+- commit STOP 7;
+- after continuation, implement P2 sanitized diagnostics/resource bounds and final Browser v2 public-launch gate.

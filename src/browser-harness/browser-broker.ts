@@ -33,6 +33,7 @@ export class BrowserBrokerError extends Error {
 }
 
 export interface BrowserBroker extends BrowserPort {
+  recover(owner: GatewayAuthority, browserSessionId: string): Promise<BrowserSessionHandle>;
   pauseForUser(owner: GatewayAuthority, browserSessionId: string): Promise<BrowserSessionHandle>;
   takeUserControl(owner: GatewayAuthority, browserSessionId: string): Promise<BrowserSessionHandle>;
   resumeAutomation(owner: GatewayAuthority, browserSessionId: string): Promise<BrowserSessionHandle>;
@@ -57,7 +58,9 @@ function decorate(handle: BrowserSessionHandle, route: RoutedSession): BrowserSe
 export function createBrowserBroker(options: {
   headless: BrowserPort;
   visible: BrowserPort;
-  attached?: BrowserPort;
+  attached?: BrowserPort & {
+    recover?: (owner: GatewayAuthority, browserSessionId: string) => Promise<BrowserSessionHandle>;
+  };
 }): BrowserBroker {
   const routes = new Map<string, RoutedSession>();
 
@@ -102,6 +105,30 @@ export function createBrowserBroker(options: {
   }
 
   return {
+    async recover(owner, browserSessionId) {
+      if (!options.attached?.recover) {
+        throw new BrowserBrokerError(
+          'BROWSER_SESSION_NOT_ROUTED',
+          'Browser session recovery is not configured',
+        );
+      }
+      const handle = await options.attached.recover(owner, browserSessionId);
+      if (handle.executionMode !== 'ATTACH_EXISTING' && handle.executionMode !== 'AI_TAB_GROUP') {
+        throw new BrowserBrokerError(
+          'BROWSER_MODE_UNAVAILABLE',
+          'Only attached existing browser sessions are recoverable',
+        );
+      }
+      const route: RoutedSession = {
+        port: options.attached,
+        executionMode: handle.executionMode,
+        ownershipMode: 'ATTACHED_EXISTING',
+        controlState: handle.controlState ?? 'RUNNING',
+      };
+      routes.set(browserSessionId, route);
+      return decorate(handle, route);
+    },
+
     async open(request: BrowserOpenRequest) {
       const executionMode = resolveBrowserOpenMode(request.mode);
       const selected = portFor(executionMode);

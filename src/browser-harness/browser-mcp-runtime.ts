@@ -25,6 +25,7 @@ import {
   type AttachedExistingBrowserPort,
 } from './attached-existing-browser-port.js';
 import { BrowserTargetClaimStore } from './browser-target-claim-store.js';
+import { BrowserAttachedSessionStore } from './browser-attached-session-store.js';
 import {
   createExistingBrowserControlClient,
   type ExistingBrowserControlClient,
@@ -109,6 +110,7 @@ export interface BrowserMcpContext {
   pauseForUser(browserSessionId: string): Promise<BrowserMcpSession>;
   takeUserControl(browserSessionId: string): Promise<BrowserMcpSession>;
   resumeAutomation(browserSessionId: string): Promise<BrowserMcpSession>;
+  suspendForRestart(): Promise<void>;
   closeAll(): Promise<void>;
 }
 
@@ -204,6 +206,7 @@ export function createPrivateBrowserMcpContext(options: {
   profileRoot: string;
   effectStatePath: string;
   targetClaimStatePath?: string;
+  attachedSessionStatePath?: string;
   killSwitch: () => boolean;
   controlDiscoveryPath?: string;
   control?: ExistingBrowserControlClient;
@@ -218,6 +221,7 @@ export function createPrivateBrowserMcpContext(options: {
   let broker: BrowserBroker | undefined;
   let control: ExistingBrowserControlClient | undefined;
   let targetClaims: BrowserTargetClaimStore | undefined;
+  let attachedSessions: BrowserAttachedSessionStore | undefined;
   let attachedPort: AttachedExistingBrowserPort | undefined;
   const port = options.port ?? (() => {
     const processes = createProcessPort({
@@ -251,9 +255,13 @@ export function createPrivateBrowserMcpContext(options: {
       targetClaims = new BrowserTargetClaimStore(
         options.targetClaimStatePath ?? options.effectStatePath + '.target-claims.sqlite',
       );
+      attachedSessions = new BrowserAttachedSessionStore(
+        options.attachedSessionStatePath ?? options.effectStatePath + '.attached-sessions.sqlite',
+      );
       attachedPort = createAttachedExistingBrowserPort({
         control,
         claims: targetClaims,
+        sessionStore: attachedSessions,
       });
     }
     broker = createBrowserBroker({
@@ -289,6 +297,41 @@ export function createPrivateBrowserMcpContext(options: {
     if (options.killSwitch()) throw new Error('Browser MCP effect denied by autonomous stop');
   }
 
+  function profileKey(
+    executionMode: string,
+    profileId: string,
+    targetId: string | undefined,
+  ): string {
+    return executionMode + ':' + profileId + ':' + (targetId ?? 'managed');
+  }
+
+  function rememberSession(handle: BrowserSessionHandle): void {
+    sessions.add(handle.browserSessionId);
+    byProfile.set(profileKey(
+      handle.executionMode ?? 'WAG_HEADLESS',
+      handle.profileId,
+      handle.rootTargetId ?? handle.targetId,
+    ), handle.browserSessionId);
+    rememberFencing(handle);
+  }
+
+  async function ensureSession(browserSessionId: string): Promise<BrowserSessionHandle | undefined> {
+    if (sessions.has(browserSessionId)) {
+      const handle = await port.describe(options.owner, browserSessionId);
+      rememberFencing(handle);
+      return handle;
+    }
+    if (broker && attachedSessions) {
+      const durable = attachedSessions.get(options.owner, browserSessionId);
+      if (durable && (durable.state === 'ACTIVE' || durable.state === 'RECOVERABLE')) {
+        const recovered = await broker.recover(options.owner, browserSessionId);
+        rememberSession(recovered);
+        return recovered;
+      }
+    }
+    return undefined;
+  }
+
   return {
     async targets() {
       assertOpen();
@@ -302,19 +345,34 @@ export function createPrivateBrowserMcpContext(options: {
       if ((resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP') && !targetId) {
         throw new Error(resolvedMode + ' requires target_id');
       }
-      const profileKey = resolvedMode + ':' + profileId + ':' + (targetId ?? 'managed');
-      const existing = byProfile.get(profileKey);
+      const key = profileKey(resolvedMode, profileId, targetId);
+      const existing = byProfile.get(key);
       if (existing) {
         try {
           const handle = await port.describe(options.owner, existing);
           rememberFencing(handle);
           return sessionView(handle);
         } catch {
-          byProfile.delete(profileKey);
+          byProfile.delete(key);
           sessions.delete(existing);
           fencing.delete(existing);
         }
       }
+      if ((resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP')
+          && targetId !== undefined && broker && attachedSessions) {
+        const durable = attachedSessions.findRecoverable(
+          options.owner,
+          profileId,
+          resolvedMode,
+          targetId,
+        );
+        if (durable) {
+          const recovered = await broker.recover(options.owner, durable.browserSessionId);
+          rememberSession(recovered);
+          return sessionView(recovered);
+        }
+      }
+
       const handle = await port.open({
         profileId,
         owner: options.owner,
@@ -322,21 +380,22 @@ export function createPrivateBrowserMcpContext(options: {
         ...(targetId === undefined ? {} : { targetId }),
         ...(groupTitle === undefined ? {} : { groupTitle }),
       });
-      sessions.add(handle.browserSessionId);
-      byProfile.set(profileKey, handle.browserSessionId);
-      rememberFencing(handle);
+      rememberSession(handle);
       return sessionView(handle);
     },
 
     async describe(browserSessionId) {
       assertOpen();
+      const recovered = await ensureSession(browserSessionId);
+      if (recovered) return sessionView(recovered);
       const handle = await port.describe(options.owner, browserSessionId);
-      rememberFencing(handle);
+      rememberSession(handle);
       return sessionView(handle);
     },
 
     async snapshot(browserSessionId) {
       assertOpen();
+      await ensureSession(browserSessionId);
       const value = await semantic.snapshot(options.owner, browserSessionId);
       rememberFencing(await port.describe(options.owner, browserSessionId));
       const nodes = value.nodes.slice(0, MAX_SNAPSHOT_NODES).map(boundedNode);
@@ -352,6 +411,7 @@ export function createPrivateBrowserMcpContext(options: {
 
     async exec(browserSessionId, idempotencyKey, action) {
       assertEffectAllowed();
+      await ensureSession(browserSessionId);
       const expectedFence = fencing.get(browserSessionId);
       let effectArguments = action as unknown as CanonicalValue;
       if (expectedFence) {
@@ -414,6 +474,7 @@ export function createPrivateBrowserMcpContext(options: {
 
     async screenshot(browserSessionId) {
       assertOpen();
+      await ensureSession(browserSessionId);
       const image = await port.screenshot(options.owner, browserSessionId);
       rememberFencing(await port.describe(options.owner, browserSessionId));
       const sizeBytes = Buffer.from(image.dataBase64, 'base64').length;
@@ -423,6 +484,7 @@ export function createPrivateBrowserMcpContext(options: {
 
     async close(browserSessionId) {
       assertOpen();
+      await ensureSession(browserSessionId);
       const handle = await port.close(options.owner, browserSessionId);
       sessions.delete(browserSessionId);
       fencing.delete(browserSessionId);
@@ -434,20 +496,51 @@ export function createPrivateBrowserMcpContext(options: {
 
     async pauseForUser(browserSessionId) {
       assertOpen();
+      await ensureSession(browserSessionId);
       if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
       return sessionView(await broker.pauseForUser(options.owner, browserSessionId));
     },
 
     async takeUserControl(browserSessionId) {
       assertOpen();
+      await ensureSession(browserSessionId);
       if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
       return sessionView(await broker.takeUserControl(options.owner, browserSessionId));
     },
 
     async resumeAutomation(browserSessionId) {
       assertOpen();
+      await ensureSession(browserSessionId);
       if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
       return sessionView(await broker.resumeAutomation(options.owner, browserSessionId));
+    },
+
+    async suspendForRestart() {
+      if (closed) return;
+      closed = true;
+      const attachedIds = new Set(fencing.keys());
+      let failure: unknown;
+      try {
+        await attachedPort?.suspendForRestart();
+      } catch (error) {
+        failure = error;
+      }
+      for (const browserSessionId of [...sessions]) {
+        if (attachedIds.has(browserSessionId)) continue;
+        try {
+          await port.close(options.owner, browserSessionId);
+        } catch (error) {
+          failure ??= error;
+        }
+      }
+      sessions.clear();
+      byProfile.clear();
+      fencing.clear();
+      attachedPort?.shutdown();
+      attachedSessions?.close();
+      targetClaims?.close();
+      effects.close();
+      if (failure) throw failure;
     },
 
     async closeAll() {
@@ -460,6 +553,7 @@ export function createPrivateBrowserMcpContext(options: {
       byProfile.clear();
       fencing.clear();
       attachedPort?.shutdown();
+      attachedSessions?.close();
       targetClaims?.close();
       effects.close();
     },

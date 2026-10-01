@@ -195,6 +195,7 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
         state: 'ACTIVE',
       };
     },
+    async suspendForRestart() {},
     async closeAll() {},
   };
 

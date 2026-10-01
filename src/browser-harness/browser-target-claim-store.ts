@@ -19,6 +19,17 @@ export interface BrowserTargetClaim {
 
 export interface BrowserTargetClaimPort {
   claim(owner: GatewayAuthority, targetId: string, browserSessionId: string): BrowserTargetClaim;
+  recover(
+    owner: GatewayAuthority,
+    targetId: string,
+    browserSessionId: string,
+    priorClaimEpoch: number,
+  ): BrowserTargetClaim;
+  recoverMany(
+    owner: GatewayAuthority,
+    browserSessionId: string,
+    priorClaims: ReadonlyMap<string, number>,
+  ): ReadonlyMap<string, BrowserTargetClaim>;
   heartbeat(
     owner: GatewayAuthority,
     targetId: string,
@@ -215,6 +226,99 @@ export class BrowserTargetClaimStore implements BrowserTargetClaimPort {
       );
       this.#db.exec('COMMIT');
       return this.#required(targetId);
+    } catch (error) {
+      this.#rollback();
+      throw error;
+    }
+  }
+
+  recover(
+    owner: GatewayAuthority,
+    targetId: string,
+    browserSessionId: string,
+    priorClaimEpoch: number,
+  ): BrowserTargetClaim {
+    const recovered = this.recoverMany(
+      owner,
+      browserSessionId,
+      new Map([[targetId, priorClaimEpoch]]),
+    ).get(targetId);
+    if (!recovered) throw new Error('Browser target recovery result disappeared');
+    return recovered;
+  }
+
+  recoverMany(
+    owner: GatewayAuthority,
+    browserSessionId: string,
+    priorClaims: ReadonlyMap<string, number>,
+  ): ReadonlyMap<string, BrowserTargetClaim> {
+    this.#assertOpen();
+    if (!BROWSER_SESSION_ID.test(browserSessionId)) {
+      throw new Error('Browser target claim browser session id is invalid');
+    }
+    if (!(priorClaims instanceof Map) || priorClaims.size < 1 || priorClaims.size > 32) {
+      throw new Error('Browser target recovery claim set is invalid');
+    }
+    const now = this.#now();
+    const expiresAt = now + this.#leaseMs;
+
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows: Array<{ targetId: string; current: ClaimRow }> = [];
+      for (const [targetId, priorClaimEpoch] of priorClaims) {
+        validateIdentity(targetId, browserSessionId);
+        if (!Number.isInteger(priorClaimEpoch) || priorClaimEpoch < 1) {
+          throw new Error('Browser target recovery epoch is invalid');
+        }
+        const current = this.#get(targetId);
+        if (!current) {
+          throw new BrowserTargetClaimError('TARGET_STALE', 'Browser target recovery claim does not exist');
+        }
+        const exactPrior = current.claim_epoch === priorClaimEpoch
+          && current.browser_session_id === browserSessionId
+          && sameAuthorityTuple({
+            ownerId: current.owner_id,
+            sessionId: current.session_id,
+            adapterId: current.adapter_id,
+          }, owner);
+        if (!exactPrior) {
+          throw new BrowserTargetClaimError('TARGET_FENCED', 'Browser target recovery claim is fenced');
+        }
+        if (current.state === 'ACTIVE' && current.expires_at > now) {
+          throw new BrowserTargetClaimError(
+            'TARGET_OWNED_BY_OTHER_SESSION',
+            'Browser target recovery lease is still active',
+          );
+        }
+        rows.push({ targetId, current });
+      }
+
+      for (const { targetId, current } of rows) {
+        const nextEpoch = Number(current.claim_epoch) + 1;
+        const updated = this.#db.prepare(`
+          UPDATE browser_target_claims
+          SET owner_id = ?, session_id = ?, adapter_id = ?, browser_session_id = ?,
+              claim_epoch = ?, claimed_at = ?, heartbeat_at = ?, expires_at = ?, state = 'ACTIVE'
+          WHERE target_id = ? AND claim_epoch = ?
+        `).run(
+          owner.ownerId,
+          owner.sessionId,
+          owner.adapterId,
+          browserSessionId,
+          nextEpoch,
+          now,
+          now,
+          expiresAt,
+          targetId,
+          current.claim_epoch,
+        );
+        if (Number(updated.changes) !== 1) {
+          throw new BrowserTargetClaimError('TARGET_FENCED', 'Browser target recovery lost its epoch');
+        }
+      }
+
+      this.#db.exec('COMMIT');
+      return new Map(rows.map(({ targetId }) => [targetId, this.#required(targetId)]));
     } catch (error) {
       this.#rollback();
       throw error;

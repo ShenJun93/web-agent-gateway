@@ -140,3 +140,66 @@ test('same exact claimant heartbeat keeps epoch stable instead of creating a suc
   assert.equal(renewed.heartbeatAt, f.now());
   assert.equal(renewed.expiresAt, f.now() + 5_000);
 });
+
+test('recovery requires the prior lease to be released or expired and increments epoch', async (t) => {
+  const f = await stores(t);
+  const original = f.first.claim(A, 'tab_51', A_BROWSER);
+
+  assert.throws(
+    () => f.second.recover(A, 'tab_51', A_BROWSER, original.claimEpoch),
+    (error: unknown) => error instanceof BrowserTargetClaimError
+      && error.code === 'TARGET_OWNED_BY_OTHER_SESSION',
+  );
+
+  f.first.release(A, 'tab_51', A_BROWSER, original.claimEpoch);
+  const recovered = f.second.recover(A, 'tab_51', A_BROWSER, original.claimEpoch);
+  assert.equal(recovered.claimEpoch, original.claimEpoch + 1);
+  assert.equal(recovered.browserSessionId, A_BROWSER);
+  assert.equal(recovered.owner.sessionId, A.sessionId);
+});
+
+test('crashed session may recover only after lease expiry and stale epoch cannot recover after succession', async (t) => {
+  const f = await stores(t);
+  const original = f.first.claim(A, 'tab_61', A_BROWSER);
+
+  f.advance(5_001);
+  const recovered = f.second.recover(A, 'tab_61', A_BROWSER, original.claimEpoch);
+  assert.equal(recovered.claimEpoch, 2);
+
+  f.second.release(A, 'tab_61', A_BROWSER, recovered.claimEpoch);
+  const successor = f.first.claim(B, 'tab_61', B_BROWSER);
+  assert.equal(successor.claimEpoch, 3);
+
+  assert.throws(
+    () => f.second.recover(A, 'tab_61', A_BROWSER, original.claimEpoch),
+    (error: unknown) => error instanceof BrowserTargetClaimError
+      && error.code === 'TARGET_FENCED',
+  );
+});
+
+test('multi-target recovery is atomic when one retained OAuth target is fenced', async (t) => {
+  const f = await stores(t);
+  const root = f.first.claim(A, 'tab_71', A_BROWSER);
+  const successorTarget = f.first.claim(A, 'tab_72', A_BROWSER);
+  f.first.release(A, 'tab_71', A_BROWSER, root.claimEpoch);
+  f.first.release(A, 'tab_72', A_BROWSER, successorTarget.claimEpoch);
+
+  const foreign = f.second.claim(B, 'tab_72', B_BROWSER);
+  assert.equal(foreign.claimEpoch, 2);
+
+  assert.throws(
+    () => f.first.recoverMany(A, A_BROWSER, new Map([
+      ['tab_71', root.claimEpoch],
+      ['tab_72', successorTarget.claimEpoch],
+    ])),
+    (error: unknown) => error instanceof BrowserTargetClaimError
+      && error.code === 'TARGET_FENCED',
+  );
+
+  const rootAfterFailure = f.first.recover(A, 'tab_71', A_BROWSER, root.claimEpoch);
+  assert.equal(
+    rootAfterFailure.claimEpoch,
+    2,
+    'failed multi-target recovery must roll back every earlier epoch update',
+  );
+});

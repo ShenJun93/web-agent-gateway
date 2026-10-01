@@ -62,6 +62,23 @@ function fixture() {
       claimCalls.push(['claim', targetId, browserSessionId]);
       return claim(owner, targetId, browserSessionId);
     },
+    recover(owner, targetId, browserSessionId, priorClaimEpoch) {
+      claimCalls.push(['recover', targetId, browserSessionId, priorClaimEpoch]);
+      return Object.freeze({
+        ...claim(owner, targetId, browserSessionId),
+        claimEpoch: priorClaimEpoch + 1,
+      });
+    },
+    recoverMany(owner, browserSessionId, priorClaims) {
+      claimCalls.push(['recoverMany', browserSessionId, [...priorClaims]]);
+      return new Map([...priorClaims].map(([targetId, priorClaimEpoch]) => [
+        targetId,
+        Object.freeze({
+          ...claim(owner, targetId, browserSessionId),
+          claimEpoch: priorClaimEpoch + 1,
+        }),
+      ]));
+    },
     heartbeat(owner, targetId, browserSessionId, claimEpoch) {
       claimCalls.push(['heartbeat', targetId, browserSessionId, claimEpoch]);
       return claim(owner, targetId, browserSessionId);
