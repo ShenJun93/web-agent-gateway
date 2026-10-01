@@ -58,6 +58,7 @@ const MAX_TEXT_BYTES = 64 * 1024;
 const MAX_UPLOAD_FILES = 20;
 const MAX_INTERNAL_PATH_BYTES = 4096;
 const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
+const FIXED_NATIVE_VALUE_FILL_FUNCTION = "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}";
 const PRESS_KEYS = new Map<string, { key: string; code: string }>([
   ['Enter', { key: 'Enter', code: 'Enter' }],
   ['Tab', { key: 'Tab', code: 'Tab' }],
@@ -249,6 +250,53 @@ export function createSemanticBrowser(options: {
       if (typeof text !== 'string' || text.includes('\0') || Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES) {
         throw new Error('Browser fill text is invalid');
       }
+      // Prefer a fixed native value-setter path for input/textarea. Calling the prototype setter
+      // bypasses framework value trackers while the bubbling input/change events let React and
+      // equivalent controlled-form models observe the replacement. The extension admits only
+      // this exact function body and one bounded string argument.
+      let objectId: string | undefined;
+      try {
+        const resolved = await options.port.exec(owner, browserSessionId, {
+          method: 'DOM.resolveNode',
+          params: { backendNodeId: target.backendDOMNodeId },
+        });
+        const candidate = typeof resolved === 'object' && resolved !== null
+          ? (resolved as { object?: { objectId?: unknown } }).object?.objectId
+          : undefined;
+        objectId = typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+        if (objectId) {
+          const invoked = await options.port.exec(owner, browserSessionId, {
+            method: 'Runtime.callFunctionOn',
+            params: {
+              objectId,
+              functionDeclaration: FIXED_NATIVE_VALUE_FILL_FUNCTION,
+              arguments: [{ value: text }],
+              returnByValue: true,
+            },
+          });
+          const result = typeof invoked === 'object' && invoked !== null
+            ? (invoked as {
+              result?: { value?: { supported?: unknown; value?: unknown } };
+            }).result?.value
+            : undefined;
+          if (result?.supported === true) {
+            if (result.value !== text) {
+              throw new Error('Browser framework fill postcondition mismatch');
+            }
+            return;
+          }
+        }
+      } finally {
+        if (objectId) {
+          await options.port.exec(owner, browserSessionId, {
+            method: 'Runtime.releaseObject',
+            params: { objectId },
+          }).catch(() => undefined);
+        }
+      }
+
+      // Keep keyboard insertion as a bounded fallback for editable surfaces that are not native
+      // input/textarea elements. Rich contenteditable editors are accepted separately in Task 6.
       await options.port.exec(owner, browserSessionId, {
         method: 'DOM.focus',
         params: { backendNodeId: target.backendDOMNodeId },

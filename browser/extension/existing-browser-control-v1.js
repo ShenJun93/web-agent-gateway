@@ -225,6 +225,8 @@ function assertAllowedCdpMethod(method) {
 }
 
 const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
+const FIXED_NATIVE_VALUE_FILL_FUNCTION = "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}";
+const MAX_FILL_TEXT_BYTES = 64 * 1024;
 
 function assertBoundedRuntimeCommand(method, params) {
   if (method === 'DOM.resolveNode') {
@@ -235,14 +237,36 @@ function assertBoundedRuntimeCommand(method, params) {
     return;
   }
   if (method === 'Runtime.callFunctionOn') {
-    const keys = Object.keys(params ?? {}).sort();
-    if (keys.join(',') !== 'functionDeclaration,objectId,returnByValue'
-        || typeof params?.objectId !== 'string' || params.objectId.length < 1 || params.objectId.length > 512
-        || params.functionDeclaration !== FIXED_DOM_CLICK_FUNCTION
-        || params.returnByValue !== true) {
+    const objectId = params?.objectId;
+    if (typeof objectId !== 'string' || objectId.length < 1 || objectId.length > 512
+        || params?.returnByValue !== true) {
       throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime call params are invalid');
     }
-    return;
+
+    if (params.functionDeclaration === FIXED_DOM_CLICK_FUNCTION) {
+      const keys = Object.keys(params ?? {}).sort();
+      if (keys.join(',') !== 'functionDeclaration,objectId,returnByValue') {
+        throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime click params are invalid');
+      }
+      return;
+    }
+
+    if (params.functionDeclaration === FIXED_NATIVE_VALUE_FILL_FUNCTION) {
+      const keys = Object.keys(params ?? {}).sort();
+      const args = params.arguments;
+      const arg = Array.isArray(args) && args.length === 1 ? args[0] : undefined;
+      if (keys.join(',') !== 'arguments,functionDeclaration,objectId,returnByValue'
+          || !arg || typeof arg !== 'object' || Array.isArray(arg)
+          || Object.keys(arg).length !== 1
+          || typeof arg.value !== 'string'
+          || arg.value.includes('\0')
+          || new TextEncoder().encode(arg.value).byteLength > MAX_FILL_TEXT_BYTES) {
+        throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime fill params are invalid');
+      }
+      return;
+    }
+
+    throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime function is not allowed');
   }
   if (method === 'Runtime.releaseObject') {
     const keys = Object.keys(params ?? {});

@@ -53,6 +53,11 @@ function fixture() {
         return { object: { objectId: 'object_42' } };
       }
       if (request.method === 'Runtime.callFunctionOn') {
+        const args = request.params?.arguments;
+        if (Array.isArray(args)) {
+          const first = args[0] as { value?: unknown } | undefined;
+          return { result: { value: { supported: true, value: first?.value } } };
+        }
         return { result: { value: true } };
       }
       if (request.method === 'DOM.getBoxModel') {
@@ -98,16 +103,20 @@ test('semantic click uses fixed in-target DOM activation without OS mouse inject
   ]);
 });
 
-test('semantic fill focuses the exact DOM node, selects existing text and inserts bounded text', async () => {
+test('semantic fill prefers fixed native-value replacement for framework-safe inputs', async () => {
   const f = fixture();
   const snapshot = await f.semantic.snapshot(OWNER, SESSION);
   f.calls.length = 0;
   await f.semantic.fill(OWNER, SESSION, snapshot.nodes[1]!.ref, 'hello');
   assert.deepEqual(f.calls, [
-    { method: 'DOM.focus', params: { backendNodeId: 43 } },
-    { method: 'Input.dispatchKeyEvent', params: { type: 'rawKeyDown', key: 'a', code: 'KeyA', modifiers: 2 } },
-    { method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2 } },
-    { method: 'Input.insertText', params: { text: 'hello' } },
+    { method: 'DOM.resolveNode', params: { backendNodeId: 43 } },
+    { method: 'Runtime.callFunctionOn', params: {
+      objectId: 'object_42',
+      functionDeclaration: "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}",
+      arguments: [{ value: 'hello' }],
+      returnByValue: true,
+    } },
+    { method: 'Runtime.releaseObject', params: { objectId: 'object_42' } },
   ]);
   await assert.rejects(() => f.semantic.fill(OWNER, SESSION, snapshot.nodes[0]!.ref, 'x'), /not editable/);
 });

@@ -362,3 +362,63 @@ Known remaining risk:
 Next:
 - commit STOP 3 / Task 4;
 - proceed to framework-safe fill acceptance without changing the public seven-tool BrowserPort surface.
+
+---
+
+Task: Browser v2 STOP 4 / Task 5 — framework-safe fill
+State: DONE / BRANCH ACCEPTED
+Evidence:
+- native input/textarea fill now prefers a WAG-owned fixed native prototype value-setter path;
+- fixed fill dispatches bubbling input + change events so controlled frameworks observe replacement;
+- returned element value is verified against requested text before semantic success;
+- prior Ctrl+A/Input.insertText path remains only as bounded fallback for non-native editable surfaces;
+- arbitrary Runtime.evaluate remains denied;
+- Runtime.callFunctionOn remains exact-function allowlisted and exact-parameter bounded;
+- real Edge acceptance proves exact replacement instead of append for pre-populated plain input and textarea;
+- real React 19.2 controlled input state updates from react-old to react-new;
+- rendered React state postcondition becomes react-state:react-new;
+- controlled validation postcondition becomes validation:valid:valid-text;
+- submit button becomes enabled from React state;
+- AI_TAB_GROUP active user tab remains unchanged;
+- Windows UIAutomation and OS pointer injection remain unused;
+- ws direct dependency upgraded 8.18.3 -> 8.22.0 after production dependency audit;
+- npm audit --omit=dev reports 0 vulnerabilities;
+- dev-only React 19.2.0/react-dom 19.2.0 are used only to bundle the real-framework acceptance fixture;
+- latest broad Browser/runtime regression = 143/143 PASS;
+- real Edge framework-safe fill acceptance = PASS;
+- real Edge AI_TAB_GROUP regression = PASS;
+- typecheck/build/diff-check PASS.
+Files changed:
+- src/browser-harness/semantic-browser.ts
+- browser/extension/existing-browser-control-v1.js
+- test/browser-harness-semantic.test.ts
+- test/browser-existing-control-v1.test.ts
+- scripts/accept-browser-v2-framework-fill.ts
+- package.json
+- package-lock.json
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop4-framework-safe-fill.md
+Tests:
+- focused fill/browser suite = 22/22 PASS
+- Browser/extension/WebSocket batch A = 76/76 PASS
+- Browser MCP/semantic/private-browser batch B = 39/39 PASS
+- control/runtime/claim-fencing batch C = 28/28 PASS
+- total broad Browser regression = 143/143 PASS
+- real Edge framework-safe fill acceptance = PASS
+- real Edge AI_TAB_GROUP regression = PASS
+- npm audit --omit=dev = 0 vulnerabilities
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+Known remaining risk:
+- RICH_TEXT_CONTENTEDITABLE = NOT_PROVEN;
+- PROSEMIRROR_TIPTAP = NOT_PROVEN;
+- OAUTH_TARGET_CONTINUITY = NOT_IMPLEMENTED;
+- BROWSER_SESSION_RECOVERY = NOT_IMPLEMENTED;
+- CROSS_PROCESS_WEBSOCKET_CONTROL = NOT_PROVEN;
+- PRODUCTION_PAIRING_UX = NOT_COMPLETE;
+- USER_REAL_PROFILE_ACCEPTANCE = NOT_EXECUTED;
+- AUTO_AI_TAB_GROUP_SELECTION = NOT_IMPLEMENTED;
+- live runtime remains older and is not promoted from this branch.
+Next:
+- commit STOP 4 / Task 5;
+- proceed to Task 6 rich-text/contenteditable acceptance.
