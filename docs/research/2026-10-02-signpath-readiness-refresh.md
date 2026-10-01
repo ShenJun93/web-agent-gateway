@@ -181,3 +181,22 @@ discovery-channel, Code-of-Conduct and personal-data-processing choices must be 
    integration is separately reviewed.
 5. For any future signed stable release, use an exact current candidate with origin verification,
    manual approval, post-sign verification and a distinct release identity.
+
+
+## Live application-form recheck — 2026-10-02
+
+A WAG Browser v2 headless read-only check loaded `https://signpath.org/apply.html` successfully.
+The page exposes a third-party semantic node `Iframe: Form`, but the current WAG semantic snapshot
+does not traverse the embedded form frame.
+
+Therefore:
+
+```text
+APPLICATION_PAGE_REACHABLE = YES
+FORM_IFRAME_PRESENT = YES
+FORM_FIELD_SCHEMA_REMEASURED_2026_10_02 = NO
+LAST_MEASURED_FIELD_SCHEMA = 2026-09-19
+FORM_SUBMISSION = NO
+```
+
+Do not claim the 2026-09-19 field list was re-verified on 2026-10-02.
