@@ -2,6 +2,8 @@
 
 Status: local readiness packet only; not an application and not authority to contact, create, configure, or sign with SignPath.
 
+> Current-state notice (2026-10-02): current-main and candidate-continuity facts in this historical dossier are superseded by `docs/research/2026-10-02-signpath-readiness-refresh.md`. The immutable `preview.1` remains release evidence, but its `c1eb195f` binary is not the signing candidate for current main.
+
 ## Purpose
 
 Collect the exact facts and unresolved fields needed for a SignPath Foundation application so the eventual submission can be short, verifiable, and consistent with WAG's source/build evidence.

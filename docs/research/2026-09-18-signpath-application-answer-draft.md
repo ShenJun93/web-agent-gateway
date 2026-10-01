@@ -2,6 +2,8 @@
 
 Status: draft only. Not submitted. This file is a factual answer bank for the public SignPath Foundation application and does not imply acceptance.
 
+> Current-state notice (2026-10-02): candidate-continuity and current-main facts in this historical draft are superseded by `docs/research/2026-10-02-signpath-readiness-refresh.md`. In particular, `c1eb195f` is no longer the signing candidate for current main.
+
 ## Live application form schema — 2026-09-19
 
 The current SignPath application page embeds HubSpot EU1 form `bf62807d-bb72-4e45-9bde-1f3a53ba2472` under portal `145110231`.
