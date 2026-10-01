@@ -207,7 +207,7 @@ test('Browser Control WebSocket rejects oversized non-screenshot responses', asy
       }));
     });
     await assert.rejects(
-      () => server.client.exec('tab_7', 'Accessibility.getFullAXTree'),
+      () => server.client.exec('tab_7', 'DOM.getBoxModel'),
       /response exceeds size limit/,
     );
   } finally {
@@ -242,6 +242,36 @@ test('Browser Control WebSocket caps concurrent pending requests at 128', async 
     );
     socket.terminate();
     await Promise.all(waiting);
+  } finally {
+    socket.terminate();
+    await server.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Browser Control WebSocket gives Accessibility tree a bounded larger response budget', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-ws-ax-budget-'));
+  const port = await freePort();
+  const statePath = join(root, 'pairing.json');
+  const state = await loadOrCreateBrowserControlPairingState(statePath, port);
+  const server = await startBrowserControlWebSocketServer({ statePath, pairingState: state });
+  const socket = new WebSocket(state.endpoint, { headers: { Origin: ORIGIN } });
+  try {
+    await waitOpen(socket);
+    socket.send(JSON.stringify({ version: 1, type: 'control.hello', pairingToken: state.pairingToken }));
+    assert.equal((await waitMessage(socket)).type, 'control.ready');
+    socket.on('message', (data) => {
+      const request = JSON.parse(data.toString());
+      if (request.type !== 'control.request' || request.method !== 'target.exec') return;
+      socket.send(JSON.stringify({
+        version: 1,
+        type: 'control.result',
+        requestId: request.requestId,
+        result: { nodes: [], padding: 'A'.repeat(512 * 1024) },
+      }));
+    });
+    const value = await server.client.exec('tab_7', 'Accessibility.getFullAXTree');
+    assert.equal(typeof value, 'object');
   } finally {
     socket.terminate();
     await server.close().catch(() => undefined);

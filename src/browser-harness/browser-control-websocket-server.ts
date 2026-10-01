@@ -19,6 +19,7 @@ const DEFAULT_PORT = 17841;
 const MAX_PENDING_REQUESTS = 128;
 const MAX_TARGETS = 512;
 const MAX_CONTROL_MESSAGE_BYTES = 256 * 1024;
+const MAX_AX_TREE_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_SCREENSHOT_BASE64_CHARS = 4 * Math.ceil(MAX_SCREENSHOT_BYTES / 3);
 const MAX_WEBSOCKET_MESSAGE_BYTES = MAX_SCREENSHOT_BASE64_CHARS + 64 * 1024;
@@ -83,6 +84,7 @@ export async function startBrowserControlWebSocketServer(options: {
   let authenticated = false;
   const pending = new Map<string, {
     method: ExistingBrowserControlRequest['method'];
+    maxResponseBytes: number;
     resolve(value: unknown): void;
     reject(error: Error): void;
     timer: NodeJS.Timeout;
@@ -141,9 +143,7 @@ export async function startBrowserControlWebSocketServer(options: {
       catch { return; }
       const entry = pending.get(response.requestId);
       if (!entry) return;
-      const maxBytes = entry.method === 'target.screenshot'
-        ? MAX_WEBSOCKET_MESSAGE_BYTES
-        : MAX_CONTROL_MESSAGE_BYTES;
+      const maxBytes = entry.maxResponseBytes;
       if (wireBytes > maxBytes) {
         pending.delete(response.requestId);
         clearTimeout(entry.timer);
@@ -198,6 +198,11 @@ export async function startBrowserControlWebSocketServer(options: {
       return Promise.reject(new Error('Browser control pending request limit reached'));
     }
     const requestId = `bctl_${randomUUID()}`;
+    const maxResponseBytes = method === 'target.screenshot'
+      ? MAX_WEBSOCKET_MESSAGE_BYTES
+      : method === 'target.exec' && cdpMethod === 'Accessibility.getFullAXTree'
+        ? MAX_AX_TREE_RESPONSE_BYTES
+        : MAX_CONTROL_MESSAGE_BYTES;
     const message: ExistingBrowserControlRequest = {
       version: EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
       type: 'control.request',
@@ -215,7 +220,7 @@ export async function startBrowserControlWebSocketServer(options: {
         reject(new Error('Browser control request timed out'));
       }, requestTimeoutMs);
       timer.unref?.();
-      pending.set(requestId, { method, resolve, reject, timer });
+      pending.set(requestId, { method, maxResponseBytes, resolve, reject, timer });
       peer!.send(JSON.stringify(message), (error) => {
         if (!error) return;
         const entry = pending.get(requestId);

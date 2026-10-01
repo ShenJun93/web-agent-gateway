@@ -730,3 +730,58 @@ Next:
 - perform bounded user-daily-profile pairing/attach/release acceptance;
 - only after that evidence decide final public-launch/promotion steps.
 - DC replacement production-local acceptance = 1 / 1 PASS; operatorApprovals=0; autonomousLocalEffects=true; prior 30-second wrapper timeouts occurred before verdict and are not test failures.
+
+
+---
+
+Task: Browser v2 STOP 10 — final public-launch technical gate
+State: DONE / FINAL TECHNICAL GATE PASS / PUBLICATION STOP
+Evidence:
+- user daily Microsoft Edge profile acceptance = PASS;
+- live first-time pairing by the real user = PASS;
+- AUTO exact active target -> AI_TAB_GROUP on the daily profile = PASS;
+- daily-profile bounded flow used snapshot + Pause + Resume + release only;
+- no navigate/fill/click/submit/cookie/token read was performed on the daily-profile gate;
+- no Windows UI Automation or OS pointer injection was used;
+- user active tab remained stable;
+- target and Edge remained open after release;
+- real daily page exposed an Accessibility tree above the old generic 256 KiB response limit;
+- first daily-profile attempt therefore failed boundedly at SNAPSHOT with Browser control response exceeds size limit;
+- transport was corrected without widening all commands:
+  - ordinary Browser Control response <= 256 KiB;
+  - Accessibility.getFullAXTree response <= 4 MiB;
+  - screenshot <= 8 MiB;
+  - pending requests <= 128;
+  - targets <= 512;
+  - semantic AX source nodes <= 2,000;
+  - MCP snapshot nodes <= 500;
+- rerun daily-profile acceptance = PASS with semanticNodeCountObserved=500 and snapshotTruncated=true;
+- broad Browser/runtime regression after fix = 163/163 PASS;
+- real Edge AUTO/AI_TAB_GROUP regression after fix = PASS;
+- real Edge OAuth continuity regression after fix = PASS;
+- real Edge runtime recovery/exact-once regression after fix = PASS;
+- WAG product/non-browser = 58/58 PASS;
+- prior DC replacement production-local gate remains 1/1 PASS with operatorApprovals=0;
+- typecheck/build/git diff --check = PASS;
+- acceptance secret cleanup:
+  - Windows clipboard cleared;
+  - temporary server stopped;
+  - port 17841 free;
+  - temporary pairing/claim/effect/session/diagnostic files deleted;
+  - only sanitized result.json/status.json retained locally.
+Files changed:
+- src/browser-harness/browser-control-websocket-server.ts
+- test/browser-control-websocket-server.test.ts
+- scripts/accept-browser-v2-user-profile.ts
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop10-final-public-launch-gate.md
+- docs/progress/PUBLIC-LAUNCH-P0-RUN.md
+Decision:
+- BROWSER_V2_FINAL_TECHNICAL_GATE = PASS_FOR_BRANCH;
+- READY_FOR_EXPLICIT_PUBLICATION_OR_PROMOTION_DECISION = YES;
+- PUBLIC_PUSH = NO;
+- LIVE_RUNTIME_PROMOTION = NO;
+- PUBLIC_NPM_PUBLISH = NO;
+- PUBLIC_LAUNCH = NO.
+Next:
+- commit STOP 10 locally;
+- stop before public push/live promotion/npm publish until the user explicitly authorizes the irreversible/public action.
