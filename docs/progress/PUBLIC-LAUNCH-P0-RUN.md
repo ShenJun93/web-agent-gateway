@@ -785,3 +785,29 @@ Decision:
 Next:
 - commit STOP 10 locally;
 - stop before public push/live promotion/npm publish until the user explicitly authorizes the irreversible/public action.
+
+
+---
+
+Task: Post STOP 10 — live WAG browser dogfood
+State: DONE / LIVE_BROWSER_DOGFOOD_PASS
+Evidence:
+- live runtime source HEAD = d9f7c27ce85b462a0280aab88f8faa81943c7505;
+- live health = ok; authority = AUTONOMOUS_LOCAL; MCP tools = 71;
+- browser.targets = PASS on the user's existing Edge profile;
+- direct AI_TAB_GROUP attach = PASS;
+- active WAG chat exact target discovery = PASS;
+- AUTO + exact target_id -> AI_TAB_GROUP = PASS;
+- semantic snapshot on attached ChatGPT target = PASS;
+- release detached WAG without closing the user's tabs or Edge;
+- AUTO + no target_id -> WAG_HEADLESS is the accepted contract, not a foreground-inference mode;
+- temporary no-target headless validation session was closed;
+- no Edge restart and no intentional user-tab-group destruction occurred.
+Receipt:
+- docs/benchmarks/2026-10-01-wag-live-browser-dogfood-post-stop10.md
+Publication boundary:
+- PUBLIC_PUSH = NO;
+- LIVE_RUNTIME_PROMOTION = NO;
+- PUBLIC_NPM_PUBLISH = NO.
+Next:
+- reconcile this live receipt locally and keep public publication/promotion stopped until explicitly authorized.
