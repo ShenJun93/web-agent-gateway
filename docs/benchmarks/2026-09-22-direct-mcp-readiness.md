@@ -461,7 +461,13 @@ The earlier BLOCKED values in this document describe the state when this
 readiness receipt was originally written. They are retained as historical
 evidence rather than silently rewritten.
 
-The live Business connector exposed six configured tools. The thirteen-tool
-list above remains the extended profile projected and locally tested by the
-readiness instrument; it was not the live configuration used for this first
-provider acceptance.
+The provider acceptance health result reported `toolCount = 6`, but that value
+is the DevSpace executor contract count validated by WAG health, not the
+ChatGPT-facing WAG MCP tool inventory.
+
+DEVSPACE_EXECUTOR_TOOL_CONTRACT = 6 / PASS
+CHATGPT_WAG_MCP_SURFACE_COUNT   = NOT_MEASURED
+
+The thirteen-tool list above remains the extended WAG profile projected and
+locally tested by the readiness instrument. The first provider acceptance did
+not measure the live connector's complete WAG tool inventory.
