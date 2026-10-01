@@ -13,6 +13,7 @@ import {
   createDelegatedObservationMemory,
   createDelegatedRunAttempt,
 } from './delegated-observation-v5.js';
+import { createExistingBrowserControlV1 } from './existing-browser-control-v1.js';
 
 /**
  * The shipped entry point, now the operator adapter (ADR-0026).
@@ -59,6 +60,11 @@ const delegation = createNativeDelegationSessionController({
   randomUUID: () => crypto.randomUUID(),
 });
 const delegatedSeen = createDelegatedObservationMemory(chrome.storage.session);
+// Browser v2 feasibility foundation. This controller is deliberately not exposed through the
+// operator/delegation message surface yet; a separate bounded native control bridge will own
+// runtime-initiated target discovery/attach after the feasibility gate passes.
+const existingBrowserControl = createExistingBrowserControlV1(chrome);
+void existingBrowserControl;
 
 /**
  * Attempt one observed candidate on the delegated path, before offering it to a person.

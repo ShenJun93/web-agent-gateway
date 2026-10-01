@@ -90,3 +90,40 @@ Known remaining risk:
 Next:
 - STOP 0 report;
 - after continuation, execute Browser v2 extension/nativeMessaging ATTACH_EXISTING feasibility spike before BrowserBroker implementation.
+
+---
+
+Task: Browser v2 Task 0.5 — extension debugger ATTACH_EXISTING feasibility spike
+State: DONE
+Evidence:
+- added bounded existing-tab controller using extension `tabs` + `debugger` APIs;
+- shipped extension branch now declares `debugger` and `tabs` permissions;
+- no raw CDP surface added to MCP;
+- discovery strips credentials/query/fragment and rejects non-http(s) targets;
+- focused controller/extension suite = 26/26 PASS;
+- real Microsoft Edge smoke with a temporary profile = PASS;
+- real smoke target was inactive before attach and active tab remained stable;
+- debugger attach/probe/detach succeeded;
+- query secret did not leak through discovery/probe output;
+- release preserved the target tab/browser;
+- initial headless harness attempts exposed an Edge limitation (multiple initial headless targets); harness was corrected to create the inactive target through the extension and run the final proof in an off-screen visible temporary Edge window.
+Files changed:
+- browser/extension/existing-browser-control-v1.js
+- browser/extension/existing-browser-control-v1.d.ts
+- browser/extension/manifest.json
+- browser/extension/service-worker.js
+- test/browser-existing-control-v1.test.ts
+- test/browser-extension-core.test.ts
+- scripts/spike-existing-browser-attach.ts
+- docs/benchmarks/2026-10-01-wag-browser-v2-existing-tab-attach-spike.md
+Tests:
+- 26/26 focused controller/extension PASS
+- real Edge temporary-profile attach smoke PASS
+Known remaining risk:
+- user's actual authenticated profile acceptance NOT EXECUTED;
+- enterprise/debugger policy behavior NOT MEASURED;
+- native runtime -> extension Browser v2 control bridge NOT IMPLEMENTED;
+- target ownership/fencing NOT IMPLEMENTED.
+Next:
+- commit feasibility spike;
+- proceed to BrowserBroker Task 1 with EXTENSION_DEBUGGER_FIRST as the ATTACH_EXISTING transport.
