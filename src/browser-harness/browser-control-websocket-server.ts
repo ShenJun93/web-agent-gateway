@@ -16,6 +16,12 @@ import type { ExistingBrowserControlClient } from './existing-browser-control-cl
 const EXTENSION_ORIGIN = `chrome-extension://${BROWSER_ADAPTER_EXTENSION_ID}`;
 const STATE_VERSION = 1 as const;
 const DEFAULT_PORT = 17841;
+const MAX_PENDING_REQUESTS = 128;
+const MAX_TARGETS = 512;
+const MAX_CONTROL_MESSAGE_BYTES = 256 * 1024;
+const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024;
+const MAX_SCREENSHOT_BASE64_CHARS = 4 * Math.ceil(MAX_SCREENSHOT_BYTES / 3);
+const MAX_WEBSOCKET_MESSAGE_BYTES = MAX_SCREENSHOT_BASE64_CHARS + 64 * 1024;
 
 export interface BrowserControlPairingState {
   version: typeof STATE_VERSION;
@@ -70,6 +76,7 @@ export async function startBrowserControlWebSocketServer(options: {
   let peer: WebSocket | undefined;
   let authenticated = false;
   const pending = new Map<string, {
+    method: ExistingBrowserControlRequest['method'];
     resolve(value: unknown): void;
     reject(error: Error): void;
     timer: NodeJS.Timeout;
@@ -79,7 +86,7 @@ export async function startBrowserControlWebSocketServer(options: {
     host: '127.0.0.1',
     port,
     path: '/browser-control',
-    maxPayload: 256 * 1024,
+    maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
     verifyClient: ({ origin }: { origin: string }) => origin === extensionOrigin,
   });
 
@@ -90,8 +97,10 @@ export async function startBrowserControlWebSocketServer(options: {
         socket.close(1003, 'text only');
         return;
       }
+      const text = data.toString();
+      const wireBytes = Buffer.byteLength(text, 'utf8');
       let message: unknown;
-      try { message = JSON.parse(data.toString()); }
+      try { message = JSON.parse(text); }
       catch {
         socket.close(1007, 'invalid json');
         return;
@@ -126,6 +135,16 @@ export async function startBrowserControlWebSocketServer(options: {
       catch { return; }
       const entry = pending.get(response.requestId);
       if (!entry) return;
+      const maxBytes = entry.method === 'target.screenshot'
+        ? MAX_WEBSOCKET_MESSAGE_BYTES
+        : MAX_CONTROL_MESSAGE_BYTES;
+      if (wireBytes > maxBytes) {
+        pending.delete(response.requestId);
+        clearTimeout(entry.timer);
+        entry.reject(new Error('Browser control response exceeds size limit'));
+        socket.close(1009, 'response too large');
+        return;
+      }
       pending.delete(response.requestId);
       clearTimeout(entry.timer);
       if (response.type === 'control.error') {
@@ -169,6 +188,9 @@ export async function startBrowserControlWebSocketServer(options: {
     if (!peer || !authenticated || peer.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('Browser control extension is offline'));
     }
+    if (pending.size >= MAX_PENDING_REQUESTS) {
+      return Promise.reject(new Error('Browser control pending request limit reached'));
+    }
     const requestId = `bctl_${randomUUID()}`;
     const message: ExistingBrowserControlRequest = {
       version: EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
@@ -187,7 +209,7 @@ export async function startBrowserControlWebSocketServer(options: {
         reject(new Error('Browser control request timed out'));
       }, requestTimeoutMs);
       timer.unref?.();
-      pending.set(requestId, { resolve, reject, timer });
+      pending.set(requestId, { method, resolve, reject, timer });
       peer!.send(JSON.stringify(message), (error) => {
         if (!error) return;
         const entry = pending.get(requestId);
@@ -203,6 +225,7 @@ export async function startBrowserControlWebSocketServer(options: {
     async listTargets() {
       const value = await request('targets.list');
       if (!Array.isArray(value)) throw new Error('Browser control target list is invalid');
+      if (value.length > MAX_TARGETS) throw new Error('Browser control target list exceeds limit');
       return Object.freeze(value.map(parseExistingBrowserTarget));
     },
     async watchContinuity(targetId) {
@@ -262,6 +285,10 @@ export async function startBrowserControlWebSocketServer(options: {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Browser screenshot invalid');
       const row = value as Record<string, unknown>;
       if (row.mimeType !== 'image/png' || typeof row.dataBase64 !== 'string') throw new Error('Browser screenshot invalid');
+      if (row.dataBase64.length > MAX_SCREENSHOT_BASE64_CHARS
+          || Buffer.byteLength(row.dataBase64, 'base64') > MAX_SCREENSHOT_BYTES) {
+        throw new Error('Browser screenshot exceeds size limit');
+      }
       return { mimeType: 'image/png', dataBase64: row.dataBase64 };
     },
     async release(targetId) {

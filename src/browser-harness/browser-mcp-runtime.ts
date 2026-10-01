@@ -27,6 +27,10 @@ import {
 import { BrowserTargetClaimStore } from './browser-target-claim-store.js';
 import { BrowserAttachedSessionStore } from './browser-attached-session-store.js';
 import {
+  BrowserRuntimeDiagnostics,
+  type BrowserDiagnosticAction,
+} from './browser-runtime-diagnostics.js';
+import {
   createExistingBrowserControlClient,
   type ExistingBrowserControlClient,
 } from './existing-browser-control-client.js';
@@ -95,6 +99,7 @@ export interface BrowserMcpEffect {
 }
 
 export interface BrowserMcpContext {
+  readonly diagnostics?: BrowserRuntimeDiagnostics;
   targets(): Promise<readonly ExistingBrowserTarget[]>;
   open(profileId: string, mode?: BrowserOpenMode, targetId?: string, groupTitle?: string): Promise<BrowserMcpSession>;
   describe(browserSessionId: string): Promise<BrowserMcpSession>;
@@ -115,7 +120,9 @@ export interface BrowserMcpContext {
 }
 
 const MAX_SNAPSHOT_NODES = 500;
+const MAX_ACTIVE_BROWSER_SESSIONS = 32;
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024;
+const MAX_SCREENSHOT_BASE64_CHARS = 4 * Math.ceil(MAX_SCREENSHOT_BYTES / 3);
 
 function truncateUtf8(value: string, maxBytes: number): string {
   const bytes = Buffer.from(value, 'utf8');
@@ -207,6 +214,7 @@ export function createPrivateBrowserMcpContext(options: {
   effectStatePath: string;
   targetClaimStatePath?: string;
   attachedSessionStatePath?: string;
+  diagnosticsStatePath?: string;
   killSwitch: () => boolean;
   controlDiscoveryPath?: string;
   control?: ExistingBrowserControlClient;
@@ -218,6 +226,9 @@ export function createPrivateBrowserMcpContext(options: {
   const effects = new HarnessEffectLedger(options.effectStatePath);
   effects.reconcileExecuting();
   const coordinator = new HarnessEffectCoordinator(effects);
+  const diagnostics = new BrowserRuntimeDiagnostics({
+    statePath: options.diagnosticsStatePath ?? options.effectStatePath + '.browser-diagnostics.json',
+  });
   let broker: BrowserBroker | undefined;
   let control: ExistingBrowserControlClient | undefined;
   let targetClaims: BrowserTargetClaimStore | undefined;
@@ -277,15 +288,17 @@ export function createPrivateBrowserMcpContext(options: {
   const fencing = new Map<string, { targetId: string; claimEpoch: number }>();
   let closed = false;
 
-  function rememberFencing(handle: BrowserSessionHandle): void {
+  function rememberFencing(handle: BrowserSessionHandle): boolean {
+    const previous = fencing.get(handle.browserSessionId);
     if (handle.targetId !== undefined && handle.claimEpoch !== undefined) {
       fencing.set(handle.browserSessionId, {
         targetId: handle.targetId,
         claimEpoch: handle.claimEpoch,
       });
-    } else {
-      fencing.delete(handle.browserSessionId);
+      return previous !== undefined && previous.targetId !== handle.targetId;
     }
+    fencing.delete(handle.browserSessionId);
+    return false;
   }
 
   function assertOpen(): void {
@@ -305,7 +318,15 @@ export function createPrivateBrowserMcpContext(options: {
     return executionMode + ':' + profileId + ':' + (targetId ?? 'managed');
   }
 
+  function assertSessionCapacity(browserSessionId?: string): void {
+    if (browserSessionId !== undefined && sessions.has(browserSessionId)) return;
+    if (sessions.size >= MAX_ACTIVE_BROWSER_SESSIONS) {
+      throw new Error('Browser active session limit reached');
+    }
+  }
+
   function rememberSession(handle: BrowserSessionHandle): void {
+    assertSessionCapacity(handle.browserSessionId);
     sessions.add(handle.browserSessionId);
     byProfile.set(profileKey(
       handle.executionMode ?? 'WAG_HEADLESS',
@@ -324,15 +345,36 @@ export function createPrivateBrowserMcpContext(options: {
     if (broker && attachedSessions) {
       const durable = attachedSessions.get(options.owner, browserSessionId);
       if (durable && (durable.state === 'ACTIVE' || durable.state === 'RECOVERABLE')) {
-        const recovered = await broker.recover(options.owner, browserSessionId);
-        rememberSession(recovered);
-        return recovered;
+        assertSessionCapacity(browserSessionId);
+        const finish = diagnostics.begin({
+          actionType: 'recover',
+          browserSessionId,
+          targetId: durable.targetId,
+          ownershipMode: 'ATTACHED_EXISTING',
+          recovered: true,
+        });
+        try {
+          const recovered = await broker.recover(options.owner, browserSessionId);
+          rememberSession(recovered);
+          finish(true, undefined, {
+            targetId: recovered.targetId,
+            ownershipMode: recovered.ownershipMode,
+            targetChanged: recovered.targetId !== durable.targetId,
+            recovered: true,
+          });
+          return recovered;
+        } catch (error) {
+          finish(false, error, { recovered: true });
+          throw error;
+        }
       }
     }
     return undefined;
   }
 
   return {
+    diagnostics,
+
     async targets() {
       assertOpen();
       if (!control) throw new Error('Existing browser control host is not configured');
@@ -367,21 +409,57 @@ export function createPrivateBrowserMcpContext(options: {
           targetId,
         );
         if (durable) {
-          const recovered = await broker.recover(options.owner, durable.browserSessionId);
-          rememberSession(recovered);
-          return sessionView(recovered);
+          assertSessionCapacity(durable.browserSessionId);
+          const finish = diagnostics.begin({
+            actionType: 'recover',
+            browserSessionId: durable.browserSessionId,
+            targetId: durable.targetId,
+            ownershipMode: 'ATTACHED_EXISTING',
+            recovered: true,
+          });
+          try {
+            const recovered = await broker.recover(options.owner, durable.browserSessionId);
+            rememberSession(recovered);
+            finish(true, undefined, {
+              targetId: recovered.targetId,
+              ownershipMode: recovered.ownershipMode,
+              targetChanged: recovered.targetId !== durable.targetId,
+              recovered: true,
+            });
+            return sessionView(recovered);
+          } catch (error) {
+            finish(false, error, { recovered: true });
+            throw error;
+          }
         }
       }
 
-      const handle = await port.open({
-        profileId,
-        owner: options.owner,
-        mode: resolvedMode,
-        ...(targetId === undefined ? {} : { targetId }),
-        ...(groupTitle === undefined ? {} : { groupTitle }),
+      assertSessionCapacity();
+      const finish = diagnostics.begin({
+        actionType: 'open',
+        targetId,
+        ownershipMode: resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP'
+          ? 'ATTACHED_EXISTING'
+          : 'WAG_OWNED',
       });
-      rememberSession(handle);
-      return sessionView(handle);
+      try {
+        const handle = await port.open({
+          profileId,
+          owner: options.owner,
+          mode: resolvedMode,
+          ...(targetId === undefined ? {} : { targetId }),
+          ...(groupTitle === undefined ? {} : { groupTitle }),
+        });
+        rememberSession(handle);
+        finish(true, undefined, {
+          targetId: handle.targetId,
+          ownershipMode: handle.ownershipMode,
+        });
+        return sessionView(handle);
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
     },
 
     async describe(browserSessionId) {
@@ -395,76 +473,123 @@ export function createPrivateBrowserMcpContext(options: {
 
     async snapshot(browserSessionId) {
       assertOpen();
-      await ensureSession(browserSessionId);
-      const value = await semantic.snapshot(options.owner, browserSessionId);
-      rememberFencing(await port.describe(options.owner, browserSessionId));
-      const nodes = value.nodes.slice(0, MAX_SNAPSHOT_NODES).map(boundedNode);
-      return Object.freeze({
-        snapshotId: value.snapshotId,
-        browserSessionId: value.browserSessionId,
-        url: truncateUtf8(value.url, 4096),
-        title: truncateUtf8(value.title, 1024),
-        nodes: Object.freeze(nodes),
-        truncated: value.nodes.length > nodes.length,
+      const initialFence = fencing.get(browserSessionId);
+      const finish = diagnostics.begin({
+        actionType: 'snapshot',
+        browserSessionId,
+        targetId: initialFence?.targetId,
+        ownershipMode: initialFence === undefined ? undefined : 'ATTACHED_EXISTING',
       });
+      try {
+        await ensureSession(browserSessionId);
+        const value = await semantic.snapshot(options.owner, browserSessionId);
+        const handle = await port.describe(options.owner, browserSessionId);
+        const targetChanged = rememberFencing(handle);
+        const nodes = value.nodes.slice(0, MAX_SNAPSHOT_NODES).map(boundedNode);
+        const result = Object.freeze({
+          snapshotId: value.snapshotId,
+          browserSessionId: value.browserSessionId,
+          url: truncateUtf8(value.url, 4096),
+          title: truncateUtf8(value.title, 1024),
+          nodes: Object.freeze(nodes),
+          truncated: value.truncated === true || value.nodes.length > nodes.length,
+        });
+        finish(true, undefined, {
+          targetId: handle.targetId,
+          ownershipMode: handle.ownershipMode,
+          targetChanged,
+        });
+        return result;
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
     },
 
     async exec(browserSessionId, idempotencyKey, action) {
       assertEffectAllowed();
       await ensureSession(browserSessionId);
       const expectedFence = fencing.get(browserSessionId);
-      let effectArguments = action as unknown as CanonicalValue;
-      if (expectedFence) {
-        const binding = await port.describe(options.owner, browserSessionId);
-        if (binding.targetId !== expectedFence.targetId
-            || binding.claimEpoch !== expectedFence.claimEpoch) {
-          throw new Error('Browser target fencing binding changed');
-        }
-        effectArguments = {
-          action: action as unknown as CanonicalValue,
-          targetId: expectedFence.targetId,
-          claimEpoch: expectedFence.claimEpoch,
-        } as unknown as CanonicalValue;
-      }
-      return effectView(await coordinator.execute(
-        options.owner,
-        idempotencyKey,
-        {
-          kind: `browser.${action.type}`,
-          resourceId: browserSessionId,
-          arguments: effectArguments,
-        },
-        async () => {
-          assertEffectAllowed();
-          switch (action.type) {
-            case 'navigate':
-              await semantic.navigate(options.owner, browserSessionId, action.url);
-              break;
-            case 'click':
-              await semantic.click(options.owner, browserSessionId, action.ref);
-              break;
-            case 'fill':
-              await semantic.fill(options.owner, browserSessionId, action.ref, action.text);
-              break;
-            case 'press':
-              await semantic.press(options.owner, browserSessionId, action.key);
-              break;
-            case 'pause_for_user':
-              if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
-              await broker.pauseForUser(options.owner, browserSessionId);
-              break;
-            case 'take_user_control':
-              if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
-              await broker.takeUserControl(options.owner, browserSessionId);
-              break;
-            case 'resume_automation':
-              if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
-              await broker.resumeAutomation(options.owner, browserSessionId);
-              break;
+      const finish = diagnostics.begin({
+        actionType: action.type as BrowserDiagnosticAction,
+        browserSessionId,
+        targetId: expectedFence?.targetId,
+        ownershipMode: expectedFence === undefined ? undefined : 'ATTACHED_EXISTING',
+      });
+      try {
+        let effectArguments = action as unknown as CanonicalValue;
+        if (expectedFence) {
+          const binding = await port.describe(options.owner, browserSessionId);
+          if (binding.targetId !== expectedFence.targetId
+              || binding.claimEpoch !== expectedFence.claimEpoch) {
+            throw new Error('Browser target fencing binding changed');
           }
-          return { status: 'CONFIRMED_SUCCESS', resultDigest: successDigest(action) };
-        },
-      ));
+          effectArguments = {
+            action: action as unknown as CanonicalValue,
+            targetId: expectedFence.targetId,
+            claimEpoch: expectedFence.claimEpoch,
+          } as unknown as CanonicalValue;
+        }
+        const record = await coordinator.execute(
+          options.owner,
+          idempotencyKey,
+          {
+            kind: `browser.${action.type}`,
+            resourceId: browserSessionId,
+            arguments: effectArguments,
+          },
+          async () => {
+            assertEffectAllowed();
+            switch (action.type) {
+              case 'navigate':
+                await semantic.navigate(options.owner, browserSessionId, action.url);
+                break;
+              case 'click':
+                await semantic.click(options.owner, browserSessionId, action.ref);
+                break;
+              case 'fill':
+                await semantic.fill(options.owner, browserSessionId, action.ref, action.text);
+                break;
+              case 'press':
+                await semantic.press(options.owner, browserSessionId, action.key);
+                break;
+              case 'pause_for_user':
+                if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+                await broker.pauseForUser(options.owner, browserSessionId);
+                break;
+              case 'take_user_control':
+                if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+                await broker.takeUserControl(options.owner, browserSessionId);
+                break;
+              case 'resume_automation':
+                if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+                await broker.resumeAutomation(options.owner, browserSessionId);
+                break;
+            }
+            return { status: 'CONFIRMED_SUCCESS', resultDigest: successDigest(action) };
+          },
+        );
+        let completion: {
+          targetId?: string;
+          ownershipMode?: string;
+          targetChanged?: boolean;
+        } = {};
+        try {
+          const handle = await port.describe(options.owner, browserSessionId);
+          completion = {
+            targetId: handle.targetId,
+            ownershipMode: handle.ownershipMode,
+            targetChanged: rememberFencing(handle),
+          };
+        } catch {
+          // Diagnostics must never turn a completed exact-once effect into a caller-visible failure.
+        }
+        finish(record.state === 'SUCCEEDED', undefined, completion);
+        return effectView(record);
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
     },
 
     async effect(effectId) {
@@ -474,12 +599,33 @@ export function createPrivateBrowserMcpContext(options: {
 
     async screenshot(browserSessionId) {
       assertOpen();
-      await ensureSession(browserSessionId);
-      const image = await port.screenshot(options.owner, browserSessionId);
-      rememberFencing(await port.describe(options.owner, browserSessionId));
-      const sizeBytes = Buffer.from(image.dataBase64, 'base64').length;
-      if (sizeBytes > MAX_SCREENSHOT_BYTES) throw new Error('Browser screenshot exceeds size limit');
-      return image;
+      const initialFence = fencing.get(browserSessionId);
+      const finish = diagnostics.begin({
+        actionType: 'screenshot',
+        browserSessionId,
+        targetId: initialFence?.targetId,
+        ownershipMode: initialFence === undefined ? undefined : 'ATTACHED_EXISTING',
+      });
+      try {
+        await ensureSession(browserSessionId);
+        const image = await port.screenshot(options.owner, browserSessionId);
+        if (image.dataBase64.length > MAX_SCREENSHOT_BASE64_CHARS) {
+          throw new Error('Browser screenshot exceeds size limit');
+        }
+        const sizeBytes = Buffer.byteLength(image.dataBase64, 'base64');
+        if (sizeBytes > MAX_SCREENSHOT_BYTES) throw new Error('Browser screenshot exceeds size limit');
+        const handle = await port.describe(options.owner, browserSessionId);
+        const targetChanged = rememberFencing(handle);
+        finish(true, undefined, {
+          targetId: handle.targetId,
+          ownershipMode: handle.ownershipMode,
+          targetChanged,
+        });
+        return image;
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
     },
 
     async close(browserSessionId) {

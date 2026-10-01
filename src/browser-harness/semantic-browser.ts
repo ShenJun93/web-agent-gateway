@@ -19,6 +19,7 @@ export interface SemanticSnapshot {
   readonly url: string;
   readonly title: string;
   readonly nodes: readonly SemanticNode[];
+  readonly truncated?: boolean;
 }
 
 export interface SemanticBrowser {
@@ -55,6 +56,7 @@ interface SnapshotBinding {
 
 const REF = /^node_[0-9a-f-]{36}_[0-9]+$/;
 const MAX_TEXT_BYTES = 64 * 1024;
+const MAX_AX_SOURCE_NODES = 2_000;
 const MAX_UPLOAD_FILES = 20;
 const MAX_INTERNAL_PATH_BYTES = 4096;
 const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
@@ -87,7 +89,10 @@ function editableFlag(properties: AxProperty[] | undefined): boolean {
   return value === true || value === 'plaintext' || value === 'richtext';
 }
 
-function parseAxNodes(result: unknown, snapshotId: string): SnapshotBinding & { nodes: SemanticNode[] } {
+function parseAxNodes(
+  result: unknown,
+  snapshotId: string,
+): SnapshotBinding & { nodes: SemanticNode[]; truncated: boolean } {
   const source = typeof result === 'object' && result !== null
     ? (result as { nodes?: unknown }).nodes
     : undefined;
@@ -96,7 +101,8 @@ function parseAxNodes(result: unknown, snapshotId: string): SnapshotBinding & { 
   const refs = new Map<string, { backendDOMNodeId: number; node: SemanticNode }>();
   const nodes: SemanticNode[] = [];
   let index = 0;
-  for (const raw of source) {
+  const boundedSource = source.slice(0, MAX_AX_SOURCE_NODES);
+  for (const raw of boundedSource) {
     if (typeof raw !== 'object' || raw === null) continue;
     const ax = raw as AxNode;
     if (ax.ignored === true || !Number.isInteger(ax.backendDOMNodeId)) continue;
@@ -117,7 +123,7 @@ function parseAxNodes(result: unknown, snapshotId: string): SnapshotBinding & { 
     refs.set(ref, { backendDOMNodeId: ax.backendDOMNodeId as number, node });
     nodes.push(node);
   }
-  return { snapshotId, refs, nodes };
+  return { snapshotId, refs, nodes, truncated: source.length > boundedSource.length };
 }
 
 function boxCenter(result: unknown): { x: number; y: number } {
@@ -174,6 +180,7 @@ export function createSemanticBrowser(options: {
         url: metadata.url,
         title: metadata.title,
         nodes: Object.freeze([...parsed.nodes]),
+        truncated: parsed.truncated,
       });
     },
 

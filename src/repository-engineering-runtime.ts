@@ -218,6 +218,7 @@ export async function startRepositoryEngineeringRuntime(
       effectStatePath: mutationSettings.statePath + '.harness-effects.sqlite',
       targetClaimStatePath: mutationSettings.statePath + '.browser-target-claims.sqlite',
       attachedSessionStatePath: mutationSettings.statePath + '.browser-attached-sessions.sqlite',
+      diagnosticsStatePath: mutationSettings.statePath + '.browser-diagnostics.json',
       killSwitch,
       ...(browserControlServer === undefined ? {} : { control: browserControlServer.client }),
     });

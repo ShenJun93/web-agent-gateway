@@ -114,6 +114,10 @@ test('graceful runtime restart recovers the same logical browser session at a fr
   second = runtime(root, control);
   const recovered = await second.open('recovery', 'AI_TAB_GROUP', 'tab_7', 'WAG • Recovery');
   assert.equal(recovered.browserSessionId, opened.browserSessionId);
+  const recoveryEvents = second.diagnostics?.recent({ limit: 20 }).events.filter((event) =>
+    event.action_type === 'recover' && event.browser_session_id === opened.browserSessionId) ?? [];
+  assert.equal(recoveryEvents.some((event) => event.recovered && !event.success), true);
+  assert.equal(recoveryEvents.some((event) => event.recovered && event.success), true);
   assert.equal(recovered.claimEpoch, 2);
   assert.equal(recovered.targetGeneration, opened.targetGeneration);
   assert.equal(recovered.rootTargetId, 'tab_7');

@@ -594,3 +594,60 @@ Known remaining risk:
 Next:
 - commit STOP 7;
 - after continuation, implement P2 sanitized diagnostics/resource bounds and final Browser v2 public-launch gate.
+
+---
+
+Task: Browser v2 STOP 8 — sanitized diagnostics + resource bounds
+State: DONE / BRANCH ACCEPTED
+Evidence:
+- added dedicated persistent Browser v2 diagnostics ring with exact-key schema validation;
+- diagnostics store only sequence/time/duration/action/success, opaque browser/target ids, ownership mode, bounded error class, target-changed and recovered booleans;
+- diagnostics never store URL/title/page text/node text/form content/arguments/idempotency keys/cookies/tokens/OAuth codes/credentials/profile paths/exception messages/screenshots;
+- injected password/token/URL/form-shaped exception content confirmed absent from serialized diagnostics;
+- diagnostics capacity default 256, configurable only 16..2048, recent read capped at 100;
+- raw AX-tree processing capped at 2,000 source nodes before semantic refs are created;
+- public browser snapshot remains capped at 500 nodes and propagates truncated=true;
+- active Browser MCP sessions capped at 32, with the 33rd denied before backend open;
+- browser screenshot capped at 8 MiB decoded data with pre-decode base64 length guard;
+- Browser Control WebSocket pending requests capped at 128;
+- targets.list capped at 512 entries;
+- non-screenshot Browser Control responses capped at 256 KiB;
+- screenshot WebSocket envelope remains separately bounded to the 8 MiB screenshot policy;
+- recovery diagnostics distinguish blocked live-lease recovery from successful successor recovery without content leakage;
+- latest broad Browser/runtime regression = 161/161 PASS;
+- focused P2 resource/diagnostics/transport = 11/11 PASS;
+- final recovery/diagnostics/resource gate = 8/8 PASS;
+- real Edge AI_TAB_GROUP, OAuth continuity and runtime recovery all PASS after final P2 code;
+- typecheck/build/diff-check PASS.
+Files changed:
+- src/browser-harness/browser-runtime-diagnostics.ts
+- src/browser-harness/browser-control-websocket-server.ts
+- src/browser-harness/browser-mcp-runtime.ts
+- src/browser-harness/semantic-browser.ts
+- src/repository-engineering-runtime.ts
+- test/browser-runtime-diagnostics.test.ts
+- test/browser-resource-bounds.test.ts
+- test/browser-control-websocket-server.test.ts
+- test/browser-runtime-session-recovery.test.ts
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop8-diagnostics-resource-bounds.md
+Tests:
+- Browser/extension/WebSocket A = 80/80 PASS
+- Browser MCP/managed B1 = 17/17 PASS
+- semantic/recovery/P2 B2 = 32/32 PASS
+- control/private-runtime/assembly C = 32/32 PASS
+- total = 161/161 PASS
+- real Edge AI_TAB_GROUP PASS
+- real Edge OAuth continuity PASS
+- real Edge runtime recovery PASS
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+Known remaining risk:
+- AUTO authenticated-existing-target selection NOT FINALIZED;
+- production first-time pairing UX NOT COMPLETE;
+- user daily Edge profile acceptance NOT EXECUTED;
+- real OS-process SIGKILL recovery NOT EXECUTED;
+- live runtime remains older and is not promoted from this branch.
+Next:
+- commit STOP 8;
+- continue to Browser v2 final public-launch gate without public push or live promotion.
