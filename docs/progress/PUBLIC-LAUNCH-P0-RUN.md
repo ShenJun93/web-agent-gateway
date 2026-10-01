@@ -59,3 +59,34 @@ Known remaining risk:
 Next:
 - commit Remote Git Inspect and canonical public-launch plans;
 - begin Browser v2 baseline + extension/nativeMessaging ATTACH_EXISTING feasibility spike.
+
+---
+
+Task: Browser v2 STOP 0 — baseline architecture and regression lock
+State: DONE
+Evidence:
+- current BrowserPort remains seven semantic/effect tools;
+- current production browser backend is WAG-owned dedicated headless Edge over loopback CDP;
+- semantic snapshot/click/fill/press implementation inventoried;
+- exact-once effect ledger/recovery behavior confirmed;
+- shipped extension has nativeMessaging but no debugger/tabs permission and only ChatGPT tab scanning;
+- ATTACH_EXISTING, WAG_VISIBLE, per-target fencing, OAuth target continuity and browser-session recovery are NOT IMPLEMENTED;
+- one stale fixed total-tool-count assertion was converted to a delta invariant (current surface + exactly seven BrowserPort tools);
+- focused browser/extension baseline rerun = 71/71 PASS;
+- architecture does not materially contradict Browser v2 plan.
+Files changed:
+- test/browser-harness-mcp-surface.test.ts
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop0-baseline.md
+- docs/progress/PUBLIC-LAUNCH-P0-RUN.md
+Tests:
+- 71/71 focused BrowserPort/CDP/extension/native-messaging baseline PASS
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+Known remaining risk:
+- debugger permission/attach feasibility has not yet been exercised against real Edge;
+- native control bridge for runtime-initiated existing-tab actions is not implemented;
+- current live runtime remains legacy and is not promoted from this lane.
+Next:
+- STOP 0 report;
+- after continuation, execute Browser v2 extension/nativeMessaging ATTACH_EXISTING feasibility spike before BrowserBroker implementation.

@@ -61,12 +61,23 @@ function fullBrowserConfig(): PrivateGatewayConfig {
   };
 }
 
-test('browser opt-in projects seven BrowserPort tools plus relay result chunking on the extended surface', async () => {
-  const projected = await projectedTools(fullBrowserConfig());
+test('browser opt-in adds exactly seven BrowserPort tools to the current extended surface', async () => {
+  const config = fullBrowserConfig();
+  const repositoryEngineering = config.repositoryEngineering!;
+  const { browser: _browser, ...withoutBrowserEngineering } = repositoryEngineering;
+  const baseline = await projectedTools({
+    ...config,
+    repositoryEngineering: withoutBrowserEngineering,
+  });
+  const projected = await projectedTools(config);
+  assert.equal(baseline.missing.length, 0);
   assert.equal(projected.missing.length, 0);
-  assert.equal(projected.tools.length, 51);
+  assert.equal(projected.tools.length, baseline.tools.length + BROWSER_TOOLS.length);
   assert.ok(projected.tools.includes('result.chunk'));
-  for (const name of BROWSER_TOOLS) assert.ok(projected.tools.includes(name), name);
+  for (const name of BROWSER_TOOLS) {
+    assert.equal(baseline.tools.includes(name), false, name + ' must be browser opt-in only');
+    assert.ok(projected.tools.includes(name), name);
+  }
   assert.equal(projected.tools.some((name) => name.includes('cdp') || name.includes('playwright')), false,
     'raw transport implementation names must not become public MCP tools');
 });
