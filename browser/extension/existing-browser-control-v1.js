@@ -21,6 +21,31 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
 
   const protocolVersion = options.protocolVersion ?? DEFAULT_PROTOCOL_VERSION;
   const attached = new Set();
+  const continuityWatches = new Map();
+  const targetActivity = new Map();
+  let activitySequence = 0;
+
+  function rememberTab(tab, sequence = 0) {
+    if (!Number.isInteger(tab?.id)) return;
+    const current = targetActivity.get(tab.id);
+    const openerTabId = Number.isInteger(tab?.openerTabId)
+      ? tab.openerTabId
+      : current?.openerTabId ?? null;
+    targetActivity.set(tab.id, {
+      openerTabId,
+      sequence: Math.max(current?.sequence ?? 0, sequence),
+    });
+  }
+
+  tabs.onCreated?.addListener?.((tab) => {
+    activitySequence += 1;
+    rememberTab(tab, activitySequence);
+  });
+  tabs.onUpdated?.addListener?.((tabId, changeInfo, tab) => {
+    if (typeof changeInfo?.url !== 'string') return;
+    activitySequence += 1;
+    rememberTab({ ...tab, id: tabId }, activitySequence);
+  });
 
   const onDetach = (source) => {
     if (Number.isInteger(source?.tabId)) attached.delete(source.tabId);
@@ -29,7 +54,56 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
 
   async function listTargets() {
     const rows = await tabs.query({});
+    for (const row of rows) rememberTab(row);
     return rows.map(describeTab);
+  }
+
+  async function watchContinuity(tabId) {
+    await getAttachableTab(tabs, tabId);
+    const rows = await tabs.query({});
+    for (const row of rows) rememberTab(row);
+    continuityWatches.set(tabId, { baselineSequence: activitySequence });
+    return { tabId, baselineSequence: activitySequence };
+  }
+
+  async function resolveContinuity(rootTabId, currentTabId) {
+    const watch = continuityWatches.get(rootTabId);
+    if (!watch) {
+      throw new ExistingBrowserControlError('CONTINUITY_NOT_WATCHED', 'Browser target continuity is not active');
+    }
+    const rows = await tabs.query({});
+    for (const row of rows) rememberTab(row);
+    const byId = new Map(rows.filter((row) => Number.isInteger(row?.id)).map((row) => [row.id, row]));
+    const root = byId.get(rootTabId);
+    const current = byId.get(currentTabId);
+
+    if (!current && root && describeTab(root).attachable) {
+      return {
+        sequence: activitySequence,
+        reason: 'CURRENT_GONE',
+        target: describeTab(root),
+      };
+    }
+
+    let selected = null;
+    let selectedSequence = watch.baselineSequence;
+    for (const row of rows) {
+      if (!Number.isInteger(row?.id) || !describeTab(row).attachable) continue;
+      if (row.id !== rootTabId && !descendsFrom(row.id, rootTabId, targetActivity)) continue;
+      const sequence = targetActivity.get(row.id)?.sequence ?? 0;
+      if (sequence <= watch.baselineSequence || sequence < selectedSequence) continue;
+      if (sequence === selectedSequence && selected && row.id <= selected.id) continue;
+      selected = row;
+      selectedSequence = sequence;
+    }
+
+    return {
+      sequence: activitySequence,
+      reason: selected
+        ? (selected.id === rootTabId ? 'ROOT_UPDATED' : 'SUCCESSOR')
+        : 'NO_CHANGE',
+      target: selected ? describeTab(selected) : null,
+    };
   }
 
   async function group(tabId, title = 'WAG • AI') {
@@ -116,7 +190,19 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     return attached.has(tabId);
   }
 
-  return { listTargets, group, attach, describe, probe, exec, screenshot, release, isAttached };
+  return {
+    listTargets,
+    watchContinuity,
+    resolveContinuity,
+    group,
+    attach,
+    describe,
+    probe,
+    exec,
+    screenshot,
+    release,
+    isAttached,
+  };
 }
 
 async function getAttachableTab(tabs, tabId) {
@@ -158,6 +244,20 @@ function describeTab(tab) {
     attachable: id !== null && safe !== null,
     ownership: 'USER_EXISTING',
   };
+}
+
+function descendsFrom(tabId, rootTabId, activity) {
+  let current = tabId;
+  const seen = new Set();
+  for (let depth = 0; depth < 16; depth += 1) {
+    if (current === rootTabId) return true;
+    if (seen.has(current)) return false;
+    seen.add(current);
+    const opener = activity.get(current)?.openerTabId;
+    if (!Number.isInteger(opener)) return false;
+    current = opener;
+  }
+  return false;
 }
 
 function sanitizeUrl(value) {
@@ -244,8 +344,16 @@ function assertBoundedRuntimeCommand(method, params) {
       throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime call params are invalid');
     }
 
-    if (params.functionDeclaration === FIXED_DOM_CLICK_FUNCTION
-        || params.functionDeclaration === FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION) {
+    if (params.functionDeclaration === FIXED_DOM_CLICK_FUNCTION) {
+      const keys = Object.keys(params ?? {}).sort();
+      if (keys.join(',') !== 'functionDeclaration,objectId,returnByValue,userGesture'
+          || params.userGesture !== true) {
+        throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime click params are invalid');
+      }
+      return;
+    }
+
+    if (params.functionDeclaration === FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION) {
       const keys = Object.keys(params ?? {}).sort();
       if (keys.join(',') !== 'functionDeclaration,objectId,returnByValue') {
         throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime fixed-function params are invalid');

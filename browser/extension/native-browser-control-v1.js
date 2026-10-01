@@ -56,6 +56,24 @@ export function createNativeBrowserControlV1({ connectNative, control }) {
           activeStable: grouped.activeStable === true,
         });
       }
+      case 'target.watch': {
+        const watched = await control.watchContinuity(tabId(request.targetId));
+        return result(request.requestId, {
+          targetId: request.targetId,
+          baselineSequence: watched.baselineSequence,
+        });
+      }
+      case 'target.continuity': {
+        const resolved = await control.resolveContinuity(
+          tabId(request.targetId),
+          tabId(request.currentTargetId),
+        );
+        return result(request.requestId, {
+          sequence: resolved.sequence,
+          reason: resolved.reason,
+          target: resolved.target ? normalizeTarget(resolved.target, control) : null,
+        });
+      }
       case 'target.attach': {
         const id = tabId(request.targetId);
         await control.attach(id);
@@ -101,6 +119,20 @@ function parseRequest(value) {
       throw new Error('Invalid existing browser group title');
     }
     return { version: VERSION, type: 'control.request', requestId: value.requestId, method, targetId: value.targetId, groupTitle: value.groupTitle };
+  }
+  if (method === 'target.watch') {
+    return { version: VERSION, type: 'control.request', requestId: value.requestId, method, targetId: value.targetId };
+  }
+  if (method === 'target.continuity') {
+    if (!TARGET_ID.test(value.currentTargetId ?? '')) throw new Error('Invalid existing browser current target id');
+    return {
+      version: VERSION,
+      type: 'control.request',
+      requestId: value.requestId,
+      method,
+      targetId: value.targetId,
+      currentTargetId: value.currentTargetId,
+    };
   }
   if (method === 'target.exec') {
     if (typeof value.cdpMethod !== 'string' || !ALLOWED_CDP.has(value.cdpMethod)) {

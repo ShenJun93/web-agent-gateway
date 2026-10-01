@@ -18,8 +18,14 @@ export function describeExistingBrowserTab(tab: unknown): ExistingBrowserTargetV
 export function createExistingBrowserControlV1(
   chromeApi: {
     tabs: {
-      query(queryInfo: Record<string, unknown>): Promise<unknown[]>;
-      get(tabId: number): Promise<unknown>;
+      query(queryInfo: Record<string, unknown>): Promise<any[]>;
+      get(tabId: number): Promise<any>;
+      group?(options: { tabIds: number[] }): Promise<number>;
+      onCreated?: { addListener(listener: (tab: any) => void): void };
+      onUpdated?: { addListener(listener: (tabId: number, changeInfo: any, tab: any) => void): void };
+    };
+    tabGroups?: {
+      update(groupId: number, options: Record<string, unknown>): Promise<any>;
     };
     debugger: {
       attach(target: { tabId: number }, protocolVersion: string): Promise<void>;
@@ -31,6 +37,12 @@ export function createExistingBrowserControlV1(
   options?: { protocolVersion?: string },
 ): {
   listTargets(): Promise<ExistingBrowserTargetV1[]>;
+  watchContinuity(tabId: number): Promise<{ tabId: number; baselineSequence: number }>;
+  resolveContinuity(rootTabId: number, currentTabId: number): Promise<{
+    sequence: number;
+    reason: 'CURRENT_GONE' | 'ROOT_UPDATED' | 'SUCCESSOR' | 'NO_CHANGE';
+    target: ExistingBrowserTargetV1 | null;
+  }>;
   group(tabId: number, title?: string): Promise<{ tabId: number; groupId: number; groupTitle: string; activeStable: boolean }>;
   attach(tabId: number): Promise<ExistingBrowserTargetV1 & { state: 'ATTACHED' }>;
   describe(tabId: number): Promise<ExistingBrowserTargetV1 & { attached: boolean }>;

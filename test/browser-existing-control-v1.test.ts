@@ -228,6 +228,7 @@ test('fixed DOM click command is allowed but arbitrary Runtime.callFunctionOn is
     objectId: 'object_42',
     functionDeclaration: 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}',
     returnByValue: true,
+    userGesture: true,
   });
 
   assert.equal(

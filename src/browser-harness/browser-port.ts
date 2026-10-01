@@ -26,7 +26,9 @@ export interface BrowserSessionHandle {
   readonly controlState?: BrowserControlState;
   readonly groupId?: string;
   readonly groupTitle?: string;
+  readonly rootTargetId?: string;
   readonly targetId?: string;
+  readonly targetGeneration?: number;
   readonly claimEpoch?: number;
   readonly claimExpiresAt?: number;
   readonly processId?: string;

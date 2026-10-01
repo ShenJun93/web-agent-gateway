@@ -122,6 +122,7 @@ test('semantic click uses fixed in-target DOM activation without OS mouse inject
       objectId: 'object_42',
       functionDeclaration: 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}',
       returnByValue: true,
+      userGesture: true,
     } },
     { method: 'Runtime.releaseObject', params: { objectId: 'object_42' } },
   ]);

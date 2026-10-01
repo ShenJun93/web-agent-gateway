@@ -209,6 +209,7 @@ export function createSemanticBrowser(options: {
               objectId,
               functionDeclaration: FIXED_DOM_CLICK_FUNCTION,
               returnByValue: true,
+              userGesture: true,
             },
           });
           const activated = typeof invoked === 'object' && invoked !== null

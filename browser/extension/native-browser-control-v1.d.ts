@@ -14,6 +14,8 @@ export function createNativeBrowserControlV1(options: {
   connectNative(): NativeBrowserControlPort;
   control: {
     listTargets(): Promise<any[]>;
+    watchContinuity(tabId: number): Promise<{ tabId: number; baselineSequence: number }>;
+    resolveContinuity(rootTabId: number, currentTabId: number): Promise<{ sequence: number; reason: string; target: any | null }>;
     group(tabId: number, title?: string): Promise<{ tabId: number; groupId: number; groupTitle: string; activeStable: boolean }>;
     attach(tabId: number): Promise<any>;
     describe(tabId: number): Promise<any>;

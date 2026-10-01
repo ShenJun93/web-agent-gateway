@@ -477,3 +477,63 @@ Known remaining risk:
 Next:
 - commit STOP 5 / Task 6;
 - proceed to OAuth/new-target continuity.
+
+---
+
+Task: Browser v2 STOP 6 — OAuth / successor-target continuity
+State: DONE / BRANCH ACCEPTED
+Evidence:
+- added bounded `target.watch` + `target.continuity` protocol for existing-tab workflow continuity;
+- extension observes same-tab URL changes plus new tabs/windows through bounded tab activity and opener ancestry;
+- successor selection ignores unrelated new tabs and strips query/hash/credentials from target metadata;
+- one logical `browser_session_id` now preserves `rootTargetId` while current `targetId` may change;
+- `targetGeneration` increments on root -> successor -> root transitions;
+- successor targets are claimed with the existing per-target claim_epoch fencing model before debugger attach;
+- AI_TAB_GROUP groups successor targets without intentionally activating user tabs;
+- previous debugger target detaches only after successor claim/group/attach succeeds;
+- all retained root/successor claims are released on logical session close;
+- Browser MCP refreshes target/claim fencing after continuity-changing snapshot/screenshot observations;
+- fixed DOM click gains exact bounded CDP `userGesture:true` only for the WAG-owned click function so OAuth popup/new-window flows can launch without OS pointer injection;
+- arbitrary Runtime.evaluate remains denied and Runtime.callFunctionOn remains exact-function/shape allowlisted;
+- real Edge local OAuth-shaped flow PASS: root app -> popup successor -> callback -> root;
+- same browser_session_id preserved, successor generation 1, final generation 2;
+- authenticated app session preserved and original user holder tab stayed active;
+- latest broad Browser/runtime regression = 149/149 PASS;
+- real Edge AI_TAB_GROUP/framework-fill/rich-text regression reruns PASS;
+- typecheck/build/diff-check PASS.
+Files changed include:
+- browser/extension/existing-browser-control-v1.js + d.ts
+- browser/extension/native-browser-control-v1.js + d.ts
+- src/browser-adapter/existing-browser-control-protocol.ts
+- src/browser-harness/attached-existing-browser-port.ts
+- src/browser-harness/browser-control-websocket-server.ts
+- src/browser-harness/browser-mcp-runtime.ts
+- src/browser-harness/browser-port.ts
+- src/browser-harness/existing-browser-control-client.ts
+- src/browser-harness/semantic-browser.ts
+- scripts/accept-browser-v2-oauth-continuity.ts
+- test/browser-oauth-continuity.test.ts
+- related Browser/WebSocket/native/fencing integration fixtures
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop6-oauth-continuity.md
+Tests:
+- browser/extension/OAuth batch A = 76/76 PASS
+- Browser MCP/semantic batch B = 44/44 PASS
+- control/runtime/fencing batch C = 29/29 PASS
+- total broad Browser/runtime regression = 149/149 PASS
+- real Edge OAuth successor-target continuity = PASS
+- real Edge AI_TAB_GROUP regression = PASS
+- real Edge framework-safe fill regression = PASS
+- real Edge rich-text/ProseMirror/TipTap regression = PASS
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+Known remaining risk:
+- REAL_EXTERNAL_OAUTH_PROVIDER = NOT_EXECUTED;
+- USER_DAILY_EDGE_PROFILE = NOT_EXECUTED;
+- CROSS_RUNTIME_SESSION_RECOVERY = NOT_IMPLEMENTED;
+- PRODUCTION_PAIRING_UX = NOT_COMPLETE;
+- AUTO does not yet automatically select AI_TAB_GROUP;
+- live runtime remains older and is not promoted from this branch.
+Next:
+- commit STOP 6;
+- proceed to Browser v2 runtime/session recovery without public push or live promotion.

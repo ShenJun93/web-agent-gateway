@@ -161,6 +161,7 @@ export async function startBrowserControlWebSocketServer(options: {
   function request(
     method: ExistingBrowserControlRequest['method'],
     targetId?: string,
+    currentTargetId?: string,
     groupTitle?: string,
     cdpMethod?: string,
     params?: Readonly<Record<string, unknown>>,
@@ -175,6 +176,7 @@ export async function startBrowserControlWebSocketServer(options: {
       requestId,
       method,
       ...(targetId === undefined ? {} : { targetId }),
+      ...(currentTargetId === undefined ? {} : { currentTargetId }),
       ...(groupTitle === undefined ? {} : { groupTitle }),
       ...(cdpMethod === undefined ? {} : { cdpMethod }),
       ...(params === undefined ? {} : { params }),
@@ -203,8 +205,36 @@ export async function startBrowserControlWebSocketServer(options: {
       if (!Array.isArray(value)) throw new Error('Browser control target list is invalid');
       return Object.freeze(value.map(parseExistingBrowserTarget));
     },
+    async watchContinuity(targetId) {
+      const value = await request('target.watch', targetId);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Browser continuity watch response is invalid');
+      }
+      const row = value as Record<string, unknown>;
+      if (row.targetId !== targetId || !Number.isInteger(row.baselineSequence) || Number(row.baselineSequence) < 0) {
+        throw new Error('Browser continuity watch response is invalid');
+      }
+      return { targetId, baselineSequence: Number(row.baselineSequence) };
+    },
+    async resolveContinuity(rootTargetId, currentTargetId) {
+      const value = await request('target.continuity', rootTargetId, currentTargetId);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Browser continuity response is invalid');
+      }
+      const row = value as Record<string, unknown>;
+      const reasons = ['CURRENT_GONE', 'ROOT_UPDATED', 'SUCCESSOR', 'NO_CHANGE'] as const;
+      if (!Number.isInteger(row.sequence) || Number(row.sequence) < 0
+          || typeof row.reason !== 'string' || !reasons.includes(row.reason as typeof reasons[number])) {
+        throw new Error('Browser continuity response is invalid');
+      }
+      return {
+        sequence: Number(row.sequence),
+        reason: row.reason as typeof reasons[number],
+        target: row.target === null ? null : parseExistingBrowserTarget(row.target),
+      };
+    },
     async groupTarget(targetId, title) {
-      const value = await request('target.group', targetId, title);
+      const value = await request('target.group', targetId, undefined, title);
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error('Browser control group response is invalid');
       }
@@ -226,7 +256,7 @@ export async function startBrowserControlWebSocketServer(options: {
     async describe(targetId) {
       return parseExistingBrowserTarget(await request('target.describe', targetId));
     },
-    exec: (targetId, method, params) => request('target.exec', targetId, undefined, method, params),
+    exec: (targetId, method, params) => request('target.exec', targetId, undefined, undefined, method, params),
     async screenshot(targetId) {
       const value = await request('target.screenshot', targetId);
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Browser screenshot invalid');

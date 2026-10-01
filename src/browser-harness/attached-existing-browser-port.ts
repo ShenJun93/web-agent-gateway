@@ -13,8 +13,12 @@ import type {
 
 interface AttachedSession {
   handle: BrowserSessionHandle;
+  rootTargetId: string;
   targetId: string;
   claimEpoch: number;
+  targetGeneration: number;
+  claims: Map<string, number>;
+  groupedTargets: Set<string>;
 }
 
 export interface AttachedExistingBrowserPort extends BrowserPort {
@@ -59,17 +63,105 @@ export function createAttachedExistingBrowserPort(options: {
   }
 
   function heartbeat(session: AttachedSession): void {
-    const claim = options.claims.heartbeat(
-      session.handle.owner,
-      session.targetId,
-      session.handle.browserSessionId,
-      session.claimEpoch,
-    );
+    let currentExpiresAt = session.handle.claimExpiresAt;
+    for (const [targetId, claimEpoch] of session.claims) {
+      const claim = options.claims.heartbeat(
+        session.handle.owner,
+        targetId,
+        session.handle.browserSessionId,
+        claimEpoch,
+      );
+      if (targetId === session.targetId) currentExpiresAt = claim.expiresAt;
+    }
     session.handle = Object.freeze({
       ...session.handle,
-      claimExpiresAt: claim.expiresAt,
+      ...(currentExpiresAt === undefined ? {} : { claimExpiresAt: currentExpiresAt }),
       lastSeenAt: now(),
     });
+  }
+
+  async function switchTarget(session: AttachedSession, targetId: string): Promise<void> {
+    if (targetId === session.targetId) return;
+    if (!TARGET_ID.test(targetId)) throw new Error('Browser continuity target id is invalid');
+
+    let claimEpoch = session.claims.get(targetId);
+    let newClaim = false;
+    let claimExpiresAt = session.handle.claimExpiresAt;
+    if (claimEpoch === undefined) {
+      const claim = options.claims.claim(
+        session.handle.owner,
+        targetId,
+        session.handle.browserSessionId,
+      );
+      claimEpoch = claim.claimEpoch;
+      claimExpiresAt = claim.expiresAt;
+      session.claims.set(targetId, claimEpoch);
+      newClaim = true;
+    } else {
+      const claim = options.claims.heartbeat(
+        session.handle.owner,
+        targetId,
+        session.handle.browserSessionId,
+        claimEpoch,
+      );
+      claimExpiresAt = claim.expiresAt;
+    }
+
+    let grouped: Awaited<ReturnType<ExistingBrowserControlClient['groupTarget']>> | undefined;
+    try {
+      if (session.handle.executionMode === 'AI_TAB_GROUP' && !session.groupedTargets.has(targetId)) {
+        grouped = await options.control.groupTarget(
+          targetId,
+          session.handle.groupTitle ?? `WAG • ${session.handle.profileId}`,
+        );
+        if (!grouped.activeStable) throw new Error('OAuth successor grouping changed the active browser tab');
+        session.groupedTargets.add(targetId);
+      }
+      const target = await options.control.attach(targetId);
+      if (!target.attachable || !target.attached) {
+        throw new Error('OAuth successor target could not be attached');
+      }
+    } catch (error) {
+      if (newClaim && claimEpoch !== undefined) {
+        session.claims.delete(targetId);
+        try {
+          options.claims.release(
+            session.handle.owner,
+            targetId,
+            session.handle.browserSessionId,
+            claimEpoch,
+          );
+        } catch {}
+      }
+      throw error;
+    }
+
+    const previousTargetId = session.targetId;
+    await options.control.release(previousTargetId).catch(() => undefined);
+    session.targetId = targetId;
+    session.claimEpoch = claimEpoch;
+    session.targetGeneration += 1;
+    session.handle = Object.freeze({
+      ...session.handle,
+      targetId,
+      claimEpoch,
+      ...(claimExpiresAt === undefined ? {} : { claimExpiresAt }),
+      targetGeneration: session.targetGeneration,
+      ...(grouped === undefined ? {} : {
+        groupId: grouped.groupId,
+        groupTitle: grouped.groupTitle,
+      }),
+      lastSeenAt: now(),
+    });
+  }
+
+  async function refreshContinuity(session: AttachedSession): Promise<void> {
+    const resolved = await options.control.resolveContinuity(
+      session.rootTargetId,
+      session.targetId,
+    );
+    const targetId = resolved.target?.targetId;
+    if (targetId && targetId !== session.targetId) await switchTarget(session, targetId);
   }
 
   const heartbeatTimer = setInterval(() => {
@@ -119,6 +211,7 @@ export function createAttachedExistingBrowserPort(options: {
         if (!target.attachable || !target.attached) {
           throw new Error('Existing browser target could not be attached');
         }
+        await options.control.watchContinuity(request.targetId);
 
         const createdAt = now();
         const handle: BrowserSessionHandle = Object.freeze({
@@ -129,7 +222,9 @@ export function createAttachedExistingBrowserPort(options: {
           executionMode: request.mode,
           ownershipMode: 'ATTACHED_EXISTING',
           controlState: 'RUNNING',
+          rootTargetId: request.targetId,
           targetId: request.targetId,
+          targetGeneration: 0,
           claimEpoch: claim.claimEpoch,
           claimExpiresAt: claim.expiresAt,
           ...(grouped === undefined ? {} : {
@@ -142,8 +237,12 @@ export function createAttachedExistingBrowserPort(options: {
         });
         sessions.set(browserSessionId, {
           handle,
+          rootTargetId: request.targetId,
           targetId: request.targetId,
           claimEpoch: claim.claimEpoch,
+          targetGeneration: 0,
+          claims: new Map([[request.targetId, claim.claimEpoch]]),
+          groupedTargets: new Set(grouped === undefined ? [] : [request.targetId]),
         });
         return clone(handle);
       } catch (error) {
@@ -167,6 +266,7 @@ export function createAttachedExistingBrowserPort(options: {
     async describe(owner, browserSessionId) {
       const session = owned(owner, browserSessionId);
       heartbeat(session);
+      await refreshContinuity(session);
       await options.control.describe(session.targetId);
       return clone(session.handle);
     },
@@ -174,6 +274,7 @@ export function createAttachedExistingBrowserPort(options: {
     async snapshot(owner, browserSessionId) {
       const session = owned(owner, browserSessionId);
       heartbeat(session);
+      await refreshContinuity(session);
       const target = await options.control.describe(session.targetId);
       return Object.freeze({
         browserSessionId,
@@ -187,6 +288,7 @@ export function createAttachedExistingBrowserPort(options: {
     async exec(owner, browserSessionId, request: BrowserExecRequest) {
       const session = owned(owner, browserSessionId);
       heartbeat(session);
+      await refreshContinuity(session);
       const value = await options.control.exec(session.targetId, request.method, request.params);
       session.handle = Object.freeze({ ...session.handle, lastSeenAt: now() });
       return value;
@@ -195,6 +297,7 @@ export function createAttachedExistingBrowserPort(options: {
     async screenshot(owner, browserSessionId) {
       const session = owned(owner, browserSessionId);
       heartbeat(session);
+      await refreshContinuity(session);
       const value = await options.control.screenshot(session.targetId);
       session.handle = Object.freeze({ ...session.handle, lastSeenAt: now() });
       return value;
@@ -215,12 +318,15 @@ export function createAttachedExistingBrowserPort(options: {
       let failure: unknown;
       try {
         await options.control.release(session.targetId);
-        options.claims.release(
-          owner,
-          session.targetId,
-          browserSessionId,
-          session.claimEpoch,
-        );
+        for (const [targetId, claimEpoch] of session.claims) {
+          options.claims.release(
+            owner,
+            targetId,
+            browserSessionId,
+            claimEpoch,
+          );
+        }
+        session.claims.clear();
         session.handle = Object.freeze({
           ...session.handle,
           state: 'CLOSED',

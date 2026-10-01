@@ -59,7 +59,9 @@ export interface BrowserMcpSession {
   readonly controlState?: string;
   readonly groupId?: string;
   readonly groupTitle?: string;
+  readonly rootTargetId?: string;
   readonly targetId?: string;
+  readonly targetGeneration?: number;
   readonly claimEpoch?: number;
   readonly claimExpiresAt?: number;
   readonly processId?: string;
@@ -129,7 +131,9 @@ function sessionView(handle: BrowserSessionHandle): BrowserMcpSession {
     ...(handle.controlState === undefined ? {} : { controlState: handle.controlState }),
     ...(handle.groupId === undefined ? {} : { groupId: handle.groupId }),
     ...(handle.groupTitle === undefined ? {} : { groupTitle: handle.groupTitle }),
+    ...(handle.rootTargetId === undefined ? {} : { rootTargetId: handle.rootTargetId }),
     ...(handle.targetId === undefined ? {} : { targetId: handle.targetId }),
+    ...(handle.targetGeneration === undefined ? {} : { targetGeneration: handle.targetGeneration }),
     ...(handle.claimEpoch === undefined ? {} : { claimEpoch: handle.claimEpoch }),
     ...(handle.claimExpiresAt === undefined ? {} : { claimExpiresAt: handle.claimExpiresAt }),
     ...(handle.processId === undefined ? {} : { processId: handle.processId }),
@@ -334,6 +338,7 @@ export function createPrivateBrowserMcpContext(options: {
     async snapshot(browserSessionId) {
       assertOpen();
       const value = await semantic.snapshot(options.owner, browserSessionId);
+      rememberFencing(await port.describe(options.owner, browserSessionId));
       const nodes = value.nodes.slice(0, MAX_SNAPSHOT_NODES).map(boundedNode);
       return Object.freeze({
         snapshotId: value.snapshotId,
@@ -410,6 +415,7 @@ export function createPrivateBrowserMcpContext(options: {
     async screenshot(browserSessionId) {
       assertOpen();
       const image = await port.screenshot(options.owner, browserSessionId);
+      rememberFencing(await port.describe(options.owner, browserSessionId));
       const sizeBytes = Buffer.from(image.dataBase64, 'base64').length;
       if (sizeBytes > MAX_SCREENSHOT_BYTES) throw new Error('Browser screenshot exceeds size limit');
       return image;

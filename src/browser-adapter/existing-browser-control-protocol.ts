@@ -4,6 +4,8 @@ export const EXISTING_BROWSER_CONTROL_MAX_BYTES = 256 * 1024;
 export type ExistingBrowserControlMethod =
   | 'targets.list'
   | 'target.group'
+  | 'target.watch'
+  | 'target.continuity'
   | 'target.attach'
   | 'target.describe'
   | 'target.exec'
@@ -28,6 +30,7 @@ export interface ExistingBrowserControlRequest {
   requestId: string;
   method: ExistingBrowserControlMethod;
   targetId?: string;
+  currentTargetId?: string;
   groupTitle?: string;
   cdpMethod?: string;
   params?: Readonly<Record<string, unknown>>;
@@ -76,7 +79,7 @@ export function isAllowedExistingBrowserCdpMethod(method: string): boolean {
 
 export function parseExistingBrowserControlRequest(value: unknown): ExistingBrowserControlRequest {
   const row = record(value, 'control request');
-  exactKeys(row, ['version', 'type', 'requestId', 'method', 'targetId', 'groupTitle', 'cdpMethod', 'params']);
+  exactKeys(row, ['version', 'type', 'requestId', 'method', 'targetId', 'currentTargetId', 'groupTitle', 'cdpMethod', 'params']);
   if (row.version !== EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION || row.type !== 'control.request') {
     throw new Error('Invalid existing browser control request');
   }
@@ -84,20 +87,27 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
     throw new Error('Invalid existing browser control request id');
   }
   const methods: ExistingBrowserControlMethod[] = [
-    'targets.list', 'target.group', 'target.attach', 'target.describe', 'target.exec', 'target.screenshot', 'target.release',
+    'targets.list', 'target.group', 'target.watch', 'target.continuity', 'target.attach', 'target.describe', 'target.exec', 'target.screenshot', 'target.release',
   ];
   if (!methods.includes(row.method as ExistingBrowserControlMethod)) {
     throw new Error('Invalid existing browser control method');
   }
   const method = row.method as ExistingBrowserControlMethod;
   if (method === 'targets.list') {
-    if (row.targetId !== undefined || row.groupTitle !== undefined || row.cdpMethod !== undefined || row.params !== undefined) {
+    if (row.targetId !== undefined || row.currentTargetId !== undefined || row.groupTitle !== undefined || row.cdpMethod !== undefined || row.params !== undefined) {
       throw new Error('Invalid existing browser target list request');
     }
   } else {
     if (typeof row.targetId !== 'string' || !TARGET_ID.test(row.targetId)) {
       throw new Error('Invalid existing browser target id');
     }
+  }
+  if (method === 'target.continuity') {
+    if (typeof row.currentTargetId !== 'string' || !TARGET_ID.test(row.currentTargetId)) {
+      throw new Error('Invalid existing browser current target id');
+    }
+  } else if (row.currentTargetId !== undefined) {
+    throw new Error('Unexpected existing browser current target id');
   }
   if (method === 'target.group') {
     if (typeof row.groupTitle !== 'string' || row.groupTitle.length < 1 || row.groupTitle.length > 64) {
@@ -122,6 +132,7 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
     requestId: row.requestId,
     method,
     ...(row.targetId === undefined ? {} : { targetId: row.targetId as string }),
+    ...(row.currentTargetId === undefined ? {} : { currentTargetId: row.currentTargetId as string }),
     ...(row.groupTitle === undefined ? {} : { groupTitle: row.groupTitle as string }),
     ...(row.cdpMethod === undefined ? {} : { cdpMethod: row.cdpMethod as string }),
     ...(row.params === undefined ? {} : { params: row.params as Readonly<Record<string, unknown>> }),

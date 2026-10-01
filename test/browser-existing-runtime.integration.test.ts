@@ -43,6 +43,8 @@ test('BrowserMcpContext ATTACH_EXISTING uses one semantic stack through native c
       let result: unknown = {};
       switch (request.method) {
         case 'targets.list': result = [target]; break;
+        case 'target.watch': result = { targetId: 'tab_7', baselineSequence: 0 }; break;
+        case 'target.continuity': result = { sequence: 0, reason: 'NO_CHANGE', target: null }; break;
         case 'target.attach': attached = true; result = { ...target, attached: true }; break;
         case 'target.describe': result = { ...target, attached }; break;
         case 'target.release': attached = false; result = { targetId: 'tab_7', released: true }; break;

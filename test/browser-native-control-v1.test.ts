@@ -26,6 +26,8 @@ test('native browser control routes bounded target operations over one native po
   };
   const control = {
     async listTargets() { calls.push(['list']); return [target]; },
+    async watchContinuity(tabId: number) { calls.push(['watch', tabId]); return { tabId, baselineSequence: 0 }; },
+    async resolveContinuity(rootTabId: number, currentTabId: number) { calls.push(['continuity', rootTabId, currentTabId]); return { sequence: 0, reason: 'NO_CHANGE', target: null }; },
     async group(tabId: number, title = 'WAG • AI') { calls.push(['group', tabId, title]); return { tabId, groupId: 9, groupTitle: title, activeStable: true }; },
     async attach(tabId: number) { calls.push(['attach', tabId]); attached.add(tabId); return { ...target, state: 'ATTACHED' }; },
     async describe(tabId: number) { calls.push(['describe', tabId]); return { ...target, attached: attached.has(tabId) }; },
@@ -82,6 +84,8 @@ test('native browser control rejects arbitrary Runtime.evaluate before control d
     connectNative: () => port as never,
     control: {
       async listTargets() { return []; },
+      async watchContinuity(tabId: number) { return { tabId, baselineSequence: 0 }; },
+      async resolveContinuity() { return { sequence: 0, reason: 'NO_CHANGE', target: null }; },
       async group(tabId: number, title = 'WAG • AI') { return { tabId, groupId: 9, groupTitle: title, activeStable: true }; },
       async attach() { return {}; },
       async describe() { return {}; },

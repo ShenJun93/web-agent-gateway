@@ -77,6 +77,18 @@ test('Browser Control WebSocket authenticates exact extension and routes target/
         groupTitle: request.groupTitle,
         activeStable: true,
       };
+    } else if (request.method === 'target.watch') {
+      result = { targetId: request.targetId, baselineSequence: 4 };
+    } else if (request.method === 'target.continuity') {
+      result = {
+        sequence: 7,
+        reason: 'SUCCESSOR',
+        target: {
+          targetId: 'tab_8', windowId: 'window_3', title: 'OAuth Successor',
+          url: 'https://auth.example.test/callback', origin: 'https://auth.example.test',
+          active: false, attachable: true, ownership: 'USER_EXISTING', attached: false,
+        },
+      };
     } else {
       result = {};
     }
@@ -90,6 +102,22 @@ test('Browser Control WebSocket authenticates exact extension and routes target/
   assert.deepEqual(
     await server.client.groupTarget('tab_7', 'WAG • Test'),
     { targetId: 'tab_7', groupId: 'group_9', groupTitle: 'WAG • Test', activeStable: true },
+  );
+  assert.deepEqual(
+    await server.client.watchContinuity('tab_7'),
+    { targetId: 'tab_7', baselineSequence: 4 },
+  );
+  assert.deepEqual(
+    await server.client.resolveContinuity('tab_7', 'tab_7'),
+    {
+      sequence: 7,
+      reason: 'SUCCESSOR',
+      target: {
+        targetId: 'tab_8', windowId: 'window_3', title: 'OAuth Successor',
+        url: 'https://auth.example.test/callback', origin: 'https://auth.example.test',
+        active: false, attachable: true, ownership: 'USER_EXISTING', attached: false,
+      },
+    },
   );
   socket.close();
 });

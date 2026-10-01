@@ -31,6 +31,8 @@ function fixture() {
     active: false, attachable: true, ownership: 'USER_EXISTING' as const,
   };
   const control: ExistingBrowserControlClient = {
+    async watchContinuity(id) { calls.push(['watch', id]); return { targetId: id, baselineSequence: 0 }; },
+    async resolveContinuity(rootId, currentId) { calls.push(['continuity', rootId, currentId]); return { sequence: 0, reason: 'NO_CHANGE', target: null }; },
     async listTargets() { return [{ ...target, attached }]; },
     async groupTarget(id, title) { calls.push(['group', id, title]); return { targetId: id, groupId: 'group_9', groupTitle: title, activeStable: true }; },
     async attach(id) { calls.push(['attach', id]); attached = true; return { ...target, attached }; },
@@ -172,4 +174,116 @@ test('AI_TAB_GROUP fails closed if grouping changes the user active tab', async 
     /changed the active browser tab/,
   );
   assert.equal(f.isAttached(), false);
+});
+
+test('AI_TAB_GROUP follows an OAuth successor while keeping one logical browser session', async () => {
+  const f = fixture();
+  let successor = false;
+  const attached = new Set<string>();
+
+  const target = (id: string) => ({
+    targetId: id,
+    windowId: id === 'tab_7' ? 'window_3' : 'window_4',
+    title: id === 'tab_7' ? 'App' : 'OAuth successor',
+    url: id === 'tab_7' ? 'https://app.example.test/' : 'https://auth.example.test/callback',
+    origin: id === 'tab_7' ? 'https://app.example.test' : 'https://auth.example.test',
+    active: false,
+    attachable: true,
+    ownership: 'USER_EXISTING' as const,
+    attached: attached.has(id),
+  });
+
+  f.control.watchContinuity = async (id) => {
+    f.calls.push(['watch', id]);
+    return { targetId: id, baselineSequence: 0 };
+  };
+  f.control.resolveContinuity = async (rootId, currentId) => {
+    f.calls.push(['continuity', rootId, currentId]);
+    return successor
+      ? { sequence: 1, reason: 'SUCCESSOR', target: target('tab_8') }
+      : { sequence: 0, reason: 'NO_CHANGE', target: null };
+  };
+  f.control.groupTarget = async (id, title) => {
+    f.calls.push(['group', id, title]);
+    return {
+      targetId: id,
+      groupId: id === 'tab_7' ? 'group_9' : 'group_10',
+      groupTitle: title,
+      activeStable: true,
+    };
+  };
+  f.control.attach = async (id) => {
+    f.calls.push(['attach', id]);
+    attached.add(id);
+    return target(id);
+  };
+  f.control.describe = async (id) => {
+    f.calls.push(['describe', id]);
+    return target(id);
+  };
+  f.control.exec = async (id, method, params) => {
+    f.calls.push(['exec', id, method, params]);
+    return { ok: true };
+  };
+  f.control.release = async (id) => {
+    f.calls.push(['release', id]);
+    const released = attached.delete(id);
+    return { targetId: id, released };
+  };
+
+  const port = createAttachedExistingBrowserPort({
+    control: f.control,
+    claims: f.claims,
+    randomUUID: () => '00000000-0000-4000-8000-000000000003',
+  });
+
+  const opened = await port.open({
+    profileId: 'oauth',
+    owner: OWNER,
+    mode: 'AI_TAB_GROUP',
+    targetId: 'tab_7',
+    groupTitle: 'WAG • OAuth',
+  });
+  assert.equal(opened.targetId, 'tab_7');
+  assert.equal(opened.targetGeneration, 0);
+  successor = true;
+
+  const snap = await port.snapshot(OWNER, opened.browserSessionId);
+  assert.equal(snap.browserSessionId, opened.browserSessionId);
+  assert.equal(snap.targetId, 'tab_8');
+
+  const after = await port.describe(OWNER, opened.browserSessionId);
+  assert.equal(after.browserSessionId, opened.browserSessionId);
+  assert.equal(after.rootTargetId, 'tab_7');
+  assert.equal(after.targetId, 'tab_8');
+  assert.equal(after.targetGeneration, 1);
+  assert.equal(after.groupTitle, 'WAG • OAuth');
+
+  assert.equal(
+    f.calls.some((row) => row[0] === 'group' && row[1] === 'tab_8'),
+    true,
+    'OAuth successor should join the visible AI tab group',
+  );
+  assert.equal(
+    f.calls.some((row) => row[0] === 'release' && row[1] === 'tab_7'),
+    true,
+    'previous debugger target should detach after successor attach succeeds',
+  );
+
+  await port.exec(OWNER, opened.browserSessionId, {
+    method: 'DOM.focus',
+    params: { backendNodeId: 2 },
+  });
+  assert.equal(
+    f.calls.some((row) => row[0] === 'exec' && row[1] === 'tab_8'),
+    true,
+    'post-OAuth effects must target the successor',
+  );
+
+  await port.close(OWNER, opened.browserSessionId);
+  assert.equal(attached.size, 0);
+  const releasedClaims = f.claimCalls.filter((row) => row[0] === 'release').map((row) => row[1]);
+  assert.ok(releasedClaims.includes('tab_7'));
+  assert.ok(releasedClaims.includes('tab_8'));
+  port.shutdown();
 });

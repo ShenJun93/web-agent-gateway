@@ -24,6 +24,25 @@ test('existing browser control protocol accepts bounded target and semantic tran
   });
   assert.equal(grouped.groupTitle, 'WAG • Acceptance');
 
+  const watch = parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.watch',
+    targetId: 'tab_7',
+  });
+  assert.equal(watch.targetId, 'tab_7');
+
+  const continuity = parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.continuity',
+    targetId: 'tab_7',
+    currentTargetId: 'tab_8',
+  });
+  assert.equal(continuity.currentTargetId, 'tab_8');
+
   const exec = parseExistingBrowserControlRequest({
     version: 1,
     type: 'control.request',
@@ -71,6 +90,15 @@ test('existing browser control protocol denies raw CDP and malformed target iden
     method: 'target.attach',
     targetId: '7',
   }), /target id/);
+
+  assert.throws(() => parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.continuity',
+    targetId: 'tab_7',
+    currentTargetId: '7',
+  }), /current target id/);
 
   assert.throws(() => parseExistingBrowserControlRequest({
     version: 1,
