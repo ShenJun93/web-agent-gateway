@@ -59,6 +59,7 @@ const MAX_UPLOAD_FILES = 20;
 const MAX_INTERNAL_PATH_BYTES = 4096;
 const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
 const FIXED_NATIVE_VALUE_FILL_FUNCTION = "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}";
+const FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION = "function(){if(!(this instanceof HTMLElement)||!this.isContentEditable)return false;this.focus();const selection=this.ownerDocument.getSelection();if(!selection)return false;const range=this.ownerDocument.createRange();range.selectNodeContents(this);selection.removeAllRanges();selection.addRange(range);return true;}";
 const PRESS_KEYS = new Map<string, { key: string; code: string }>([
   ['Enter', { key: 'Enter', code: 'Enter' }],
   ['Tab', { key: 'Tab', code: 'Tab' }],
@@ -78,6 +79,12 @@ function value(input: AxValue | undefined): string {
 function flag(properties: AxProperty[] | undefined, name: string): boolean {
   const property = properties?.find((item) => item.name === name);
   return property?.value?.value === true;
+}
+
+function editableFlag(properties: AxProperty[] | undefined): boolean {
+  const property = properties?.find((item) => item.name === 'editable');
+  const value = property?.value?.value;
+  return value === true || value === 'plaintext' || value === 'richtext';
 }
 
 function parseAxNodes(result: unknown, snapshotId: string): SnapshotBinding & { nodes: SemanticNode[] } {
@@ -104,7 +111,7 @@ function parseAxNodes(result: unknown, snapshotId: string): SnapshotBinding & { 
       name,
       ...(rawValue === '' ? {} : { value: rawValue }),
       disabled: flag(ax.properties, 'disabled'),
-      editable: flag(ax.properties, 'editable') || ['textbox', 'searchbox', 'combobox', 'spinbutton'].includes(role),
+      editable: editableFlag(ax.properties) || ['textbox', 'searchbox', 'combobox', 'spinbutton'].includes(role),
       focusable: flag(ax.properties, 'focusable'),
     });
     refs.set(ref, { backendDOMNodeId: ax.backendDOMNodeId as number, node });
@@ -283,6 +290,25 @@ export function createSemanticBrowser(options: {
             if (result.value !== text) {
               throw new Error('Browser framework fill postcondition mismatch');
             }
+            return;
+          }
+
+          const selected = await options.port.exec(owner, browserSessionId, {
+            method: 'Runtime.callFunctionOn',
+            params: {
+              objectId,
+              functionDeclaration: FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION,
+              returnByValue: true,
+            },
+          });
+          const contenteditableSelected = typeof selected === 'object' && selected !== null
+            ? (selected as { result?: { value?: unknown } }).result?.value === true
+            : false;
+          if (contenteditableSelected) {
+            await options.port.exec(owner, browserSessionId, {
+              method: 'Input.insertText',
+              params: { text },
+            });
             return;
           }
         }

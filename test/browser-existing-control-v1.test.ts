@@ -270,3 +270,38 @@ test('fixed native-value fill function accepts one bounded string and rejects pa
       && error.code === 'CONTROL_PARAMS_INVALID',
   );
 });
+
+test('fixed contenteditable selection function is exact and cannot be widened', async () => {
+  const f = fixture();
+  const control = createExistingBrowserControlV1(f.chromeApi);
+  await control.attach(11);
+
+  const fixed = "function(){if(!(this instanceof HTMLElement)||!this.isContentEditable)return false;this.focus();const selection=this.ownerDocument.getSelection();if(!selection)return false;const range=this.ownerDocument.createRange();range.selectNodeContents(this);selection.removeAllRanges();selection.addRange(range);return true;}";
+
+  await control.exec(11, 'Runtime.callFunctionOn', {
+    objectId: 'object_45',
+    functionDeclaration: fixed,
+    returnByValue: true,
+  });
+
+  await assert.rejects(
+    () => control.exec(11, 'Runtime.callFunctionOn', {
+      objectId: 'object_45',
+      functionDeclaration: fixed,
+      arguments: [],
+      returnByValue: true,
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+
+  await assert.rejects(
+    () => control.exec(11, 'Runtime.callFunctionOn', {
+      objectId: 'object_45',
+      functionDeclaration: fixed.replace('return true', 'return document.cookie'),
+      returnByValue: true,
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+});

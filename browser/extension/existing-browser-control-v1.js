@@ -226,6 +226,7 @@ function assertAllowedCdpMethod(method) {
 
 const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
 const FIXED_NATIVE_VALUE_FILL_FUNCTION = "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}";
+const FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION = "function(){if(!(this instanceof HTMLElement)||!this.isContentEditable)return false;this.focus();const selection=this.ownerDocument.getSelection();if(!selection)return false;const range=this.ownerDocument.createRange();range.selectNodeContents(this);selection.removeAllRanges();selection.addRange(range);return true;}";
 const MAX_FILL_TEXT_BYTES = 64 * 1024;
 
 function assertBoundedRuntimeCommand(method, params) {
@@ -243,10 +244,11 @@ function assertBoundedRuntimeCommand(method, params) {
       throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime call params are invalid');
     }
 
-    if (params.functionDeclaration === FIXED_DOM_CLICK_FUNCTION) {
+    if (params.functionDeclaration === FIXED_DOM_CLICK_FUNCTION
+        || params.functionDeclaration === FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION) {
       const keys = Object.keys(params ?? {}).sort();
       if (keys.join(',') !== 'functionDeclaration,objectId,returnByValue') {
-        throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime click params are invalid');
+        throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime fixed-function params are invalid');
       }
       return;
     }

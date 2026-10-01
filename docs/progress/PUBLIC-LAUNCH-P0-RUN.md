@@ -422,3 +422,58 @@ Known remaining risk:
 Next:
 - commit STOP 4 / Task 5;
 - proceed to Task 6 rich-text/contenteditable acceptance.
+
+---
+
+Task: Browser v2 STOP 5 / Task 6 — rich-text/contenteditable
+State: DONE / BRANCH ACCEPTED
+Evidence:
+- AX semantic parser now accepts editable=true, plaintext and richtext tokens;
+- real Chromium ProseMirror richtext node is discovered as semantic editable;
+- background Ctrl+A fallback was rejected by real contenteditable postcondition failure;
+- rich editable replacement now uses exact WAG-owned contenteditable selection inside the attached target followed by bounded Input.insertText;
+- fixed selection function is exact allowlisted; extra arguments or modified arbitrary function bodies are rejected;
+- Runtime.evaluate remains denied;
+- real Edge plain contenteditable model postcondition PASS;
+- real ProseMirror EditorState.doc.textContent replacement PASS;
+- real TipTap editor.getText replacement PASS;
+- replacement-not-append PASS;
+- active user tab remains stable; no Windows UIAutomation or OS pointer injection;
+- Task 5 native/React fill regression remains PASS;
+- AI_TAB_GROUP snapshot/fill/click regression remains PASS;
+- broad Browser/runtime regression = 145/145 PASS;
+- focused rich-text/security tests = 17/17 PASS;
+- typecheck/build/diff-check PASS;
+- npm audit --omit=dev = 0 vulnerabilities.
+Files changed:
+- src/browser-harness/semantic-browser.ts
+- browser/extension/existing-browser-control-v1.js
+- test/browser-harness/semantic.test.ts
+- test/browser-existing-control-v1.test.ts
+- scripts/accept-browser-v2-rich-text.ts
+- package.json
+- package-lock.json
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop5-rich-text.md
+Tests:
+- Browser/extension/WebSocket batch A = 77/77 PASS
+- Browser MCP/semantic/private-browser batch B = 40/40 PASS
+- control/runtime/claim-fencing batch C = 28/28 PASS
+- total broad Browser regression = 145/145 PASS
+- real Edge rich-text/contenteditable/ProseMirror/TipTap = PASS
+- real Edge framework-safe fill = PASS
+- real Edge AI_TAB_GROUP regression = PASS
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+- npm audit --omit=dev = 0 vulnerabilities
+Known remaining risk:
+- OAUTH_TARGET_CONTINUITY = NOT_IMPLEMENTED;
+- BROWSER_SESSION_RECOVERY = NOT_IMPLEMENTED;
+- CROSS_PROCESS_WEBSOCKET_CONTROL = NOT_PROVEN;
+- PRODUCTION_PAIRING_UX = NOT_COMPLETE;
+- USER_REAL_PROFILE_ACCEPTANCE = NOT_EXECUTED;
+- AUTO_AI_TAB_GROUP_SELECTION = NOT_IMPLEMENTED;
+- live runtime remains older and is not promoted from this branch.
+Next:
+- commit STOP 5 / Task 6;
+- proceed to OAuth/new-target continuity.

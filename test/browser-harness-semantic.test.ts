@@ -45,18 +45,41 @@ function fixture() {
                 { name: 'editable', value: { value: true } },
               ],
             },
+            {
+              ignored: false,
+              role: { value: 'generic' },
+              name: { value: 'ProseMirror' },
+              value: { value: 'pm-old' },
+              backendDOMNodeId: 45,
+              properties: [
+                { name: 'focusable', value: { value: true } },
+                { name: 'editable', value: { value: 'richtext' } },
+              ],
+            },
             { ignored: true, role: { value: 'generic' }, backendDOMNodeId: 44 },
           ],
         };
       }
       if (request.method === 'DOM.resolveNode') {
-        return { object: { objectId: 'object_42' } };
+        const backendNodeId = request.params?.backendNodeId;
+        return { object: { objectId: `object_${String(backendNodeId)}` } };
       }
       if (request.method === 'Runtime.callFunctionOn') {
         const args = request.params?.arguments;
+        const objectId = request.params?.objectId;
+        const declaration = request.params?.functionDeclaration;
         if (Array.isArray(args)) {
           const first = args[0] as { value?: unknown } | undefined;
-          return { result: { value: { supported: true, value: first?.value } } };
+          return {
+            result: {
+              value: objectId === 'object_43'
+                ? { supported: true, value: first?.value }
+                : { supported: false, value: null },
+            },
+          };
+        }
+        if (typeof declaration === 'string' && declaration.includes('isContentEditable')) {
+          return { result: { value: objectId === 'object_45' } };
         }
         return { result: { value: true } };
       }
@@ -79,10 +102,11 @@ function fixture() {
 test('semantic snapshot produces opaque refs from accessible DOM-backed nodes only', async () => {
   const f = fixture();
   const snapshot = await f.semantic.snapshot(OWNER, SESSION);
-  assert.equal(snapshot.nodes.length, 2);
+  assert.equal(snapshot.nodes.length, 3);
   assert.deepEqual(snapshot.nodes.map((node) => ({ role: node.role, name: node.name, editable: node.editable })), [
     { role: 'button', name: 'Submit', editable: false },
     { role: 'textbox', name: 'Question', editable: true },
+    { role: 'generic', name: 'ProseMirror', editable: true },
   ]);
   assert.match(snapshot.nodes[0]!.ref, /^node_00000000-0000-4000-8000-000000000101_0$/);
 });
@@ -111,14 +135,37 @@ test('semantic fill prefers fixed native-value replacement for framework-safe in
   assert.deepEqual(f.calls, [
     { method: 'DOM.resolveNode', params: { backendNodeId: 43 } },
     { method: 'Runtime.callFunctionOn', params: {
-      objectId: 'object_42',
+      objectId: 'object_43',
       functionDeclaration: "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}",
       arguments: [{ value: 'hello' }],
       returnByValue: true,
     } },
-    { method: 'Runtime.releaseObject', params: { objectId: 'object_42' } },
+    { method: 'Runtime.releaseObject', params: { objectId: 'object_43' } },
   ]);
   await assert.rejects(() => f.semantic.fill(OWNER, SESSION, snapshot.nodes[0]!.ref, 'x'), /not editable/);
+});
+
+test('semantic fill selects rich contenteditable in-target before bounded text insertion', async () => {
+  const f = fixture();
+  const snapshot = await f.semantic.snapshot(OWNER, SESSION);
+  f.calls.length = 0;
+  await f.semantic.fill(OWNER, SESSION, snapshot.nodes[2]!.ref, 'pm-new');
+  assert.deepEqual(f.calls, [
+    { method: 'DOM.resolveNode', params: { backendNodeId: 45 } },
+    { method: 'Runtime.callFunctionOn', params: {
+      objectId: 'object_45',
+      functionDeclaration: "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}",
+      arguments: [{ value: 'pm-new' }],
+      returnByValue: true,
+    } },
+    { method: 'Runtime.callFunctionOn', params: {
+      objectId: 'object_45',
+      functionDeclaration: "function(){if(!(this instanceof HTMLElement)||!this.isContentEditable)return false;this.focus();const selection=this.ownerDocument.getSelection();if(!selection)return false;const range=this.ownerDocument.createRange();range.selectNodeContents(this);selection.removeAllRanges();selection.addRange(range);return true;}",
+      returnByValue: true,
+    } },
+    { method: 'Input.insertText', params: { text: 'pm-new' } },
+    { method: 'Runtime.releaseObject', params: { objectId: 'object_45' } },
+  ]);
 });
 
 test('semantic refs fail closed after a new snapshot or navigation', async () => {
