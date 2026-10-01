@@ -284,6 +284,26 @@ test('the shipped worker entry is pinned to the v4 modules and the derived actor
   assert.equal(order.includes(-1), false);
 });
 
+test('Browser v2 pairing is sidepanel-only and the panel does not retain the pasted token in the DOM', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const worker = await readFile(new URL('../browser/extension/service-worker.js', import.meta.url), 'utf8');
+  const panel = await readFile(new URL('../browser/extension/sidepanel.js', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../browser/extension/sidepanel.html', import.meta.url), 'utf8');
+
+  for (const messageType of ['browser.control.configure', 'browser.control.state', 'browser.control.clear']) {
+    assert.ok(worker.includes(`message?.type === '${messageType}'`));
+  }
+  assert.ok(worker.includes("if (actor !== 'sidepanel') { sendResponse({ configured: false }); return false; }"));
+  assert.ok(worker.includes("if (actor !== 'sidepanel') { sendResponse({ cleared: false }); return false; }"));
+
+  assert.ok(html.includes('id="browser-pairing"'));
+  assert.ok(html.includes('browser-pairing --config'));
+  assert.ok(panel.includes("browserPairingEl.value = '';"), 'the pasted token must be cleared after pairing');
+  assert.equal(panel.includes('browserControlEndpointEl.textContent = state.pairingToken'), false);
+  assert.equal(panel.includes('browserPairingResultEl.textContent = config.pairingToken'), false);
+  assert.ok(panel.includes("type: 'browser.control.clear'"));
+});
+
 test('a schema-refused frame is answered, and the admitted session survives it', async () => {
   const accepted = `chrome-extension://${BROWSER_ADAPTER_EXTENSION_ID}/`;
   const decoder = new NativeMessageDecoder();

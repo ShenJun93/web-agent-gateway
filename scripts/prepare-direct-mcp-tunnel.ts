@@ -9,7 +9,7 @@
  *
  *   ChatGPT connector -> OpenAI tunnel endpoint -> tunnel-client (this machine)
  *     -> node dist/cli.js serve-stdio --config <local config>   [stdio, no listening port]
- *     -> DevSpace / durable store / local approval or Goal Lease
+ *     -> DevSpace / durable store / autonomous-local policy
  *
  * This script verifies the local half and prints the exact invocation for the remote half. It
  * deliberately stops at every boundary that needs a person:
@@ -29,6 +29,7 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { loadPrivateGatewayConfig, type PrivateGatewayConfig } from '../src/private-config.js';
 import { createGatewayMcpServer } from '../src/server.js';
+import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 
@@ -40,7 +41,6 @@ interface Readiness {
   cliPath: string;
   tools: string[];
   missing: string[];
-  leaseNamed?: string;
   stableSession: boolean;
   delegationNamed?: string;
 }
@@ -93,8 +93,21 @@ export async function projectedTools(
     inspect: engineering?.inspect === true,
     ...(engineering?.mutation === undefined ? {} : {
       mutationContext: { callerContext, coordinator: refusing() },
+      changeSetContext: { callerContext, coordinator: refusing() },
+      capabilityContext: refusing(),
+      machineContext: refusing(),
+      diagnosticsContext: new ToolUsageDiagnostics(),
+      productContext: refusing(),
+      ...(engineering.browser === undefined ? {} : { browserContext: refusing() }),
+      ...(engineering.desktop === undefined ? {} : { desktopContext: refusing() }),
       ...(engineering.gitCommit === undefined
-        ? {} : { gitCommitContext: { callerContext, coordinator: refusing() } }),
+        ? {}
+        : {
+          gitCommitContext: { callerContext, coordinator: refusing() },
+          ...(engineering.inspect === true
+            ? { commandContext: { authorize: async () => undefined } }
+            : {}),
+        }),
     }),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -113,6 +126,11 @@ export async function projectedTools(
   if (Object.keys(config.verifyProfiles).length === 0) missing.push('verify');
   if (!engineering?.mutation) missing.push('mutation');
   if (!engineering?.gitCommit) missing.push('commit');
+  if (!(engineering?.inspect === true
+    && engineering?.mutation !== undefined
+    && engineering?.gitCommit !== undefined)) {
+    missing.push('command');
+  }
   return { tools, missing };
 }
 
@@ -133,8 +151,6 @@ export async function prepare(configPath: string): Promise<Readiness> {
     tools,
     missing,
     stableSession: config.repositoryEngineering?.mutation?.sessionCorrelation !== undefined,
-    ...(config.repositoryEngineering?.mutation?.goalLeaseId === undefined
-      ? {} : { leaseNamed: config.repositoryEngineering.mutation.goalLeaseId }),
     ...(config.repositoryEngineering?.mutation?.goalUiDelegationId === undefined
       ? {} : { delegationNamed: config.repositoryEngineering.mutation.goalUiDelegationId }),
   };
@@ -168,41 +184,12 @@ function report(readiness: Readiness, allowPartial: boolean): number {
     console.log('  --allow-partial to emit a read-only tunnel profile deliberately.');
   }
 
-  // The single most consequential thing an operator can get wrong here. A tunnel creates no
-  // authority, but it does widen *who can propose*, and a named lease is what decides whether a
-  // proposal becomes an effect with nobody present.
-  //
-  // Only the lease matters on this surface. A Goal UI Delegation (ADR-0029) lifts *Run* — the
-  // step that turns an untrusted page's text into a proposal — and the direct path has no page
-  // and no Run gesture, because the MCP call is itself the proposal. It is reported below for
-  // completeness and is not part of this surface's authority.
-  if (readiness.leaseNamed && !readiness.stableSession) {
-    // The gateway refuses this at startup; say so here rather than let it look workable.
-    console.log(`\n  !! MISCONFIGURED      goalLeaseId ${readiness.leaseNamed} with no sessionCorrelation`);
-    console.log('     A lease admits only the sessions its row lists, and without a correlation');
-    console.log('     this surface mints a new session every start — so the lease could never');
-    console.log('     admit. `serve-stdio` will refuse to start until one is set or the lease is');
-    console.log('     removed.');
-  } else if (readiness.leaseNamed) {
-    console.log(`\n  !! GOAL LEASE NAMED   goalLeaseId ${readiness.leaseNamed}`);
-    console.log('     Autonomous admission is reachable here: the session is stable across');
-    console.log('     restarts, so if the lease is live, names that session, and admits the');
-    console.log('     action, a mutation or commit reaches a durable effect with no human');
-    console.log('     approval — and over a tunnel the party proposing it is ChatGPT.');
-    console.log('     Whether it is live is decided per admission from the durable row, not here.');
-    console.log('     Unname it to require local operator approval again.');
-  } else if (readiness.stableSession) {
-    console.log('\n  approval         local operator approval required for every effect');
-    console.log('                   (session is stable, but no goalLeaseId named)');
-  } else {
-    console.log('\n  approval         local operator approval required for every effect');
-    console.log('                   (no goalLeaseId named, so ADR-0026 holds in full)');
-  }
+  console.log('\n  authority        trusted private-local profile + caller-owned workspace identity');
+  console.log('                   + immediate kill-switch revalidation; no per-goal authority step exists.');
   if (readiness.stableSession) {
     console.log('  session          stable, resolved from the configured correlation.');
-    console.log('                   Start the gateway once and read `stableSessionId` from its');
-    console.log('                   gateway.profile line on stderr: that is the id a Goal Lease');
-    console.log('                   must be issued for, out of band, by a person.');
+    console.log('                   stableSessionId is reconnect/audit identity only; it grants no');
+    console.log('                   execution authority and needs no out-of-band issuance.');
   }
   if (readiness.delegationNamed) {
     console.log(`  delegation       ${readiness.delegationNamed}`);
@@ -245,7 +232,8 @@ function report(readiness: Readiness, allowPartial: boolean): number {
   console.log('  1. create the tunnel and a runtime API key in the OpenAI platform settings');
   console.log('  2. install tunnel-client from the openai/tunnel-client releases');
   console.log('  3. add the connector in ChatGPT settings, on a plan that permits custom MCP');
-  console.log('  4. approve, in ChatGPT, any write action it asks you to confirm');
+  console.log('  4. choose the connector permission mode you want in ChatGPT; WAG Local itself');
+  console.log('     requires no per-change Goal Lease or operator approval');
 
   const blocked = readiness.missing.length > 0 && !allowPartial;
   console.log(`\nDIRECT_MCP_LOCAL_READINESS = ${blocked ? 'INCOMPLETE' : 'READY'}`);

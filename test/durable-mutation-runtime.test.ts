@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -54,12 +54,44 @@ test('durable mutation runtime reconciles before serving and owns only its local
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
     'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
-    'mutation.preview', 'file.create', 'mutation.result',
+    'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'result.chunk',
   ]);
 
   const opened = await client.callTool({ name: 'workspace.open', arguments: { path: fixture.workspaceRoot } });
   const workspaceId = (opened.structuredContent as { workspaceId?: string } | undefined)?.workspaceId;
   assert.match(workspaceId ?? '', /^ws_/);
+
+  const replacement = 'replacement\nwhole file\n';
+  const replacePreview = await client.callTool({ name: 'file.replace', arguments: {
+    workspace_id: workspaceId,
+    path: 'note.txt',
+    base_sha256: sha256(note),
+    content: replacement,
+  } });
+  const replaceView = replacePreview.structuredContent as {
+    mutationId?: string;
+    before_sha256?: string;
+    after_sha256?: string;
+  } | undefined;
+  assert.match(replaceView?.mutationId ?? '', /^mut_/);
+  assert.equal(replaceView?.before_sha256, sha256(note));
+  assert.equal(replaceView?.after_sha256, sha256(replacement));
+  assert.equal(await readFile(join(fixture.workspaceRoot, 'note.txt'), 'utf8'), note,
+    'file.replace is still a proposal and must not write before admission');
+
+  const replaceResult = await client.callTool({
+    name: 'mutation.result',
+    arguments: { mutation_id: replaceView?.mutationId },
+  });
+  assert.equal(
+    (replaceResult.structuredContent as { before_sha256?: string } | undefined)?.before_sha256,
+    sha256(note),
+  );
+  assert.equal(
+    (replaceResult.structuredContent as { after_sha256?: string } | undefined)?.after_sha256,
+    sha256(replacement),
+  );
+
   const preview = await client.callTool({ name: 'mutation.preview', arguments: {
     workspace_id: workspaceId, path: 'note.txt', base_sha256: sha256(note), before: 'beta', after: 'BETA',
   } });

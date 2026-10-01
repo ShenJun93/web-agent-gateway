@@ -14,7 +14,7 @@ import {
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const builtCli = join(repoRoot, 'dist', 'cli.js');
-const fiveTools = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run'];
+const directTools = ['health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'result.chunk'];
 
 async function connectBuiltCli(configPath: string) {
   const transport = new StdioClientTransport({
@@ -88,7 +88,7 @@ test('built Business stdio path works with exact-pinned DevSpace and rotating OA
   assert.ok(firstPid, 'stdio client transport must expose the Gateway child pid');
 
   const tools = await first.client.listTools();
-  assert.deepEqual(tools.tools.map((tool) => tool.name), fiveTools);
+  assert.deepEqual(tools.tools.map((tool) => tool.name), directTools);
   const opened = await first.client.callTool({
     name: 'workspace.open',
     arguments: { path: fixture.workspaceRoot },

@@ -87,7 +87,7 @@ const PROTECTED_DIR = '.claude/hooks/';
 /** The operator's single-use bootstrap credential, as an actual file name. Matching the bare
  *  word refused `rg operator-url src/`, which is reading, not reaching. */
 const OPERATOR_URL_FILE = /[\w.-]+\.operator-url\b/i;
-const OPERATOR_ROUTE = /\/(?:mutations|commits|verifications)\/[A-Za-z0-9_.:-]{1,64}\/(?:approve|reject)\b/i;
+const OPERATOR_ROUTE = /\/(?:mutations|commits|verifications|pushes)\/[A-Za-z0-9_.:-]{1,64}\/(?:approve|reject)\b/i;
 const OPERATOR_BOOTSTRAP = /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d{1,5})?\/bootstrap\b/i;
 const OPERATOR_ORIGIN = /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}\b/i;
 const WAG_STATE_FILE = 'browser-operator-v4.sqlite';
@@ -122,37 +122,20 @@ const FILE_READ_VERB =
   /\b(?:cat|type|more|less|head|tail|Get-Content|gc|Copy-Item|copy|cp|mv|Move-Item|xargs|base64|od|xxd|strings)\b|[<>|]/;
 
 /**
- * Minting an authority that removes a human gesture, or naming one in local configuration.
+ * Browser Goal UI Delegation remains human-issued because it lifts the browser Run gesture.
+ * Private/local execution is autonomous and uses no per-goal authority object. sessionCorrelation
+ * is identity/audit continuity only and may be minted by WAG for a new autonomous lane.
  *
- * A Goal Lease lifts Approve (ADR-0028); a Goal UI Delegation lifts Run (ADR-0029). Both rules say
- * the same thing in the same words — issuance is human-only and out of band, Claude may *use* a
- * grant and must *report* on one but may never create, widen or renew one — and until this block
- * that was the only rule in `human-presence-boundary.md` with no pattern behind it anywhere.
- *
- * Two acts are refused, because there are two ways a shell reaches authority:
- *
- *   1. **running** issuance — the control CLI with an issuing flag, or a one-liner that calls the
- *      store or the control plane directly;
- *   2. **naming** a grant in local configuration — which is the quieter half and the one that
- *      actually matters. A delegation not named in config is inert whatever its row says, so
- *      writing the name is the act that turns a row into live authority.
- *
- * Deliberately **not** refused: `--show`, `--sessions`, `--workspaces`, every read of any of
- * these files, `--revoke`, and `npm run lease:stop`. Narrowing a grant and stopping automation
- * are things a person may need help with in a hurry, and a guard that refused them is a guard
- * people learn to turn off.
+ * Deliberately not refused: private-local execution, inspection, stable-identity bootstrap,
+ * revocation, the emergency kill switch, or ordinary private configuration writes.
  */
 const GRANT_CLI = /\bdelegation-control(?:\.[cm]?[jt]s)?\b/i;
 const GRANT_CLI_FLAG = /--(?:issue|renew)\b/;
 /** A *call*, not a mention: the open bracket is what separates invoking from describing. */
 const GRANT_CALL =
-  /\b(?:insertUiDelegation|renewUiDelegation|insertGoalLease)\s*\(|\bnew\s+UiDelegationControlPlane\s*\(/;
-/**
- * The configuration fields that bind Claude to durable authority this process will honour: a Goal
- * Lease, a Goal UI Delegation, and the session correlation that selects which durable session a
- * lease's bindings are matched against. Naming any of them is the operator's edit, not Claude's.
- */
-const GRANT_CONFIG_FIELD = /\b(?:goalUiDelegationId|goalLeaseId|sessionCorrelation)\b/;
+  /\b(?:insertUiDelegation|renewUiDelegation)\s*\(|\bnew\s+UiDelegationControlPlane\s*\(/;
+/** The one private-config field that activates human-issued browser authority. */
+const GRANT_CONFIG_FIELD = /\bgoalUiDelegationId\b/;
 /** Something that *runs* a script, as opposed to reading, grepping or quoting one. */
 const SCRIPT_RUNNER = /\b(?:node|npx|npm|pnpm|yarn|bun|deno|tsx|ts-node)\b/i;
 
@@ -210,7 +193,7 @@ function matchAuthorityIssuance(text) {
   if (GRANT_CLI.test(text) && GRANT_CLI_FLAG.test(text)) {
     return 'issues or renews a Goal UI Delegation';
   }
-  if (GRANT_CALL.test(text)) return 'calls delegation or lease issuance directly';
+  if (GRANT_CALL.test(text)) return 'calls Goal UI Delegation issuance directly';
   return undefined;
 }
 
@@ -231,7 +214,7 @@ function matchAuthorityWrite(input) {
   if (typeof target !== 'string') return undefined;
   if (!/\.json$/i.test(target.split('\\').join('/'))) return undefined;
   return GRANT_CONFIG_FIELD.test(serialize(input))
-    ? 'names a Goal Lease, a Goal UI Delegation, or a session correlation in a configuration file'
+    ? 'names a Goal UI Delegation in a configuration file'
     : undefined;
 }
 
@@ -262,7 +245,7 @@ export function decide(event) {
     if (why) {
       return {
         deny: true,
-        reason: `wag-human-gate-guard: this write ${why}. A delegation or lease that is not named in local configuration is inert, so writing the name is what turns a row into live authority — and issuance is human-only and out of band. ${BOUNDARY_RULE}`,
+        reason: `wag-human-gate-guard: this write ${why}. A Goal UI Delegation not named in local configuration is inert, so writing the name is what turns browser Run delegation into live authority — and issuance is human-only and out of band. ${BOUNDARY_RULE}`,
       };
     }
   }
@@ -313,7 +296,7 @@ export function decide(event) {
     if (issuing) {
       return {
         deny: true,
-        reason: `wag-human-gate-guard: this command ${issuing}. Claude may use a Goal Lease or a Goal UI Delegation and must report on one; it may not create, widen or renew one. Revocation and \`npm run lease:stop\` are not refused. ${BOUNDARY_RULE}`,
+        reason: `wag-human-gate-guard: this command ${issuing}. Goal UI Delegation issuance, widening and renewal remain human-only. Private-local WAG execution needs no grant. Revocation and \`npm run autonomy:stop\` are not refused. ${BOUNDARY_RULE}`,
       };
     }
     // Naming a route or a credential is not reaching for one: an analysis script may quote both,

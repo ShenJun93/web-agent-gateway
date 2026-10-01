@@ -334,26 +334,15 @@ export class SqliteDurableStore {
       );
       CREATE INDEX IF NOT EXISTS idx_mutations_state ON mutations(state, created_at);
     `);
-    // Autonomous Goal Lease v1 (ADR-0028). Two tables rather than columns on `mutations`, for the
-    // reason stated above: there is no migration framework here.
-    //
-    // `mutation_authority` is what makes POLICY_APPROVED and HUMAN_APPROVED distinguishable after
-    // the fact. A row is written at admission and never updated, so the authority under which an
-    // effect happened is a durable fact rather than something inferred from which code path ran.
-    // A mutation with no row was admitted by neither and cannot have executed.
+    // Autonomous-local authority provenance. New stores carry no Goal Lease table or selector.
+    // Existing stores may retain retired lease columns/tables; they are inert. Historical
+    // POLICY_APPROVED rows carrying retired authority are refused at the effect boundary.
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS goal_leases (
-        lease_id TEXT PRIMARY KEY,
-        created_at INTEGER NOT NULL,
-        not_before INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        revoked_at INTEGER,
-        bindings TEXT NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS mutation_authority (
         mutation_id TEXT PRIMARY KEY,
         authority TEXT NOT NULL,
-        lease_id TEXT,
+        retired_policy_authority INTEGER NOT NULL DEFAULT 0
+          CHECK (retired_policy_authority IN (0, 1)),
         admitted_at INTEGER NOT NULL,
         fingerprint TEXT NOT NULL,
         workspace_id TEXT NOT NULL,
@@ -362,11 +351,11 @@ export class SqliteDurableStore {
         diff_bytes INTEGER NOT NULL,
         FOREIGN KEY(mutation_id) REFERENCES mutations(mutation_id)
       );
-      CREATE INDEX IF NOT EXISTS idx_mutation_authority_lease ON mutation_authority(lease_id);
       CREATE TABLE IF NOT EXISTS commit_authority (
         commit_id TEXT PRIMARY KEY,
         authority TEXT NOT NULL,
-        lease_id TEXT,
+        retired_policy_authority INTEGER NOT NULL DEFAULT 0
+          CHECK (retired_policy_authority IN (0, 1)),
         admitted_at INTEGER NOT NULL,
         fingerprint TEXT NOT NULL,
         workspace_id TEXT NOT NULL,
@@ -375,8 +364,8 @@ export class SqliteDurableStore {
         path_count INTEGER NOT NULL,
         FOREIGN KEY(commit_id) REFERENCES commits(commit_id)
       );
-      CREATE INDEX IF NOT EXISTS idx_commit_authority_lease ON commit_authority(lease_id);
     `);
+    this.migrateRetiredPolicyAuthoritySchema();
     // Goal UI Delegation v1 (ADR-0029). New tables, for the reason above: no migration framework.
     //
     // The lifecycle is explicit in the schema rather than implied by a nullable timestamp:
@@ -741,7 +730,6 @@ export class SqliteDurableStore {
    */
   policyAdmitMutation(input: {
     mutationId: string;
-    leaseId: string;
     now: number;
     admissionTtlMs: number;
   }): MutationRecord | undefined {
@@ -759,7 +747,6 @@ export class SqliteDurableStore {
       this.recordMutationAuthority({
         mutationId: input.mutationId,
         authority: 'POLICY_APPROVED',
-        leaseId: input.leaseId,
         admittedAt: input.now,
         fingerprint: record.fingerprint,
         workspaceId: record.workspaceId,
@@ -778,7 +765,6 @@ export class SqliteDurableStore {
   recordMutationAuthority(input: {
     mutationId: string;
     authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
-    leaseId?: string;
     admittedAt: number;
     fingerprint: string;
     workspaceId: string;
@@ -787,15 +773,15 @@ export class SqliteDurableStore {
     diffBytes: number;
   }): void {
     this.db.prepare(`INSERT OR IGNORE INTO mutation_authority
-      (mutation_id, authority, lease_id, admitted_at, fingerprint, workspace_id, path, result_sha256, diff_bytes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(input.mutationId, input.authority, input.leaseId ?? null, input.admittedAt,
+      (mutation_id, authority, admitted_at, fingerprint, workspace_id, path, result_sha256, diff_bytes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(input.mutationId, input.authority, input.admittedAt,
         input.fingerprint, input.workspaceId, input.path, input.resultSha256, input.diffBytes);
   }
 
   getMutationAuthority(mutationId: string): {
     authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
-    leaseId?: string;
+    retiredPolicyAuthority?: boolean;
     admittedAt: number;
     fingerprint: string;
     path: string;
@@ -807,7 +793,7 @@ export class SqliteDurableStore {
     if (!row) return undefined;
     return {
       authority: row.authority as 'HUMAN_APPROVED' | 'POLICY_APPROVED',
-      ...(row.lease_id === null ? {} : { leaseId: String(row.lease_id) }),
+      ...(Number(row.retired_policy_authority) === 1 ? { retiredPolicyAuthority: true } : {}),
       admittedAt: Number(row.admitted_at),
       fingerprint: String(row.fingerprint),
       path: String(row.path),
@@ -827,7 +813,6 @@ export class SqliteDurableStore {
   recordCommitAuthority(input: {
     commitId: string;
     authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
-    leaseId?: string;
     admittedAt: number;
     fingerprint: string;
     workspaceId: string;
@@ -836,15 +821,15 @@ export class SqliteDurableStore {
     pathCount: number;
   }): void {
     this.db.prepare(`INSERT OR IGNORE INTO commit_authority
-      (commit_id, authority, lease_id, admitted_at, fingerprint, workspace_id, branch, old_head, path_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(input.commitId, input.authority, input.leaseId ?? null, input.admittedAt,
+      (commit_id, authority, admitted_at, fingerprint, workspace_id, branch, old_head, path_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(input.commitId, input.authority, input.admittedAt,
         input.fingerprint, input.workspaceId, input.branch, input.oldHead, input.pathCount);
   }
 
   getCommitAuthority(commitId: string): {
     authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
-    leaseId?: string;
+    retiredPolicyAuthority?: boolean;
     admittedAt: number;
     branch: string;
     pathCount: number;
@@ -854,11 +839,98 @@ export class SqliteDurableStore {
     if (!row) return undefined;
     return {
       authority: row.authority as 'HUMAN_APPROVED' | 'POLICY_APPROVED',
-      ...(row.lease_id === null ? {} : { leaseId: String(row.lease_id) }),
+      ...(Number(row.retired_policy_authority) === 1 ? { retiredPolicyAuthority: true } : {}),
       admittedAt: Number(row.admitted_at),
       branch: String(row.branch),
       pathCount: Number(row.path_count),
     };
+  }
+
+  /**
+   * One-time in-place removal of the retired per-goal authority column.
+   *
+   * Accepted stores created before autonomous-local cutover may still have a nullable authority
+   * selector column. Its identifier is deliberately not preserved: only the fact that the row came
+   * from retired policy is retained, so a queued historical effect is refused rather than silently
+   * reinterpreted as autonomous-local.
+   */
+  private migrateRetiredPolicyAuthoritySchema(): void {
+    const specs = [
+      {
+        table: 'mutation_authority',
+        next: 'mutation_authority_v2',
+        create: `CREATE TABLE mutation_authority_v2 (
+          mutation_id TEXT PRIMARY KEY,
+          authority TEXT NOT NULL,
+          retired_policy_authority INTEGER NOT NULL DEFAULT 0 CHECK (retired_policy_authority IN (0, 1)),
+          admitted_at INTEGER NOT NULL,
+          fingerprint TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          path TEXT NOT NULL,
+          result_sha256 TEXT NOT NULL,
+          diff_bytes INTEGER NOT NULL,
+          FOREIGN KEY(mutation_id) REFERENCES mutations(mutation_id)
+        )`,
+        insert: `INSERT INTO mutation_authority_v2
+          (mutation_id, authority, retired_policy_authority, admitted_at, fingerprint, workspace_id, path, result_sha256, diff_bytes)
+          SELECT mutation_id, authority, CASE WHEN lease_id IS NULL THEN 0 ELSE 1 END,
+            admitted_at, fingerprint, workspace_id, path, result_sha256, diff_bytes
+          FROM mutation_authority`,
+      },
+      {
+        table: 'commit_authority',
+        next: 'commit_authority_v2',
+        create: `CREATE TABLE commit_authority_v2 (
+          commit_id TEXT PRIMARY KEY,
+          authority TEXT NOT NULL,
+          retired_policy_authority INTEGER NOT NULL DEFAULT 0 CHECK (retired_policy_authority IN (0, 1)),
+          admitted_at INTEGER NOT NULL,
+          fingerprint TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          branch TEXT NOT NULL,
+          old_head TEXT NOT NULL,
+          path_count INTEGER NOT NULL,
+          FOREIGN KEY(commit_id) REFERENCES commits(commit_id)
+        )`,
+        insert: `INSERT INTO commit_authority_v2
+          (commit_id, authority, retired_policy_authority, admitted_at, fingerprint, workspace_id, branch, old_head, path_count)
+          SELECT commit_id, authority, CASE WHEN lease_id IS NULL THEN 0 ELSE 1 END,
+            admitted_at, fingerprint, workspace_id, branch, old_head, path_count
+          FROM commit_authority`,
+      },
+    ] as const;
+
+    const migrations = specs.filter((spec) => {
+      const ddl = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ).get(spec.table) as { sql?: string } | undefined;
+      if (!ddl?.sql) return false;
+      const columns = new Set(
+        (this.db.prepare(`PRAGMA table_info(${spec.table})`).all() as Array<{ name: string }>)
+          .map((row) => String(row.name)),
+      );
+      return columns.has('lease_id');
+    });
+    const retiredTablePresent = Boolean(this.db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'goal_leases'",
+    ).get());
+    if (migrations.length === 0 && !retiredTablePresent) return;
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const spec of migrations) {
+        this.db.exec(`DROP TABLE IF EXISTS ${spec.next}`);
+        this.db.exec(spec.create);
+        this.db.exec(spec.insert);
+        this.db.exec(`DROP TABLE ${spec.table}`);
+        this.db.exec(`ALTER TABLE ${spec.next} RENAME TO ${spec.table}`);
+      }
+      this.db.exec('DROP TABLE IF EXISTS goal_leases');
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* preserve migration failure */ }
+      throw error;
+    }
   }
 
   /**
@@ -1526,59 +1598,6 @@ export class SqliteDurableStore {
         reasonCode: String(row.reason_code),
         slotClaimed: Number(row.slot_claimed) === 1,
       }));
-  }
-
-  insertGoalLease(record: {
-    leaseId: string; createdAt: number; notBefore: number; expiresAt: number; bindings: string;
-  }): void {
-    this.db.prepare(`INSERT INTO goal_leases (lease_id, created_at, not_before, expires_at, bindings)
-      VALUES (?, ?, ?, ?, ?)`)
-      .run(record.leaseId, record.createdAt, record.notBefore, record.expiresAt, record.bindings);
-  }
-
-  getGoalLeaseRow(leaseId: string): {
-    leaseId: string; createdAt: number; notBefore: number; expiresAt: number; revokedAt?: number; bindings: string;
-  } | undefined {
-    const row = this.db.prepare('SELECT * FROM goal_leases WHERE lease_id = ?').get(leaseId) as
-      Record<string, unknown> | undefined;
-    if (!row) return undefined;
-    return {
-      leaseId: String(row.lease_id),
-      createdAt: Number(row.created_at),
-      notBefore: Number(row.not_before),
-      expiresAt: Number(row.expires_at),
-      ...(row.revoked_at === null ? {} : { revokedAt: Number(row.revoked_at) }),
-      bindings: String(row.bindings),
-    };
-  }
-
-  /** Idempotent, and one-way: a revoked lease is never un-revoked. */
-  revokeGoalLease(leaseId: string, now: number): boolean {
-    const result = this.db.prepare('UPDATE goal_leases SET revoked_at = ? WHERE lease_id = ? AND revoked_at IS NULL')
-      .run(now, leaseId);
-    return Number(result.changes) === 1;
-  }
-
-  listGoalLeaseIds(): string[] {
-    return (this.db.prepare('SELECT lease_id FROM goal_leases ORDER BY created_at').all() as Array<{ lease_id: string }>)
-      .map((r) => r.lease_id);
-  }
-
-  /**
-   * What a lease has already spent, counted from durable rows rather than from memory.
-   *
-   * Files are counted by *distinct path*, so editing the same file twice spends one file of the
-   * budget and two lots of bytes — which matches what the binding means. Counting rows would let
-   * a lease exhaust its file budget rewriting one file.
-   */
-  goalLeaseSpend(leaseId: string): { filesChanged: number; bytesWritten: number } {
-    // Distinct (workspace, path), not distinct path. `workspaceRoots` is a list, so a lease
-    // binding two repositories counted `src/index.ts` in both as one file — `maxFiles: 5` over
-    // two roots would have permitted ten actual files. A review found it.
-    const row = this.db.prepare(`SELECT COUNT(DISTINCT workspace_id || char(10) || path) AS files,
-      COALESCE(SUM(diff_bytes), 0) AS bytes
-      FROM mutation_authority WHERE lease_id = ?`).get(leaseId) as { files: number; bytes: number };
-    return { filesChanged: Number(row.files), bytesWritten: Number(row.bytes) };
   }
 
   rejectMutation(mutationId: string, now: number): boolean {

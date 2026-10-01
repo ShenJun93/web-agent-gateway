@@ -2,8 +2,10 @@ import type { GatewayCallerContext } from './caller-context.js';
 import type { SqliteDurableStore, WorkspaceRecord } from './durable-store.js';
 import { DevspaceReadLimitError, type DevspaceExecutor } from './executor/devspace.js';
 import { readDevspaceText } from './executor/devspace-read.js';
+import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
 import type { RepositoryInspectionBackend, RepoSearchOptions, RepoSearchResult, RepoSnapshotOptions, RepoSnapshotResult } from './repository-inspection.js';
 import { assertReadTarget, canonicalWorkspace, validateReadPath } from './path-policy.js';
+import type { WorkspaceIdentityRegistry } from './workspace-identity.js';
 
 interface RuntimeBinding {
   canonicalRoot: string;
@@ -13,6 +15,8 @@ interface RuntimeBinding {
 export interface AdmittedWorkspaceServiceOptions {
   store: SqliteDurableStore;
   executor: Pick<DevspaceExecutor, 'openWorkspace' | 'readFile'>;
+  identityExecutor?: Pick<DevspaceExecutor, 'execCommand' | 'interruptCommand'>;
+  workspaceIdentities?: WorkspaceIdentityRegistry;
   inspection: RepositoryInspectionBackend;
   allowedRoots: readonly string[];
   now?: () => number;
@@ -24,11 +28,22 @@ export class AdmittedWorkspaceService {
 
   constructor(private readonly options: AdmittedWorkspaceServiceOptions) {
     this.now = options.now ?? Date.now;
+    if ((options.identityExecutor === undefined) !== (options.workspaceIdentities === undefined)) {
+      throw new Error('Workspace identity registry and executor must be configured together');
+    }
   }
 
   async open(caller: GatewayCallerContext, path: string): Promise<{ workspaceId: string }> {
     const canonicalRoot = await canonicalWorkspace(path, this.options.allowedRoots);
     const devspaceWorkspaceId = await this.options.executor.openWorkspace(canonicalRoot);
+    const observation = this.options.workspaceIdentities === undefined
+      ? undefined
+      : await observeDevspaceWorkspaceIdentity(
+        this.options.identityExecutor!, devspaceWorkspaceId, canonicalRoot,
+      );
+    if (observation !== undefined && !samePath(observation.canonicalRoot, canonicalRoot)) {
+      throw new Error('Gateway denied workspace identity drift');
+    }
     const record = this.options.store.openWorkspaceRecord({
       ownerId: caller.ownerId,
       sessionId: caller.sessionId,
@@ -37,6 +52,7 @@ export class AdmittedWorkspaceService {
       backendKind: 'devspace',
       createdAt: this.now(),
     });
+    if (observation !== undefined) this.options.workspaceIdentities!.record(record.workspaceId, observation);
     this.bindings.set(record.workspaceId, { canonicalRoot, devspaceWorkspaceId });
     return { workspaceId: record.workspaceId };
   }
@@ -107,6 +123,15 @@ export class AdmittedWorkspaceService {
     const currentCanonical = await canonicalWorkspace(record.canonicalRoot, this.options.allowedRoots);
     if (currentCanonical !== record.canonicalRoot) throw new Error('Gateway denied workspace');
     const devspaceWorkspaceId = await this.options.executor.openWorkspace(record.canonicalRoot);
+    if (this.options.workspaceIdentities !== undefined) {
+      const observation = await observeDevspaceWorkspaceIdentity(
+        this.options.identityExecutor!, devspaceWorkspaceId, record.canonicalRoot,
+      );
+      if (!samePath(observation.canonicalRoot, record.canonicalRoot)) {
+        throw new Error('Gateway denied workspace identity drift');
+      }
+      this.options.workspaceIdentities.record(record.workspaceId, observation);
+    }
     const binding = { canonicalRoot: record.canonicalRoot, devspaceWorkspaceId };
     this.bindings.set(record.workspaceId, binding);
     return binding;
@@ -117,4 +142,9 @@ function sameAuthority(record: WorkspaceRecord, caller: GatewayCallerContext): b
   return record.ownerId === caller.ownerId
     && record.sessionId === caller.sessionId
     && record.adapterId === caller.adapterId;
+}
+function samePath(left: string, right: string): boolean {
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
 }

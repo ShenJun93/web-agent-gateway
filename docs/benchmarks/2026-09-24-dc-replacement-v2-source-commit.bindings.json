@@ -1,0 +1,51 @@
+{
+  "workspaceRoots": [
+    "E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1"
+  ],
+  "workspaceIdentities": [
+    {
+      "workspaceRoot": "E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1",
+      "fingerprint": "92398c31ed6f74e3ee4470eabb83d897200892a1ed053950c3a5e4bca1a5c849"
+    }
+  ],
+  "allowedTools": [
+    "git.commit"
+  ],
+  "pathPatterns": [
+    "src/executor/local-machine-file-mutation.ts",
+    "src/local-machine-runtime.ts",
+    "src/environment-policy.ts",
+    "src/goal-lease.ts",
+    "src/repository-engineering-runtime.ts",
+    "src/server.ts",
+    "src/stdio-server.ts",
+    "src/cli.ts",
+    "scripts/prepare-direct-mcp-tunnel.ts",
+    "test/local-machine-runtime.test.ts",
+    "test/local-machine-file-mutation.test.ts",
+    "test/direct-mcp-readiness.test.ts",
+    "test/goal-lease-policy.test.ts",
+    "test/repository-engineering-runtime.test.ts",
+    "docs/superpowers/specs/2026-09-24-wag-dc-replacement-v2-automation-first.md",
+    "docs/benchmarks/2026-09-24-wag-dc-replacement-v2-local-machine-phase-a.md",
+    "docs/benchmarks/2026-09-24-dc-replacement-v2-source-commit.bindings.json",
+    "docs/benchmarks/2026-09-24-dc-replacement-v2-machine-lease.bindings.json"
+  ],
+  "maxFiles": 24,
+  "maxBytes": 2097152,
+  "maxDiffBytes": 1048576,
+  "admittedSessions": [
+    "session_d9e39801-87fd-40f5-92b7-999a48609f1d"
+  ],
+  "admittedAdapters": [
+    "private.stdio.v1"
+  ],
+  "commitSemantics": "commit-to-bound-branch",
+  "commitBindings": [
+    {
+      "workspaceRoot": "E:\\Projects\\web-agent-gateway\\.worktrees\\claude-autonomous-wag-harness-v1",
+      "branch": "feat/goal-ui-delegation-v1",
+      "headSha": "468b1efc85c1f3225405e5373fcbbfecf6911f09"
+    }
+  ]
+}

@@ -33,7 +33,7 @@ function storePaths(env: NodeJS.ProcessEnv): Array<{ label: string; path: string
 /** Row counts for every table whose growth would mean a consequential effect happened. */
 const COUNTED = [
   'mutations', 'mutation_authority', 'commits', 'commit_authority',
-  'goal_leases', 'workspaces', 'adapter_sessions', 'audit_events',
+  'workspaces', 'adapter_sessions', 'audit_events',
 ] as const;
 
 function countRows(path: string): Record<string, number | string> {

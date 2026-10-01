@@ -1,17 +1,23 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { adapterCorrelationDigest } from '../src/adapter-admission.js';
 import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DurableMutationCoordinator } from '../src/durable-mutation.js';
 import { SqliteDurableStore } from '../src/durable-store.js';
-import { DevspaceExecutor } from '../src/executor/devspace.js';
+import { DevspaceExecutor, REQUIRED_DEVSPACE_TOOLS } from '../src/executor/devspace.js';
 import { DurableCommitCoordinator } from '../src/git-commit.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
 import type { PrivateGatewayConfig } from '../src/private-config.js';
+import {
+  PRIVATE_STDIO_ADAPTER_ID,
+  startRepositoryEngineeringRuntime,
+} from '../src/repository-engineering-runtime.js';
 import { projectedTools } from '../scripts/prepare-direct-mcp-tunnel.js';
+import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 
 /**
  * The direct-MCP surface is the one a remote MCP client discovers over the Secure MCP Tunnel.
@@ -42,17 +48,67 @@ interface Hints {
 const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['health', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['workspace.open', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['capabilities.describe', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.open', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+  ['machine.describe', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.read_many', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.image.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.pdf.extract', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.docx.inspect', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.docx.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['machine.docx.replace_text', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['machine.xlsx.inspect', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.xlsx.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['machine.xlsx.set_cells', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['machine.pdf.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['machine.pdf.overlay_text', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['machine.search', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.search_continue', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.search_list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.search_cancel', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.info', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.mkdir', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['machine.move', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['machine.delete', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['machine.command.run', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.process.start', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.process.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
+  ['machine.process.inspect', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
+  ['machine.process.terminate', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.open', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
+  ['machine.terminal.output', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.input', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
+  ['machine.terminal.close', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['repo.list', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['repo.search', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['repo.snapshot', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['repo.diff', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['file.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['verify.run', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['command.run', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }],
   ['mutation.preview', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['file.replace', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['file.edit_block', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
+  ['file.append', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['mutation.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['change.preview', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['change.apply', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }],
+  ['change.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['git.commit', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['git.commit.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['result.chunk', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['diagnostics.recent', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['diagnostics.usage', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.config.get', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.config.update', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['product.activity.recent', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.usage', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.update.check', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
+  ['product.help', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
 ];
 
 /** Names WAG derives locally and must never accept from a tool argument (ADR-0015, ADR-0020). */
@@ -90,6 +146,8 @@ async function openDirectSurface(t: TestContext) {
   };
 
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
+  (executor as unknown as { listTools(): Promise<Array<{ name: string; inputSchema: unknown }>> }).listTools = async () =>
+    REQUIRED_DEVSPACE_TOOLS.map((name) => ({ name, inputSchema: {} }));
   const gateway = createGateway({ executor, allowedRoots: [root], verifyProfiles: { unit: { argv: ['node', '--version'] } } });
   const server = createGatewayMcpServer(gateway, {
     inspect: true,
@@ -97,9 +155,31 @@ async function openDirectSurface(t: TestContext) {
       callerContext,
       coordinator: new DurableMutationCoordinator({ store, backends: [mutationBackend] }),
     },
+    changeSetContext: {
+      callerContext,
+      coordinator: new Proxy({}, {
+        get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
+      }) as never,
+    },
     gitCommitContext: {
       callerContext,
       coordinator: new DurableCommitCoordinator({ store, backend: commitBackend as never }),
+    },
+    commandContext: { authorize: async () => undefined },
+    capabilityContext: new Proxy({}, {
+      get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
+    }) as never,
+    machineContext: new Proxy({}, {
+      get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
+    }) as never,
+    diagnosticsContext: new ToolUsageDiagnostics(),
+    productContext: {
+      configGet: () => ({}),
+      configUpdate: () => ({}),
+      activityRecent: () => ({}),
+      usage: () => ({}),
+      updateCheck: async () => ({}),
+      help: () => ({}),
     },
   });
 
@@ -119,6 +199,38 @@ test('the direct MCP surface is exactly the required ChatGPT tool loop', async (
     DECLARED_SURFACE.map(([name]) => name),
     'a direct client must discover read, mutation, verify and commit in one surface',
   );
+});
+
+test('health reports the full live private-stdio surface through the frozen health name', async (t) => {
+  const { client } = await openDirectSurface(t);
+
+  const first = await client.callTool({ name: 'health', arguments: {} });
+  assert.notEqual(first.isError, true);
+  const firstView = first.structuredContent as {
+    toolCount: number;
+    mcpToolCount: number;
+    mcpTools: string[];
+    authorityMode?: string;
+    runtime?: { pid: number; parent_pid: number; cli_path: string; deployed: boolean };
+    diagnostics?: { total_calls: number; retained_events: number; capacity: number };
+  };
+  assert.equal(firstView.toolCount, REQUIRED_DEVSPACE_TOOLS.length,
+    'executor tool count remains distinct from the MCP surface count');
+  assert.equal(firstView.mcpToolCount, DECLARED_SURFACE.length);
+  assert.deepEqual(firstView.mcpTools, DECLARED_SURFACE.map(([name]) => name));
+  assert.equal(firstView.authorityMode, 'AUTONOMOUS_LOCAL');
+  assert.ok((firstView.runtime?.pid ?? 0) > 0);
+  assert.ok((firstView.runtime?.parent_pid ?? -1) >= 0);
+  assert.equal(typeof firstView.runtime?.cli_path, 'string');
+  assert.equal(typeof firstView.runtime?.deployed, 'boolean');
+  assert.equal(firstView.diagnostics?.total_calls, 0,
+    'the in-flight health call must not count itself before its result exists');
+
+  const second = await client.callTool({ name: 'health', arguments: {} });
+  const secondView = second.structuredContent as { diagnostics?: { total_calls: number; retained_events: number } };
+  assert.equal(secondView.diagnostics?.total_calls, 1,
+    'a frozen connector can observe prior tool usage through health without diagnostics.* discovery');
+  assert.equal(secondView.diagnostics?.retained_events, 1);
 });
 
 test('every direct tool declares all four hints, so none falls back to a specification default', async (t) => {
@@ -152,7 +264,30 @@ test('no direct tool claims read-only while creating durable state', async (t) =
   // The regression this pins: `workspace.open` mints a durable caller-owned workspace record,
   // and previously claimed `readOnlyHint: true` — the one annotation class ADR-0020 warns can
   // cause a provider-side write confirmation to be skipped.
-  for (const name of ['workspace.open', 'verify.run', 'mutation.preview', 'file.create', 'git.commit']) {
+  for (const name of [
+    'workspace.open',
+    'machine.open',
+    'machine.mkdir',
+    'machine.move',
+    'machine.delete',
+    'machine.command.run',
+    'machine.process.start',
+    'machine.process.terminate',
+    'machine.terminal.open',
+    'machine.terminal.output',
+    'machine.terminal.input',
+    'machine.terminal.close',
+    'verify.run',
+    'command.run',
+    'mutation.preview',
+    'file.replace',
+    'file.edit_block',
+    'file.append',
+    'file.create',
+    'change.preview',
+    'change.apply',
+    'git.commit',
+  ]) {
     const tool = tools.tools.find((candidate) => candidate.name === name);
     assert.equal(
       tool?.annotations?.readOnlyHint, false,
@@ -194,6 +329,52 @@ test('every direct tool refuses unknown arguments instead of silently dropping t
  * this pins — is that its config-to-options mapping opts in to the same capabilities the runtime
  * does, and that an unconfigured gateway still projects exactly the accepted five.
  */
+test('runtime command authority is immediate in the trusted autonomous-local profile', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-direct-command-authority-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ownerId = 'local.private.stdio';
+  const operator = async () => ({
+    origin: 'http://127.0.0.1:1',
+    bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+    close: async () => {},
+  });
+  const fakeExecutor = {} as unknown as DevspaceExecutor;
+
+  const runtime = await startRepositoryEngineeringRuntime({
+    allowedRoots: [root],
+    devspace: { baseUrl: 'http://127.0.0.1:1', resourceUrl: 'http://127.0.0.1:1/mcp' },
+    verifyProfiles: {},
+    repositoryEngineering: {
+      inspect: true,
+      mutation: { statePath: join(root, 'autonomous.sqlite'), ownerId },
+      gitCommit: {},
+    },
+  }, { startOperatorServer: operator });
+
+  try {
+    const first = runtime.openWorkspaceId!(await realpath(root));
+    const second = runtime.openWorkspaceId!(join(await realpath(root), 'other'));
+    await runtime.attach(fakeExecutor);
+
+    assert.ok(runtime.commandContext);
+    assert.ok(runtime.capabilityContext);
+    await runtime.commandContext!.authorize(first);
+    await runtime.commandContext!.authorize(second);
+
+    for (const workspaceId of [first, second]) {
+      const authority = await runtime.capabilityContext!.describe(workspaceId) as {
+        authority: { mode: string; kill_switch: string };
+        capabilities: { LOCAL_COMMAND: { granted: boolean; reason: string } };
+      };
+      assert.deepEqual(authority.authority, { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' });
+      assert.equal(authority.capabilities.LOCAL_COMMAND.granted, true);
+      assert.equal(authority.capabilities.LOCAL_COMMAND.reason, 'AUTONOMOUS_LOCAL_PROFILE');
+    }
+  } finally {
+    await runtime.close();
+  }
+});
+
 test('the tunnel instrument projects the surface the server really registers', async (t) => {
   const base: PrivateGatewayConfig = {
     allowedRoots: ['E:/nowhere'],
@@ -215,13 +396,17 @@ test('the tunnel instrument projects the surface the server really registers', a
     (await defaultClient.listTools()).tools.map((tool) => tool.name),
     'the instrument must project the accepted five when nothing is opted in',
   );
-  assert.deepEqual((await projectedTools(base)).missing, ["mutation", "commit"]);
+  assert.deepEqual((await projectedTools(base)).missing, ["mutation", "commit", "command"]);
 
   const full: PrivateGatewayConfig = {
     ...base,
     repositoryEngineering: {
       inspect: true,
-      mutation: { statePath: 'E:/nowhere/state.sqlite', ownerId: 'owner_direct' },
+      mutation: {
+        statePath: 'E:/nowhere/state.sqlite',
+        ownerId: 'owner_direct',
+        sessionCorrelation: 'session_11111111-2222-3333-4444-555555555555',
+      },
       gitCommit: {},
     },
   };

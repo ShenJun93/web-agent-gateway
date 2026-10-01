@@ -17,6 +17,22 @@ const repositoryEngineeringSchema = z.object({
   gitCommit: z.object({
     protectedBranches: z.array(z.string().min(1).max(256)).min(1).max(64).optional(),
   }).strict().optional(),
+  remoteGitPush: z.object({
+    autonomous: z.object({
+      allowedPushUrls: z.array(z.string().url().max(2048)).min(1).max(16),
+      allowedDestinationRefs: z.array(
+        z.string().min(1).max(256)
+          .regex(/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._\/-]*$/),
+      ).min(1).max(64),
+    }).strict(),
+  }).strict().optional(),
+  browser: z.object({
+    edgeExecutablePath: z.string().min(1),
+    profileRoot: z.string().min(1),
+  }).strict().optional(),
+  desktop: z.object({
+    enabled: z.literal(true),
+  }).strict().optional(),
   mutation: z.object({
     statePath: z.string().min(1),
     ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).default(DEFAULT_PRIVATE_STDIO_OWNER_ID),
@@ -27,19 +43,9 @@ const repositoryEngineeringSchema = z.object({
      */
     reviewTtlMs: z.number().int().min(1_000).max(5 * 60_000).optional(),
     /**
-     * The Autonomous Goal Lease this runtime will honour (ADR-0028).
-     *
-     * Absent means autonomous admission is off and every effect needs a human on the operator's
-     * Approve route, which is the default and the only behaviour before this field existed.
-     * Naming a lease here does not create one or grant anything: the lease's own bindings,
-     * expiry and revocation still decide, and a lease id that is not in the durable store is
-     * refused rather than treated as unrestricted.
-     */
-    goalLeaseId: z.string().min(1).max(128).regex(/^lease_[A-Za-z0-9._:-]+$/).optional(),
-    /**
      * The Goal UI Delegation this runtime will honour (ADR-0029).
      *
-     * Same shape as `goalLeaseId` above, and for the same reason. Absent means delegated Run is
+     * Absent means delegated Run is
      * off and every proposal stays on the human path, which is the default and the only behaviour
      * before this field existed. Naming a delegation here does not create one or grant anything:
      * its own bindings, window, supersession and revocation still decide, and an id that is not in
@@ -52,27 +58,23 @@ const repositoryEngineeringSchema = z.object({
     /**
      * The correlation that gives this surface a *stable* durable session (ADR-0017, ADR-0030).
      *
-     * Absent — the default, and every deployment before this field existed — the session id is
-     * minted fresh per process, exactly as ADR-0020 §5 describes. That is the right default for
-     * an interactive local caller: no MCP client can read, resume or replay a record proposed by
-     * a previous process.
+     * It is identity/audit continuity only. It does not grant filesystem, process, mutation or
+     * commit authority; those capabilities come from the trusted autonomous-local private runtime
+     * profile. A WAG bootstrap may therefore mint a fresh strong correlation for a new local lane.
      *
-     * It is the wrong default for a Goal Lease. A lease admits only the sessions listed in its own
-     * row, so a session that changes on every start can never be the session a lease was issued
-     * for — which made autonomous admission unreachable on this surface rather than merely unused.
-     * Naming a correlation here resolves the session through the same
-     * `getOrCreateAdapterSession` path a browser adapter uses: the same string returns the same
-     * durable session across restarts, so a lease issued for it keeps applying.
-     *
-     * Required shape is the strong one, for the reason `OPERATOR_CORRELATION_PATTERN` gives:
-     * whoever can choose the string joins the session, and this surface can propose changes. It
-     * is read from local configuration only — never from a tool argument, the transport, the
-     * client's environment or repository text — so it is a human act, like naming a lease.
-     * Because it selects which session a lease's bindings match, it must be treated as authority
-     * configuration: an agent may read and report it, and must never write it.
+     * The value still stays out of MCP tool arguments and repository text so one caller cannot
+     * deliberately acquire another caller's durable workspace handles. The strong correlation
+     * shape is retained for reconnect uniqueness and cross-adapter domain separation.
      */
     sessionCorrelation: z.string().regex(OPERATOR_CORRELATION_PATTERN).optional(),
   }).strict().optional(),
+}).strict();
+
+const remoteRelayDeviceSchema = z.object({
+  supabaseUrl: z.string().url().max(2048),
+  publishableKey: z.string().min(16).max(4096),
+  deviceId: z.string().min(8).max(160).regex(/^[A-Za-z0-9._:-]+$/),
+  secretEnv: z.string().min(3).max(128).regex(/^[A-Z][A-Z0-9_]+$/),
 }).strict();
 
 const privateGatewayConfigSchema = z.object({
@@ -86,6 +88,7 @@ const privateGatewayConfigSchema = z.object({
     z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
   ).max(32).default([]),
   repositoryEngineering: repositoryEngineeringSchema.optional(),
+  remoteRelayDevice: remoteRelayDeviceSchema.optional(),
 }).strict();
 
 export type PrivateVerifyProfile = z.infer<typeof verifyProfileSchema>;
@@ -93,17 +96,38 @@ export interface PrivateRepositoryEngineeringMutation {
   statePath: string;
   ownerId: string;
   reviewTtlMs?: number;
-  goalLeaseId?: string;
   goalUiDelegationId?: string;
   sessionCorrelation?: string;
 }
 export interface PrivateRepositoryEngineeringGitCommit {
   protectedBranches?: string[];
 }
+export interface PrivateRepositoryEngineeringRemoteGitPush {
+  autonomous: {
+    allowedPushUrls: string[];
+    allowedDestinationRefs: string[];
+  };
+}
+export interface PrivateRepositoryEngineeringBrowser {
+  edgeExecutablePath: string;
+  profileRoot: string;
+}
+export interface PrivateRepositoryEngineeringDesktop {
+  enabled: true;
+}
 export interface PrivateRepositoryEngineering {
   inspect: boolean;
   gitCommit?: PrivateRepositoryEngineeringGitCommit;
+  remoteGitPush?: PrivateRepositoryEngineeringRemoteGitPush;
+  browser?: PrivateRepositoryEngineeringBrowser;
+  desktop?: PrivateRepositoryEngineeringDesktop;
   mutation?: PrivateRepositoryEngineeringMutation;
+}
+export interface PrivateRemoteRelayDevice {
+  supabaseUrl: string;
+  publishableKey: string;
+  deviceId: string;
+  secretEnv: string;
 }
 export interface PrivateGatewayConfig {
   allowedRoots: string[];
@@ -111,6 +135,7 @@ export interface PrivateGatewayConfig {
   verifyProfiles: Record<string, PrivateVerifyProfile>;
   browserVerifyProfiles?: string[];
   repositoryEngineering?: PrivateRepositoryEngineering;
+  remoteRelayDevice?: PrivateRemoteRelayDevice;
 }
 export async function loadPrivateGatewayConfig(configPath: string): Promise<PrivateGatewayConfig> {
   if (!isAbsolute(configPath)) throw new Error('Private gateway config path must be absolute');
@@ -133,12 +158,53 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
   if (parsed.repositoryEngineering?.gitCommit && !mutation) {
     throw new Error('Private gateway repository engineering gitCommit requires mutation');
   }
+  const remoteGitPush = parsed.repositoryEngineering?.remoteGitPush;
+  if (remoteGitPush && !mutation) {
+    throw new Error('Private gateway repository engineering remoteGitPush requires mutation');
+  }
+  if (remoteGitPush) {
+    const pushUrls = remoteGitPush.autonomous.allowedPushUrls;
+    const destinationRefs = remoteGitPush.autonomous.allowedDestinationRefs;
+    if (new Set(pushUrls).size !== pushUrls.length) {
+      throw new Error('Private gateway autonomous remote Git push URLs must be unique');
+    }
+    if (new Set(destinationRefs).size !== destinationRefs.length) {
+      throw new Error('Private gateway autonomous remote Git push destination refs must be unique');
+    }
+    for (const url of pushUrls) validateAutonomousPushUrl(url);
+    for (const ref of destinationRefs) validateAutonomousDestinationRef(ref);
+  }
+  const browser = parsed.repositoryEngineering?.browser;
+  if (browser && !mutation) {
+    throw new Error('Private gateway repository engineering browser requires mutation identity');
+  }
+  if (browser && (!isAbsolute(browser.edgeExecutablePath) || !isAbsolute(browser.profileRoot))) {
+    throw new Error('Private gateway browser paths must be absolute');
+  }
+  const desktop = parsed.repositoryEngineering?.desktop;
+  if (desktop && !mutation) {
+    throw new Error('Private gateway repository engineering desktop requires mutation identity');
+  }
+  const remoteRelayDevice = parsed.remoteRelayDevice;
+  if (remoteRelayDevice && !mutation) {
+    throw new Error('Private gateway remote relay device requires mutation identity');
+  }
+  const remoteRelayUrl = remoteRelayDevice === undefined
+    ? undefined
+    : validateRemoteRelaySupabaseUrl(remoteRelayDevice.supabaseUrl);
+  if (remoteRelayDevice?.publishableKey.startsWith('sb_secret_')) {
+    throw new Error('Private gateway remote relay device forbids Supabase secret keys');
+  }
 
   const allowedRoots: string[] = [];
   for (const configuredRoot of parsed.allowedRoots) {
     if (!isAbsolute(configuredRoot)) throw new Error('Private gateway allowed root must be absolute');
     const canonicalRoot = await realpath(configuredRoot);
-    await canonicalWorkspace(canonicalRoot, [canonicalRoot]);
+    // A drive root is allowed as an operator-approved trust envelope, but it is never itself
+    // an admissible workspace. canonicalWorkspace() keeps that separate invariant.
+    if (!/^[A-Za-z]:[\\/]*$/.test(canonicalRoot)) {
+      await canonicalWorkspace(canonicalRoot, [canonicalRoot]);
+    }
     allowedRoots.push(canonicalRoot);
   }
 
@@ -147,6 +213,14 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
     devspace: { baseUrl, resourceUrl },
     verifyProfiles: parsed.verifyProfiles,
     browserVerifyProfiles: parsed.browserVerifyProfiles,
+    ...(remoteRelayDevice === undefined ? {} : {
+      remoteRelayDevice: {
+        supabaseUrl: remoteRelayUrl!,
+        publishableKey: remoteRelayDevice.publishableKey,
+        deviceId: remoteRelayDevice.deviceId,
+        secretEnv: remoteRelayDevice.secretEnv,
+      },
+    }),
     ...(parsed.repositoryEngineering === undefined ? {} : {
       repositoryEngineering: {
         inspect: parsed.repositoryEngineering.inspect,
@@ -157,12 +231,30 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
               : { protectedBranches: parsed.repositoryEngineering.gitCommit.protectedBranches }),
           },
         }),
+        ...(remoteGitPush === undefined ? {} : {
+          remoteGitPush: {
+            autonomous: {
+              allowedPushUrls: remoteGitPush.autonomous.allowedPushUrls
+                .map(validateAutonomousPushUrl),
+              allowedDestinationRefs: remoteGitPush.autonomous.allowedDestinationRefs
+                .map(validateAutonomousDestinationRef),
+            },
+          },
+        }),
+        ...(browser === undefined ? {} : {
+          browser: {
+            edgeExecutablePath: browser.edgeExecutablePath,
+            profileRoot: browser.profileRoot,
+          },
+        }),
+        ...(desktop === undefined ? {} : {
+          desktop: { enabled: true as const },
+        }),
         ...(mutation === undefined ? {} : {
           mutation: {
             statePath: mutation.statePath,
             ownerId: mutation.ownerId,
             ...(mutation.reviewTtlMs === undefined ? {} : { reviewTtlMs: mutation.reviewTtlMs }),
-            ...(mutation.goalLeaseId === undefined ? {} : { goalLeaseId: mutation.goalLeaseId }),
             ...(mutation.goalUiDelegationId === undefined
               ? {} : { goalUiDelegationId: mutation.goalUiDelegationId }),
             ...(mutation.sessionCorrelation === undefined
@@ -172,6 +264,63 @@ export async function loadPrivateGatewayConfig(configPath: string): Promise<Priv
       },
     }),
   };
+}
+
+function validateRemoteRelaySupabaseUrl(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== 'https:'
+    || url.username !== ''
+    || url.password !== ''
+    || url.search !== ''
+    || url.hash !== ''
+  ) {
+    throw new Error('Private gateway remote relay Supabase URL must be credential-free HTTPS');
+  }
+  return url.href.replace(/\/$/, '');
+}
+
+function validateAutonomousPushUrl(value: string): string {
+  const url = new URL(value);
+  if (url.protocol !== 'https:' && url.protocol !== 'ssh:') {
+    throw new Error('Private gateway autonomous remote Git push URL must use HTTPS or SSH');
+  }
+  if (url.password !== '' || (url.protocol === 'https:' && url.username !== '')) {
+    throw new Error('Private gateway autonomous remote Git push URL must not contain credentials');
+  }
+  if (
+    url.hostname === ''
+    || url.pathname === ''
+    || url.pathname === '/'
+    || url.search !== ''
+    || url.hash !== ''
+  ) {
+    throw new Error('Private gateway autonomous remote Git push URL is invalid');
+  }
+  return url.href;
+}
+
+function validateAutonomousDestinationRef(value: string): string {
+  if (!value.startsWith('refs/heads/')) {
+    throw new Error('Private gateway autonomous remote Git push destination must be a branch ref');
+  }
+  const name = value.slice('refs/heads/'.length);
+  if (
+    name.length === 0
+    || name.toLowerCase() === 'main'
+    || name.toLowerCase() === 'master'
+    || name.startsWith('-')
+    || name.startsWith('.')
+    || name.endsWith('/')
+    || name.endsWith('.')
+    || name.endsWith('.lock')
+    || name.includes('..')
+    || name.includes('//')
+    || name.includes('@{')
+  ) {
+    throw new Error('Private gateway autonomous remote Git push destination is unsafe');
+  }
+  return value;
 }
 
 function validateLoopbackBaseUrl(value: string): string {

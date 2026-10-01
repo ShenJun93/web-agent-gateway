@@ -641,7 +641,7 @@ export class UiDelegationDispatchPlane {
    * Record a Run that no delegation authorised — the ordinary human path.
    *
    * It spends no slot, consults no delegation, and is deliberately **not** subject to the
-   * autonomy stop: `npm run lease:stop` pauses automation, and someone stopping runaway
+   * autonomy stop: `npm run autonomy:stop` pauses automation, and someone stopping runaway
    * automation must still be able to act themselves.
    *
    * A proposal staged under a delegation is refused, in the store, inside the transaction. Letting

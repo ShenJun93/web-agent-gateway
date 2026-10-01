@@ -43,7 +43,22 @@ test('operator server is loopback-only and bootstrap is single-use', async (t) =
   assert.equal(replay.status, 403);
 });
 
-test('operator page escapes review content and emits restrictive headers', async (t) => {
+test('empty operator page auto-refreshes until a pending review appears', async (t) => {
+  const empty = {
+    listPendingLocal: () => [],
+    reviewLocal: () => undefined,
+    approveLocal: async () => false,
+    rejectLocal: () => false,
+  };
+  const server = await startOperatorServer({ coordinator: empty });
+  t.after(() => server.close());
+  const boot = await fetch(server.bootstrapUrl, { redirect: 'manual' });
+  const cookie = cookiePair(boot.headers.get('set-cookie'));
+  const html = await (await fetch(server.origin, { headers: { cookie } })).text();
+  assert.match(html, /<meta http-equiv="refresh" content="2">/);
+});
+
+test('operator page with a pending review stops auto-refresh and emits restrictive headers', async (t) => {
   const server = await startOperatorServer({ coordinator: fakeCoordinator() });
   t.after(() => server.close());
   const boot = await fetch(server.bootstrapUrl, { redirect: 'manual' });
@@ -51,6 +66,7 @@ test('operator page escapes review content and emits restrictive headers', async
   const page = await fetch(server.origin, { headers: { cookie } });
   const html = await page.text();
   assert.equal(page.status, 200);
+  assert.doesNotMatch(html, /http-equiv="refresh"/);
   assert.match(page.headers.get('content-security-policy') ?? '', /default-src 'none'/);
   assert.equal(page.headers.get('x-frame-options'), 'DENY');
   // `same-origin`, not `no-referrer`: under no-referrer a navigation POST serialises its Origin

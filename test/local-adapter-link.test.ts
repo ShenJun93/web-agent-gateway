@@ -15,8 +15,9 @@ function fakeGateway(): GatewayApi {
   return {
     health: async () => ({ status: 'ok', executor: 'devspace', protocolVersion: 'test', toolCount: 4 }),
     openWorkspace: async () => ({ workspaceId: 'legacy' }),
-    readFile: async () => ({ content: 'legacy' }),
+    readFile: async () => ({ content: 'legacy', raw_sha256: 'c49fea7425fa7f8699897a97c159c6690267d9003bb78c53d9f62610e3833697', size_bytes: 6, encoding: 'utf-8', bom: false, newline_mode: 'NONE' }),
     verifyRun: async () => ({ profile: 'none', exitCode: 0, output: '' }),
+    commandRun: async () => ({ exitCode: 0, output: '', timedOut: false, durationMs: 0, cwd: '.' }),
     repoSnapshot: async () => ({ branch: '', head: '', dirty: false, status: [], diffStat: '', files: [], filesTruncated: false }),
     repoSearch: async () => ({ matches: [], truncated: false }),
     repoList: async () => ({ path: '', entries: [], truncated: false }),

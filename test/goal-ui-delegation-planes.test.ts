@@ -161,7 +161,7 @@ test('the dispatch port carries no issuance method, at runtime', async (t) => {
   // of its class name, and every import-pinning test still green. So this calls the port.
   for (const forbidden of [
     'insertUiDelegation', 'revokeUiDelegation', 'renewUiDelegation', 'supersedeUiDelegation',
-    'insertGoalLease', 'abandonExpiredClaims',
+    'abandonExpiredClaims',
   ]) {
     assert.equal(port[forbidden], undefined, `${forbidden} must not be reachable from the port`);
     assert.throws(

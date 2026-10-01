@@ -5,7 +5,7 @@ import { createGatewayCallerContext } from '../src/caller-context.js';
 import { DevspaceExecutor } from '../src/executor/devspace.js';
 import { createGateway, createGatewayMcpServer } from '../src/server.js';
 
-test('public MCP exposes only the five V0 semantic tools', async (t) => {
+test('public MCP exposes the V0 semantic tools plus relay chunk retrieval', async (t) => {
   const executor = new DevspaceExecutor({ baseUrl: 'http://127.0.0.1:1', accessToken: 'unused' });
   const gateway = createGateway({ executor, allowedRoots: [process.cwd()], verifyProfiles: { test: { argv: ['node', '--version'] } } });
   const server = createGatewayMcpServer(gateway);
@@ -17,7 +17,7 @@ test('public MCP exposes only the five V0 semantic tools', async (t) => {
 
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
-    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
+    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'result.chunk',
   ]);
   const verify = tools.tools.find((tool) => tool.name === 'verify.run');
   assert.equal(verify?.annotations?.readOnlyHint, false, 'verify.run may execute scripts and must not claim read-only');
@@ -37,7 +37,7 @@ test('legacy file.patch opt-in cannot resurrect a removed tool', async (t) => {
 
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
-    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
+    'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run', 'result.chunk',
   ]);
 });
 test('opt-in durable mutation MCP exposes preview/result without remote approval fields', async (t) => {
@@ -74,7 +74,7 @@ test('opt-in durable mutation MCP exposes preview/result without remote approval
   const tools = await client.listTools();
   assert.deepEqual(tools.tools.map((tool) => tool.name), [
     'health', 'workspace.open', 'repo.snapshot', 'file.read', 'verify.run',
-    'mutation.preview', 'file.create', 'mutation.result',
+    'mutation.preview', 'file.replace', 'file.edit_block', 'file.append', 'file.create', 'mutation.result', 'result.chunk',
   ]);
   const previewTool = tools.tools.find((tool) => tool.name === 'mutation.preview');
   const resultTool = tools.tools.find((tool) => tool.name === 'mutation.result');

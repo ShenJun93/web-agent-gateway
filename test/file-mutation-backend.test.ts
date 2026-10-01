@@ -35,6 +35,15 @@ test('devspace file backend preserves CRLF bytes', async (t) => {
   assert.equal(await readFile(target, 'utf8'), candidate);
 });
 
+test('devspace file backend deletes only the exact current file', async (t) => {
+  const original = 'delete-me\n';
+  const { fixture, target, backend } = await setup(t, original);
+
+  await backend.deleteExisting!(fixture.workspaceRoot, 'note.txt', original);
+  await assert.rejects(() => readFile(target, 'utf8'));
+  assert.equal(await backend.readExactIfPresent(fixture.workspaceRoot, 'note.txt'), undefined);
+});
+
 test('devspace file backend rejects donor metadata for a different change', async () => {
   const executor = fakeExecutor({
     result: 'bad', additions: 1, removals: 1,

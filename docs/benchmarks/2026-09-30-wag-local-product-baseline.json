@@ -1,0 +1,122 @@
+{
+  "schema": "WAG_LOCAL_PRODUCT_HEALTH_V1",
+  "generatedAtUtc": "2026-09-29T21:25:05.652Z",
+  "status": "READY",
+  "source": {
+    "branch": "feat/remote-effect-bypass-closure-v1",
+    "head": "4ae22d4d7322fcaaea6e78086227c5c7d1bde43f",
+    "clean": true,
+    "runtimeAligned": false
+  },
+  "host": {
+    "nodeVersion": "v24.20.0",
+    "nodeSupported": true,
+    "pwshVersion": "7.6.6",
+    "pwshSupported": true,
+    "wslAvailable": true
+  },
+  "runtime": {
+    "sourceHead": "12ea8315b650e8df11ddc1483c4ee4d2e764a48e",
+    "capability": "autonomous-local-runtime-v1",
+    "cliSha256": "4b6cf7ba82389992d31f4088005463eb91a0ed8dbe0e9bcbc0a5cdaf0ebe4cb4"
+  },
+  "launchers": {
+    "matchCanonical": true,
+    "hashes": {
+      "tunnel": {
+        "expected": "0d104cc04a6166ab4ad79562ad9e7428b47e3f849ff7c2b672c8e3ea288cd33a",
+        "installed": "0d104cc04a6166ab4ad79562ad9e7428b47e3f849ff7c2b672c8e3ea288cd33a"
+      },
+      "start": {
+        "expected": "e22334a9d6eb4fc2ce296c68c36787828ebd76f68be363580ab9382835d4429b",
+        "installed": "e22334a9d6eb4fc2ce296c68c36787828ebd76f68be363580ab9382835d4429b"
+      }
+    },
+    "startupShortcutPresent": true
+  },
+  "devspace": {
+    "expectedRevision": "33d6d0bcc2256024484d2456da924af8afd814ed",
+    "packageVersion": "1.0.8",
+    "installedRevision": "33d6d0bcc2256024484d2456da924af8afd814ed",
+    "pinMatch": true,
+    "discoveryHttpStatus": 200,
+    "discoveryReady": true
+  },
+  "tunnel": {
+    "healthHttpStatus": 200,
+    "readyHttpStatus": 200,
+    "ready": true
+  },
+  "mcp": {
+    "roundTrip": true,
+    "status": "ok",
+    "executor": "devspace",
+    "protocolVersion": "2026-07-28",
+    "executorToolCount": 6,
+    "mcpToolCount": 53,
+    "listedToolCount": 53,
+    "tools": [
+      "health",
+      "workspace.open",
+      "capabilities.describe",
+      "machine.open",
+      "machine.describe",
+      "machine.list",
+      "machine.read",
+      "machine.read_many",
+      "machine.image.read",
+      "machine.pdf.extract",
+      "machine.search",
+      "machine.search_continue",
+      "machine.info",
+      "machine.mkdir",
+      "machine.move",
+      "machine.delete",
+      "machine.command.run",
+      "machine.process.start",
+      "machine.process.list",
+      "machine.process.inspect",
+      "machine.process.terminate",
+      "machine.terminal.open",
+      "machine.terminal.list",
+      "machine.terminal.output",
+      "machine.terminal.input",
+      "machine.terminal.close",
+      "browser.open",
+      "browser.describe",
+      "browser.snapshot",
+      "browser.exec",
+      "browser.effect.get",
+      "browser.screenshot",
+      "browser.close",
+      "repo.list",
+      "repo.search",
+      "repo.snapshot",
+      "repo.diff",
+      "file.read",
+      "verify.run",
+      "command.run",
+      "mutation.preview",
+      "file.replace",
+      "file.edit_block",
+      "file.append",
+      "file.create",
+      "mutation.result",
+      "git.commit",
+      "git.commit.result",
+      "git.push",
+      "git.push.result",
+      "result.chunk",
+      "diagnostics.recent",
+      "diagnostics.usage"
+    ],
+    "authorityMode": "AUTONOMOUS_LOCAL"
+  },
+  "diagnostics": [
+    {
+      "code": "WAG_DEVELOPMENT_SOURCE_RUNTIME_DRIFT",
+      "severity": "INFO",
+      "message": "The development repository HEAD differs from the currently deployed runtime source HEAD."
+    }
+  ]
+}

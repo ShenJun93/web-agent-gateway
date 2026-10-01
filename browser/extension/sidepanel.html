@@ -1,9 +1,43 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>WAG Browser Adapter</title></head>
+<head>
+  <meta charset="utf-8">
+  <title>WAG Browser Adapter</title>
+  <style>
+    body { font: 13px system-ui, sans-serif; margin: 16px; }
+    section { margin: 18px 0; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 72px; resize: vertical; }
+    button { margin: 6px 6px 0 0; }
+    .muted { opacity: 0.72; }
+    .ok { font-weight: 600; }
+    .error { font-weight: 600; }
+  </style>
+</head>
 <body>
   <h1>WAG Browser Adapter</h1>
   <p id="status">Checking connection…</p>
+
+  <section aria-labelledby="browser-control-heading">
+    <h2 id="browser-control-heading">Browser control</h2>
+    <p id="browser-control-status">Checking pairing…</p>
+    <p id="browser-control-endpoint" class="muted"></p>
+    <label for="browser-pairing">
+      Pairing payload
+      <textarea
+        id="browser-pairing"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        placeholder='Paste the JSON from: web-agent-gateway browser-pairing --config <absolute-path>'
+      ></textarea>
+    </label>
+    <div>
+      <button id="browser-pair">Pair</button>
+      <button id="browser-forget" type="button">Forget pairing</button>
+    </div>
+    <p id="browser-pairing-result" class="muted"></p>
+  </section>
+
   <section>
     <h2>Pending calls</h2>
     <div id="pending"></div>

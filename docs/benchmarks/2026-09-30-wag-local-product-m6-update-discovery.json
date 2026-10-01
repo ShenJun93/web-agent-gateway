@@ -1,0 +1,58 @@
+{
+  "schema": "WAG_LOCAL_M6_UPDATE_DISCOVERY_V1",
+  "generatedAtUtc": "2026-09-30T11:03:10Z",
+  "branch": "feat/wag-local-m6-update-discovery-v1",
+  "baseHead": "2f10032cc46d7e366d646f113b81fe9d61f29d0a",
+  "verdict": {
+    "updateDiscoveryEngine": "PASS",
+    "productionUpdateFeed": "NOT_CONFIGURED",
+    "liveRuntimePromotion": "NOT_EXECUTED"
+  },
+  "surface": {
+    "addedTool": "product.update.check",
+    "projectedToolCount": 69,
+    "currentPrimaryLiveToolCount": 53,
+    "readOnly": true,
+    "openWorld": true
+  },
+  "security": {
+    "httpsOnly": true,
+    "redirectsRejected": true,
+    "boundedTimeout": true,
+    "boundedMetadataBytes": true,
+    "signature": "Ed25519",
+    "signatureBeforeSelection": true,
+    "expiryRequired": true,
+    "packageDownloadedByDiscovery": false,
+    "runtimeMutationByDiscovery": false,
+    "incompatibleCandidatesIgnored": true,
+    "currentVersionNeverGuessed": true
+  },
+  "acceptance": {
+    "signedDiscovery": "7/7 PASS",
+    "doctorMapping": "7/7 PASS",
+    "directMcpReadiness": "10/10 PASS",
+    "wagProduct": "58/58 PASS",
+    "dcReplacement": "1/1 PASS",
+    "projectedToolCount": 69,
+    "operatorApprovals": 0,
+    "autonomousLocalEffects": true,
+    "typecheck": "PASS",
+    "build": "PASS",
+    "packageDryRun": "PASS",
+    "diffCheck": "PASS"
+  },
+  "liveDoctor": {
+    "status": "READY",
+    "devspaceDiscoveryHttpStatus": 200,
+    "tunnelHealthHttpStatus": 200,
+    "tunnelReadyHttpStatus": 200,
+    "localMcpRoundTrip": true,
+    "updateStatus": "UNCONFIGURED"
+  },
+  "deferred": [
+    "production-update-feed-hosting-and-signing",
+    "bounded-in-memory-execution",
+    "hosted-multi-device-management"
+  ]
+}

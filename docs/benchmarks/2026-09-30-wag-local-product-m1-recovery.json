@@ -1,0 +1,55 @@
+{
+  "schema": "WAG_LOCAL_M1_RECOVERY_ACCEPTANCE_V1",
+  "date": "2026-09-30",
+  "result": "PASS",
+  "scope": "service-crash-recovery",
+  "sourceBaseHead": "27e62d5ed959ac5686cef7d37246234170f479d5",
+  "receipts": {
+    "safe": {
+      "source": "%LOCALAPPDATA%\\WAG-Local\\receipts\\wag-local-m1-safe-final.json",
+      "sha256": "63286b93e544f861934358358509116db7275763e9c30618a4c85d22bb25b6f7",
+      "pass": true,
+      "cases": {
+        "powershell5-reentry": 2418,
+        "stale-pid-reconciliation": 1839,
+        "launcher-drift-repair": 533,
+        "autostart-drift-repair": 718
+      }
+    },
+    "tunnelCrash": {
+      "source": "%LOCALAPPDATA%\\WAG-Local\\receipts\\wag-local-m1-tunnelcrash-final.json",
+      "sha256": "cff45482af0b3b193f42f356e56e0b8ae2066dc6b36c6ec9fbaee6b1e6845df1",
+      "pass": true,
+      "elapsedMs": 22865
+    },
+    "devSpaceCrash": {
+      "source": "%LOCALAPPDATA%\\WAG-Local\\receipts\\wag-local-m1-devspacecrash-final.json",
+      "sha256": "55b4ee995854f977cec3b7ea7c9ab93a56eb22da932980b85312b719e2ab243c",
+      "pass": true,
+      "elapsedMs": 18987
+    }
+  },
+  "finalVerification": {
+    "gitDiffCheck": "PASS",
+    "typecheck": "PASS",
+    "wagProductTests": "8/8 PASS",
+    "productHealth": "READY",
+    "devSpaceDiscoveryHttp": 200,
+    "tunnelHealthHttp": 200,
+    "tunnelReadyHttp": 200,
+    "freshMcpRoundTrip": true,
+    "mcpToolCount": 53,
+    "authorityMode": "AUTONOMOUS_LOCAL",
+    "startupTargetsSupervisor": true,
+    "supervisorRunning": true,
+    "launchersMatchCanonical": true
+  },
+  "fixedDefects": [
+    "stale launcher PID diagnostics polluted the PowerShell success pipeline and were captured as the PID value",
+    "a live tunnel launcher could keep running after DevSpace died, causing the starter to wait instead of repairing DevSpace"
+  ],
+  "notClaimed": [
+    "full Windows reboot recovery",
+    "power-loss recovery"
+  ]
+}

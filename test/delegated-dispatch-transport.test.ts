@@ -497,7 +497,7 @@ test('the extension refuses to reuse one request id for both calls', async () =>
 
 test('the kill switch is read live by an already-open connection', async (t) => {
   // Every earlier kill-switch test reconnected first, so an implementation that snapshotted the
-  // switch at construction would have passed all of them. `npm run lease:stop` promises to work
+  // switch at construction would have passed all of them. `npm run autonomy:stop` promises to work
   // "in every WAG process, without any of them cooperating"; that means an open port too.
   const h = await harness(t);
   let engaged = false;

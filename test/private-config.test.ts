@@ -51,7 +51,9 @@ test('private config is strict, absolute, loopback-only, and canonicalizes allow
   if (process.platform === 'win32') {
     const driveRoot = parse(root).root;
     const broad = validConfig(driveRoot);
-    await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'drive-root.json', broad)), /drive-root|workspace/i);
+    const loadedBroad = await loadPrivateGatewayConfig(await writeConfig(root, 'drive-root.json', broad));
+    assert.deepEqual(loadedBroad.allowedRoots, [driveRoot],
+      'a drive root is a trusted envelope; workspace.open still refuses the drive root itself');
   }
 
   const loaded = await loadPrivateGatewayConfig(await writeConfig(root, 'valid.json', validConfig(root)));

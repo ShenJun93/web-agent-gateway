@@ -1,0 +1,368 @@
+# Multi-workspace development lanes — source acceptance
+
+Date: 2026-09-23
+
+## Goal
+
+Allow one human-issued direct-stdio Goal Lease to cover more than one exact local development
+worktree without turning Git authority into an ambient branch grant.
+
+This is the minimum composition needed for concurrent local project lanes behind one trusted WAG
+caller:
+
+- mutation authority remains exact-root + path-pattern bounded;
+- `command.run` remains exact-root + lease bounded;
+- each writable Git lane gets its own exact branch and starting-HEAD compare-and-swap;
+- a workspace may be granted edit/test authority without being granted commit authority;
+- the existing single-workspace `branch` + `headSha` lease shape remains valid.
+
+## Why this is workspace isolation, not provider-session identity
+
+The private stdio connector deliberately derives one trusted caller session from the locally written
+`sessionCorrelation`. ChatGPT chat identity is not a tool argument and the tunnel does not provide
+trusted per-chat identity to WAG.
+
+Therefore this milestone does **not** claim that WAG can cryptographically distinguish Chat A from
+Chat B when both use the same connector. That would require a different trusted identity source or
+separate connector/runtime lanes.
+
+What WAG can enforce with the current trusted inputs is stronger workspace isolation: the caller may
+hold one lease naming several canonical workspace roots, while consequential Git history authority
+is independently pinned per root.
+
+## Binding extension
+
+A commit-granting lease may now use either the existing single-workspace shape:
+
+```text
+commitSemantics = commit-to-bound-branch
+branch           = feat/a
+headSha          = <HEAD-A>
+```
+
+or a multi-workspace shape:
+
+```text
+commitSemantics = commit-to-bound-branch
+commitBindings  = [
+  { workspaceRoot = E:/worktrees/a, branch = feat/a, headSha = <HEAD-A> },
+  { workspaceRoot = E:/worktrees/b, branch = feat/b, headSha = <HEAD-B> }
+]
+```
+
+The two forms are mutually exclusive. Every `commitBindings.workspaceRoot` must already appear in
+the lease's exact `workspaceRoots` allowlist, and a root may appear at most once.
+
+A root present in `workspaceRoots` but absent from `commitBindings` may still receive mutation or
+`command.run` authority if the rest of the lease grants it, but a commit from that root is denied
+with `COMMIT_NOT_GRANTED`.
+
+## Fail-closed properties pinned by tests
+
+`test/goal-lease-multi-workspace.test.ts` proves:
+
+1. workspace A is admitted only against A's branch and HEAD;
+2. workspace B is admitted only against B's branch and HEAD;
+3. branch or HEAD values cannot be borrowed across roots;
+4. a third edit/test-only workspace cannot commit;
+5. duplicate commit roots are malformed;
+6. a commit root outside `workspaceRoots` is malformed;
+7. legacy and multi-workspace commit bindings cannot be mixed;
+8. `commitBindings` cannot exist under `commitSemantics: none`;
+9. the real `DurableCommitCoordinator` executes two pending commits from two workspaces through one
+   lease and records both as successful under their own CAS bindings.
+
+The focused direct-MCP surface gate also imports the existing legacy Goal Lease policy and autonomous
+commit suites, so the additive extension is checked against the old single-workspace behavior.
+
+## Measured gate
+
+After the extension:
+
+```text
+surface    47 tests, 47 pass, 0 fail
+typecheck  pass
+build      pass
+diffcheck  pass
+```
+
+The repository-wide `npm test` profile still exceeds the current 30-second verification-runner
+ceiling. That is recorded as a runner timeout, not as a test failure.
+
+## Remaining production gate
+
+This document is source acceptance, not a claim that the new code is already the live tunnel
+runtime.
+
+Production readiness still requires:
+
+1. commit this slice;
+2. build and promote that commit to the separate `E:/WAG-Runtime/... ` runtime;
+3. issue one successor human Goal Lease whose `workspaceRoots` and `commitBindings` name two
+   disposable development worktrees;
+4. reconnect/fresh-discover the direct MCP surface so `command.run` is visible to the client;
+5. run two independent workspace lanes concurrently through edit -> test/command -> commit;
+6. prove that each lane changes only its own worktree/branch and that a cross-lane branch/HEAD
+   attempt is denied.
+
+PFP is not an acceptance write target and receives no autonomous write or command grant.
+
+## Live production acceptance receipt
+
+The production gate above was exercised through the live d8fd stdio runtime and ChatGPT custom
+connector after a manual tool-metadata refresh exposed the newly registered `command.run` tool.
+
+Measured live result:
+
+```text
+ChatGPT-discovered WAG tools   14
+command.run                    present
+Lane A start HEAD              d8fd901d3a16cfa587a4211aadece255be99d11a
+Lane A committed HEAD          e222e27beab2fab7d90ec31daa7dafb41f47e5bc
+Lane B start HEAD              d8fd901d3a16cfa587a4211aadece255be99d11a
+Lane B committed HEAD          517aac66921baae2f37558c1e08d90f5fc19bc19
+focused multi-workspace test   4 pass, 0 fail
+```
+
+Both lanes independently completed mutation -> `command.run` -> commit under the same human-issued
+successor Goal Lease. Each commit proposal was bound to its own workspace root, branch and original
+d8fd HEAD, and both durable commit records reached `SUCCEEDED` with different trees and commit
+SHAs.
+
+A second live commit proposal on lane A after its HEAD advanced remained `PENDING_APPROVAL` rather
+than being auto-admitted by the lease. This is the expected stale-HEAD CAS refusal signal: the lease
+remained bound to d8fd and did not authorize a second commit from the advanced lane.
+
+The focused `test/goal-lease-multi-workspace.test.ts` run passed all four tests, including rejection
+of cross-root branch/HEAD borrowing and malformed/ambiguous multi-workspace bindings.
+
+After the stale-CAS probe was reverted, `git diff HEAD --name-only` was empty and
+`git diff HEAD --check` exited zero in both acceptance worktrees. `repo.snapshot` may still report
+`MM` for the committed benchmark file because WAG's commit backend uses a private index and does
+not reset the operator's index; no index reset was performed to manufacture a clean status.
+
+No DevSpace restart or second promotion was required for acceptance. PFP was not opened as an
+acceptance workspace and received no mutation, command or commit authority.
+
+## Next slice — rollover and multi-session source acceptance
+
+The live acceptance above deliberately consumed each commit binding's starting-HEAD CAS. Continuing
+development therefore needs a new human-reviewed authority statement rather than an automatic
+"advance HEAD" shortcut.
+
+### Lease/Lane Rollover v1
+
+The source now exposes a pure `rolloverCommitBindingHeads` policy. It may change the HEAD CAS for
+each already commit-bound workspace only when every bound root is observed exactly once and its
+branch is unchanged. Missing roots, extra roots, duplicate roots and branch drift fail closed.
+
+Rollover also carries the predecessor's mutation spend forward by shrinking the successor ceilings:
+
+```text
+successor.maxFiles = predecessor.maxFiles - predecessor.filesChanged
+successor.maxBytes = predecessor.maxBytes - predecessor.bytesWritten
+```
+
+This prevents a fresh lease id from becoming a budget reset. If either residual budget is exhausted,
+rollover refuses and a genuinely new lease must be issued as a separate human authority decision.
+`maxDiffBytes`, roots, tools, path patterns, admitted sessions/adapters and commit semantics are
+copied unchanged.
+
+The tracked promotion helper now has a read-only `--preview-rollover` mode. It reads the configured
+lease and durable spend, observes the current branch/HEAD of every commit-bound workspace, computes
+the bounded successor bindings and prints a SHA-256 plan receipt. It inserts no lease, writes no
+configuration and restarts nothing.
+
+The matching `--apply-rollover <reviewed-plan-sha256>` path is intentionally human-only. It refuses
+unless both stdin and stdout are interactive TTYs, prints the exact reviewed plan, requires the
+operator to type `APPLY <digest>`, then re-measures config, spend, branches and HEADs after that
+gesture and refuses any digest drift. Only then may it insert the successor row, atomically name it
+in local config, restart the WAG tunnel runtime, and revoke the predecessor. The successor keeps the
+predecessor's exact expiration; extending the time window is renewal, not rollover. A failed
+activation restores the original config, revokes the inert successor row and attempts to restore the
+previous WAG runtime.
+
+The direct MCP `command.run` runner has no interactive TTY. A live probe of the apply command
+therefore exited 1 with `interactive TTY human confirmation` before any authority write, proving
+that the same autonomous surface which can preview a rollover cannot activate one.
+
+The helper also no longer deletes itself after a successful promotion. It is now tracked source, so
+self-deletion would itself be an unintended repository mutation.
+
+### Multi-Session Identity Isolation v1
+
+This slice does not claim that one ChatGPT connector exposes trustworthy per-chat identity; it
+does not. The accepted composition instead uses separate connector/runtime configurations, each
+with its own human-written `sessionCorrelation`.
+
+The runtime-level source test uses one shared durable store and two exact workspace roots. Two
+different stdio correlations resolve to two different durable `stableSessionId` values, survive
+runtime restart independently, and bind to separate Goal Leases. A caller from lane A using lane
+B's lease is refused with `SESSION_NOT_ADMITTED`; using its own lease against B's root is refused
+with `WORKSPACE_NOT_GRANTED`, and vice versa.
+
+This proves connector/runtime-lane identity isolation from WAG-owned inputs. A later live acceptance
+still needs two separately configured WAG connector/runtime lanes and human-issued leases; until
+that is exercised, it is not described as provider-level per-chat identity.
+
+Measured source gates for this slice:
+
+```text
+goal-lease multi-workspace + rollover   6 pass, 0 fail
+direct MCP session binding              9 pass, 0 fail
+typecheck                               pass
+diffcheck                               pass
+rollover preview                        pass, read-only
+```
+
+The remaining production gate is operational, not an authority shortcut: a person reviews a fresh
+rollover preview and issues/names any successor out of band. Live multi-session acceptance then uses
+two connector/runtime lanes and proves independent command/mutation/commit behavior plus independent
+revocation/recovery.
+
+## Multi-Session Goal Lease Resolution v1 — current source acceptance candidate
+
+Date refreshed: 2026-09-23
+
+This section records the current source/runtime truth for the successor Goal Lease architecture.
+Chat history is not an authority source for this slice.
+
+### Frozen target
+
+Goal Lease is the authority plane, not a runtime mode selector.
+
+Consequential requests resolve against the durable lease store at request time:
+
+```text
+0 matching eligible leases  -> deny NO_LEASE
+1 matching eligible lease   -> authorize that exact lease
+>1 matching eligible leases -> deny AMBIGUOUS_LEASE
+```
+
+No newest-lease, longest-TTL, configured-selector or other precedence heuristic is allowed.
+Human-only issuance/revocation boundaries remain. `git.push` remains outside the grantable
+surface. Proposal/approval is a separate plane and may not widen a lease.
+
+The old `repositoryEngineering.mutation.goalLeaseId` field is accepted only as a legacy
+configuration field. It is not an activation selector for the new resolver path.
+
+### Implemented in the worktree
+
+Current implementation candidate includes:
+
+- `src/goal-lease-resolver.ts`: durable multi-active resolver with exact 0/1/>1 behavior;
+- `src/durable-mutation.ts`: request-time resolution for mutation admission, with resolved lease id
+  written to durable authority audit;
+- `src/git-commit.ts`: one exact lease must cover every commit path plus session/adapter/workspace,
+  branch and HEAD bindings;
+- `src/repository-engineering-runtime.ts`: `command.run`, mutation and commit authority no longer
+  depend on a singleton configured lease id;
+- `src/browser-operator-runtime.ts`: mutation/commit coordinators use resolver mode;
+- `src/private-config.ts`, `src/cli.ts`, `scripts/prepare-direct-mcp-tunnel.ts` and
+  `scripts/goal-lease-delegation-control.ts`: legacy-selector and no-restart issuance semantics;
+- `test/goal-lease-resolver.test.ts` plus runtime hot-change coverage.
+
+The runtime-level hot-change test proves a running direct runtime observes issue, ambiguity,
+revocation and recovery without restart.
+
+### Fresh measured source gates
+
+Executed from:
+
+```text
+E:/Projects/web-agent-gateway/.worktrees/claude-autonomous-wag-harness-v1
+branch = feat/goal-ui-delegation-v1
+HEAD   = b05ec91dbc93cb772e8d1d2b73ea4ff4ff4426d5
+```
+
+Commands and results:
+
+```text
+npx.cmd tsx --test --test-concurrency=1 \
+  test/goal-lease-resolver.test.ts \
+  test/repository-engineering-runtime.test.ts
+=> 15 pass, 0 fail
+
+npx.cmd tsx --test --test-concurrency=1 \
+  test/direct-mcp-readiness.test.ts \
+  test/direct-mcp-session-binding.test.ts
+=> 48 pass, 0 fail
+
+npm.cmd run typecheck
+=> pass
+
+npm.cmd run build
+=> pass
+```
+
+Focused primary total: 63 pass, 0 fail.
+
+Additional independent regression gates:
+
+```text
+npx.cmd tsx --test --test-concurrency=1 \
+  test/cli.test.ts \
+  test/dc-replacement-config.test.ts \
+  test/authority-issuance-guard.test.ts
+=> 30 pass, 0 fail
+
+npx.cmd tsx --test --test-concurrency=1 test/dc-replacement-surface.test.ts
+=> 12 pass, 0 fail
+
+npx.cmd tsx --test --test-concurrency=1 test/browser-operator-runtime.test.ts
+=> 4 pass, 0 fail
+```
+
+Focused measured total for this slice: 109 pass, 0 fail.
+
+A larger mixed regression command hit the WAG `command.run` 30-second ceiling after many passes and
+before completion; it is recorded as a runner timeout, not as a pass or a test failure. The
+repository-wide test profile is not claimed here.
+
+### Live runtime status
+
+The live connector is still serving the previously promoted runtime based on
+`b05ec91dbc93cb772e8d1d2b73ea4ff4ff4426d5`. The source changes above are present in the dirty
+development worktree but have not been committed or promoted by this slice.
+
+Current live authority check on 2026-09-23:
+
+```text
+WAG health       = ok
+executor         = devspace
+protocolVersion  = 2026-07-28
+Goal Lease       = ACTIVE
+FILE_WRITE       = granted
+GIT_COMMIT       = granted
+LOCAL_COMMAND    = granted
+GIT_PUSH         = denied / non-grantable
+```
+
+Do not use the worktree's dirty status as a reason to reset or clean it. The private-index workflow
+intentionally leaves mixed index/worktree state.
+
+### Remaining gaps before claiming final architecture
+
+Not yet closed by this source candidate:
+
+1. stable workspace identity stronger than canonical root / current durable workspace binding;
+2. cleaner architectural separation between authority resolution and capability evaluation;
+3. atomic concurrent budget reservation/settlement for the last available budget slot;
+4. dedicated pre-side-effect lease/revocation/budget revalidation at every effect boundary;
+5. live multi-session A/B/C acceptance of issue/revoke/successor without runtime restart;
+6. final durable receipt lineage for every consequential effect;
+7. later interactive process-session capability, still bounded by the same authority plane.
+
+### Next production gate
+
+Before any promotion:
+
+1. establish the exact safe runtime-copy/tunnel-reconnect procedure from local source/evidence;
+2. do not run `git reset`, `git clean`, `checkout -- .` or `restore .`;
+3. do not restart DevSpace merely to deploy this slice;
+4. do not mutate UAF or PFP;
+5. deploy only the built WAG runtime/tunnel layer required for acceptance;
+6. run concurrent A/B workspace/session acceptance proving isolation, ambiguity denial, hot
+   issue/revoke/successor, commit CAS and continued `git.push` denial.
+
+Only after that gate may this slice be described as live production acceptance.

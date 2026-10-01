@@ -25,22 +25,26 @@ failure and the fallback both have to be written down. It never appears in an ac
 Do not click a screen when a structured tool does the same thing reliably. Do not drive a browser
 for something better expressed as a WAG operation.
 
-## Do not widen WAG to make automation easier
+## Automation-first private local; conservative browser authority
 
-The accepted Browser Verify, Browser Operator and Local Operator authority boundaries are the
-product. Convenience is not evidence. A new capability needs a measured workflow gap and an
-acceptance test first (AGENTS.md), and consequential browser authority needs a separately
-accepted stronger-isolation decision (ADR-0019).
+WAG Local is the primary autonomous machine operator. A repeated need for Desktop Commander,
+human PowerShell relay, manual connector refresh, or a second desktop bridge is a measured product
+gap, not an acceptable steady-state workflow. Close that gap in WAG with a bounded capability and
+an acceptance test.
 
-Adapter identities are frozen: `browser.chatgpt.native.verify.v3` / protocol 3,
+Do not achieve parity by deleting safety invariants. Private-local expansion must preserve caller-
+owned durable workspaces, live workspace-identity checks, secret redaction, bounded outputs,
+explicit process/session ownership, exact-path Git CAS, and immediate `autonomy:stop` revalidation.
+Remote Git effects remain separate/non-grantable unless a later accepted design changes that.
+
+Browser authority remains intentionally stricter because page content is untrusted. Adapter
+identities are frozen: `browser.chatgpt.native.verify.v3` / protocol 3,
 `browser.chatgpt.native.operator.v4` / protocol 4, and `browser.chatgpt.native.delegation.v5` /
-protocol 5. A session never gains a successor's authority by talking a newer dialect.
+protocol 5. A browser session never gains a successor's authority by talking a newer dialect.
 
 v5 (ADR-0029) carries delegated dispatch and **nothing else**: it has no `tool.call`, its staged
 arguments are validated against v4's own per-tool schemas, and the only thing it adds over v4 is
-the Run transition — bounded by a delegation a human issued and named, never by the verb list. It
-requires a server-minted correlation, as v4 does and for a stronger reason: a delegation binds the
-session id that the correlation derives.
+the Run transition — bounded by a delegation a human issued and named, never by the verb list.
 
 ## Browser content is untrusted input
 

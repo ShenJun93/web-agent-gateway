@@ -15,7 +15,8 @@ import { DurableVerifyJobCoordinator } from './durable-verify-job.js';
 import { DurableCommitCoordinator } from './git-commit.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
-import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
+import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
+import { isKillSwitchEngaged } from './autonomy-kill-switch.js';
 import { DevspaceVerifyExecutionPort } from './executor/devspace-verify.js';
 import { startBrowserAdmissionHttpServer } from './http-server.js';
 import { operatorDenialsToStderr, startOperatorServer } from './operator-server.js';
@@ -34,9 +35,7 @@ import {
   UiDelegationDispatchPlane,
   createDelegationDispatchPort,
 } from './goal-ui-delegation-dispatch.js';
-
-/** How often a configured lease is offered the pending queue. Idle when nothing is pending. */
-const LEASE_ADMISSION_INTERVAL_MS = 2_000;
+import { WorkspaceIdentityRegistry } from './workspace-identity.js';
 
 /**
  * The browser operator runtime (ADR-0026).
@@ -57,15 +56,9 @@ export interface BrowserOperatorRuntime {
   /** Where the single-use bootstrap URL was written, 0600, removed on shutdown. */
   operatorUrlFile: string;
   /**
-   * The Autonomous Goal Lease this runtime honours, if any (ADR-0028). Absent is the default and
-   * means every effect still needs the operator's Approve. Surfaced so the CLI can say plainly
-   * that autonomous admission is on, rather than it being invisible in a config file.
-   */
-  goalLeaseId?: string;
-  /**
    * The Goal UI Delegation this runtime honours, if any (ADR-0029). Absent is the default and means
-   * Run stays human for every proposal. Surfaced for the same reason the lease is: an authority that
-   * is only visible by reading a config file is one an operator can be running without knowing.
+   * Run stays human for every proposal. Surfaced because an authority that is only visible by
+   * reading a config file is one an operator can be running without knowing.
    */
   goalUiDelegationId?: string;
   /** Where the v5 discovery was written, when a delegation is configured. Removed on shutdown. */
@@ -108,11 +101,11 @@ export async function startBrowserOperatorRuntime(options: {
   }
   const bootstrapToken = randomBytes(32).toString('base64url');
   let store: SqliteDurableStore | undefined;
+  let workspaceIdentities: WorkspaceIdentityRegistry | undefined;
   let admission: BrowserAdmissionRegistry | undefined;
   let privateRuntime: Awaited<ReturnType<typeof bootstrapPrivateGateway>> | undefined;
   let http: Awaited<ReturnType<typeof startBrowserAdmissionHttpServer>> | undefined;
   let operator: Awaited<ReturnType<typeof startOperatorServer>> | undefined;
-  let leaseTimer: ReturnType<typeof setInterval> | undefined;
   let delegationAdmission: BrowserAdmissionRegistry | undefined;
   let delegationHttp: Awaited<ReturnType<typeof startDelegationDispatchHttpServer>> | undefined;
   let claimSweeper: DelegationClaimSweeper | undefined;
@@ -135,6 +128,7 @@ export async function startBrowserOperatorRuntime(options: {
     await mkdir(dirname(options.statePath), { recursive: true });
     await mkdir(dirname(options.discoveryPath), { recursive: true });
     store = new SqliteDurableStore(options.statePath);
+    workspaceIdentities = new WorkspaceIdentityRegistry(options.statePath);
     // The correlation is the session key, so on the adapter that can propose changes it must be
     // a server-minted UUID rather than any string a caller chose.
     admission = new BrowserAdmissionRegistry(
@@ -146,6 +140,8 @@ export async function startBrowserOperatorRuntime(options: {
     const workspaces = new AdmittedWorkspaceService({
       store,
       executor: privateRuntime.executor,
+      identityExecutor: privateRuntime.executor,
+      workspaceIdentities,
       inspection,
       allowedRoots: config.allowedRoots,
     });
@@ -168,47 +164,47 @@ export async function startBrowserOperatorRuntime(options: {
     // One review window for both record kinds, so the operator does not have to learn two.
     const reviewTtlMs = engineering.mutation.reviewTtlMs;
 
-    /**
-     * The Autonomous Goal Lease, if this runtime was configured with one (ADR-0028).
-     *
-     * Absent unless the config names a lease, so autonomous admission is off by default and the
-     * only route to an effect stays the operator's Approve button. Naming one grants nothing on
-     * its own: the lease's bindings, expiry and revocation still decide every action, and an id
-     * that is not in the store is refused rather than read as unrestricted.
-     *
-     * The kill switch is read from disk on every admission rather than captured here, so
-     * engaging it stops this already-running process without restarting it.
-     */
-    const leaseId = engineering.mutation.goalLeaseId;
+    // Browser proposals remain proposal-only. Goal Lease has been retired from the live
+    // authority plane; a browser effect requires the operator review path. The kill switch is
+    // still shared with delegated Run so one emergency stop halts autonomous browser dispatch.
     const killSwitchDir = dirname(options.statePath);
-    const goalLease = leaseId === undefined ? undefined : {
-      leaseId,
-      killSwitch: () => isKillSwitchEngaged(killSwitchDir),
-    };
+    const identityStore = store;
+    const identityRegistry = workspaceIdentities;
+    const identityRuntime = privateRuntime;
 
-    /**
-     * The configured delegation, read here as well as below, and for a different reason.
-     *
-     * Below it decides whether the v5 dispatch surface exists at all. Here it is handed to the two
-     * coordinators that can admit an effect **without a human**, so that the lease policy can ask
-     * which goal is currently allowed to Run without a click — and refuse a delegated adapter whose
-     * goal the lease does not name (ADR-0029 §composition, `delegated-run-provenance.ts`).
-     *
-     * Not passing it would not make the composition safe; it would make it invisible. With no
-     * delegation configured the resolution returns `undefined`, which on a delegated adapter the
-     * policy denies — so the fail-closed direction is the same either way.
-     */
+    async function revalidateWorkspaceIdentity(
+      workspaceId: string,
+      canonicalRoot: string,
+    ): Promise<void> {
+      const workspace = identityStore.getWorkspace(workspaceId);
+      if (!workspace || workspace.backendKind !== 'devspace') {
+        throw new Error('Gateway denied workspace identity backend');
+      }
+      const expectedRoot = process.platform === 'win32'
+        ? canonicalRoot.toLowerCase() : canonicalRoot;
+      const storedRoot = process.platform === 'win32'
+        ? workspace.canonicalRoot.toLowerCase() : workspace.canonicalRoot;
+      if (storedRoot !== expectedRoot) throw new Error('Gateway denied workspace identity drift');
+
+      const devspaceWorkspaceId = await identityRuntime.executor.openWorkspace(canonicalRoot);
+      const observation = await observeDevspaceWorkspaceIdentity(
+        identityRuntime.executor, devspaceWorkspaceId, canonicalRoot,
+      );
+      const observedRoot = process.platform === 'win32'
+        ? observation.canonicalRoot.toLowerCase() : observation.canonicalRoot;
+      if (observedRoot !== expectedRoot) throw new Error('Gateway denied workspace identity drift');
+      identityRegistry.record(workspaceId, observation);
+    }
+
+    // Goal UI Delegation controls browser Run/dispatch only. It never approves filesystem or Git
+    // effects; those stay on the operator-review path.
     const configuredDelegationId = engineering.mutation.goalUiDelegationId;
-    const uiDelegation = configuredDelegationId === undefined
-      ? undefined
-      : { configuredDelegationId };
 
     const mutation = new DurableMutationCoordinator({
       store,
       backends: [new DevspaceFileMutationBackend(privateRuntime.executor)],
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
-      ...(goalLease === undefined ? {} : { goalLease }),
-      ...(uiDelegation === undefined ? {} : { uiDelegation }),
+      effectBoundary: { revalidateWorkspace: revalidateWorkspaceIdentity },
     });
     await mutation.reconcile();
 
@@ -219,33 +215,9 @@ export async function startBrowserOperatorRuntime(options: {
         ? {}
         : { protectedBranches: engineering.gitCommit.protectedBranches }),
       ...(reviewTtlMs === undefined ? {} : { reviewTtlMs }),
-      ...(goalLease === undefined ? {} : { goalLease }),
-      ...(uiDelegation === undefined ? {} : { uiDelegation }),
+      effectBoundary: { revalidateWorkspace: revalidateWorkspaceIdentity },
     });
     await commit.reconcile();
-
-    /**
-     * The admission pass, which is the thing that makes a configured lease do anything.
-     *
-     * Driven by a modest interval rather than fired from the proposal path, so that a proposal's
-     * contract is unchanged and so that records left pending across a restart are picked up too.
-     * It exists only when a lease is configured — with none, no timer is created and nothing on
-     * this path runs at all.
-     *
-     * `unref` so it never holds the process open, and errors are swallowed per tick: a failing
-     * admission must not take down a runtime whose human review path is working fine.
-     */
-    if (goalLease) {
-      leaseTimer = setInterval(() => {
-        void mutation.admitPendingUnderLease().catch(() => undefined);
-        // Commits too. Driving only mutations here meant a lease that granted `git.commit`, bound
-        // the exact branch and pinned the exact HEAD still never admitted one: the record sat at
-        // PENDING_APPROVAL until its review window closed, while the runtime reported that
-        // autonomous admission was enabled. Measured in production on 2026-09-22.
-        void commit.admitPendingUnderLease().catch(() => undefined);
-      }, LEASE_ADMISSION_INTERVAL_MS);
-      leaseTimer.unref?.();
-    }
 
     // One review server for all three record kinds; the browser never learns its origin.
     operator = await startOperatorServer({
@@ -382,7 +354,6 @@ export async function startBrowserOperatorRuntime(options: {
       operatorOrigin: operator.origin,
       operatorBootstrapUrl: operator.bootstrapUrl,
       operatorUrlFile,
-      ...(leaseId === undefined ? {} : { goalLeaseId: leaseId }),
       ...(engineering.mutation.goalUiDelegationId === undefined
         ? {}
         : { goalUiDelegationId: engineering.mutation.goalUiDelegationId }),
@@ -392,7 +363,6 @@ export async function startBrowserOperatorRuntime(options: {
       async close() {
         if (closed) return;
         closed = true;
-        if (leaseTimer) clearInterval(leaseTimer);
         await closeDelegation();
         await rm(options.discoveryPath, { force: true });
         await rm(operatorUrlFile, { force: true }).catch(() => undefined);
@@ -400,6 +370,7 @@ export async function startBrowserOperatorRuntime(options: {
         await operator?.close();
         admission?.close();
         await privateRuntime?.close();
+        workspaceIdentities?.close();
         store?.close();
       },
     };
@@ -411,6 +382,7 @@ export async function startBrowserOperatorRuntime(options: {
     await operator?.close().catch(() => undefined);
     admission?.close();
     await privateRuntime?.close().catch(() => undefined);
+    workspaceIdentities?.close();
     store?.close();
     throw error;
   }

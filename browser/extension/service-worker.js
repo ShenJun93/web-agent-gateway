@@ -13,6 +13,8 @@ import {
   createDelegatedObservationMemory,
   createDelegatedRunAttempt,
 } from './delegated-observation-v5.js';
+import { createExistingBrowserControlV1 } from './existing-browser-control-v1.js';
+import { createBrowserControlWebSocketV1 } from './browser-control-websocket-v1.js';
 
 /**
  * The shipped entry point, now the operator adapter (ADR-0026).
@@ -59,6 +61,17 @@ const delegation = createNativeDelegationSessionController({
   randomUUID: () => crypto.randomUUID(),
 });
 const delegatedSeen = createDelegatedObservationMemory(chrome.storage.session);
+// Browser v2 feasibility foundation. This controller is deliberately not exposed through the
+// operator/delegation message surface yet; a separate bounded native control bridge will own
+// runtime-initiated target discovery/attach after the feasibility gate passes.
+const existingBrowserControl = createExistingBrowserControlV1(chrome);
+const browserControlWebSocket = createBrowserControlWebSocketV1({
+  storage: chrome.storage.local,
+  control: existingBrowserControl,
+});
+// Browser v2 no longer requires a separately signed native executable. The extension connects
+// outbound to the WAG loopback server only after first-time pairing has stored endpoint + token.
+void browserControlWebSocket.start().catch(() => undefined);
 
 /**
  * Attempt one observed candidate on the delegated path, before offering it to a person.
@@ -87,6 +100,34 @@ const tryDelegatedRun = createDelegatedRunAttempt({
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // The actor is derived from what Chrome put in `sender`, never from what the message claims.
   const actor = senderActor(sender, chrome.runtime);
+
+  if (message?.type === 'browser.control.configure') {
+    if (actor !== 'sidepanel') { sendResponse({ configured: false }); return false; }
+    void browserControlWebSocket.configure({
+      endpoint: message.endpoint,
+      pairingToken: message.pairingToken,
+    }).then(() => sendResponse({ configured: true }))
+      .catch(() => sendResponse({ configured: false }));
+    return true;
+  }
+
+  if (message?.type === 'browser.control.state') {
+    if (actor !== 'sidepanel') { sendResponse({ connected: false, configured: false }); return false; }
+    void browserControlWebSocket.loadConfig().then((config) => sendResponse({
+      connected: browserControlWebSocket.isConnected(),
+      configured: config !== null,
+      endpoint: config?.endpoint,
+    })).catch(() => sendResponse({ connected: false, configured: false }));
+    return true;
+  }
+
+  if (message?.type === 'browser.control.clear') {
+    if (actor !== 'sidepanel') { sendResponse({ cleared: false }); return false; }
+    void browserControlWebSocket.clearConfig()
+      .then(() => sendResponse({ cleared: true }))
+      .catch(() => sendResponse({ cleared: false }));
+    return true;
+  }
 
   if (message?.type === 'provider.observed_text') {
     const tabId = sender.tab?.id;

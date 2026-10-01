@@ -288,6 +288,12 @@ test('untrusted repository instructions cannot reach outside the admitted worksp
       arguments: { workspace_id: durable.workspaceId, path, base_sha256: baseSha(), before: 'a', after: 'b' },
     });
     assert.equal((attempt as { isError?: boolean }).isError, true, `mutation.preview must deny ${path}`);
+
+    const replace = await client.callTool({
+      name: 'file.replace',
+      arguments: { workspace_id: durable.workspaceId, path, base_sha256: baseSha(), content: 'replacement\n' },
+    });
+    assert.equal((replace as { isError?: boolean }).isError, true, `file.replace must deny ${path}`);
   }
   assert.deepEqual(writes, [], 'no escape attempt may produce a write');
 });

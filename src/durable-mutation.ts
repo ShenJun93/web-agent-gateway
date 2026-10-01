@@ -1,35 +1,11 @@
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from './path-policy.js';
 import { createProposalRateLimit, type ProposalRateLimit } from './proposal-rate-limit.js';
-import { evaluateGoalLease, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
-import { resolveDelegatedGoal } from './delegated-run-provenance.js';
 import type { GatewayAuthority, GatewayCallerContext } from './caller-context.js';
 import type { FileMutationBackend } from './file-mutation-backend.js';
-import { affectedBytes } from './durable-store.js';
 import type { MutationRecord, SqliteDurableStore } from './durable-store.js';
+import type { PolicyDecision } from './policy-decision.js';
 
-/**
- * The tool name this coordinator's records are judged as under a lease.
- *
- * A constant rather than anything the proposal carries: the lease grants tools, and a proposal
- * must not be able to nominate which grant it is checked against.
- */
-const MUTATION_TOOL = 'mutation.preview';
-
-/**
- * The checkout this gateway was loaded from.
- *
- * Derived from this module's own location, never from a caller: a lease must not be able to
- * nominate which repository counts as "not mine to edit". A lease whose workspace resolves
- * inside this is refused outright, because it could otherwise rewrite the approver, the kill
- * switch or the extension manifest, and a bound that can rewrite itself is not a bound.
- */
-const GATEWAY_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
-
-
-/** Outstanding proposals one caller may have awaiting review, as for commits. */
 const MAX_PENDING_PER_CALLER = 8;
 /** The store's own ceiling for a pending query, so the overdue sweep sees everything it lists. */
 const PENDING_SCAN_LIMIT = 100;
@@ -45,6 +21,24 @@ export interface DurableMutationInput {
   before: string;
   after: string;
 }
+
+export interface DurableReplaceInput {
+  path: string;
+  baseSha256: string;
+  content: string;
+}
+export interface DurableEditBlockInput {
+  path: string;
+  oldString: string;
+  newString: string;
+}
+
+export interface DurableAppendInput {
+  path: string;
+  expectedSuffix: string;
+  content: string;
+}
+
 export interface MutationPreview {
   status: 'approval_required';
   mutationId: string;
@@ -98,29 +92,14 @@ export class DurableMutationCoordinator {
     admissionTtlMs?: number;
     rateLimit?: ProposalRateLimit;
     /**
-     * Absent by default, which is what makes autonomous admission off by default: with no lease
-     * configured, `admitByPolicy` refuses and the only way to an effect is a human on the
-     * operator's Approve route, exactly as before.
+     * Trusted private-local execution mode. Browser proposal coordinators leave this absent.
+     * The emergency stop is re-read at admission and immediately before the filesystem effect.
      */
-    goalLease?: {
-      leaseId: string;
-      /** Consulted on every admission, so engaging it takes effect immediately. */
-      killSwitch: () => boolean;
+    autonomous?: { killSwitch: () => boolean };
+    /** Re-observe the durable workspace object immediately before any filesystem effect. */
+    effectBoundary?: {
+      revalidateWorkspace: (workspaceId: string, canonicalRoot: string) => Promise<void>;
     };
-    /**
-     * The Goal UI Delegation named in local configuration, if any (ADR-0029).
-     *
-     * Carried here *only* so that the lease policy can be told which goal is currently allowed to
-     * Run without a click on the browser context that produced a record. It grants nothing: this
-     * coordinator cannot issue, renew or widen a delegation, and the id is a reference the plane
-     * re-reads every binding behind.
-     *
-     * Absent means delegated Run is off, in which case nothing reaches the effect path from a
-     * delegated adapter and the resolution never matters. Present but stale, revoked, superseded or
-     * bound elsewhere resolves to `undefined`, which the policy denies on a delegated adapter —
-     * see `delegated-run-provenance.ts`.
-     */
-    uiDelegation?: { configuredDelegationId: string };
   }) {
     this.backends = new Map(options.backends.map((backend) => [backend.kind, backend]));
     if (this.backends.size !== options.backends.length) throw new Error('Duplicate file mutation backend kind');
@@ -170,6 +149,162 @@ export class DurableMutationCoordinator {
       reviewDeadline: createdAt + this.reviewTtlMs,
     });
     return toPreview(record);
+  }
+
+  /**
+   * Propose replacing the complete contents of one existing text file, guarded by the exact
+   * pre-read SHA-256. This is a compatibility wrapper over the durable mutation record: it stores
+   * the exact original text as `before`, so execution, Goal Lease admission, restart recovery and
+   * post-write verification all remain the same accepted mechanism.
+   *
+   * Existing empty files are refused because the durable mutation format reserves
+   * empty-before + empty-base SHA-256 as the unambiguous file.create sentinel (ADR-0022).
+   */
+  async replace(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    input: DurableReplaceInput,
+  ): Promise<MutationPreview> {
+    const workspace = this.options.store.getWorkspace(workspaceId);
+    if (!workspace) throw new Error('Unknown workspace_id');
+    assertIdentity(caller, workspace);
+    const backend = this.backend(workspace.backendKind);
+    const path = validateReadPath(input.path);
+
+    if (!SHA256_RE.test(input.baseSha256)) {
+      throw new Error('Gateway rejected invalid base SHA-256');
+    }
+    rejectUnsafeText(input.content, 'replacement');
+    if (Buffer.byteLength(input.content, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected replacement exceeds 32 KiB');
+    }
+
+    const chargedAt = this.now();
+    if (this.options.store.countPendingMutations(authorityOf(caller), chargedAt) >= MAX_PENDING_PER_CALLER) {
+      throw new Error('Gateway denied mutation: too many proposals awaiting review');
+    }
+    this.rateLimit.charge(authorityOf(caller), chargedAt);
+
+    await assertReadTarget(workspace.canonicalRoot, path);
+    const original = await backend.readExact(workspace.canonicalRoot, path);
+    if (original === '') {
+      throw new Error('Gateway rejected replacement of an empty existing file');
+    }
+    if (Buffer.byteLength(original, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected replacement target exceeds 32 KiB');
+    }
+
+    const mutation: DurableMutationInput = {
+      path,
+      baseSha256: input.baseSha256,
+      before: original,
+      after: input.content,
+    };
+    const prepared = prepareMutation(workspaceId, path, original, mutation);
+    const createdAt = this.now();
+    const record = this.options.store.createMutation({
+      ...caller,
+      workspaceId,
+      backendKind: workspace.backendKind,
+      path,
+      baseSha256: prepared.baseSha256,
+      before: original,
+      after: input.content,
+      resultSha256: prepared.resultSha256,
+      fingerprint: prepared.fingerprint,
+      additions: prepared.additions,
+      removals: prepared.removals,
+      createdAt,
+      reviewDeadline: createdAt + this.reviewTtlMs,
+    });
+    return toPreview(record);
+  }
+
+  /**
+   * Build an exact unique-substring edit without exposing the rest of the file to the caller.
+   *
+   * This is the safe editing primitive for secret-bearing files: WAG reads the raw target only
+   * inside the trusted backend, derives the exact base hash, and persists the same durable
+   * mutation record used by mutation.preview. A concurrent change between this pre-read and the
+   * preview re-read fails the base SHA check rather than being merged implicitly.
+   */
+  async editBlock(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    input: DurableEditBlockInput,
+  ): Promise<MutationPreview> {
+    if (!input.oldString) throw new Error('Gateway rejected empty edit block');
+    rejectUnsafeText(input.oldString, 'old string');
+    rejectUnsafeText(input.newString, 'new string');
+    if (Buffer.byteLength(input.oldString, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected old string exceeds 32 KiB');
+    }
+    if (Buffer.byteLength(input.newString, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected new string exceeds 32 KiB');
+    }
+
+    const workspace = this.options.store.getWorkspace(workspaceId);
+    if (!workspace) throw new Error('Unknown workspace_id');
+    assertIdentity(caller, workspace);
+    const backend = this.backend(workspace.backendKind);
+    const path = validateReadPath(input.path);
+    await assertReadTarget(workspace.canonicalRoot, path);
+    const original = await backend.readExact(workspace.canonicalRoot, path);
+    if (countOccurrences(original, input.oldString) !== 1) {
+      throw new Error('Gateway rejected old string must occur exactly once');
+    }
+
+    return this.preview(caller, workspaceId, {
+      path,
+      baseSha256: sha256(original),
+      before: input.oldString,
+      after: input.newString,
+    });
+  }
+
+  /**
+   * Append bounded text without sending or persisting the rest of a potentially secret-bearing file.
+   *
+   * The caller names an exact expected suffix. WAG verifies that suffix is both the current tail
+   * and unique in the file, then reuses the durable exact-block mutation path to replace only that
+   * suffix with suffix+content. The internally derived base SHA preserves stale-write detection.
+   */
+  async append(
+    caller: GatewayCallerContext,
+    workspaceId: string,
+    input: DurableAppendInput,
+  ): Promise<MutationPreview> {
+    if (!input.expectedSuffix) throw new Error('Gateway rejected empty append suffix');
+    if (!input.content) throw new Error('Gateway rejected empty append content');
+    rejectUnsafeText(input.expectedSuffix, 'append suffix');
+    rejectUnsafeText(input.content, 'append content');
+    if (Buffer.byteLength(input.expectedSuffix, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected append suffix exceeds 32 KiB');
+    }
+    if (Buffer.byteLength(input.expectedSuffix + input.content, 'utf8') > MAX_FRAGMENT_BYTES) {
+      throw new Error('Gateway rejected append replacement exceeds 32 KiB');
+    }
+
+    const workspace = this.options.store.getWorkspace(workspaceId);
+    if (!workspace) throw new Error('Unknown workspace_id');
+    assertIdentity(caller, workspace);
+    const backend = this.backend(workspace.backendKind);
+    const path = validateReadPath(input.path);
+    await assertReadTarget(workspace.canonicalRoot, path);
+    const original = await backend.readExact(workspace.canonicalRoot, path);
+    if (!original.endsWith(input.expectedSuffix)) {
+      throw new Error('Gateway rejected append suffix is not the current file tail');
+    }
+    if (countOccurrences(original, input.expectedSuffix) !== 1) {
+      throw new Error('Gateway rejected append suffix must occur exactly once');
+    }
+
+    return this.preview(caller, workspaceId, {
+      path,
+      baseSha256: sha256(original),
+      before: input.expectedSuffix,
+      after: input.expectedSuffix + input.content,
+    });
   }
 
   result(caller: GatewayCallerContext, mutationId: string): MutationResultView {
@@ -246,102 +381,50 @@ export class DurableMutationCoordinator {
    *
    * Returns the decision so a caller can log precisely why something was refused.
    */
-  async admitByPolicy(mutationId: string): Promise<LeaseDecision> {
-    const lease = this.options.goalLease;
-    if (!lease) return { admitted: false, code: 'NO_LEASE', detail: 'no lease is configured on this coordinator' };
-
+  async admitByPolicy(mutationId: string): Promise<PolicyDecision> {
     const record = this.options.store.getMutation(mutationId);
-    if (!record) return { admitted: false, code: 'NO_LEASE', detail: 'no such mutation' };
+    if (!record) {
+      return { admitted: false, code: 'RECORD_NOT_FOUND', detail: 'no such mutation' };
+    }
     if (record.state !== 'PENDING_APPROVAL') {
-      return { admitted: false, code: 'NO_LEASE', detail: `record is ${record.state}, not awaiting review` };
+      return {
+        admitted: false,
+        code: 'RECORD_NOT_PENDING',
+        detail: `record is ${record.state}, not awaiting execution`,
+      };
     }
-    const workspace = this.options.store.getWorkspace(record.workspaceId);
-    if (!workspace) return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
-
-    const stored = this.options.store.getGoalLeaseRow(lease.leaseId);
-    if (!stored) return { admitted: false, code: 'NO_LEASE', detail: 'the configured lease is not in the store' };
-
-    let bindings: GoalLeaseBindings;
-    try {
-      bindings = JSON.parse(stored.bindings) as GoalLeaseBindings;
-    } catch {
-      // A lease whose bindings will not parse is refused, never treated as absent restrictions.
-      return { admitted: false, code: 'LEASE_MALFORMED', detail: 'the stored bindings are not JSON' };
+    if (!this.options.store.getWorkspace(record.workspaceId)) {
+      return { admitted: false, code: 'WORKSPACE_NOT_GRANTED', detail: 'the workspace is gone' };
     }
-
-    const delegatedGoalId = resolveDelegatedGoal({
-      port: this.options.store,
-      configuredDelegationId: this.options.uiDelegation?.configuredDelegationId,
-      sessionId: record.sessionId,
-      adapterId: record.adapterId,
-      now: this.now(),
-    });
-
-    const decision = evaluateGoalLease({
-      lease: {
-        leaseId: stored.leaseId,
-        createdAt: stored.createdAt,
-        notBefore: stored.notBefore,
-        expiresAt: stored.expiresAt,
-        ...(stored.revokedAt === undefined ? {} : { revokedAt: stored.revokedAt }),
-        bindings,
-      },
-      now: this.now(),
-      request: {
-        tool: MUTATION_TOOL,
-        sessionId: record.sessionId,
-        adapterId: record.adapterId,
-        workspaceRoot: workspace.canonicalRoot,
-        path: record.path,
-        diffBytes: affectedBytes(record),
-        // Resolved from durable rows here, at the moment of the consequence, and never taken from
-        // the record or from anything the browser said. On a delegated adapter an unresolved goal
-        // is a denial, not a pass — the lease policy makes that call, not this line.
-        ...(delegatedGoalId === undefined ? {} : { delegatedGoalId }),
-      },
-      spend: this.options.store.goalLeaseSpend(stored.leaseId),
-      killSwitch: lease.killSwitch(),
-      gatewayRoot: GATEWAY_ROOT,
-    });
-    if (!decision.admitted) return decision;
+    if (!this.options.autonomous) {
+      return {
+        admitted: false,
+        code: 'AUTONOMOUS_DISABLED',
+        detail: 'autonomous local execution is not enabled on this coordinator',
+      };
+    }
+    if (this.options.autonomous.killSwitch()) {
+      return {
+        admitted: false,
+        code: 'KILL_SWITCH_ENGAGED',
+        detail: 'the local autonomous kill switch is engaged',
+      };
+    }
 
     const admitted = this.options.store.policyAdmitMutation({
       mutationId,
-      leaseId: stored.leaseId,
       now: this.now(),
       admissionTtlMs: this.admissionTtlMs,
     });
     if (!admitted) {
-      // Lost the CAS: something else moved the record between the decision and the transition.
-      return { admitted: false, code: 'LEASE_EXPIRED', detail: 'the record was no longer awaiting review' };
+      return {
+        admitted: false,
+        code: 'RECORD_NOT_PENDING',
+        detail: 'the record was no longer awaiting execution',
+      };
     }
     await this.executeQueued(mutationId);
     return { admitted: true };
-  }
-
-  /**
-   * Offer every record currently awaiting review to the lease policy.
-   *
-   * This is what makes a lease do anything in production. `admitByPolicy` decides one record;
-   * without a caller, configuring a lease changed nothing at all while the CLI announced that
-   * autonomous admission was enabled — a review caught exactly that gap.
-   *
-   * Bounded and driven rather than continuous: the runtime calls it, it walks at most one page
-   * of pending records, and each one goes through the identical policy. A record the lease does
-   * not cover is simply left pending for a human, which is the correct outcome and not an error.
-   *
-   * Returns the ids it admitted, so a caller can log what autonomy actually did.
-   */
-  async admitPendingUnderLease(limit = 20): Promise<string[]> {
-    if (!this.options.goalLease) return [];
-    const admitted: string[] = [];
-    // Snapshot first: admitting mutates the pending set underneath an iterator.
-    const pending = this.options.store.listPendingMutations(Math.min(Math.max(limit, 1), PENDING_SCAN_LIMIT));
-    for (const record of pending) {
-      const decision = await this.admitByPolicy(record.mutationId);
-      if (decision.admitted) admitted.push(record.mutationId);
-    }
-    return admitted;
   }
 
   async approveLocal(mutationId: string): Promise<boolean> {
@@ -401,6 +484,13 @@ export class DurableMutationCoordinator {
       await this.revalidateStoredPlan(workspace.canonicalRoot, claimed, backend);
       const original = await readBase(backend, workspace.canonicalRoot, claimed.path, claimed);
       const candidate = original.replace(claimed.before, claimed.after);
+      const authorityDecision = await this.revalidatePolicyAuthority(claimed, workspace.canonicalRoot);
+      if (!authorityDecision.admitted) {
+        this.options.store.finishMutation(
+          mutationId, 'FAILED', this.now(), undefined, `ExecutionPolicy_${authorityDecision.code}`,
+        );
+        return;
+      }
       if (isCreationInput(claimed)) {
         await backend.createNew(workspace.canonicalRoot, claimed.path, candidate);
       } else {
@@ -438,6 +528,55 @@ export class DurableMutationCoordinator {
       return;
     }
     this.options.store.finishMutation(record.mutationId, 'OUTCOME_UNKNOWN', this.now(), undefined, 'DivergentTarget');
+  }
+
+  /**
+   * Re-check policy authority at the last synchronous boundary before a filesystem write.
+   *
+   * The POLICY_APPROVED row is already the durable budget reservation for this mutation. Feeding
+   * that same row back into aggregate spend would charge it twice, so this liveness re-check
+   * deliberately overrides spend only for the lease that already admitted this exact mutation.
+   * Cross-process atomic reservation is a separate store-level gate; this method does not claim it.
+   */
+  private async revalidatePolicyAuthority(
+    record: MutationRecord,
+    canonicalRoot: string,
+  ): Promise<PolicyDecision> {
+    const authority = this.options.store.getMutationAuthority(record.mutationId);
+    if (!authority) {
+      return {
+        admitted: false,
+        code: 'AUTHORITY_MISSING',
+        detail: 'queued mutation has no durable authority row',
+      };
+    }
+    if (authority.authority !== 'POLICY_APPROVED') {
+      await this.options.effectBoundary?.revalidateWorkspace(record.workspaceId, canonicalRoot);
+      return { admitted: true };
+    }
+    if (authority.retiredPolicyAuthority) {
+      return {
+        admitted: false,
+        code: 'LEGACY_AUTHORITY_RETIRED',
+        detail: 'Goal Lease authority is retired; legacy policy-approved records cannot execute',
+      };
+    }
+    if (!this.options.autonomous) {
+      return {
+        admitted: false,
+        code: 'AUTONOMOUS_DISABLED',
+        detail: 'autonomous execution provenance is not enabled here',
+      };
+    }
+    if (this.options.autonomous.killSwitch()) {
+      return {
+        admitted: false,
+        code: 'KILL_SWITCH_ENGAGED',
+        detail: 'the local autonomous kill switch is engaged',
+      };
+    }
+    await this.options.effectBoundary?.revalidateWorkspace(record.workspaceId, canonicalRoot);
+    return { admitted: true };
   }
 
   private async revalidateStoredPlan(root: string, record: MutationRecord, backend: FileMutationBackend): Promise<void> {

@@ -122,6 +122,74 @@ test('repository engineering git commit cannot be a half-capability', async (t) 
     'an empty gitCommit block means the built-in protected set, not an empty one');
 });
 
+test('autonomous remote Git push config is explicit, bounded, and requires mutation identity', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-dc-config-autopush-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const autonomous = {
+    allowedPushUrls: ['https://github.com/example/private.git'],
+    allowedDestinationRefs: ['refs/heads/work/commercial-packaging-v1', 'refs/heads/backup/wag-source'],
+  };
+
+  await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'orphan-push.json', {
+    ...baseConfig(root),
+    repositoryEngineering: { remoteGitPush: { autonomous } },
+  })), /remoteGitPush requires mutation/i);
+
+  const loaded = await loadPrivateGatewayConfig(await writeConfig(root, 'bounded-push.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      mutation: { statePath },
+      remoteGitPush: { autonomous },
+    },
+  }));
+  assert.deepEqual(loaded.repositoryEngineering?.remoteGitPush, { autonomous });
+
+  for (const destinationRef of ['refs/heads/main', 'refs/heads/master', 'refs/heads/feat/../escape']) {
+    await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'unsafe-ref.json', {
+      ...baseConfig(root),
+      repositoryEngineering: {
+        mutation: { statePath },
+        remoteGitPush: {
+          autonomous: {
+            allowedPushUrls: autonomous.allowedPushUrls,
+            allowedDestinationRefs: [destinationRef],
+          },
+        },
+      },
+    })), /destination|unsafe|invalid/i);
+  }
+
+  await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'credential-url.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      mutation: { statePath },
+      remoteGitPush: {
+        autonomous: {
+          allowedPushUrls: ['https://token@example.com/private.git'],
+          allowedDestinationRefs: [autonomous.allowedDestinationRefs[0]],
+        },
+      },
+    },
+  })), /credentials/i);
+
+  await assert.rejects(async () => loadPrivateGatewayConfig(await writeConfig(root, 'duplicate-ref.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      mutation: { statePath },
+      remoteGitPush: {
+        autonomous: {
+          allowedPushUrls: autonomous.allowedPushUrls,
+          allowedDestinationRefs: [
+            autonomous.allowedDestinationRefs[0],
+            autonomous.allowedDestinationRefs[0],
+          ],
+        },
+      },
+    },
+  })), /unique/i);
+});
+
 test('repository engineering config stays strict so no key silently grants capability', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-dc-config-strict-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -173,6 +241,12 @@ test('every accepted repositoryEngineering field survives the loader', async (t)
       reviewTtlMs: 300_000,
     },
     gitCommit: { protectedBranches: ['main', 'release'] },
+    remoteGitPush: {
+      autonomous: {
+        allowedPushUrls: ['https://github.com/example/private.git'],
+        allowedDestinationRefs: ['refs/heads/work/commercial-packaging-v1'],
+      },
+    },
   };
   await writeFile(configPath, JSON.stringify({
     allowedRoots: [root],
@@ -195,4 +269,86 @@ test('every accepted repositoryEngineering field survives the loader', async (t)
     },
   }), 'utf8');
   await assert.rejects(loadPrivateGatewayConfig(configPath));
+});
+
+test('remote relay device config is explicit, secret-free, and requires mutation identity', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-relay-device-config-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const relay = {
+    supabaseUrl: 'https://project.supabase.co/',
+    publishableKey: 'sb_publishable_' + 'a'.repeat(32),
+    deviceId: 'device_primary',
+    secretEnv: 'WAG_RELAY_DEVICE_SECRET',
+  };
+
+  await assert.rejects(
+    loadPrivateGatewayConfig(await writeConfig(root, 'orphan-relay.json', {
+      ...baseConfig(root),
+      remoteRelayDevice: relay,
+    })),
+    /remote relay device requires mutation identity/i,
+  );
+
+  const loaded = await loadPrivateGatewayConfig(await writeConfig(root, 'relay.json', {
+    ...baseConfig(root),
+    repositoryEngineering: {
+      mutation: { statePath: join(root, 'state.sqlite') },
+    },
+    remoteRelayDevice: relay,
+  }));
+  assert.deepEqual(loaded.remoteRelayDevice, {
+    ...relay,
+    supabaseUrl: 'https://project.supabase.co',
+  });
+  assert.equal(JSON.stringify(loaded).includes('device-secret-value'), false);
+});
+
+test('remote relay device config rejects unsafe Supabase endpoints and server secrets', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-relay-device-config-unsafe-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const baseRelay = {
+    supabaseUrl: 'https://project.supabase.co',
+    publishableKey: 'sb_publishable_' + 'a'.repeat(32),
+    deviceId: 'device_primary',
+    secretEnv: 'WAG_RELAY_DEVICE_SECRET',
+  };
+
+  for (const supabaseUrl of [
+    'http://project.supabase.co',
+    'https://user:pass@project.supabase.co',
+    'https://project.supabase.co?token=secret',
+  ]) {
+    await assert.rejects(
+      loadPrivateGatewayConfig(await writeConfig(root, 'bad-url.json', {
+        ...baseConfig(root),
+        repositoryEngineering: { mutation: { statePath } },
+        remoteRelayDevice: { ...baseRelay, supabaseUrl },
+      })),
+      /credential-free HTTPS/i,
+    );
+  }
+
+  await assert.rejects(
+    loadPrivateGatewayConfig(await writeConfig(root, 'secret-key.json', {
+      ...baseConfig(root),
+      repositoryEngineering: { mutation: { statePath } },
+      remoteRelayDevice: {
+        ...baseRelay,
+        publishableKey: 'sb_secret_' + 'a'.repeat(32),
+      },
+    })),
+    /forbids Supabase secret keys/i,
+  );
+
+  await assert.rejects(
+    loadPrivateGatewayConfig(await writeConfig(root, 'bad-env.json', {
+      ...baseConfig(root),
+      repositoryEngineering: { mutation: { statePath } },
+      remoteRelayDevice: {
+        ...baseRelay,
+        secretEnv: 'lowercase-secret',
+      },
+    })),
+  );
 });

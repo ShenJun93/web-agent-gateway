@@ -1,0 +1,118 @@
+{
+  "schema": "WAG_LOCAL_DOCTOR_V1",
+  "generatedAtUtc": "2026-09-30T04:09:13.903Z",
+  "repairRequested": true,
+  "status": "READY",
+  "version": "0.1.0",
+  "source": {
+    "mode": "development-checkout",
+    "packageVersion": "0.1.0",
+    "branch": "feat/wag-local-m3-doctor-repair-v1",
+    "head": "01e33229e2498fd76d330cdd9e6fed25f1bae58d",
+    "clean": false,
+    "runtimeAligned": false
+  },
+  "runtime": {
+    "sourceHead": "12ea8315b650e8df11ddc1483c4ee4d2e764a48e",
+    "capability": "autonomous-local-runtime-v1",
+    "cliSha256": "4b6cf7ba82389992d31f4088005463eb91a0ed8dbe0e9bcbc0a5cdaf0ebe4cb4"
+  },
+  "host": {
+    "nodeVersion": "v24.20.0",
+    "nodeSupported": true,
+    "pwshVersion": "7.6.6",
+    "pwshSupported": true,
+    "wslAvailable": true
+  },
+  "devspace": {
+    "expectedRevision": "33d6d0bcc2256024484d2456da924af8afd814ed",
+    "packageVersion": "1.0.8",
+    "installedRevision": "33d6d0bcc2256024484d2456da924af8afd814ed",
+    "pinMatch": true,
+    "discoveryHttpStatus": 200,
+    "discoveryReady": true
+  },
+  "tunnel": {
+    "healthHttpStatus": 200,
+    "readyHttpStatus": 200,
+    "ready": true,
+    "profilePresent": true,
+    "clientPathPinned": true,
+    "clientExecutable": true,
+    "clientVersion": "0.0.14+0f870e50a973fa820d4c409000059e181e8d242b (git sha: 0f870e50a973fa820d4c409000059e181e8d242b)",
+    "exactProcessRunning": true
+  },
+  "connector": {
+    "localTunnelReady": true,
+    "localMcpRoundTrip": true,
+    "externalClientRoundTrip": "NOT_TESTABLE_FROM_LOCAL_DOCTOR"
+  },
+  "processState": {
+    "staleLauncherPid": false,
+    "staleDevspacePid": false,
+    "staleSupervisorPid": false,
+    "portOwners": {
+      "port7677": 3360,
+      "port8080": 4488
+    },
+    "port7677Collision": false,
+    "port8080Collision": false
+  },
+  "network": {
+    "controlPlaneReachable": true,
+    "authorizationFailed": false
+  },
+  "update": {
+    "status": "UNCONFIGURED",
+    "available": null
+  },
+  "lastMeaningfulFailure": {
+    "code": "AUTHORIZATION",
+    "source": "wag-local.stderr.log",
+    "observedAtUtc": "2026-09-30T04:08:35.785Z"
+  },
+  "diagnostics": [
+    {
+      "code": "WAG_LAUNCHER_DRIFT",
+      "severity": "WARN",
+      "message": "Development source launchers differ from the installed runtime; run the installed doctor for canonical launcher drift."
+    },
+    {
+      "code": "WAG_DEVELOPMENT_SOURCE_RUNTIME_DRIFT",
+      "severity": "INFO",
+      "message": "The development repository HEAD differs from the currently deployed runtime source HEAD."
+    },
+    {
+      "code": "WAG_SOURCE_WORKTREE_DIRTY",
+      "severity": "WARN",
+      "message": "The development source worktree is dirty."
+    },
+    {
+      "code": "WAG_UPDATE_CHECK_UNCONFIGURED",
+      "severity": "INFO",
+      "message": "No stable update channel is configured yet; update availability is unknown."
+    }
+  ],
+  "repairs": [
+    {
+      "code": "WAG_REPAIR_TUNNEL_CLIENT_PIN",
+      "state": "SUCCEEDED",
+      "message": "Pinned the exact running WAG tunnel-client path in the per-user install root."
+    },
+    {
+      "code": "WAG_REPAIR_LAUNCHERS",
+      "state": "SKIPPED",
+      "message": "Launcher replacement is skipped from a development checkout; run the installed doctor."
+    }
+  ],
+  "beforeRepair": {
+    "status": "READY",
+    "diagnostics": [
+      "WAG_LAUNCHER_DRIFT",
+      "WAG_DEVELOPMENT_SOURCE_RUNTIME_DRIFT",
+      "WAG_SOURCE_WORKTREE_DIRTY",
+      "WAG_TUNNEL_CLIENT_PIN_MISSING",
+      "WAG_UPDATE_CHECK_UNCONFIGURED"
+    ]
+  }
+}

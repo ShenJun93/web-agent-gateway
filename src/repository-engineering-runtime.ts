@@ -2,17 +2,44 @@ import { randomUUID } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { adapterCorrelationDigest } from './adapter-admission.js';
+import { sameAuthorityTuple } from './authority-tuple.js';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
+import { DurableChangeSetCoordinator } from './change-set.js';
+import { ChangeSetStore } from './change-set-store.js';
 import { SqliteDurableStore } from './durable-store.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
+import { LocalMachineFileMutationBackend } from './executor/local-machine-file-mutation.js';
 import { DevspaceGitCommitBackend } from './executor/devspace-git-commit.js';
+import { observeDevspaceWorkspaceIdentity } from './executor/devspace-workspace-identity.js';
 import { DurableCommitCoordinator } from './git-commit.js';
-import { isKillSwitchEngaged } from './goal-lease-kill-switch.js';
+import { DurableRemoteGitPushCoordinator } from './remote-git-push.js';
+import { LocalRemoteGitPushBackend } from './remote-git-push-backend.js';
+import { RemoteGitPushStore } from './remote-git-push-store.js';
+import { isKillSwitchEngaged } from './autonomy-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
-import type { GitCommitMcpContext, MutationMcpContext } from './server.js';
+import type { CapabilityMcpContext, ChangeSetMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext, RemoteGitPushMcpContext } from './server.js';
+import { WorkspaceIdentityRegistry } from './workspace-identity.js';
+import {
+  createLocalMachineContext,
+  observeLocalMachineWorkspaceIdentity,
+  type LocalMachineContext,
+} from './local-machine-runtime.js';
+import { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import {
+  createPrivateBrowserMcpContext,
+  type BrowserMcpContext,
+} from './browser-harness/browser-mcp-runtime.js';
+import {
+  startBrowserControlWebSocketServer,
+  type BrowserControlWebSocketServer,
+} from './browser-harness/browser-control-websocket-server.js';
+import {
+  createPrivateDesktopMcpContext,
+  type DesktopMcpContext,
+} from './desktop-harness/desktop-mcp-runtime.js';
 
 /** Fixed adapter identity for the private stdio surface. Never client-supplied. */
 export const PRIVATE_STDIO_ADAPTER_ID = 'private.stdio.v1';
@@ -21,14 +48,15 @@ export interface RepositoryEngineeringProfile {
   inspect: boolean;
   mutation: boolean;
   gitCommit: boolean;
+  browser?: boolean;
+  desktop?: boolean;
   /**
    * The durable session this surface will keep using, present only when a `sessionCorrelation`
    * makes it stable.
    *
-   * It is reported for one reason: a lease binds a session id, and a human issuing a lease out of
-   * band has to be able to find out which one to bind. The browser path solved the same bootstrap
-   * problem with `listAdapterSessions`; this is its stdio equivalent. A session id is an identity,
-   * not a credential — it grants nothing without a lease row a human wrote.
+   * It is reported for reconnect/audit continuity. A session id is an identity, not a credential:
+   * private-local authority comes from the trusted runtime profile, while browser-facing authority
+   * remains on its separate reviewed/delegated path.
    */
   stableSessionId?: string;
 }
@@ -38,12 +66,30 @@ export interface RepositoryEngineeringRuntime {
   profile: RepositoryEngineeringProfile;
   /** Present only when mutation is enabled; binds workspace.open to durable records. */
   openWorkspaceId?: (canonicalRoot: string) => string;
+  /** Completes stable filesystem/repository identity binding before workspace.open returns. */
+  bindWorkspaceIdentity?: (workspaceId: string, canonicalRoot: string, devspaceWorkspaceId: string) => Promise<void>;
   /** Builds the coordinator and operator review server once the executor exists. */
   attach(executor: DevspaceExecutor): Promise<void>;
   /** Present only after a successful attach with mutation enabled. */
   mutationContext?: MutationMcpContext;
+  /** Immutable multi-file plan/apply/result surface for the trusted private-local profile. */
+  changeSetContext?: ChangeSetMcpContext;
   /** Present only after a successful attach with git commit enabled. */
   gitCommitContext?: GitCommitMcpContext;
+  /** Human-gated exact remote Git push proposal/consume surface. */
+  remoteGitPushContext?: RemoteGitPushMcpContext;
+  /** Trusted autonomous-local argv execution, bound to caller-owned workspace identity. */
+  commandContext?: CommandMcpContext;
+  /** Effective preflight authority for an opened workspace. */
+  capabilityContext?: CapabilityMcpContext;
+  /** Trusted autonomous-local Windows operations independent of DevSpace roots. */
+  machineContext?: LocalMachineContext;
+  /** Bounded process-local MCP tool usage diagnostics; never stores arguments or output. */
+  diagnosticsContext?: ToolUsageDiagnostics;
+  /** Optional outbound BrowserPort surface. It shares identity, not filesystem/Git authority. */
+  browserContext?: BrowserMcpContext;
+  /** Optional native Windows DesktopPort surface, restricted to WAG-owned processes. */
+  desktopContext?: DesktopMcpContext;
   /** Present only after a successful attach with mutation enabled. */
   operator?: { origin: string; bootstrapUrl: string; urlFile: string };
   close(): Promise<void>;
@@ -52,6 +98,8 @@ export interface RepositoryEngineeringRuntime {
 export interface RepositoryEngineeringRuntimeOptions {
   /** Injected only by tests; production always uses the real loopback operator server. */
   startOperatorServer?: typeof startOperatorServer;
+  /** Test seam for the Browser v2 loopback WebSocket transport. */
+  startBrowserControlWebSocketServer?: typeof startBrowserControlWebSocketServer;
 }
 
 /**
@@ -64,9 +112,6 @@ export interface RepositoryEngineeringRuntimeOptions {
  * mutation backend needs the executor that only exists after the gateway bootstraps.
  * `attach` is therefore a second phase rather than constructor work.
  */
-/** How often a configured lease is offered the pending queue. Idle when nothing is pending. */
-const LEASE_ADMISSION_INTERVAL_MS = 1_000;
-
 export async function startRepositoryEngineeringRuntime(
   config: PrivateGatewayConfig,
   options: RepositoryEngineeringRuntimeOptions = {},
@@ -75,8 +120,13 @@ export async function startRepositoryEngineeringRuntime(
   const inspect = settings?.inspect === true;
   const mutationSettings = settings?.mutation;
   const gitCommitSettings = settings?.gitCommit;
+  const remoteGitPushSettings = settings?.remoteGitPush;
+  const browserSettings = settings?.browser;
+  const desktopSettings = settings?.desktop;
 
   if (!mutationSettings) {
+    if (browserSettings) throw new Error('Repository engineering browser requires mutation identity');
+    if (desktopSettings) throw new Error('Repository engineering desktop requires mutation identity');
     return {
       profile: { inspect, mutation: false, gitCommit: false },
       async attach() { /* nothing to attach */ },
@@ -84,26 +134,30 @@ export async function startRepositoryEngineeringRuntime(
     };
   }
 
-  /**
-   * A lease admits only the sessions its own row lists, so a session that changes on every start
-   * can never be one of them. Naming a lease without a stable session is therefore not a working
-   * configuration that happens to be strict — it is one that can never admit anything, while the
-   * profile reports autonomous admission as enabled.
-   *
-   * This project has shipped that shape twice now (a coordinator nothing called; a rule nothing
-   * could satisfy), so it fails at startup rather than at the first silent denial.
-   *
-   * Checked before the store is opened, so a refused configuration leaves no handle behind.
+  /*
+   * Private stdio is the trusted autonomous-local execution plane. sessionCorrelation is only
+   * stable identity/audit continuity; it grants no execution authority and no Goal Lease is
+   * consulted by this runtime.
    */
-  if (mutationSettings.goalLeaseId !== undefined && mutationSettings.sessionCorrelation === undefined) {
-    throw new Error(
-      'Private gateway names a goalLeaseId without a sessionCorrelation: this surface mints a new '
-      + 'session every start, so the lease could never admit. Add repositoryEngineering.mutation'
-      + '.sessionCorrelation, or remove the lease and use local operator approval.',
-    );
-  }
 
   const store = new SqliteDurableStore(mutationSettings.statePath);
+  let remotePushStore: RemoteGitPushStore | undefined;
+  let changeSetStore: ChangeSetStore | undefined;
+  let workspaceIdentities: WorkspaceIdentityRegistry;
+  try {
+    remotePushStore = new RemoteGitPushStore(mutationSettings.statePath + '.remote-git-push.sqlite');
+    changeSetStore = new ChangeSetStore(mutationSettings.statePath + '.change-set.sqlite');
+    workspaceIdentities = new WorkspaceIdentityRegistry(mutationSettings.statePath);
+  } catch (error) {
+    changeSetStore?.close();
+    remotePushStore?.close();
+    store.close();
+    throw error;
+  }
+  if (!remotePushStore) throw new Error('Remote Git push store initialization failed');
+  if (!changeSetStore) throw new Error('Change-set store initialization failed');
+  const pushStore = remotePushStore;
+  const changes = changeSetStore;
   const urlFile = `${mutationSettings.statePath}.operator-url`;
 
   /**
@@ -137,25 +191,118 @@ export async function startRepositoryEngineeringRuntime(
     adapterId: PRIVATE_STDIO_ADAPTER_ID,
   });
 
-  /**
-   * The Autonomous Goal Lease this surface honours, if the config names one (ADR-0028).
-   *
-   * This is the surface where a lease actually removes *both* gestures. There is no Run here —
-   * Run is a browser-adapter concept, the act of turning an untrusted page's text into a
-   * proposal — so a caller on this stdio surface proposes directly, and a lease admits. On the
-   * browser operator runtime a lease removes only Approve, because a human pressing Run is what
-   * creates the proposal in the first place.
-   *
-   * Absent unless configured, which is every existing deployment.
-   */
-  const goalLease = mutationSettings.goalLeaseId === undefined ? undefined : {
-    leaseId: mutationSettings.goalLeaseId,
-    killSwitch: () => isKillSwitchEngaged(dirname(mutationSettings.statePath)),
-  };
+  /** Read on every consequential decision so the kill switch remains immediate. */
+  const killSwitch = () => isKillSwitchEngaged(dirname(mutationSettings.statePath));
+  const autonomousPushUrls = new Set(
+    remoteGitPushSettings?.autonomous.allowedPushUrls ?? [],
+  );
+  const autonomousPushRefs = new Set(
+    remoteGitPushSettings?.autonomous.allowedDestinationRefs ?? [],
+  );
+
+  const machineContext = createLocalMachineContext({
+    store,
+    callerContext,
+    workspaceIdentities,
+    killSwitch,
+    processRegistryPath: mutationSettings.statePath + '.machine-processes.' + sessionId + '.json',
+    terminalRegistryPath: mutationSettings.statePath + '.machine-terminals.' + sessionId,
+  });
+  const diagnosticsContext = new ToolUsageDiagnostics({
+    ...(mutationSettings.sessionCorrelation === undefined
+      ? {}
+      : { statePath: mutationSettings.statePath + '.tool-usage.' + sessionId + '.json' }),
+  });
+  let browserContext: BrowserMcpContext | undefined;
+  let browserControlServer: BrowserControlWebSocketServer | undefined;
+  let desktopContext: DesktopMcpContext | undefined;
+  try {
+    browserControlServer = browserSettings === undefined ? undefined : await (
+      options.startBrowserControlWebSocketServer ?? startBrowserControlWebSocketServer
+    )({ statePath: mutationSettings.statePath + '.browser-control-pairing.json' });
+    browserContext = browserSettings === undefined ? undefined : createPrivateBrowserMcpContext({
+      owner: callerContext,
+      edgeExecutablePath: browserSettings.edgeExecutablePath,
+      profileRoot: browserSettings.profileRoot,
+      effectStatePath: mutationSettings.statePath + '.harness-effects.sqlite',
+      targetClaimStatePath: mutationSettings.statePath + '.browser-target-claims.sqlite',
+      attachedSessionStatePath: mutationSettings.statePath + '.browser-attached-sessions.sqlite',
+      diagnosticsStatePath: mutationSettings.statePath + '.browser-diagnostics.json',
+      killSwitch,
+      ...(browserControlServer === undefined ? {} : { control: browserControlServer.client }),
+    });
+    desktopContext = desktopSettings === undefined ? undefined : createPrivateDesktopMcpContext({
+      owner: callerContext,
+      machineContext,
+      effectStatePath: mutationSettings.statePath + '.desktop-effects.sqlite',
+      killSwitch,
+    });
+  } catch (error) {
+    await browserContext?.closeAll().catch(() => undefined);
+    await browserControlServer?.close().catch(() => undefined);
+    workspaceIdentities.close();
+    changes.close();
+    pushStore.close();
+    store.close();
+    throw error;
+  }
+
+  async function freshWorkspaceFingerprint(workspaceId: string): Promise<string | undefined> {
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) return undefined;
+    // Migration compatibility: records created before workspace-identity v1 have no durable
+    // identity to revalidate. New production workspace.open calls bindWorkspaceIdentity before
+    // returning the handle, so every new handle takes the live-observation path below.
+    if (workspaceIdentities.fingerprint(workspaceId) === undefined) return undefined;
+
+    if (workspace.backendKind === 'local-machine') {
+      const observation = await observeLocalMachineWorkspaceIdentity(workspace.canonicalRoot);
+      const observedRoot = process.platform === 'win32'
+        ? observation.canonicalRoot.toLowerCase() : observation.canonicalRoot;
+      const expectedRoot = process.platform === 'win32'
+        ? workspace.canonicalRoot.toLowerCase() : workspace.canonicalRoot;
+      if (observedRoot !== expectedRoot) throw new Error('Gateway denied workspace identity drift');
+      return workspaceIdentities.record(workspaceId, observation).fingerprint;
+    }
+
+    if (workspace.backendKind !== 'devspace') {
+      throw new Error('Gateway denied workspace identity backend');
+    }
+    if (attachedExecutor === undefined) {
+      throw new Error('Gateway workspace identity runtime is not attached');
+    }
+
+    const devspaceWorkspaceId = await attachedExecutor.openWorkspace(workspace.canonicalRoot);
+    const observation = await observeDevspaceWorkspaceIdentity(
+      attachedExecutor, devspaceWorkspaceId, workspace.canonicalRoot,
+    );
+    const observedRoot = process.platform === 'win32'
+      ? observation.canonicalRoot.toLowerCase() : observation.canonicalRoot;
+    const expectedRoot = process.platform === 'win32'
+      ? workspace.canonicalRoot.toLowerCase() : workspace.canonicalRoot;
+    if (observedRoot !== expectedRoot) throw new Error('Gateway denied workspace identity drift');
+    return workspaceIdentities.record(workspaceId, observation).fingerprint;
+  }
+
+  async function effectiveCommandGrant(workspaceId: string) {
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
+      return { granted: false as const, reason: 'WORKSPACE_NOT_GRANTED' };
+    }
+    await freshWorkspaceFingerprint(workspaceId);
+    if (killSwitch()) {
+      return { granted: false as const, reason: 'KILL_SWITCH_ENGAGED', workspace };
+    }
+    return {
+      granted: true as const,
+      reason: 'AUTONOMOUS_LOCAL_PROFILE',
+      workspace,
+    };
+  }
 
   let operator: OperatorServer | undefined;
   let mutationCoordinator: DurableMutationCoordinator | undefined;
-  let leaseTimer: ReturnType<typeof setInterval> | undefined;
+  let attachedExecutor: DevspaceExecutor | undefined;
   let attached = false;
   let closed = false;
   const runtime: RepositoryEngineeringRuntime = {
@@ -163,8 +310,14 @@ export async function startRepositoryEngineeringRuntime(
       inspect,
       mutation: true,
       gitCommit: gitCommitSettings !== undefined,
+      ...(browserSettings === undefined ? {} : { browser: true }),
+      ...(desktopSettings === undefined ? {} : { desktop: true }),
       ...(mutationSettings.sessionCorrelation === undefined ? {} : { stableSessionId: sessionId }),
     },
+    machineContext,
+    diagnosticsContext,
+    ...(browserContext === undefined ? {} : { browserContext }),
+    ...(desktopContext === undefined ? {} : { desktopContext }),
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,
       sessionId: callerContext.sessionId,
@@ -173,37 +326,154 @@ export async function startRepositoryEngineeringRuntime(
       backendKind: 'devspace',
       createdAt: Date.now(),
     }).workspaceId,
+    async bindWorkspaceIdentity(workspaceId, canonicalRoot, devspaceWorkspaceId) {
+      if (attachedExecutor === undefined) throw new Error('Gateway workspace identity runtime is not attached');
+      const observation = await observeDevspaceWorkspaceIdentity(
+        attachedExecutor, devspaceWorkspaceId, canonicalRoot,
+      );
+      const observedRoot = process.platform === 'win32'
+        ? observation.canonicalRoot.toLowerCase() : observation.canonicalRoot;
+      const expectedRoot = process.platform === 'win32' ? canonicalRoot.toLowerCase() : canonicalRoot;
+      if (observedRoot !== expectedRoot) throw new Error('Gateway denied workspace identity drift');
+      workspaceIdentities.record(workspaceId, observation);
+    },
+    capabilityContext: {
+      async describe(workspaceId) {
+        const command = await effectiveCommandGrant(workspaceId);
+        const workspace = command.workspace ?? store.getWorkspace(workspaceId);
+        if (!workspace || !sameAuthorityTuple(workspace, callerContext)) {
+          throw new Error('Gateway denied capability workspace');
+        }
+        const executionEnabled = !killSwitch();
+        return {
+          workspace_id: workspaceId,
+          root: workspace.canonicalRoot,
+          authority: {
+            mode: 'AUTONOMOUS_LOCAL',
+            kill_switch: executionEnabled ? 'CLEAR' : 'ENGAGED',
+          },
+          capabilities: {
+            REPOSITORY_READ: {
+              granted: true, denied: false, grantable: true, requires_human: false, reason: 'WORKSPACE_OWNED',
+            },
+            FILE_READ: {
+              granted: true, denied: false, grantable: true, requires_human: false, reason: 'WORKSPACE_OWNED',
+            },
+            VERIFY: {
+              granted: true, denied: false, grantable: true, requires_human: false, reason: 'PROFILE_SCOPED',
+            },
+            FILE_WRITE: {
+              granted: executionEnabled,
+              denied: !executionEnabled,
+              grantable: true,
+              requires_human: false,
+              reason: executionEnabled ? 'AUTONOMOUS_LOCAL_PROFILE' : 'KILL_SWITCH_ENGAGED',
+            },
+            GIT_COMMIT: {
+              granted: gitCommitSettings !== undefined && executionEnabled,
+              denied: gitCommitSettings === undefined || !executionEnabled,
+              grantable: gitCommitSettings !== undefined,
+              requires_human: false,
+              reason: gitCommitSettings === undefined
+                ? 'CAPABILITY_UNAVAILABLE'
+                : executionEnabled ? 'AUTONOMOUS_LOCAL_PROFILE' : 'KILL_SWITCH_ENGAGED',
+            },
+            LOCAL_COMMAND: {
+              granted: command.granted,
+              denied: !command.granted,
+              grantable: true,
+              requires_human: false,
+              reason: command.reason,
+            },
+            GIT_PUSH: remoteGitPushSettings === undefined
+              ? {
+                granted: false,
+                denied: true,
+                grantable: true,
+                requires_human: true,
+                reason: executionEnabled ? 'REMOTE_EFFECT_GRANT_REQUIRED' : 'KILL_SWITCH_ENGAGED',
+              }
+              : {
+                granted: executionEnabled,
+                denied: !executionEnabled,
+                grantable: true,
+                requires_human: false,
+                reason: executionEnabled ? 'AUTONOMOUS_REMOTE_POLICY' : 'KILL_SWITCH_ENGAGED',
+              },
+          },
+        };
+      },
+    },
     async attach(executor) {
       if (attached) throw new Error('Repository engineering runtime is already attached');
       attached = true;
+      attachedExecutor = executor;
       try {
         const coordinator = new DurableMutationCoordinator({
           store,
-          backends: [new DevspaceFileMutationBackend(executor)],
-          ...(goalLease === undefined ? {} : { goalLease }),
+          backends: [
+            new DevspaceFileMutationBackend(executor),
+            new LocalMachineFileMutationBackend(),
+          ],
+          autonomous: { killSwitch },
+          effectBoundary: {
+            async revalidateWorkspace(workspaceId) {
+              await freshWorkspaceFingerprint(workspaceId);
+            },
+          },
         });
         await coordinator.reconcile();
         mutationCoordinator = coordinator;
 
-        // The admission pass. Without a caller, configuring a lease attaches an option nothing
-        // consults — which is exactly the gap a review found on the browser runtime, so it is
-        // not repeated here. Interval-driven rather than fired from the proposal path, so the
-        // tool's contract is unchanged and records left pending across a restart are picked up.
-        // `unref` so it never holds the process open; errors swallowed per tick so a failing
-        // admission cannot take down a gateway whose human review path is working.
-        // Declared before the timer so the same pass can drive it. Commits were missing from this
-        // pass entirely — a lease granting `git.commit` left its records at PENDING_APPROVAL while
-        // the runtime reported autonomous admission as enabled, which is the same gap this comment
-        // says was "not repeated here", repeated here for the other record kind.
+        const changeCoordinator = new DurableChangeSetCoordinator({
+          store: changes,
+          workspaceStore: store,
+          backends: [
+            new DevspaceFileMutationBackend(executor),
+            new LocalMachineFileMutationBackend(),
+          ],
+          killSwitch,
+          effectBoundary: {
+            async revalidateWorkspace(workspaceId, canonicalRoot) {
+              const workspace = store.getWorkspace(workspaceId);
+              if (!workspace || workspace.canonicalRoot !== canonicalRoot) {
+                throw new Error('Gateway denied change-set workspace drift');
+              }
+              await freshWorkspaceFingerprint(workspaceId);
+            },
+          },
+        });
+        await changeCoordinator.reconcile();
+
         let commitCoordinator: DurableCommitCoordinator | undefined;
 
-        if (goalLease) {
-          leaseTimer = setInterval(() => {
-            void coordinator.admitPendingUnderLease().catch(() => undefined);
-            void commitCoordinator?.admitPendingUnderLease().catch(() => undefined);
-          }, LEASE_ADMISSION_INTERVAL_MS);
-          leaseTimer.unref?.();
-        }
+        const remotePushCoordinator = new DurableRemoteGitPushCoordinator({
+          store: pushStore,
+          workspaceStore: store,
+          backend: new LocalRemoteGitPushBackend({
+            hooksDir: mutationSettings.statePath + '.remote-git-hooks',
+          }),
+          ...(remoteGitPushSettings === undefined ? {} : {
+            autonomous: {
+              permits(target) {
+                return autonomousPushUrls.has(target.resolvedPushUrl)
+                  && autonomousPushRefs.has(target.destinationRef);
+              },
+              denyUnmatched: true,
+            },
+          }),
+          killSwitch,
+          effectBoundary: {
+            async revalidateWorkspace(workspaceId, canonicalRoot) {
+              const workspace = store.getWorkspace(workspaceId);
+              if (!workspace || workspace.canonicalRoot !== canonicalRoot) {
+                throw new Error('Gateway denied remote Git push workspace drift');
+              }
+              await freshWorkspaceFingerprint(workspaceId);
+            },
+          },
+        });
+        await remotePushCoordinator.reconcile();
 
         if (gitCommitSettings) {
           commitCoordinator = new DurableCommitCoordinator({
@@ -212,9 +482,27 @@ export async function startRepositoryEngineeringRuntime(
             ...(gitCommitSettings.protectedBranches === undefined
               ? {}
               : { protectedBranches: gitCommitSettings.protectedBranches }),
-            ...(goalLease === undefined ? {} : { goalLease }),
+            ...(mutationSettings.reviewTtlMs === undefined
+              ? {} : { reviewTtlMs: mutationSettings.reviewTtlMs }),
+            autonomous: { killSwitch },
+            effectBoundary: {
+              async revalidateWorkspace(workspaceId) {
+                await freshWorkspaceFingerprint(workspaceId);
+              },
+            },
           });
           await commitCoordinator.reconcile();
+        }
+
+        // The command surface is part of the trusted private-local profile. Workspace ownership
+        // and the emergency kill switch are revalidated for every call.
+        if (inspect && commitCoordinator) {
+          runtime.commandContext = {
+            async authorize(workspaceId) {
+              const grant = await effectiveCommandGrant(workspaceId);
+              if (!grant.granted) throw new Error(`Gateway denied command: ${grant.reason}`);
+            },
+          };
         }
 
         // No `onDeny` here, deliberately. The browser-operator runtime sends refusals to stderr so
@@ -226,15 +514,20 @@ export async function startRepositoryEngineeringRuntime(
         operator = await (options.startOperatorServer ?? startOperatorServer)({
           coordinator,
           ...(commitCoordinator === undefined ? {} : { commitCoordinator }),
+          pushCoordinator: remotePushCoordinator,
         });
-        if (commitCoordinator) runtime.gitCommitContext = { callerContext, coordinator: commitCoordinator };
+        if (commitCoordinator) {
+          runtime.gitCommitContext = { callerContext, coordinator: commitCoordinator, autonomous: true };
+        }
+        runtime.remoteGitPushContext = { callerContext, coordinator: remotePushCoordinator };
+        runtime.changeSetContext = { callerContext, coordinator: changeCoordinator };
         // The single-use bootstrap token is written beside the state database rather than
         // printed, because a stdio gateway's stderr belongs to whatever spawned it — for the
         // supported deployment that is the remote-facing tunnel client, which is permitted to
         // log or forward child stderr. The file carries the same exposure as the state
         // database itself and is removed on shutdown.
         await writeFile(urlFile, `${operator.bootstrapUrl}\n`, { encoding: 'utf8', mode: 0o600 });
-        runtime.mutationContext = { callerContext, coordinator };
+        runtime.mutationContext = { callerContext, coordinator, autonomous: true };
         runtime.operator = { origin: operator.origin, bootstrapUrl: operator.bootstrapUrl, urlFile };
       } catch (error) {
         await runtime.close();
@@ -244,14 +537,34 @@ export async function startRepositoryEngineeringRuntime(
     async close() {
       if (closed) return;
       closed = true;
-      // Before the store closes: an admission tick firing against a closed handle would throw
-      // inside a timer, where nothing is waiting to catch it.
-      if (leaseTimer) clearInterval(leaseTimer);
+      let failure: unknown;
+      try {
+        await desktopContext?.closeAll();
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        await browserContext?.suspendForRestart();
+      } catch (error) {
+        failure ??= error;
+      }
+      try {
+        await browserControlServer?.close();
+      } catch (error) {
+        failure ??= error;
+      }
       try {
         await rm(urlFile, { force: true }).catch(() => undefined);
         await operator?.close();
+      } catch (error) {
+        failure ??= error;
+      } finally {
+        workspaceIdentities.close();
+        changes.close();
+        pushStore.close();
+        store.close();
       }
-      finally { store.close(); }
+      if (failure) throw failure;
     },
   };
   return runtime;

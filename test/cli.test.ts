@@ -54,7 +54,150 @@ function makeCliHarness() {
     stdioClosed: () => stdioClosed,
   };
 }
-test('doctor emits only health JSON and closes the private runtime', async () => {
+test('setup dispatches without --config and maps only bounded installer arguments', async () => {
+  const h = makeCliHarness();
+  let observed: string[] | undefined;
+  h.deps.runSetup = async (args) => { observed = args; return 0; };
+  const root = resolve('wag-user-workspace');
+  const tunnel = 'tunnel_0123456789abcdef0123456789abcdef';
+  assert.equal(await main([
+    'setup', '--check-only', '--no-start', '--connector-confirmed',
+    '--tunnel-id', tunnel,
+    '--runtime-key-ref', 'env:CONTROL_PLANE_API_KEY',
+    '--allowed-root', root,
+  ], h.deps), 0);
+  assert.deepEqual(observed, [
+    '-CheckOnly', '-NoStart', '-ConnectorConfirmed',
+    '-TunnelId', tunnel,
+    '-RuntimeKeyRef', 'env:CONTROL_PLANE_API_KEY',
+    '-AllowedRoot', root,
+  ]);
+  assert.equal(h.stderr.text(), '');
+
+  const bad = makeCliHarness();
+  let called = 0;
+  bad.deps.runSetup = async () => { called += 1; return 0; };
+  assert.equal(await main(['setup', '--not-a-real-flag'], bad.deps), 1);
+  assert.equal(called, 0);
+  assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
+});
+
+test('product doctor dispatches without --config and maps only bounded arguments', async () => {
+  const h = makeCliHarness();
+  let observed: string[] | undefined;
+  h.deps.runDoctor = async (args) => { observed = args; return 0; };
+  const output = resolve('doctor.json');
+  assert.equal(await main(['doctor', '--repair', '--output', output], h.deps), 0);
+  assert.deepEqual(observed, ['-Repair', '-Output', output]);
+  assert.equal(h.stderr.text(), '');
+
+  const bad = makeCliHarness();
+  let called = 0;
+  bad.deps.runDoctor = async () => { called += 1; return 0; };
+  assert.equal(await main(['doctor', '--unknown'], bad.deps), 1);
+  assert.equal(called, 0);
+  assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
+});
+
+test('browser-pairing reads the existing private pairing state without starting a runtime', async () => {
+  const h = makeCliHarness();
+  const statePath = resolve('browser-pairing-state.sqlite');
+  const configPath = resolve('private.json');
+  h.deps.loadConfig = async () => ({
+    ...config(),
+    repositoryEngineering: {
+      inspect: true,
+      mutation: { statePath, ownerId: 'local.private.stdio' },
+      browser: {
+        edgeExecutablePath: resolve('msedge.exe'),
+        profileRoot: resolve('browser-profiles'),
+      },
+    },
+  });
+  let readPath: string | undefined;
+  h.deps.readBrowserPairing = async (path) => {
+    readPath = path;
+    return {
+      version: 1,
+      endpoint: 'ws://127.0.0.1:17841/browser-control',
+      pairingToken: 'pairing-token-' + 'x'.repeat(32),
+    };
+  };
+
+  assert.equal(await main(['browser-pairing', '--config', configPath], h.deps), 0);
+  assert.equal(readPath, statePath + '.browser-control-pairing.json');
+  const payload = JSON.parse(h.stdout.text()) as Record<string, unknown>;
+  assert.equal(payload.version, 1);
+  assert.equal(payload.endpoint, 'ws://127.0.0.1:17841/browser-control');
+  assert.equal(typeof payload.pairingToken, 'string');
+  assert.equal(h.stderr.text(), '');
+  assert.equal(h.runtimeClosed(), 0, 'pairing read must not bootstrap the private runtime');
+  assert.equal(h.stdioClosed(), 0);
+
+  const unavailable = makeCliHarness();
+  assert.equal(await main(['browser-pairing', '--config', configPath], unavailable.deps), 1);
+  assert.match(unavailable.stderr.text(), /"code":"BROWSER_PAIRING_UNAVAILABLE"/);
+  assert.equal(unavailable.stdout.text(), '');
+});
+
+test('product update, rollback, and uninstall dispatch only bounded lifecycle arguments', async () => {
+  const update = makeCliHarness();
+  let updateObserved: unknown;
+  update.deps.runUpdate = async (args) => { updateObserved = args; return 0; };
+  const packageRoot = resolve('candidate-package');
+  const manifestPath = resolve('candidate-release.json');
+  const updateOutput = resolve('update-receipt.json');
+  assert.equal(await main([
+    'update',
+    '--package-root', packageRoot,
+    '--manifest', manifestPath,
+    '--output', updateOutput,
+  ], update.deps), 0);
+  assert.deepEqual(updateObserved, { packageRoot, manifestPath, output: updateOutput });
+
+  const rollback = makeCliHarness();
+  let rollbackObserved: unknown;
+  rollback.deps.runRollback = async (args) => { rollbackObserved = args; return 0; };
+  const rollbackOutput = resolve('rollback-receipt.json');
+  assert.equal(await main(['rollback', '--output', rollbackOutput], rollback.deps), 0);
+  assert.deepEqual(rollbackObserved, { output: rollbackOutput });
+
+  const uninstall = makeCliHarness();
+  let uninstallObserved: unknown;
+  uninstall.deps.runUninstall = async (args) => { uninstallObserved = args; return 0; };
+  const uninstallOutput = resolve('uninstall-receipt.json');
+  assert.equal(await main([
+    'uninstall',
+    '--keep-state',
+    '--remove-managed-devspace',
+    '--output', uninstallOutput,
+  ], uninstall.deps), 0);
+  assert.deepEqual(uninstallObserved, {
+    keepState: true,
+    removeManagedDevspace: true,
+    output: uninstallOutput,
+  });
+
+  const embeddedManifest = makeCliHarness();
+  let embeddedObserved: unknown;
+  embeddedManifest.deps.runUpdate = async (args) => { embeddedObserved = args; return 0; };
+  assert.equal(await main(['update', '--package-root', packageRoot], embeddedManifest.deps), 0);
+  assert.deepEqual(embeddedObserved, { packageRoot });
+
+  const bad = makeCliHarness();
+  let called = 0;
+  bad.deps.runUpdate = async () => { called += 1; return 0; };
+  assert.equal(await main(['update', '--manifest', manifestPath], bad.deps), 1);
+  assert.equal(called, 0);
+  assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
+
+  const relative = makeCliHarness();
+  relative.deps.runRollback = async () => 0;
+  assert.equal(await main(['rollback', '--output', 'relative.json'], relative.deps), 1);
+  assert.match(relative.stderr.text(), /"code":"CLI_USAGE"/);
+});
+
+test('doctor --config preserves the legacy runtime preflight', async () => {
   const h = makeCliHarness();
   const code = await main(['doctor', '--config', resolve('private.json')], h.deps);
   assert.equal(code, 0);
@@ -152,4 +295,78 @@ test('serve-browser-operator refuses to start without a usable LOCALAPPDATA', as
   assert.equal(await main(['serve-browser-operator', '--config', resolve('private.json')], h.deps), 1);
   assert.equal(started, 0);
   assert.equal(JSON.parse(h.stderr.text()).code, 'CLI_USAGE');
+});
+
+test('serve-remote-relay-device uses the full runtime without stdio and shuts down on the service signal path', async () => {
+  const h = makeCliHarness();
+  const secret = 'relay-device-secret-that-must-not-be-logged';
+  h.deps.env.WAG_RELAY_DEVICE_SECRET = secret;
+  h.deps.loadConfig = async () => ({
+    ...config(),
+    repositoryEngineering: {
+      inspect: true,
+      mutation: {
+        statePath: resolve('relay-state.sqlite'),
+        ownerId: 'local.private.stdio',
+      },
+    },
+    remoteRelayDevice: {
+      supabaseUrl: 'https://project.supabase.co',
+      publishableKey: 'sb_publishable_' + 'a'.repeat(32),
+      deviceId: 'device_primary',
+      secretEnv: 'WAG_RELAY_DEVICE_SECRET',
+    },
+  });
+
+  let engineeringAttached = 0;
+  let engineeringClosed = 0;
+  h.deps.startRepositoryEngineering = async () => ({
+    profile: { inspect: true, mutation: true, gitCommit: false },
+    async attach() { engineeringAttached += 1; },
+    async close() { engineeringClosed += 1; },
+  });
+
+  let relayStarted = 0;
+  let relayClosed = 0;
+  let relayRunStarted = 0;
+  h.deps.startRemoteRelayDevice = async (options) => {
+    relayStarted += 1;
+    assert.equal(options.config.remoteRelayDevice?.deviceId, 'device_primary');
+    return {
+      async run(signal) {
+        relayRunStarted += 1;
+        if (signal.aborted) return;
+        await new Promise<void>((resolvePromise) => {
+          signal.addEventListener('abort', () => resolvePromise(), { once: true });
+        });
+      },
+      async close() { relayClosed += 1; },
+    };
+  };
+
+  let requestRemoteShutdown!: () => void;
+  const remoteShutdown = new Promise<void>((resolvePromise) => {
+    requestRemoteShutdown = resolvePromise;
+  });
+  h.deps.waitForRemoteShutdown = async () => remoteShutdown;
+
+  const running = main(['serve-remote-relay-device', '--config', resolve('private.json')], h.deps);
+  for (let i = 0; i < 20 && relayRunStarted === 0; i += 1) {
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+  }
+
+  assert.equal(relayStarted, 1);
+  assert.equal(relayRunStarted, 1);
+  assert.equal(engineeringAttached, 1);
+  assert.equal(h.stdioClosed(), 0, 'remote relay mode must not create the stdio transport');
+  assert.equal(h.stdout.text(), '', 'remote relay mode reserves no stdout protocol');
+  assert.match(h.stderr.text(), /"mode":"remote-relay-device"/);
+  assert.equal(h.stderr.text().includes(secret), false);
+
+  requestRemoteShutdown();
+  assert.equal(await running, 0);
+  assert.equal(relayClosed, 1);
+  assert.equal(engineeringClosed, 1);
+  assert.equal(h.runtimeClosed(), 1);
+  assert.equal(h.stdioClosed(), 0);
 });

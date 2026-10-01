@@ -1,12 +1,22 @@
+#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BROWSER_OPERATOR_ADAPTER_ID } from './adapter-admission.js';
+import { readBrowserControlPairingState } from './browser-harness/browser-control-websocket-server.js';
 import {
   startBrowserOperatorRuntime,
   type BrowserOperatorRuntime,
 } from './browser-operator-runtime.js';
-import { loadPrivateGatewayConfig } from './private-config.js';
+import { loadPrivateGatewayConfig, type PrivateGatewayConfig } from './private-config.js';
+import { createProductMcpContext } from './product-ux.js';
+import {
+  runProductRollback,
+  runProductUninstall,
+  runProductUpdate,
+  type ProductUninstallArgs,
+} from './product-release-runtime.js';
 import {
   bootstrapPrivateGateway,
   PrivateRuntimeError,
@@ -21,6 +31,10 @@ import {
   type GatewayStdioServer,
 } from './stdio-server.js';
 import type { GatewayTelemetryEvent, TelemetrySink } from './telemetry.js';
+import {
+  startRemoteRelayDeviceRuntime,
+  type RemoteRelayDeviceRuntime,
+} from './remote-relay-device-runtime.js';
 
 export interface CliDependencies {
   env: NodeJS.ProcessEnv;
@@ -32,13 +46,31 @@ export interface CliDependencies {
   startStdio: typeof startGatewayStdioServer;
   waitForShutdown: () => Promise<void>;
   telemetry: TelemetrySink;
+  /** Per-user installer bootstrap; injected by setup tests. */
+  runSetup?: (argv: string[]) => Promise<number>;
+  /** Product doctor entrypoint; injected by doctor tests. */
+  runDoctor?: (argv: string[]) => Promise<number>;
+  /** Transactional product update; injected by product lifecycle tests. */
+  runUpdate?: (args: ProductUpdateArgs) => Promise<number>;
+  /** Explicit rollback; injected by product lifecycle tests. */
+  runRollback?: (args: ProductRollbackArgs) => Promise<number>;
+  /** Supported uninstall; injected by product lifecycle tests. */
+  runUninstall?: (args: ProductUninstallArgs) => Promise<number>;
   /** Defaults to the real assembly; injected only by tests. */
   startRepositoryEngineering?: typeof startRepositoryEngineeringRuntime;
   /** Defaults to the real assembly; injected only by tests. */
   startBrowserOperator?: typeof startBrowserOperatorRuntime;
+  /** Defaults to the real outbound relay-device assembly; injected only by tests. */
+  startRemoteRelayDevice?: typeof startRemoteRelayDeviceRuntime;
+  /** Remote-device service lifetime is signal-driven and must not depend on stdin staying open. */
+  waitForRemoteShutdown?: () => Promise<void>;
+  /** Read-only first-time Browser v2 pairing payload; injected only by CLI tests. */
+  readBrowserPairing?: typeof readBrowserControlPairingState;
 }
-type CliCommand = 'doctor' | 'serve-stdio' | 'serve-browser-operator';
+type CliCommand = 'doctor' | 'serve-stdio' | 'serve-browser-operator' | 'serve-remote-relay-device';
 interface ParsedCli { command: CliCommand; configPath: string; }
+interface ProductUpdateArgs { packageRoot: string; manifestPath?: string; output?: string; }
+interface ProductRollbackArgs { output?: string; }
 
 class CliUsageError extends Error {}
 
@@ -50,6 +82,75 @@ export async function main(
   if (argv.length === 1 && argv[0] === '--help') {
     deps.stdout.write(usageText());
     return 0;
+  }
+  if (argv[0] === 'browser-pairing') {
+    try {
+      if (argv.length !== 3 || argv[1] !== '--config' || !isAbsolute(argv[2]!)) {
+        throw new CliUsageError('browser-pairing requires --config <absolute-path>');
+      }
+      const config = await deps.loadConfig(argv[2]!);
+      const mutation = config.repositoryEngineering?.mutation;
+      const browser = config.repositoryEngineering?.browser;
+      if (!mutation || !browser) {
+        throw new Error('Browser pairing requires repositoryEngineering.browser and mutation');
+      }
+      const statePath = mutation.statePath + '.browser-control-pairing.json';
+      const pairing = await (deps.readBrowserPairing ?? readBrowserControlPairingState)(statePath);
+      deps.stdout.write(`${JSON.stringify(pairing)}\n`);
+      return 0;
+    } catch (error) {
+      emitError(
+        deps.stderr,
+        error instanceof CliUsageError ? 'CLI_USAGE' : 'BROWSER_PAIRING_UNAVAILABLE',
+        error,
+      );
+      return 1;
+    }
+  }
+  if (argv[0] === 'update') {
+    try {
+      const updateArgs = parseProductUpdateArgs(argv.slice(1));
+      return await (deps.runUpdate ?? runProductUpdate)(updateArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'UPDATE_FAILED', error);
+      return 1;
+    }
+  }
+  if (argv[0] === 'rollback') {
+    try {
+      const rollbackArgs = parseProductRollbackArgs(argv.slice(1));
+      return await (deps.runRollback ?? runProductRollback)(rollbackArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'ROLLBACK_FAILED', error);
+      return 1;
+    }
+  }
+  if (argv[0] === 'uninstall') {
+    try {
+      const uninstallArgs = parseProductUninstallArgs(argv.slice(1));
+      return await (deps.runUninstall ?? runProductUninstall)(uninstallArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'UNINSTALL_FAILED', error);
+      return 1;
+    }
+  }
+  if (argv[0] === 'doctor' && !(argv.length === 3 && argv[1] === '--config')) {
+    try {
+      const doctorArgs = mapDoctorArgs(argv.slice(1));
+      return await (deps.runDoctor ?? ((args) => runDoctorPowerShell(args, deps.stdout, deps.stderr)))(doctorArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'DOCTOR_FAILED', error);
+      return 1;
+    }
+  }
+  if (argv[0] === 'setup') {
+    try {
+      const setupArgs = mapSetupArgs(argv.slice(1));
+      return await (deps.runSetup ?? ((args) => runSetupPowerShell(args, deps.stdout, deps.stderr)))(setupArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'SETUP_FAILED', error);
+      return 1;
+    }
   }
 
   let parsed: ParsedCli;
@@ -88,6 +189,7 @@ export async function main(
       env: deps.env,
       telemetry: deps.telemetry,
       openWorkspaceId: engineering.openWorkspaceId,
+      bindWorkspaceIdentity: engineering.bindWorkspaceIdentity,
     });
   } catch (error) {
     await closeQuietly(engineering);
@@ -119,6 +221,18 @@ export async function main(
   }
   emitProfile(deps.stderr, engineering);
 
+  if (parsed.command === 'serve-remote-relay-device') {
+    return serveRemoteRelayDevice(deps, config, runtime, engineering);
+  }
+
+  const productContext = engineering.diagnosticsContext === undefined
+    ? undefined
+    : createProductMcpContext({
+        configPath: parsed.configPath,
+        config,
+        diagnostics: engineering.diagnosticsContext,
+      });
+
   let stdio: GatewayStdioServer;
   try {
     stdio = await deps.startStdio({
@@ -127,7 +241,16 @@ export async function main(
       output: deps.stdout,
       inspect: engineering.profile.inspect,
       mutationContext: engineering.mutationContext,
+      changeSetContext: engineering.changeSetContext,
       gitCommitContext: engineering.gitCommitContext,
+      remoteGitPushContext: engineering.remoteGitPushContext,
+      commandContext: engineering.commandContext,
+      capabilityContext: engineering.capabilityContext,
+      machineContext: engineering.machineContext,
+      diagnosticsContext: engineering.diagnosticsContext,
+      productContext,
+      browserContext: engineering.browserContext,
+      desktopContext: engineering.desktopContext,
     });
   } catch (error) {
     await closeQuietly(engineering);
@@ -145,6 +268,66 @@ export async function main(
   } finally {
     for (const step of [
       () => stdio.close(),
+      () => engineering.close(),
+      () => runtime.close(),
+    ]) {
+      try {
+        await step();
+      } catch (error) {
+        emitError(deps.stderr, 'CLI_INTERNAL', error);
+        exitCode = 1;
+      }
+    }
+  }
+  return exitCode;
+}
+
+async function serveRemoteRelayDevice(
+  deps: CliDependencies,
+  config: PrivateGatewayConfig,
+  runtime: PrivateGatewayRuntime,
+  engineering: RepositoryEngineeringRuntime,
+): Promise<number> {
+  let relay: RemoteRelayDeviceRuntime;
+  try {
+    relay = await (deps.startRemoteRelayDevice ?? startRemoteRelayDeviceRuntime)({
+      config,
+      gatewayRuntime: runtime,
+      engineering,
+      env: deps.env,
+      onMetadata(event) {
+        deps.stderr.write(`${JSON.stringify({ type: 'gateway.remote-relay', ...event })}\n`);
+      },
+    });
+  } catch (error) {
+    await closeQuietly(engineering);
+    await runtime.close().catch(() => undefined);
+    emitError(deps.stderr, 'REMOTE_RELAY_DEVICE_START_FAILED', error);
+    return 1;
+  }
+
+  deps.stderr.write(`${JSON.stringify({ type: 'gateway.ready', mode: 'remote-relay-device' })}\n`);
+  const controller = new AbortController();
+  let exitCode = 0;
+  const running = relay.run(controller.signal);
+  try {
+    const outcome = await Promise.race([
+      running.then(() => 'agent-exit' as const),
+      (deps.waitForRemoteShutdown ?? waitForProcessSignals)().then(() => 'shutdown' as const),
+    ]);
+    if (outcome === 'agent-exit') {
+      throw new Error('Remote relay device agent exited before shutdown');
+    }
+    controller.abort();
+    await running;
+  } catch (error) {
+    controller.abort();
+    await running.catch(() => undefined);
+    emitError(deps.stderr, 'REMOTE_RELAY_DEVICE_FAILED', error);
+    exitCode = 1;
+  } finally {
+    for (const step of [
+      () => relay.close(),
       () => engineering.close(),
       () => runtime.close(),
     ]) {
@@ -209,24 +392,15 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
     origin: runtime.operatorOrigin,
     urlFile: runtime.operatorUrlFile,
   })}\n`);
-  // Announced loudly when on, and silent when off. An autonomous-admission mode that is only
-  // visible by reading a config file is one an operator can be running without knowing.
-  if (runtime.goalLeaseId !== undefined) {
-    deps.stderr.write(`${JSON.stringify({
-      type: 'gateway.goalLease',
-      leaseId: runtime.goalLeaseId,
-      note: 'autonomous admission is ENABLED for actions inside this lease; npm run lease:stop halts it',
-    })}\n`);
-  }
-  // Announced for the same reason, and phrased to keep the two authorities apart. A delegation
-  // lifts Run and never Approve: an effect still needs the operator, or a lease that admits it.
+  // A delegation lifts browser Run only. Goal Lease is retired from the live authority plane, so
+  // every browser filesystem or Git effect still reaches the operator review path.
   if (runtime.goalUiDelegationId !== undefined) {
     deps.stderr.write(`${JSON.stringify({
       type: 'gateway.goalUiDelegation',
       delegationId: runtime.goalUiDelegationId,
       discoveryPath: runtime.delegationDiscoveryPath,
-      note: 'delegated Run is ENABLED for proposals inside this delegation; APPROVAL is unchanged '
-        + 'and still requires the operator or an active lease. npm run lease:stop halts it',
+      note: 'delegated Run is ENABLED for proposals inside this delegation; effects still require '
+        + 'the operator review path. npm run autonomy:stop halts delegated dispatch',
     })}\n`);
   }
 
@@ -257,15 +431,16 @@ async function serveBrowserOperator(deps: CliDependencies, configPath: string): 
  * operator reads it from there.
  */
 function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime): void {
-  const { inspect, mutation, gitCommit, stableSessionId } = engineering.profile;
-  if (!inspect && !mutation && !gitCommit) return;
+  const { inspect, mutation, gitCommit, browser, stableSessionId } = engineering.profile;
+  if (!inspect && !mutation && !gitCommit && browser !== true) return;
   stderr.write(`${JSON.stringify({
     type: 'gateway.profile',
     inspect,
     mutation,
     gitCommit,
+    ...(browser === true ? { browser: true } : {}),
     // Only when a correlation makes it stable, so the default profile line is byte-identical to
-    // what it was. This is how a human finds the session id a Goal Lease has to be bound to.
+    // what it was. The id is reconnect/audit continuity, not an authority grant.
     ...(stableSessionId === undefined ? {} : { stableSessionId }),
   })}\n`);
   if (engineering.operator) {
@@ -279,7 +454,12 @@ function emitProfile(stderr: Writable, engineering: RepositoryEngineeringRuntime
 
 function parseCli(argv: string[]): ParsedCli {
   if (argv.length !== 3 || argv[1] !== '--config') throw new CliUsageError('Invalid CLI arguments');
-  if (argv[0] !== 'doctor' && argv[0] !== 'serve-stdio' && argv[0] !== 'serve-browser-operator') {
+  if (
+    argv[0] !== 'doctor'
+    && argv[0] !== 'serve-stdio'
+    && argv[0] !== 'serve-browser-operator'
+    && argv[0] !== 'serve-remote-relay-device'
+  ) {
     throw new CliUsageError('Unknown command');
   }
   if (!isAbsolute(argv[2])) throw new CliUsageError('Config path must be absolute');
@@ -298,12 +478,157 @@ function telemetryToStderr(stderr: Writable): TelemetrySink {
   };
 }
 
+function requireAbsoluteCliPath(value: string, flag: string): string {
+  if (!isAbsolute(value)) throw new CliUsageError(`${flag} must be an absolute path`);
+  return resolve(value);
+}
+
+function parseProductUpdateArgs(argv: string[]): ProductUpdateArgs {
+  let packageRoot = '';
+  let manifestPath = '';
+  let output: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--package-root' || arg === '--manifest' || arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError(`Missing value after ${arg}`);
+      const absolute = requireAbsoluteCliPath(value, arg);
+      if (arg === '--package-root') packageRoot = absolute;
+      else if (arg === '--manifest') manifestPath = absolute;
+      else output = absolute;
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown update argument: ${arg}`);
+  }
+  if (!packageRoot) throw new CliUsageError('update requires --package-root');
+  return {
+    packageRoot,
+    ...(manifestPath ? { manifestPath } : {}),
+    ...(output ? { output } : {}),
+  };
+}
+
+function parseProductRollbackArgs(argv: string[]): ProductRollbackArgs {
+  let output: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError('Missing value after --output');
+      output = requireAbsoluteCliPath(value, '--output');
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown rollback argument: ${arg}`);
+  }
+  return output ? { output } : {};
+}
+
+function parseProductUninstallArgs(argv: string[]): ProductUninstallArgs {
+  let output: string | undefined;
+  let keepState = false;
+  let removeManagedDevspace = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--keep-state') { keepState = true; continue; }
+    if (arg === '--remove-managed-devspace') { removeManagedDevspace = true; continue; }
+    if (arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError('Missing value after --output');
+      output = requireAbsoluteCliPath(value, '--output');
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown uninstall argument: ${arg}`);
+  }
+  return {
+    keepState,
+    removeManagedDevspace,
+    ...(output ? { output } : {}),
+  };
+}
+
+function mapDoctorArgs(argv: string[]): string[] {
+  const mapped: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--repair') { mapped.push('-Repair'); continue; }
+    if (arg === '--output') {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError('Missing value after --output');
+      mapped.push('-Output', value);
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown doctor argument: ${arg}`);
+  }
+  return mapped;
+}
+
+async function runDoctorPowerShell(argv: string[], stdout: Writable, stderr: Writable): Promise<number> {
+  const script = fileURLToPath(new URL('../scripts/wag-local-doctor.ps1', import.meta.url));
+  const result = spawnSync('pwsh.exe', [
+    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...argv,
+  ], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.error) throw result.error;
+  if (result.stdout) stdout.write(result.stdout);
+  if (result.stderr) stderr.write(result.stderr);
+  return result.status ?? 1;
+}
+
+function mapSetupArgs(argv: string[]): string[] {
+  const mapped: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === '--check-only') { mapped.push('-CheckOnly'); continue; }
+    if (arg === '--no-start') { mapped.push('-NoStart'); continue; }
+    if (arg === '--no-autostart') { mapped.push('-NoAutostart'); continue; }
+    if (arg === '--connector-confirmed') { mapped.push('-ConnectorConfirmed'); continue; }
+    const names: Record<string, string> = {
+      '--allowed-root': '-AllowedRoot',
+      '--output': '-Output',
+      '--tunnel-client-path': '-TunnelClientPath',
+      '--tunnel-id': '-TunnelId',
+      '--runtime-key-ref': '-RuntimeKeyRef',
+    };
+    const mappedName = names[arg];
+    if (mappedName) {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError(`Missing value after ${arg}`);
+      mapped.push(mappedName, value);
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown setup argument: ${arg}`);
+  }
+  return mapped;
+}
+
+async function runSetupPowerShell(argv: string[], stdout: Writable, stderr: Writable): Promise<number> {
+  const script = fileURLToPath(new URL('../scripts/wag-local-provision.ps1', import.meta.url));
+  const result = spawnSync('pwsh.exe', [
+    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...argv,
+  ], { encoding: 'utf8', windowsHide: true, stdio: ['inherit', 'pipe', 'pipe'] });
+  if (result.error) throw result.error;
+  if (result.stdout) stdout.write(result.stdout);
+  if (result.stderr) stderr.write(result.stderr);
+  return result.status ?? 1;
+}
+
 function usageText(): string {
   return [
     'Usage:',
-    '  web-agent-gateway doctor --config <absolute-path>',
+    '  web-agent-gateway setup [--check-only] [--tunnel-id <tunnel_...>] [--runtime-key-ref env:CONTROL_PLANE_API_KEY] [--connector-confirmed] [--allowed-root <absolute-path>] [--no-start] [--no-autostart]',
+    '  web-agent-gateway update --package-root <absolute-path> [--manifest <absolute-path>] [--output <absolute-path>]',
+    '  web-agent-gateway rollback [--output <absolute-path>]',
+    '  web-agent-gateway uninstall [--keep-state] [--remove-managed-devspace] [--output <absolute-path>]',
+    '  web-agent-gateway doctor [--repair] [--output <absolute-path>]',
+    '  web-agent-gateway doctor --config <absolute-path>  # legacy runtime preflight',
+    '  web-agent-gateway browser-pairing --config <absolute-path>',
     '  web-agent-gateway serve-stdio --config <absolute-path>',
     '  web-agent-gateway serve-browser-operator --config <absolute-path>',
+    '  web-agent-gateway serve-remote-relay-device --config <absolute-path>',
     '',
   ].join('\n');
 }
@@ -318,9 +643,25 @@ function createDefaultDependencies(): CliDependencies {
     bootstrap: bootstrapPrivateGateway,
     startStdio: startGatewayStdioServer,
     waitForShutdown: waitForProcessShutdown,
+    waitForRemoteShutdown: waitForProcessSignals,
     telemetry: telemetryToStderr(process.stderr),
   };
 }
+async function waitForProcessSignals(): Promise<void> {
+  await new Promise<void>((resolvePromise) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      process.off('SIGINT', finish);
+      process.off('SIGTERM', finish);
+      resolvePromise();
+    };
+    process.once('SIGINT', finish);
+    process.once('SIGTERM', finish);
+  });
+}
+
 async function waitForProcessShutdown(): Promise<void> {
   if (process.stdin.readableEnded || process.stdin.destroyed) return;
   await new Promise<void>((resolvePromise) => {

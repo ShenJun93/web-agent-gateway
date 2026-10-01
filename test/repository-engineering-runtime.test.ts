@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
+import { adapterCorrelationDigest } from '../src/adapter-admission.js';
 import { main, type CliDependencies } from '../src/cli.js';
+import { SqliteDurableStore } from '../src/durable-store.js';
 import type { DevspaceExecutor } from '../src/executor/devspace.js';
 import type { PrivateGatewayConfig } from '../src/private-config.js';
 import {
@@ -98,6 +100,8 @@ test('mutation opt-in binds workspace.open to durable records owned by a per-pro
 
   await first.attach(fakeExecutor);
   assert.ok(first.mutationContext);
+  assert.equal(first.mutationContext!.autonomous, true,
+    'direct stdio mutations must be autonomous-local, with no per-change operator fallback');
   assert.equal(first.mutationContext!.callerContext.adapterId, PRIVATE_STDIO_ADAPTER_ID);
   assert.equal(first.mutationContext!.callerContext.ownerId, 'local.private.stdio');
   assert.match(first.mutationContext!.callerContext.sessionId, /^sid_/);
@@ -200,6 +204,9 @@ test('serve-stdio forwards the resolved capability profile to the MCP surface', 
   assert.equal(h.stdioOptions.length, 1);
   assert.equal(h.stdioOptions[0]!.inspect, true);
   assert.ok(h.stdioOptions[0]!.mutationContext, 'mutation opt-in must reach the stdio surface');
+  assert.ok(h.stdioOptions[0]!.changeSetContext, 'change-set opt-in must reach the stdio surface');
+  assert.ok(h.stdioOptions[0]!.machineContext,
+    'mutation opt-in must also wire the autonomous local-machine backend to stdio');
 
   h.requestShutdown();
   assert.equal(await running, 0);
@@ -282,4 +289,277 @@ test('an attach failure closes the privileged runtime and never serves the surfa
   assert.match(h.stderr.text(), /"code":"REPOSITORY_ENGINEERING_START_FAILED"/);
   assert.equal(h.stdioOptions.length, 0);
   assert.deepEqual(h.closed, ['engineering', 'runtime']);
+});
+test('stdio git commit inherits the configured mutation review TTL', async () => {
+  const statePath = join(
+    process.cwd(),
+    `.wag-runtime-ttl-${process.pid}-${Date.now()}.sqlite`,
+  );
+
+  const runtime = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: {
+        statePath,
+        ownerId: 'local.private.stdio',
+        reviewTtlMs: 300_000,
+      },
+      gitCommit: {},
+    }),
+    {
+      startOperatorServer: async () => ({
+        origin: 'http://127.0.0.1:1',
+        bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+        close: async () => {},
+      }),
+    },
+  );
+
+  try {
+    await runtime.attach(fakeExecutor);
+
+    assert.ok(runtime.gitCommitContext, 'git commit must be enabled after attach');
+    assert.equal(runtime.gitCommitContext!.autonomous, true,
+      'direct stdio commits must be autonomous-local, with no per-change operator fallback');
+
+    const coordinator = runtime.gitCommitContext!.coordinator as unknown as {
+      reviewTtlMs: number;
+    };
+
+    assert.equal(
+      coordinator.reviewTtlMs,
+      300_000,
+      'stdio commit review must inherit mutation.reviewTtlMs',
+    );
+  } finally {
+    await runtime.close();
+    await rm(statePath, { force: true });
+    await rm(`${statePath}.operator-url`, { force: true });
+    await rm(`${statePath}.remote-git-push.sqlite`, { force: true });
+    await rm(`${statePath}.change-set.sqlite`, { force: true });
+    await rm(`${statePath}.remote-git-hooks`, { recursive: true, force: true });
+  }
+});
+
+test('command authority is autonomous-local and rejects a foreign session workspace handle', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-command-authority-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ownerId = 'local.private.stdio';
+  const statePath = join(root, 'autonomous.sqlite');
+  const operator = async () => ({
+    origin: 'http://127.0.0.1:1',
+    bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+    close: async () => {},
+  });
+
+  const runtime = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: { statePath, ownerId },
+      gitCommit: {},
+    }),
+    { startOperatorServer: operator },
+  );
+  try {
+    const workspaceRoot = await realpath(root);
+    const mine = runtime.openWorkspaceId!(workspaceRoot);
+    await runtime.attach(fakeExecutor);
+
+    assert.ok(runtime.commandContext);
+    await runtime.commandContext!.authorize(mine);
+
+    const store = new SqliteDurableStore(statePath);
+    let foreign = '';
+    try {
+      foreign = store.openWorkspaceRecord({
+        ownerId,
+        sessionId: 'session_foreign',
+        adapterId: PRIVATE_STDIO_ADAPTER_ID,
+        canonicalRoot: workspaceRoot,
+        backendKind: 'devspace',
+        createdAt: Date.now(),
+      }).workspaceId;
+    } finally {
+      store.close();
+    }
+
+    await assert.rejects(
+      async () => runtime.commandContext!.authorize(foreign),
+      /WORKSPACE_NOT_GRANTED/,
+      'an opaque workspace owned by another session must not be inherited',
+    );
+  } finally {
+    await runtime.close();
+  }
+});
+
+test('private-stdio authority is autonomous-local without any per-goal authority row', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-autonomous-profile-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const workspaceRoot = await realpath(root);
+  const runtime = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: {
+        statePath,
+        ownerId: 'local.private.stdio',
+        sessionCorrelation: 'session_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      },
+      gitCommit: {},
+    }),
+    {
+      startOperatorServer: async () => ({
+        origin: 'http://127.0.0.1:1',
+        bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+        close: async () => {},
+      }),
+    },
+  );
+
+  try {
+    const workspaceId = runtime.openWorkspaceId!(workspaceRoot);
+    await runtime.attach(fakeExecutor);
+
+    await runtime.commandContext!.authorize(workspaceId);
+    const authority = await runtime.capabilityContext!.describe(workspaceId) as {
+      authority: { mode: string; kill_switch: string };
+      capabilities: {
+        FILE_WRITE: { granted: boolean; reason: string };
+        GIT_COMMIT: { granted: boolean; reason: string };
+        LOCAL_COMMAND: { granted: boolean; reason: string };
+        GIT_PUSH: object;
+      };
+    };
+
+    assert.deepEqual(authority.authority, { mode: 'AUTONOMOUS_LOCAL', kill_switch: 'CLEAR' });
+    assert.deepEqual(
+      [
+        authority.capabilities.FILE_WRITE.reason,
+        authority.capabilities.GIT_COMMIT.reason,
+        authority.capabilities.LOCAL_COMMAND.reason,
+      ],
+      [
+        'AUTONOMOUS_LOCAL_PROFILE',
+        'AUTONOMOUS_LOCAL_PROFILE',
+        'AUTONOMOUS_LOCAL_PROFILE',
+      ],
+    );
+    assert.deepEqual(authority.capabilities.GIT_PUSH, {
+      granted: false,
+      denied: true,
+      grantable: true,
+      requires_human: true,
+      reason: 'REMOTE_EFFECT_GRANT_REQUIRED',
+    });
+  } finally {
+    await runtime.close();
+  }
+});
+
+test('autonomous remote Git push policy removes per-push Human authority for configured targets', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-autonomous-push-profile-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const workspaceRoot = await realpath(root);
+  const runtime = await startRepositoryEngineeringRuntime(
+    config({
+      inspect: true,
+      mutation: { statePath, ownerId: 'local.private.stdio' },
+      remoteGitPush: {
+        autonomous: {
+          allowedPushUrls: ['https://github.com/example/private.git'],
+          allowedDestinationRefs: ['refs/heads/work/commercial-packaging-v1'],
+        },
+      },
+    }),
+    {
+      startOperatorServer: async () => ({
+        origin: 'http://127.0.0.1:1',
+        bootstrapUrl: 'http://127.0.0.1:1/bootstrap?token=x',
+        close: async () => {},
+      }),
+    },
+  );
+
+  try {
+    const workspaceId = runtime.openWorkspaceId!(workspaceRoot);
+    await runtime.attach(fakeExecutor);
+    const authority = await runtime.capabilityContext!.describe(workspaceId) as {
+      capabilities: {
+        GIT_PUSH: {
+          granted: boolean;
+          denied: boolean;
+          grantable: boolean;
+          requires_human: boolean;
+          reason: string;
+        };
+      };
+    };
+    assert.deepEqual(authority.capabilities.GIT_PUSH, {
+      granted: true,
+      denied: false,
+      grantable: true,
+      requires_human: false,
+      reason: 'AUTONOMOUS_REMOTE_POLICY',
+    });
+  } finally {
+    await runtime.close();
+  }
+});
+
+test('stable private-stdio diagnostics survive repository runtime restart', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-runtime-diagnostics-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, 'state.sqlite');
+  const settings = config({
+    inspect: true,
+    mutation: {
+      statePath,
+      ownerId: 'local.private.stdio',
+      sessionCorrelation: 'session_diagnostics_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    },
+  });
+
+  const first = await startRepositoryEngineeringRuntime(settings);
+  const stableSessionId = first.profile.stableSessionId;
+  assert.ok(stableSessionId);
+  assert.ok(first.diagnosticsContext);
+  first.diagnosticsContext!.begin('health')(true);
+  await first.close();
+
+  const diagnosticsPath = statePath + '.tool-usage.' + stableSessionId + '.json';
+  const persisted = await readFile(diagnosticsPath, 'utf8');
+  assert.equal(persisted.includes('"tool": "health"'), true);
+
+  const second = await startRepositoryEngineeringRuntime(settings);
+  try {
+    assert.equal(second.profile.stableSessionId, stableSessionId);
+    assert.deepEqual(
+      second.diagnosticsContext!.recent({ limit: 10 }).events.map((event) => [
+        event.sequence,
+        event.tool,
+        event.success,
+      ]),
+      [[1, 'health', true]],
+    );
+    second.diagnosticsContext!.begin('workspace.open')(false, new TypeError('must never persist'));
+  } finally {
+    await second.close();
+  }
+
+  const third = await startRepositoryEngineeringRuntime(settings);
+  try {
+    const recent = third.diagnosticsContext!.recent({ limit: 10 });
+    assert.deepEqual(
+      recent.events.map((event) => [event.sequence, event.tool, event.success, event.error_class]),
+      [
+        [1, 'health', true, undefined],
+        [2, 'workspace.open', false, 'TypeError'],
+      ],
+    );
+    assert.equal(JSON.stringify(recent).includes('must never persist'), false);
+  } finally {
+    await third.close();
+  }
 });

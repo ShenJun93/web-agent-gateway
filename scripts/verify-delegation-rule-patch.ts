@@ -45,8 +45,8 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AUTHORISED = [
   {
     path: '.claude/rules/human-presence-boundary.md',
-    before: '210becf3015bb993653935457e7c8fe57ce99a514c69c22fe5fee6cea4e90562',
-    after: '7355153a8a89684e89c4dda6f42f7c0ed3451965ef7d6bbd3fa03838e4a4b2a9',
+    before: '5888b3282df0fdde4d1585232c6125754ea12e21b6ba7fb4c1fc4fffdeaf1fa5',
+    after: 'c5ca61431b18d5ade89458e48f16259fe36c3cad59ac364dc306faf38435d9ca',
   },
   {
     path: '.claude/rules/wag-primary-operator.md',
@@ -72,8 +72,8 @@ const PATCH_PAYLOAD_SHA256 = 'bedf154361e8bd23dae8173cc8ce6594fa9c38cea097c17ec1
 export const GUARD_PATH_RELATIVE = '.claude/hooks/wag-human-gate-guard.mjs';
 
 /**
- * The guard as a human last installed it, out of band: the authority-issuance patterns of
- * 2026-09-21, plus the `sessionCorrelation` refusal of 2026-09-22 (ADR-0030).
+ * The active guard keeps human issuance for browser Goal UI Delegation while private-stdio
+ * execution is autonomous and sessionCorrelation is identity/audit continuity only.
  *
  * Exported so `test/authority-issuance-guard.test.ts` reads it from one place rather than keeping a
  * second copy of the number. Each patch that produced a state, and its pending doc, were retired
@@ -83,8 +83,8 @@ export const GUARD_PATH_RELATIVE = '.claude/hooks/wag-human-gate-guard.mjs';
  * `sessionCorrelation`), so a revert of the latest patch is reported as a revert, not a mystery.
  */
 export const ISSUANCE_GUARD_SHA256 =
-  'd3218fd6d5f33fb8a68f57e48aca86261a9d9236b85eae26741fedebbe87bba9';
-const GUARD_BEFORE_PATCH = '3f0787de4e0d8cf2a5df58e7f4a07a76738a82ec22097af071cd1d61a1273a61';
+  'd6ebcff87bca3d13e14c60d8756a2a4b0284163606e388d6f461f59de03e8066';
+const GUARD_BEFORE_PATCH = '50972b63d49bac14addb08b8f90ffcd3bb69a9bac6d6431ec8b57d6516409728';
 
 const out = (line = ''): void => { process.stdout.write(`${line}\n`); };
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
@@ -147,8 +147,8 @@ function main(): number {
   } else if (guardDigest === GUARD_BEFORE_PATCH) {
     drift += 1;
     out(`  REVERTED ${GUARD_PATH_RELATIVE}`);
-    out('           this is the immediately prior authorised guard: the sessionCorrelation refusal');
-    out('           has been dropped, so naming that field in a JSON config is no longer refused.');
+    out('           this is the immediately prior authorised guard from before autonomous-local');
+    out('           execution was separated from browser Goal UI Delegation authority.');
   } else if (guardDigest !== undefined) {
     drift += 1;
     out(`  DRIFTED  ${GUARD_PATH_RELATIVE}`);

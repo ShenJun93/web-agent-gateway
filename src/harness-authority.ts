@@ -55,7 +55,7 @@ import { SqliteDurableStore } from './durable-store.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { canonicalWorkspace } from './path-policy.js';
 import { startOperatorServer, type OperatorDenialCode } from './operator-server.js';
-import { validateBindings, type GoalLeaseBindings, type LeaseDecision } from './goal-lease.js';
+import type { PolicyDecision } from './policy-decision.js';
 import { BROWSER_DELEGATION_ADAPTER_ID } from './adapter-admission.js';
 import { DelegatedDispatchRouter } from './delegated-dispatch-router.js';
 import {
@@ -164,19 +164,10 @@ export interface HarnessLane {
   reopen(): Promise<void>;
   /** Start a real operator review server over this lane's store. See {@link LaneOperator}. */
   serveOperator(): Promise<LaneOperator>;
-  /**
-   * Grant an Autonomous Goal Lease over this lane's fixture (ADR-0028).
-   *
-   * The bindings default to this lane's own workspace, session and adapter, so a test states only
-   * what it is varying. Returns the lease id. Creating one does not enable anything by itself:
-   * `admitUnderLease` is the only thing that consults it.
-   */
-  grantLease(bindings?: Partial<GoalLeaseBindings> & { ttlMs?: number; notBeforeMs?: number }): Promise<string>;
-  revokeLease(leaseId: string): Promise<boolean>;
-  /** The local kill switch, consulted on every admission. */
+  /** The local emergency stop, consulted on every autonomous admission and immediately pre-effect. */
   setKillSwitch(engaged: boolean): void;
-  /** Admit a pending record by policy rather than by a human. Returns the full decision. */
-  admitUnderLease(leaseId: string, mutationId: string): Promise<LeaseDecision>;
+  /** Execute a pending fixture record through the same autonomous-local policy as private stdio. */
+  admitAutonomous(mutationId: string): Promise<PolicyDecision>;
   /** The delegated-dispatch equivalent. See {@link HarnessDelegationLane}. */
   delegation(): HarnessDelegationLane;
   /**
@@ -187,7 +178,6 @@ export interface HarnessLane {
    */
   authorityOf(mutationId: string): {
     authority: 'HUMAN_APPROVED' | 'POLICY_APPROVED';
-    leaseId?: string;
     admittedAt: number;
     fingerprint: string;
     path: string;
@@ -400,9 +390,7 @@ function build(root: string, marker: LaneMarker, stateDir: string, config: {
   let store!: SqliteDurableStore;
   let coordinator!: DurableMutationCoordinator;
 
-  // The lease the next `admitUnderLease` will be judged against, and the local stop. Both are
-  // per-lane state: one lane's kill switch says nothing about another's.
-  let activeLeaseId: string | undefined;
+  // Per-lane emergency stop: one fixture lane's stop state says nothing about another's.
   let killSwitch = false;
 
   const openStore = (): void => {
@@ -412,12 +400,7 @@ function build(root: string, marker: LaneMarker, stateDir: string, config: {
       backends: [fixtureBackend(marker.fixtureRoot)],
       now,
       ...(config.reviewTtlMs === undefined ? {} : { reviewTtlMs: config.reviewTtlMs }),
-      // Reads the closure, so a lease granted after the coordinator was built is still seen and
-      // a reopen does not silently drop the lease binding.
-      goalLease: {
-        get leaseId() { return activeLeaseId ?? ''; },
-        killSwitch: () => killSwitch,
-      } as { leaseId: string; killSwitch: () => boolean },
+      autonomous: { killSwitch: () => killSwitch },
     });
     // Reuse the lane's one workspace when reopening. `openWorkspaceRecord` always inserts, so
     // calling it again would strand every record proposed before the reopen.
@@ -584,47 +567,22 @@ function build(root: string, marker: LaneMarker, stateDir: string, config: {
         .filter((r) => store.getMutation(r.mutationId)?.workspaceId === marker.workspaceId)
         .map((r) => ({ mutationId: r.mutationId, path: r.path }));
     },
-    async grantLease(overrides = {}) {
-      await assertLaneIntact();
-      const { ttlMs, notBeforeMs, ...bindingOverrides } = overrides;
-      const bindings: GoalLeaseBindings = {
-        workspaceRoots: [marker.fixtureRoot],
-        allowedTools: ['mutation.preview'],
-        pathPatterns: ['**'],
-        maxFiles: 10,
-        maxBytes: 1_000_000,
-        maxDiffBytes: 100_000,
-        admittedSessions: [caller.sessionId],
-        admittedAdapters: [caller.adapterId],
-        commitSemantics: 'none',
-        ...bindingOverrides,
-      };
-      // Refused at creation as well as at use. A lease is a row, and a row can change between
-      // those two moments, so both ends check rather than trusting the other one did.
-      const malformed = validateBindings(bindings);
-      if (malformed) throw new Error(`Harness lane: refusing to grant a malformed lease — ${malformed}`);
-      const leaseId = `lease_${randomUUID()}`;
-      const createdAt = now();
-      store.insertGoalLease({
-        leaseId,
-        createdAt,
-        notBefore: createdAt + (notBeforeMs ?? 0),
-        expiresAt: createdAt + (ttlMs ?? 60_000),
-        bindings: JSON.stringify(bindings),
-      });
-      activeLeaseId = leaseId;
-      return leaseId;
-    },
-    async revokeLease(leaseId) {
-      await assertLaneIntact();
-      return store.revokeGoalLease(leaseId, now());
-    },
     setKillSwitch(engaged) { killSwitch = engaged; },
-    authorityOf(mutationId) { return store.getMutationAuthority(mutationId); },
-    async admitUnderLease(leaseId, mutationId) {
+    authorityOf(mutationId) {
+      const row = store.getMutationAuthority(mutationId);
+      if (!row) return undefined;
+      return {
+        authority: row.authority,
+        admittedAt: row.admittedAt,
+        fingerprint: row.fingerprint,
+        path: row.path,
+        resultSha256: row.resultSha256,
+        diffBytes: row.diffBytes,
+      };
+    },
+    async admitAutonomous(mutationId) {
       await assertLaneIntact();
       assertOwnRecord(mutationId);
-      activeLeaseId = leaseId;
       return coordinator.admitByPolicy(mutationId);
     },
     delegation() {
