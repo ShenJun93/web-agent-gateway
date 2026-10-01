@@ -30,6 +30,7 @@ import {
   createPrivateBrowserMcpContext,
   type BrowserMcpContext,
 } from './browser-harness/browser-mcp-runtime.js';
+import { defaultExistingBrowserControlDiscoveryPath } from './browser-harness/existing-browser-control-client.js';
 import {
   createPrivateDesktopMcpContext,
   type DesktopMcpContext,
@@ -207,6 +208,9 @@ export async function startRepositoryEngineeringRuntime(
       profileRoot: browserSettings.profileRoot,
       effectStatePath: mutationSettings.statePath + '.harness-effects.sqlite',
       killSwitch,
+      ...(defaultExistingBrowserControlDiscoveryPath() === undefined ? {} : {
+        controlDiscoveryPath: defaultExistingBrowserControlDiscoveryPath(),
+      }),
     });
     desktopContext = desktopSettings === undefined ? undefined : createPrivateDesktopMcpContext({
       owner: callerContext,

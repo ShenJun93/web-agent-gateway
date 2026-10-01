@@ -117,7 +117,7 @@ test('visible Pause -> Take Control blocks effects until Resume revalidates targ
   assert.deepEqual(await broker.exec(OWNER, opened.browserSessionId, { method: 'Runtime.evaluate' }), { ok: true });
 });
 
-test('takeover is rejected for headless and ATTACH_EXISTING fails closed until runtime bridge lands', async () => {
+test('takeover is rejected for headless and ATTACH_EXISTING fails closed without runtime bridge', async () => {
   const headless = portFixture('WAG_HEADLESS', '7');
   const visible = portFixture('WAG_VISIBLE', '8');
   const broker = createBrowserBroker({ headless: headless.port, visible: visible.port });
@@ -132,4 +132,26 @@ test('takeover is rejected for headless and ATTACH_EXISTING fails closed until r
     (error: unknown) => error instanceof BrowserBrokerError
       && error.code === 'ATTACH_EXISTING_NOT_CONFIGURED',
   );
+});
+
+test('BrowserBroker routes ATTACH_EXISTING through the attached adapter with one logical session', async () => {
+  const headless = portFixture('WAG_HEADLESS', '9');
+  const visible = portFixture('WAG_VISIBLE', '0');
+  const attached = portFixture('ATTACH_EXISTING', '1');
+  const broker = createBrowserBroker({
+    headless: headless.port,
+    visible: visible.port,
+    attached: attached.port,
+  });
+
+  const opened = await broker.open({
+    profileId: 'existing',
+    owner: OWNER,
+    mode: 'ATTACH_EXISTING',
+    targetId: 'tab_7',
+  });
+  assert.equal(opened.executionMode, 'ATTACH_EXISTING');
+  assert.equal(opened.ownershipMode, 'ATTACHED_EXISTING');
+  assert.equal((await broker.snapshot(OWNER, opened.browserSessionId)).browserSessionId, opened.browserSessionId);
+  assert.deepEqual(attached.calls.slice(0, 2), ['open:ATTACH_EXISTING', 'snapshot']);
 });

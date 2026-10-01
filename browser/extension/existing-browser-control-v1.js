@@ -44,6 +44,11 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     return { ...describeTab(tab), state: 'ATTACHED' };
   }
 
+  async function describe(tabId) {
+    const tab = await getAttachableTab(tabs, tabId);
+    return { ...describeTab(tab), attached: attached.has(tabId) };
+  }
+
   async function probe(tabId) {
     assertAttached(attached, tabId);
     const response = await debuggerApi.sendCommand({ tabId }, 'Page.getFrameTree');
@@ -55,6 +60,23 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
       origin: safe?.origin ?? null,
       url: safe?.url ?? null,
     };
+  }
+
+  async function exec(tabId, method, params) {
+    assertAttached(attached, tabId);
+    assertAllowedCdpMethod(method);
+    if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params))) {
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Browser command params are invalid');
+    }
+    return debuggerApi.sendCommand({ tabId }, method, params);
+  }
+
+  async function screenshot(tabId) {
+    const value = await exec(tabId, 'Page.captureScreenshot', { format: 'png' });
+    if (typeof value?.data !== 'string') {
+      throw new ExistingBrowserControlError('SCREENSHOT_FAILED', 'Browser screenshot returned no data');
+    }
+    return { mimeType: 'image/png', dataBase64: value.data };
   }
 
   async function release(tabId) {
@@ -71,7 +93,7 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     return attached.has(tabId);
   }
 
-  return { listTargets, attach, probe, release, isAttached };
+  return { listTargets, attach, describe, probe, exec, screenshot, release, isAttached };
 }
 
 async function getAttachableTab(tabs, tabId) {
@@ -155,4 +177,23 @@ function normalizeAttachError(error) {
     return new ExistingBrowserControlError('ATTACH_PERMISSION_REQUIRED', 'Debugger permission is unavailable');
   }
   return new ExistingBrowserControlError('ATTACH_FAILED', 'Debugger attachment failed');
+}
+
+const ALLOWED_CDP_METHODS = new Set([
+  'Accessibility.getFullAXTree',
+  'Page.navigate',
+  'DOM.scrollIntoViewIfNeeded',
+  'DOM.getBoxModel',
+  'Input.dispatchMouseEvent',
+  'DOM.focus',
+  'Input.dispatchKeyEvent',
+  'Input.insertText',
+  'DOM.setFileInputFiles',
+  'Page.captureScreenshot',
+]);
+
+function assertAllowedCdpMethod(method) {
+  if (typeof method !== 'string' || !ALLOWED_CDP_METHODS.has(method)) {
+    throw new ExistingBrowserControlError('CONTROL_METHOD_DENIED', 'Browser command is not allowed');
+  }
 }

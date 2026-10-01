@@ -9,6 +9,7 @@ import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 import { projectedTools } from '../scripts/prepare-direct-mcp-tunnel.js';
 
 const BROWSER_TOOLS = [
+  'browser.targets',
   'browser.open',
   'browser.describe',
   'browser.snapshot',
@@ -61,7 +62,7 @@ function fullBrowserConfig(): PrivateGatewayConfig {
   };
 }
 
-test('browser opt-in adds exactly seven BrowserPort tools to the current extended surface', async () => {
+test('browser opt-in adds the bounded BrowserPort target/session surface to the current extended surface', async () => {
   const config = fullBrowserConfig();
   const repositoryEngineering = config.repositoryEngineering!;
   const { browser: _browser, ...withoutBrowserEngineering } = repositoryEngineering;
@@ -85,8 +86,22 @@ test('browser opt-in adds exactly seven BrowserPort tools to the current extende
 test('browser exact-once recovery correlates diagnostics to durable effect state without replay', async (t) => {
   const calls: unknown[][] = [];
   const browserContext: BrowserMcpContext = {
-    async open(profileId, mode) {
-      calls.push(['open', profileId, mode]);
+    async targets() {
+      calls.push(['targets']);
+      return [{
+        targetId: 'tab_7',
+        windowId: 'window_3',
+        title: 'Existing',
+        url: 'https://example.test/',
+        origin: 'https://example.test',
+        active: false,
+        attachable: true,
+        ownership: 'USER_EXISTING',
+        attached: false,
+      }];
+    },
+    async open(profileId, mode, targetId) {
+      calls.push(['open', profileId, mode, targetId]);
       return {
         browserSessionId: 'browser_00000000-0000-4000-8000-000000000001',
         profileId,
@@ -209,6 +224,11 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
   const tools = (await client.listTools()).tools;
   for (const name of BROWSER_TOOLS) assert.ok(tools.some((tool) => tool.name === name), name);
 
+  const targets = await client.callTool({ name: 'browser.targets', arguments: {} });
+  assert.equal(targets.isError === true, false);
+  assert.equal((targets.structuredContent as { targets?: unknown[] } | undefined)?.targets?.length, 1);
+  assert.deepEqual(calls.at(-1), ['targets']);
+
   const sessionId = 'browser_00000000-0000-4000-8000-000000000001';
   const executed = await client.callTool({
     name: 'browser.exec',
@@ -290,7 +310,20 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
     'WAG_VISIBLE',
   );
   assert.deepEqual(calls.filter((row) => row[0] === 'open').at(-1), [
-    'open', 'acceptance-visible', 'WAG_VISIBLE',
+    'open', 'acceptance-visible', 'WAG_VISIBLE', undefined,
+  ]);
+
+  const attached = await client.callTool({
+    name: 'browser.open',
+    arguments: {
+      profile_id: 'acceptance-existing',
+      mode: 'ATTACH_EXISTING',
+      target_id: 'tab_7',
+    },
+  });
+  assert.equal(attached.isError === true, false);
+  assert.deepEqual(calls.filter((row) => row[0] === 'open').at(-1), [
+    'open', 'acceptance-existing', 'ATTACH_EXISTING', 'tab_7',
   ]);
 
   for (const [index, type] of [

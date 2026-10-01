@@ -20,6 +20,12 @@ import {
   resolveBrowserOpenMode,
   type BrowserBroker,
 } from './browser-broker.js';
+import { createAttachedExistingBrowserPort } from './attached-existing-browser-port.js';
+import {
+  createExistingBrowserControlClient,
+  type ExistingBrowserControlClient,
+} from './existing-browser-control-client.js';
+import type { ExistingBrowserTarget } from '../browser-adapter/existing-browser-control-protocol.js';
 import { createFileBrowserProfileStore } from './browser-profile-store.js';
 import { createNodeCdpTransport } from './node-cdp-transport.js';
 import { createOwnedEdgeCdpBackend } from './owned-edge-cdp-backend.js';
@@ -77,7 +83,8 @@ export interface BrowserMcpEffect {
 }
 
 export interface BrowserMcpContext {
-  open(profileId: string, mode?: BrowserOpenMode): Promise<BrowserMcpSession>;
+  targets(): Promise<readonly ExistingBrowserTarget[]>;
+  open(profileId: string, mode?: BrowserOpenMode, targetId?: string): Promise<BrowserMcpSession>;
   describe(browserSessionId: string): Promise<BrowserMcpSession>;
   snapshot(browserSessionId: string): Promise<BrowserMcpSnapshot>;
   exec(
@@ -179,6 +186,7 @@ export function createPrivateBrowserMcpContext(options: {
   profileRoot: string;
   effectStatePath: string;
   killSwitch: () => boolean;
+  controlDiscoveryPath?: string;
   /** Test-only seam; production omits it and receives the concrete owned-Edge backend. */
   port?: BrowserPort;
   /** Test-only semantic seam paired with port. */
@@ -188,6 +196,7 @@ export function createPrivateBrowserMcpContext(options: {
   effects.reconcileExecuting();
   const coordinator = new HarnessEffectCoordinator(effects);
   let broker: BrowserBroker | undefined;
+  let control: ExistingBrowserControlClient | undefined;
   const port = options.port ?? (() => {
     const processes = createProcessPort({
       backend: createNodeProcessBackend(),
@@ -213,9 +222,15 @@ export function createPrivateBrowserMcpContext(options: {
         connect: (endpointUrl) => createNodeCdpTransport({ endpointUrl }),
       }),
     });
+    control = options.controlDiscoveryPath === undefined
+      ? undefined
+      : createExistingBrowserControlClient({ discoveryPath: options.controlDiscoveryPath });
     broker = createBrowserBroker({
       headless: managed('WAG_HEADLESS'),
       visible: managed('WAG_VISIBLE'),
+      ...(control === undefined ? {} : {
+        attached: createAttachedExistingBrowserPort({ control }),
+      }),
     });
     return broker;
   })();
@@ -234,10 +249,19 @@ export function createPrivateBrowserMcpContext(options: {
   }
 
   return {
-    async open(profileId, mode) {
+    async targets() {
+      assertOpen();
+      if (!control) throw new Error('Existing browser control host is not configured');
+      return control.listTargets();
+    },
+
+    async open(profileId, mode, targetId) {
       assertEffectAllowed();
       const resolvedMode = resolveBrowserOpenMode(mode);
-      const profileKey = resolvedMode + ':' + profileId;
+      if (resolvedMode === 'ATTACH_EXISTING' && !targetId) {
+        throw new Error('ATTACH_EXISTING requires target_id');
+      }
+      const profileKey = resolvedMode + ':' + profileId + ':' + (targetId ?? 'managed');
       const existing = byProfile.get(profileKey);
       if (existing) {
         try {
@@ -247,7 +271,12 @@ export function createPrivateBrowserMcpContext(options: {
           sessions.delete(existing);
         }
       }
-      const handle = await port.open({ profileId, owner: options.owner, mode: resolvedMode });
+      const handle = await port.open({
+        profileId,
+        owner: options.owner,
+        mode: resolvedMode,
+        ...(targetId === undefined ? {} : { targetId }),
+      });
       sessions.add(handle.browserSessionId);
       byProfile.set(profileKey, handle.browserSessionId);
       return sessionView(handle);

@@ -35,6 +35,7 @@ export interface BrowserOpenRequest {
   readonly profileId: string;
   readonly owner: GatewayAuthority;
   readonly mode?: BrowserOpenMode;
+  readonly targetId?: string;
 }
 
 export interface BrowserSnapshot {

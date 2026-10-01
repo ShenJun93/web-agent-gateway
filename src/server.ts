@@ -1054,14 +1054,23 @@ export function createGatewayMcpServer(
       z.object({ type: z.literal('resume_automation') }).strict(),
     ]);
 
+    registerTool('browser.targets', {
+      description: 'List sanitized existing Edge/Chrome targets eligible for ATTACH_EXISTING without changing foreground focus.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    }, async () => toolResult({ targets: await browserContext.targets() }));
+
     registerTool('browser.open', {
-      description: 'Open or recover a WAG browser session using AUTO, managed visible, managed headless, or existing-tab mode.',
+      description: 'Open or recover a WAG browser session using AUTO, managed visible, managed headless, or an exact existing target.',
       inputSchema: z.object({
         profile_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
         mode: z.enum(['AUTO', 'ATTACH_EXISTING', 'WAG_VISIBLE', 'WAG_HEADLESS']).optional(),
+        target_id: z.string().regex(/^tab_[0-9]+$/).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, async ({ profile_id, mode }) => toolResult(await browserContext.open(profile_id, mode)));
+    }, async ({ profile_id, mode, target_id }) => toolResult(
+      await browserContext.open(profile_id, mode, target_id),
+    ));
 
     registerTool('browser.describe', {
       description: 'Describe one caller-owned BrowserPort session without exposing authority identifiers.',

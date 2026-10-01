@@ -14,6 +14,7 @@ import {
   createDelegatedRunAttempt,
 } from './delegated-observation-v5.js';
 import { createExistingBrowserControlV1 } from './existing-browser-control-v1.js';
+import { createNativeBrowserControlV1 } from './native-browser-control-v1.js';
 
 /**
  * The shipped entry point, now the operator adapter (ADR-0026).
@@ -64,7 +65,13 @@ const delegatedSeen = createDelegatedObservationMemory(chrome.storage.session);
 // operator/delegation message surface yet; a separate bounded native control bridge will own
 // runtime-initiated target discovery/attach after the feasibility gate passes.
 const existingBrowserControl = createExistingBrowserControlV1(chrome);
-void existingBrowserControl;
+const nativeBrowserControl = createNativeBrowserControlV1({
+  connectNative: () => chrome.runtime.connectNative('com.openai.web_agent_gateway_browser_control'),
+  control: existingBrowserControl,
+});
+// One bounded connection attempt per worker lifetime. If the optional Browser v2 host is absent,
+// normal operator/delegation behavior remains unchanged and the next worker restart can retry.
+try { nativeBrowserControl.ensureConnected(); } catch { /* Browser v2 host not installed/running. */ }
 
 /**
  * Attempt one observed candidate on the delegated path, before offering it to a person.

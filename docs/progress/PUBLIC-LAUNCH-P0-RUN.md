@@ -174,3 +174,70 @@ Known remaining risk:
 Next:
 - STOP 1 report;
 - after continuation, implement Tasks 2-3 existing-target discovery + native runtime/extension attach/release bridge.
+
+---
+
+Task: Browser v2 Tasks 2-3 — existing-target discovery + safe attach/release
+State: PARTIAL / VERIFICATION BLOCKED
+Evidence:
+- added read-only `browser.targets` with sanitized target metadata and no focus mutation;
+- `browser.open(ATTACH_EXISTING)` now requires an exact `target_id`;
+- added a dedicated Browser Control protocol/channel separate from operator v4 and delegation v5;
+- added loopback bearer-authenticated native-host bridge with multi-client request multiplexing;
+- added AttachedExistingBrowserPort so attached tabs reuse the same semantic Browser layer;
+- internal CDP transport is strict allowlist only; `Runtime.evaluate` is denied;
+- release detaches and does not close the target/browser;
+- Browser/extension regression batch A = 72/72 PASS;
+- Browser/private-runtime regression batch B = 30/30 PASS;
+- new Browser Control contract tests = 10/10 PASS;
+- full source ATTACH_EXISTING integration = 1/1 PASS;
+- typecheck/build/diff-check PASS before receipt write;
+- dedicated Browser Control SEA build PASS;
+- built artifact sha256 = 8a74004bb4611bb1bcf6e22ed3f5b91c69a384afad999834077ce7278c67d014;
+- real Edge native-host acceptance attempted but Windows Code Integrity events 3033/3077 denied the unsigned executable for Enterprise signing level policy {d8809ec6-f1a7-485c-bd87-9e2fd18c8bec};
+- no security policy was weakened;
+- temporary Edge native-host registry key restored to ABSENT;
+- browser-control-v1 discovery file absent after cleanup.
+Files changed:
+- browser/extension/existing-browser-control-v1.js
+- browser/extension/existing-browser-control-v1.d.ts
+- browser/extension/native-browser-control-v1.js
+- browser/extension/native-browser-control-v1.d.ts
+- browser/extension/service-worker.js
+- package.json
+- scripts/accept-browser-v2-existing-runtime.ts
+- scripts/build-browser-control-native-host.ts
+- src/browser-adapter/existing-browser-control-protocol.ts
+- src/browser-adapter/native-host-browser-control.ts
+- src/browser-adapter/native-host-browser-control-main.ts
+- src/browser-adapter/native-host-manifest-browser-control.ts
+- src/browser-harness/attached-existing-browser-port.ts
+- src/browser-harness/existing-browser-control-client.ts
+- src/browser-harness/browser-mcp-runtime.ts
+- src/browser-harness/browser-port.ts
+- src/repository-engineering-runtime.ts
+- src/server.ts
+- test/browser-existing-runtime.integration.test.ts
+- test/browser-harness-attached-existing-port.test.ts
+- test/browser-harness-broker.test.ts
+- test/browser-harness-mcp-surface.test.ts
+- test/browser-native-control-host.test.ts
+- test/browser-native-control-manifest.test.ts
+- test/browser-native-control-v1.test.ts
+- test/existing-browser-control-protocol.test.ts
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop2-existing-attach.md
+Tests:
+- 72/72 browser/extension regression PASS
+- 30/30 private-browser regression PASS
+- 10/10 Browser Control new contract PASS
+- 1/1 full source ATTACH_EXISTING integration PASS
+- typecheck PASS
+- build PASS
+Known remaining risk:
+- real Edge native-host end-to-end acceptance VERIFICATION BLOCKED by Windows signing policy;
+- per-target claim epoch/fencing NOT IMPLEMENTED;
+- actual user's authenticated profile acceptance NOT EXECUTED;
+- installer registration for Browser Control native host NOT IMPLEMENTED.
+Next:
+- commit Tasks 2-3 implementation and STOP 2 receipt;
+- do not promote or treat STOP 2 as PASS until trusted/signed host execution can be verified.
