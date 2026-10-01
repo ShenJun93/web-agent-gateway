@@ -4,6 +4,10 @@ import test from 'node:test';
 import type { GatewayAuthority } from '../src/caller-context.js';
 import { createAttachedExistingBrowserPort } from '../src/browser-harness/attached-existing-browser-port.js';
 import type { ExistingBrowserControlClient } from '../src/browser-harness/existing-browser-control-client.js';
+import type {
+  BrowserTargetClaim,
+  BrowserTargetClaimPort,
+} from '../src/browser-harness/browser-target-claim-store.js';
 
 const OWNER: GatewayAuthority = {
   ownerId: 'owner_attached',
@@ -18,7 +22,9 @@ const OTHER: GatewayAuthority = {
 
 function fixture() {
   const calls: unknown[][] = [];
+  const claimCalls: unknown[][] = [];
   let attached = false;
+  let claimState: BrowserTargetClaim['state'] = 'ACTIVE';
   const target = {
     targetId: 'tab_7', windowId: 'window_3', title: 'Existing',
     url: 'https://example.test/', origin: 'https://example.test',
@@ -33,13 +39,49 @@ function fixture() {
     async screenshot(id) { calls.push(['screenshot', id]); return { mimeType: 'image/png', dataBase64: 'cG5n' }; },
     async release(id) { calls.push(['release', id]); const released = attached; attached = false; return { targetId: id, released }; },
   };
-  return { control, calls, isAttached: () => attached };
+  const claim = (
+    owner: GatewayAuthority,
+    targetId: string,
+    browserSessionId: string,
+    state = claimState,
+  ): BrowserTargetClaim => Object.freeze({
+    targetId,
+    owner: Object.freeze({ ...owner }),
+    browserSessionId,
+    claimEpoch: 1,
+    claimedAt: 1,
+    heartbeatAt: 2,
+    expiresAt: 60_000,
+    state,
+  });
+  const claims: BrowserTargetClaimPort = {
+    claim(owner, targetId, browserSessionId) {
+      claimState = 'ACTIVE';
+      claimCalls.push(['claim', targetId, browserSessionId]);
+      return claim(owner, targetId, browserSessionId);
+    },
+    heartbeat(owner, targetId, browserSessionId, claimEpoch) {
+      claimCalls.push(['heartbeat', targetId, browserSessionId, claimEpoch]);
+      return claim(owner, targetId, browserSessionId);
+    },
+    assertCurrent(owner, targetId, browserSessionId, claimEpoch) {
+      claimCalls.push(['assert', targetId, browserSessionId, claimEpoch]);
+      return claim(owner, targetId, browserSessionId);
+    },
+    release(owner, targetId, browserSessionId, claimEpoch) {
+      claimState = 'RELEASED';
+      claimCalls.push(['release', targetId, browserSessionId, claimEpoch]);
+      return claim(owner, targetId, browserSessionId, 'RELEASED');
+    },
+  };
+  return { control, claims, calls, claimCalls, isAttached: () => attached };
 }
 
 test('attached existing BrowserPort binds exact target and release does not close browser', async () => {
   const f = fixture();
   const port = createAttachedExistingBrowserPort({
     control: f.control,
+    claims: f.claims,
     randomUUID: () => '00000000-0000-4000-8000-000000000001',
     now: (() => { let n = 1; return () => n++; })(),
   });
@@ -69,7 +111,7 @@ test('attached existing BrowserPort binds exact target and release does not clos
 
 test('attached existing BrowserPort rejects implicit or malformed target selection', async () => {
   const f = fixture();
-  const port = createAttachedExistingBrowserPort({ control: f.control });
+  const port = createAttachedExistingBrowserPort({ control: f.control, claims: f.claims });
   await assert.rejects(
     () => port.open({ profileId: 'existing', owner: OWNER, mode: 'ATTACH_EXISTING' }),
     /exact target id/,
@@ -84,6 +126,7 @@ test('AI_TAB_GROUP groups before attach, preserves group metadata, and still onl
   const f = fixture();
   const port = createAttachedExistingBrowserPort({
     control: f.control,
+    claims: f.claims,
     randomUUID: () => '00000000-0000-4000-8000-000000000002',
   });
 
@@ -116,7 +159,7 @@ test('AI_TAB_GROUP fails closed if grouping changes the user active tab', async 
     groupTitle: title,
     activeStable: false,
   });
-  const port = createAttachedExistingBrowserPort({ control: f.control });
+  const port = createAttachedExistingBrowserPort({ control: f.control, claims: f.claims });
 
   await assert.rejects(
     () => port.open({

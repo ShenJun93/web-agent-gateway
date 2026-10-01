@@ -302,3 +302,63 @@ Known remaining risk:
 Next:
 - commit STOP 2B;
 - Task 4: per-target claim epoch / fencing / stale-owner recovery before multi-session acceptance.
+
+---
+
+Task: Browser v2 STOP 3 / Task 4 — per-target ownership, claim epoch and fencing
+State: DONE / BRANCH ACCEPTED
+Evidence:
+- durable SQLite per-target claim store; no global browser Goal Lease;
+- claim identity binds target_id + owner/session/adapter + browser_session_id + monotonic claim_epoch;
+- claim is acquired before group/debugger attach;
+- active same-target conflict fails TARGET_OWNED_BY_OTHER_SESSION before debugger attach;
+- expired exact owner reports TARGET_STALE; a superseded epoch reports TARGET_FENCED;
+- expired/released claims may be succeeded only at claim_epoch + 1;
+- heartbeat keeps active attached sessions alive; process death permits expiry/recovery;
+- attached describe/snapshot/exec/screenshot/close revalidate the exact claim before browser dispatch;
+- stale owner exec is fenced before control.exec;
+- stale owner close is fenced before control.release, so it cannot detach a successor debugger session;
+- release preserves the row as RELEASED, so epoch never resets across release or SQLite reopen;
+- two independent DatabaseSync connections to one claim database prove cross-process durable exclusion/succession;
+- attached-browser effect fingerprints include target_id + claim_epoch;
+- same browser session/idempotency key with changed epoch conflicts instead of replaying;
+- WAG_VISIBLE/WAG_HEADLESS exact-once paths remain unchanged;
+- real Edge AI_TAB_GROUP regression remains PASS after fencing;
+- latest broad Browser/runtime regression = 141/141 PASS;
+- focused claim/fencing = 5/5 PASS;
+- effect fingerprint epoch-binding regression PASS;
+- typecheck/build/diff-check PASS.
+Files changed:
+- src/browser-harness/browser-target-claim-store.ts
+- src/browser-harness/attached-existing-browser-port.ts
+- src/browser-harness/browser-mcp-runtime.ts
+- src/browser-harness/browser-port.ts
+- src/repository-engineering-runtime.ts
+- test/browser-target-claim-store.test.ts
+- test/browser-target-fencing.integration.test.ts
+- test/browser-harness-attached-existing-port.test.ts
+- test/browser-harness-mcp-runtime.test.ts
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop3-target-fencing.md
+Tests:
+- Browser/extension/WebSocket batch A = 75/75 PASS
+- Browser MCP/semantic/private-browser batch B = 38/38 PASS
+- control/runtime/claim-fencing batch C = 28/28 PASS
+- total broad Browser regression = 141/141 PASS
+- final claim store + fencing integration = 5/5 PASS
+- real Edge AI_TAB_GROUP regression = PASS
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+Known remaining risk:
+- CROSS_PROCESS_WEBSOCKET_CONTROL = NOT_PROVEN;
+- FRAMEWORK_SAFE_FILL = NOT PROVEN;
+- RICH_TEXT_FILL = NOT PROVEN;
+- OAUTH_TARGET_CONTINUITY = NOT IMPLEMENTED;
+- BROWSER_SESSION_RECOVERY = NOT IMPLEMENTED;
+- PRODUCTION_PAIRING_UX = NOT_COMPLETE;
+- USER_REAL_PROFILE_ACCEPTANCE = NOT_EXECUTED;
+- AUTO does not yet select AI_TAB_GROUP;
+- live runtime remains older and is not promoted from this branch.
+Next:
+- commit STOP 3 / Task 4;
+- proceed to framework-safe fill acceptance without changing the public seven-tool BrowserPort surface.

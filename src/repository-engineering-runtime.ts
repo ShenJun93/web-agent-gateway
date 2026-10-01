@@ -216,6 +216,7 @@ export async function startRepositoryEngineeringRuntime(
       edgeExecutablePath: browserSettings.edgeExecutablePath,
       profileRoot: browserSettings.profileRoot,
       effectStatePath: mutationSettings.statePath + '.harness-effects.sqlite',
+      targetClaimStatePath: mutationSettings.statePath + '.browser-target-claims.sqlite',
       killSwitch,
       ...(browserControlServer === undefined ? {} : { control: browserControlServer.client }),
     });

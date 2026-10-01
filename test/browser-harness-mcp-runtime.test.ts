@@ -115,3 +115,73 @@ test('browser MCP outcome-unknown blocks blind replay after an uncertain semanti
   );
   assert.equal(attempts, 1, 'OUTCOME_UNKNOWN must never dispatch the effect again');
 });
+
+test('attached browser effect fingerprint binds target id and claim epoch', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-mcp-fence-fp-'));
+  let epoch = 1;
+  let clicks = 0;
+  const sessionId = 'browser_00000000-0000-4000-8000-000000000444';
+  const handle = () => ({
+    browserSessionId: sessionId,
+    profileId: 'attached',
+    owner: OWNER,
+    backend: 'cdp' as const,
+    executionMode: 'ATTACH_EXISTING' as const,
+    ownershipMode: 'ATTACHED_EXISTING' as const,
+    controlState: 'RUNNING' as const,
+    targetId: 'tab_7',
+    claimEpoch: epoch,
+    claimExpiresAt: Date.now() + 30_000,
+    createdAt: 1,
+    lastSeenAt: 1,
+    state: 'ACTIVE' as const,
+  });
+  const port: BrowserPort = {
+    async open() { return handle(); },
+    async describe() { return handle(); },
+    async snapshot() { throw new Error('unused'); },
+    async exec() { throw new Error('unused'); },
+    async screenshot() { throw new Error('unused'); },
+    async close() { return { ...handle(), state: 'CLOSED' as const }; },
+  };
+  const semantic: SemanticBrowser = {
+    async snapshot() { throw new Error('unused'); },
+    async navigate() { throw new Error('unused'); },
+    async click() { clicks += 1; },
+    async fill() { throw new Error('unused'); },
+    async setFiles() { throw new Error('unused'); },
+    async press() { throw new Error('unused'); },
+  };
+  const runtime = createPrivateBrowserMcpContext({
+    owner: OWNER,
+    edgeExecutablePath: join(root, 'msedge.exe'),
+    profileRoot: join(root, 'profiles'),
+    effectStatePath: join(root, 'effects.sqlite'),
+    killSwitch: () => false,
+    port,
+    semantic,
+  });
+  t.after(async () => {
+    await runtime.closeAll();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const opened = await runtime.open('attached', 'ATTACH_EXISTING', 'tab_7');
+  const action = {
+    type: 'click' as const,
+    ref: 'node_00000000-0000-4000-8000-000000000555_0',
+  };
+  const first = await runtime.exec(opened.browserSessionId, 'browser.fenced.click.once', action);
+  assert.equal(first.state, 'SUCCEEDED');
+  assert.equal(clicks, 1);
+
+  epoch = 2;
+  const rebound = await runtime.describe(opened.browserSessionId);
+  assert.equal(rebound.claimEpoch, 2);
+
+  await assert.rejects(
+    () => runtime.exec(opened.browserSessionId, 'browser.fenced.click.once', action),
+    /conflicts with a different effect plan/i,
+  );
+  assert.equal(clicks, 1, 'epoch change must never replay an idempotent attached-browser effect');
+});

@@ -20,7 +20,11 @@ import {
   resolveBrowserOpenMode,
   type BrowserBroker,
 } from './browser-broker.js';
-import { createAttachedExistingBrowserPort } from './attached-existing-browser-port.js';
+import {
+  createAttachedExistingBrowserPort,
+  type AttachedExistingBrowserPort,
+} from './attached-existing-browser-port.js';
+import { BrowserTargetClaimStore } from './browser-target-claim-store.js';
 import {
   createExistingBrowserControlClient,
   type ExistingBrowserControlClient,
@@ -55,6 +59,9 @@ export interface BrowserMcpSession {
   readonly controlState?: string;
   readonly groupId?: string;
   readonly groupTitle?: string;
+  readonly targetId?: string;
+  readonly claimEpoch?: number;
+  readonly claimExpiresAt?: number;
   readonly processId?: string;
   readonly pid?: number;
   readonly createdAt: number;
@@ -122,6 +129,9 @@ function sessionView(handle: BrowserSessionHandle): BrowserMcpSession {
     ...(handle.controlState === undefined ? {} : { controlState: handle.controlState }),
     ...(handle.groupId === undefined ? {} : { groupId: handle.groupId }),
     ...(handle.groupTitle === undefined ? {} : { groupTitle: handle.groupTitle }),
+    ...(handle.targetId === undefined ? {} : { targetId: handle.targetId }),
+    ...(handle.claimEpoch === undefined ? {} : { claimEpoch: handle.claimEpoch }),
+    ...(handle.claimExpiresAt === undefined ? {} : { claimExpiresAt: handle.claimExpiresAt }),
     ...(handle.processId === undefined ? {} : { processId: handle.processId }),
     ...(handle.pid === undefined ? {} : { pid: handle.pid }),
     createdAt: handle.createdAt,
@@ -189,6 +199,7 @@ export function createPrivateBrowserMcpContext(options: {
   edgeExecutablePath: string;
   profileRoot: string;
   effectStatePath: string;
+  targetClaimStatePath?: string;
   killSwitch: () => boolean;
   controlDiscoveryPath?: string;
   control?: ExistingBrowserControlClient;
@@ -202,6 +213,8 @@ export function createPrivateBrowserMcpContext(options: {
   const coordinator = new HarnessEffectCoordinator(effects);
   let broker: BrowserBroker | undefined;
   let control: ExistingBrowserControlClient | undefined;
+  let targetClaims: BrowserTargetClaimStore | undefined;
+  let attachedPort: AttachedExistingBrowserPort | undefined;
   const port = options.port ?? (() => {
     const processes = createProcessPort({
       backend: createNodeProcessBackend(),
@@ -230,19 +243,38 @@ export function createPrivateBrowserMcpContext(options: {
     control = options.control ?? (options.controlDiscoveryPath === undefined
       ? undefined
       : createExistingBrowserControlClient({ discoveryPath: options.controlDiscoveryPath }));
+    if (control !== undefined) {
+      targetClaims = new BrowserTargetClaimStore(
+        options.targetClaimStatePath ?? options.effectStatePath + '.target-claims.sqlite',
+      );
+      attachedPort = createAttachedExistingBrowserPort({
+        control,
+        claims: targetClaims,
+      });
+    }
     broker = createBrowserBroker({
       headless: managed('WAG_HEADLESS'),
       visible: managed('WAG_VISIBLE'),
-      ...(control === undefined ? {} : {
-        attached: createAttachedExistingBrowserPort({ control }),
-      }),
+      ...(attachedPort === undefined ? {} : { attached: attachedPort }),
     });
     return broker;
   })();
   const semantic = options.semantic ?? createSemanticBrowser({ port });
   const sessions = new Set<string>();
   const byProfile = new Map<string, string>();
+  const fencing = new Map<string, { targetId: string; claimEpoch: number }>();
   let closed = false;
+
+  function rememberFencing(handle: BrowserSessionHandle): void {
+    if (handle.targetId !== undefined && handle.claimEpoch !== undefined) {
+      fencing.set(handle.browserSessionId, {
+        targetId: handle.targetId,
+        claimEpoch: handle.claimEpoch,
+      });
+    } else {
+      fencing.delete(handle.browserSessionId);
+    }
+  }
 
   function assertOpen(): void {
     if (closed) throw new Error('Browser MCP runtime is closed');
@@ -270,10 +302,13 @@ export function createPrivateBrowserMcpContext(options: {
       const existing = byProfile.get(profileKey);
       if (existing) {
         try {
-          return sessionView(await port.describe(options.owner, existing));
+          const handle = await port.describe(options.owner, existing);
+          rememberFencing(handle);
+          return sessionView(handle);
         } catch {
           byProfile.delete(profileKey);
           sessions.delete(existing);
+          fencing.delete(existing);
         }
       }
       const handle = await port.open({
@@ -285,12 +320,15 @@ export function createPrivateBrowserMcpContext(options: {
       });
       sessions.add(handle.browserSessionId);
       byProfile.set(profileKey, handle.browserSessionId);
+      rememberFencing(handle);
       return sessionView(handle);
     },
 
     async describe(browserSessionId) {
       assertOpen();
-      return sessionView(await port.describe(options.owner, browserSessionId));
+      const handle = await port.describe(options.owner, browserSessionId);
+      rememberFencing(handle);
+      return sessionView(handle);
     },
 
     async snapshot(browserSessionId) {
@@ -309,13 +347,27 @@ export function createPrivateBrowserMcpContext(options: {
 
     async exec(browserSessionId, idempotencyKey, action) {
       assertEffectAllowed();
+      const expectedFence = fencing.get(browserSessionId);
+      let effectArguments = action as unknown as CanonicalValue;
+      if (expectedFence) {
+        const binding = await port.describe(options.owner, browserSessionId);
+        if (binding.targetId !== expectedFence.targetId
+            || binding.claimEpoch !== expectedFence.claimEpoch) {
+          throw new Error('Browser target fencing binding changed');
+        }
+        effectArguments = {
+          action: action as unknown as CanonicalValue,
+          targetId: expectedFence.targetId,
+          claimEpoch: expectedFence.claimEpoch,
+        } as unknown as CanonicalValue;
+      }
       return effectView(await coordinator.execute(
         options.owner,
         idempotencyKey,
         {
           kind: `browser.${action.type}`,
           resourceId: browserSessionId,
-          arguments: action as unknown as CanonicalValue,
+          arguments: effectArguments,
         },
         async () => {
           assertEffectAllowed();
@@ -367,6 +419,7 @@ export function createPrivateBrowserMcpContext(options: {
       assertOpen();
       const handle = await port.close(options.owner, browserSessionId);
       sessions.delete(browserSessionId);
+      fencing.delete(browserSessionId);
       for (const [key, value] of byProfile) {
         if (value === browserSessionId) byProfile.delete(key);
       }
@@ -399,6 +452,9 @@ export function createPrivateBrowserMcpContext(options: {
       }
       sessions.clear();
       byProfile.clear();
+      fencing.clear();
+      attachedPort?.shutdown();
+      targetClaims?.close();
       effects.close();
     },
   };
