@@ -63,6 +63,17 @@ export class DevspaceFileMutationBackend implements FileMutationBackend {
     if (finalText !== candidate) throw new Error('Gateway rejected backend post-write mismatch');
   }
 
+  async deleteExisting(root: string, path: string, original: string): Promise<void> {
+    const workspaceId = await this.executor.openWorkspace(root);
+    const current = await this.readWorkspaceExact(workspaceId, path);
+    if (current !== original) throw new Error('Gateway rejected backend stale delete target');
+    const result = await this.executor.applyPatch(workspaceId, buildDeletePatch(path));
+    assertSingleResult(result, path, 'delete');
+    if (await this.readExactIfPresent(root, path) !== undefined) {
+      throw new Error('Gateway rejected backend post-delete mismatch');
+    }
+  }
+
   private async readWorkspaceExact(workspaceId: string, path: string): Promise<string> {
     try {
       return await readDevspaceText(this.executor, workspaceId, path, {
@@ -98,7 +109,7 @@ function patchLines(value: string): string[] {
   return lines;
 }
 
-function assertSingleResult(result: DevspacePatchResult, path: string, operation: 'add' | 'update'): void {
+function assertSingleResult(result: DevspacePatchResult, path: string, operation: 'add' | 'update' | 'delete'): void {
   const file = result.files[0];
   if (result.files.length !== 1 || file?.operation !== operation || file.path !== path || file.previousPath !== undefined) {
     throw new Error('Gateway rejected DevSpace patch result');
@@ -111,6 +122,15 @@ function buildAddPatch(path: string, candidate: string): string {
     '*** Begin Patch',
     `*** Add File: ${path}`,
     ...patchLines(candidate).map((line) => `+${line}`),
+    '*** End Patch',
+  ].join('\n');
+}
+
+function buildDeletePatch(path: string): string {
+  if (/[\r\n]/.test(path)) throw new Error('Gateway denied workspace-relative path');
+  return [
+    '*** Begin Patch',
+    `*** Delete File: ${path}`,
     '*** End Patch',
   ].join('\n');
 }

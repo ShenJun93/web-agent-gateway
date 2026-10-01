@@ -95,6 +95,9 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['file.append', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['file.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['mutation.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['change.preview', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  ['change.apply', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }],
+  ['change.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['git.commit', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['git.commit.result', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['result.chunk', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
@@ -151,6 +154,12 @@ async function openDirectSurface(t: TestContext) {
     mutationContext: {
       callerContext,
       coordinator: new DurableMutationCoordinator({ store, backends: [mutationBackend] }),
+    },
+    changeSetContext: {
+      callerContext,
+      coordinator: new Proxy({}, {
+        get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
+      }) as never,
     },
     gitCommitContext: {
       callerContext,
@@ -275,6 +284,8 @@ test('no direct tool claims read-only while creating durable state', async (t) =
     'file.edit_block',
     'file.append',
     'file.create',
+    'change.preview',
+    'change.apply',
     'git.commit',
   ]) {
     const tool = tools.tools.find((candidate) => candidate.name === name);

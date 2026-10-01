@@ -1,4 +1,4 @@
-import { open, readFile, realpath, writeFile } from 'node:fs/promises';
+import { open, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { FileMutationBackend } from '../file-mutation-backend.js';
 import { assertCreateTarget, assertReadTarget, validateReadPath } from '../path-policy.js';
@@ -64,6 +64,18 @@ export class LocalMachineFileMutationBackend implements FileMutationBackend {
     }
     if (await this.readExact(root, safe) !== candidate) {
       throw new Error('Gateway rejected local-machine post-write mismatch');
+    }
+  }
+
+  async deleteExisting(root: string, path: string, original: string): Promise<void> {
+    const safe = validateReadPath(path);
+    await assertReadTarget(root, safe);
+    const target = await realpath(resolve(root, safe));
+    const current = await this.readExact(root, safe);
+    if (current !== original) throw new Error('Gateway rejected local-machine stale delete target');
+    await unlink(target);
+    if (await this.readExactIfPresent(root, safe) !== undefined) {
+      throw new Error('Gateway rejected local-machine post-delete mismatch');
     }
   }
 }

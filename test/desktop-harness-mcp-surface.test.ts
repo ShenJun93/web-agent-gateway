@@ -43,15 +43,28 @@ function config(withBrowser = true): PrivateGatewayConfig {
 }
 
 test('desktop opt-in projects exactly seven semantic DesktopPort tools and composes with BrowserPort', async () => {
-  const desktopOnly = await projectedTools(config(false));
+  const withoutBrowser = config(false);
+  const withoutBrowserBaseline = config(false);
+  delete withoutBrowserBaseline.repositoryEngineering!.desktop;
+  const [desktopOnly, desktopBaseline] = await Promise.all([
+    projectedTools(withoutBrowser),
+    projectedTools(withoutBrowserBaseline),
+  ]);
   assert.equal(desktopOnly.missing.length, 0);
-  assert.equal(desktopOnly.tools.length, 51);
-  for (const name of DESKTOP_TOOLS) assert.ok(desktopOnly.tools.includes(name), name);
+  assert.deepEqual(desktopOnly.tools.filter((name) => name.startsWith('desktop.')), [...DESKTOP_TOOLS]);
+  assert.equal(desktopOnly.tools.length - desktopBaseline.tools.length, DESKTOP_TOOLS.length);
 
-  const full = await projectedTools(config(true));
+  const withBrowser = config(true);
+  const withBrowserBaseline = config(true);
+  delete withBrowserBaseline.repositoryEngineering!.desktop;
+  const [full, browserBaseline] = await Promise.all([
+    projectedTools(withBrowser),
+    projectedTools(withBrowserBaseline),
+  ]);
   assert.equal(full.missing.length, 0);
-  assert.equal(full.tools.length, 58);
-  for (const name of DESKTOP_TOOLS) assert.ok(full.tools.includes(name), name);
+  assert.deepEqual(full.tools.filter((name) => name.startsWith('desktop.')), [...DESKTOP_TOOLS]);
+  assert.equal(full.tools.length - browserBaseline.tools.length, DESKTOP_TOOLS.length);
+  assert.ok(full.tools.some((name) => name.startsWith('browser.')), 'BrowserPort must remain composed');
   assert.equal(full.tools.some((name) => name.includes('uia') || name.includes('sendinput')), false);
 });
 

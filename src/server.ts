@@ -17,6 +17,7 @@ import {
 } from './effect-correlation.js';
 import { detectRuntimeIdentity } from './runtime-identity.js';
 import type { DurableMutationCoordinator } from './durable-mutation.js';
+import type { ChangeSetOperationInput, DurableChangeSetCoordinator } from './change-set.js';
 import type { DurableCommitCoordinator } from './git-commit.js';
 import type { DurableRemoteGitPushCoordinator } from './remote-git-push.js';
 import type { BrowserVerifyRequestCoordinator } from './browser-verify-request.js';
@@ -460,6 +461,11 @@ export interface MutationMcpContext {
   autonomous?: boolean;
 }
 
+export interface ChangeSetMcpContext {
+  callerContext: GatewayCallerContext;
+  coordinator: Pick<DurableChangeSetCoordinator, 'preview' | 'apply' | 'result'>;
+}
+
 export interface RemoteGitPushMcpContext {
   callerContext: GatewayCallerContext;
   coordinator: Pick<DurableRemoteGitPushCoordinator, 'inspect' | 'request' | 'result'>;
@@ -482,9 +488,10 @@ export interface CapabilityMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, productContext, browserContext, desktopContext }: {
+  { inspect, mutationContext, changeSetContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, productContext, browserContext, desktopContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
+    changeSetContext?: ChangeSetMcpContext;
     gitCommitContext?: GitCommitMcpContext;
     remoteGitPushContext?: RemoteGitPushMcpContext;
     commandContext?: CommandMcpContext;
@@ -1433,6 +1440,121 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async ({ mutation_id }) => directMutationToolResult(
       mutationContext.coordinator.result(mutationContext.callerContext, mutation_id),
+    ));
+  }
+
+  if (changeSetContext) {
+    const changeReplaceContent = z.string()
+      .refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024);
+    const changeCreateContent = z.string()
+      .min(1)
+      .refine((value) => Buffer.byteLength(value, 'utf8') <= 32 * 1024);
+    const changeSha = z.string().regex(/^[a-f0-9]{64}$/);
+    const changePath = z.string().min(1).max(4096);
+    const changeOperation = z.discriminatedUnion('type', [
+      z.object({
+        type: z.literal('replace'),
+        path: changePath,
+        base_sha256: changeSha,
+        content: changeReplaceContent,
+      }).strict(),
+      z.object({
+        type: z.literal('create'),
+        path: changePath,
+        content: changeCreateContent,
+      }).strict(),
+      z.object({
+        type: z.literal('delete'),
+        path: changePath,
+        base_sha256: changeSha,
+      }).strict(),
+      z.object({
+        type: z.literal('move'),
+        from: changePath,
+        to: changePath,
+        base_sha256: changeSha,
+      }).strict(),
+    ]);
+
+    registerTool('change.preview', {
+      description: 'Prepare one immutable bounded multi-file change plan without modifying the workspace.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        operations: z.array(changeOperation).min(1).max(32),
+      }).strict(),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    }, async ({ workspace_id, operations }) => {
+      const normalized: ChangeSetOperationInput[] = operations.map((operation) => {
+        if (operation.type === 'replace') {
+          return {
+            type: 'replace',
+            path: operation.path,
+            baseSha256: operation.base_sha256,
+            content: operation.content,
+          };
+        }
+        if (operation.type === 'create') {
+          return { type: 'create', path: operation.path, content: operation.content };
+        }
+        if (operation.type === 'delete') {
+          return {
+            type: 'delete',
+            path: operation.path,
+            baseSha256: operation.base_sha256,
+          };
+        }
+        return {
+          type: 'move',
+          from: operation.from,
+          to: operation.to,
+          baseSha256: operation.base_sha256,
+        };
+      });
+      return toolResult(await changeSetContext.coordinator.preview(
+        changeSetContext.callerContext,
+        workspace_id,
+        normalized,
+      ));
+    });
+
+    registerTool('change.apply', {
+      description: 'Apply one exact prepared change plan after revalidating workspace identity, HEAD and every path precondition.',
+      inputSchema: z.object({
+        change_id: z.string().regex(/^change_[0-9a-f-]{36}$/),
+        plan_sha256: changeSha,
+      }).strict(),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    }, async ({ change_id, plan_sha256 }) => toolResult(
+      await changeSetContext.coordinator.apply(
+        changeSetContext.callerContext,
+        change_id,
+        plan_sha256,
+      ),
+    ));
+
+    registerTool('change.result', {
+      description: 'Read durable bounded state for one caller-owned immutable change plan.',
+      inputSchema: z.object({
+        change_id: z.string().regex(/^change_[0-9a-f-]{36}$/),
+      }).strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    }, async ({ change_id }) => toolResult(
+      changeSetContext.coordinator.result(changeSetContext.callerContext, change_id),
     ));
   }
 

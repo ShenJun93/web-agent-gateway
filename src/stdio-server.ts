@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import {
   createGatewayMcpServer,
   type CapabilityMcpContext,
+  type ChangeSetMcpContext,
   type CommandMcpContext,
   type GatewayApi,
   type GitCommitMcpContext,
@@ -21,6 +22,7 @@ export interface GatewayStdioServerOptions {
   output?: Writable;
   inspect?: boolean;
   mutationContext?: MutationMcpContext;
+  changeSetContext?: ChangeSetMcpContext;
   gitCommitContext?: GitCommitMcpContext;
   remoteGitPushContext?: RemoteGitPushMcpContext;
   commandContext?: CommandMcpContext;
@@ -42,6 +44,7 @@ export function createPrivateGatewayMcpServer(
   return createGatewayMcpServer(options.gateway, {
     inspect: options.inspect,
     mutationContext: options.mutationContext,
+    changeSetContext: options.changeSetContext,
     gitCommitContext: options.gitCommitContext,
     remoteGitPushContext: options.remoteGitPushContext,
     commandContext: options.commandContext,

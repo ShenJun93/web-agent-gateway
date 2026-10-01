@@ -62,6 +62,7 @@ export async function startRemoteRelayDeviceRuntime(
     gateway: options.gatewayRuntime.gateway,
     inspect: options.engineering.profile.inspect,
     mutationContext: options.engineering.mutationContext,
+    changeSetContext: options.engineering.changeSetContext,
     gitCommitContext: options.engineering.gitCommitContext,
     remoteGitPushContext: options.engineering.remoteGitPushContext,
     commandContext: options.engineering.commandContext,

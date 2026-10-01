@@ -204,6 +204,7 @@ test('serve-stdio forwards the resolved capability profile to the MCP surface', 
   assert.equal(h.stdioOptions.length, 1);
   assert.equal(h.stdioOptions[0]!.inspect, true);
   assert.ok(h.stdioOptions[0]!.mutationContext, 'mutation opt-in must reach the stdio surface');
+  assert.ok(h.stdioOptions[0]!.changeSetContext, 'change-set opt-in must reach the stdio surface');
   assert.ok(h.stdioOptions[0]!.machineContext,
     'mutation opt-in must also wire the autonomous local-machine backend to stdio');
 
@@ -335,6 +336,7 @@ test('stdio git commit inherits the configured mutation review TTL', async () =>
     await rm(statePath, { force: true });
     await rm(`${statePath}.operator-url`, { force: true });
     await rm(`${statePath}.remote-git-push.sqlite`, { force: true });
+    await rm(`${statePath}.change-set.sqlite`, { force: true });
     await rm(`${statePath}.remote-git-hooks`, { recursive: true, force: true });
   }
 });

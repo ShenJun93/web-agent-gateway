@@ -11,4 +11,6 @@ export interface FileMutationBackend {
   updateExisting(root: string, path: string, original: string, candidate: string): Promise<void>;
   /** Creates a file that must not already exist; the backend proves it created rather than replaced. */
   createNew(root: string, path: string, candidate: string): Promise<void>;
+  /** Deletes an exact existing file only when its complete current contents still match. */
+  deleteExisting?(root: string, path: string, original: string): Promise<void>;
 }

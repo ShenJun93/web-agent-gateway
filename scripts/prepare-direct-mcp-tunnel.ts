@@ -93,6 +93,7 @@ export async function projectedTools(
     inspect: engineering?.inspect === true,
     ...(engineering?.mutation === undefined ? {} : {
       mutationContext: { callerContext, coordinator: refusing() },
+      changeSetContext: { callerContext, coordinator: refusing() },
       capabilityContext: refusing(),
       machineContext: refusing(),
       diagnosticsContext: new ToolUsageDiagnostics(),

@@ -28,7 +28,15 @@ test('browser opt-in assembles a private BrowserPort context without allocating 
     },
   };
 
-  const runtime = await startRepositoryEngineeringRuntime(config);
+  const runtime = await startRepositoryEngineeringRuntime(config, {
+    startBrowserControlWebSocketServer: async () => ({
+      endpoint: 'ws://127.0.0.1:0/browser-control',
+      pairingToken: 'fixture-pairing-token',
+      client: {} as never,
+      connected: () => false,
+      close: async () => {},
+    }),
+  });
   t.after(async () => {
     await runtime.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });

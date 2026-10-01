@@ -241,6 +241,7 @@ export async function main(
       output: deps.stdout,
       inspect: engineering.profile.inspect,
       mutationContext: engineering.mutationContext,
+      changeSetContext: engineering.changeSetContext,
       gitCommitContext: engineering.gitCommitContext,
       remoteGitPushContext: engineering.remoteGitPushContext,
       commandContext: engineering.commandContext,

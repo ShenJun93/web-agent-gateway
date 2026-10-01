@@ -5,6 +5,8 @@ import { adapterCorrelationDigest } from './adapter-admission.js';
 import { sameAuthorityTuple } from './authority-tuple.js';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
+import { DurableChangeSetCoordinator } from './change-set.js';
+import { ChangeSetStore } from './change-set-store.js';
 import { SqliteDurableStore } from './durable-store.js';
 import { DevspaceFileMutationBackend } from './executor/devspace-file-mutation.js';
 import { LocalMachineFileMutationBackend } from './executor/local-machine-file-mutation.js';
@@ -18,7 +20,7 @@ import { isKillSwitchEngaged } from './autonomy-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
-import type { CapabilityMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext, RemoteGitPushMcpContext } from './server.js';
+import type { CapabilityMcpContext, ChangeSetMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext, RemoteGitPushMcpContext } from './server.js';
 import { WorkspaceIdentityRegistry } from './workspace-identity.js';
 import {
   createLocalMachineContext,
@@ -70,6 +72,8 @@ export interface RepositoryEngineeringRuntime {
   attach(executor: DevspaceExecutor): Promise<void>;
   /** Present only after a successful attach with mutation enabled. */
   mutationContext?: MutationMcpContext;
+  /** Immutable multi-file plan/apply/result surface for the trusted private-local profile. */
+  changeSetContext?: ChangeSetMcpContext;
   /** Present only after a successful attach with git commit enabled. */
   gitCommitContext?: GitCommitMcpContext;
   /** Human-gated exact remote Git push proposal/consume surface. */
@@ -138,17 +142,22 @@ export async function startRepositoryEngineeringRuntime(
 
   const store = new SqliteDurableStore(mutationSettings.statePath);
   let remotePushStore: RemoteGitPushStore | undefined;
+  let changeSetStore: ChangeSetStore | undefined;
   let workspaceIdentities: WorkspaceIdentityRegistry;
   try {
     remotePushStore = new RemoteGitPushStore(mutationSettings.statePath + '.remote-git-push.sqlite');
+    changeSetStore = new ChangeSetStore(mutationSettings.statePath + '.change-set.sqlite');
     workspaceIdentities = new WorkspaceIdentityRegistry(mutationSettings.statePath);
   } catch (error) {
+    changeSetStore?.close();
     remotePushStore?.close();
     store.close();
     throw error;
   }
   if (!remotePushStore) throw new Error('Remote Git push store initialization failed');
+  if (!changeSetStore) throw new Error('Change-set store initialization failed');
   const pushStore = remotePushStore;
+  const changes = changeSetStore;
   const urlFile = `${mutationSettings.statePath}.operator-url`;
 
   /**
@@ -232,6 +241,7 @@ export async function startRepositoryEngineeringRuntime(
     await browserContext?.closeAll().catch(() => undefined);
     await browserControlServer?.close().catch(() => undefined);
     workspaceIdentities.close();
+    changes.close();
     pushStore.close();
     store.close();
     throw error;
@@ -415,6 +425,26 @@ export async function startRepositoryEngineeringRuntime(
         await coordinator.reconcile();
         mutationCoordinator = coordinator;
 
+        const changeCoordinator = new DurableChangeSetCoordinator({
+          store: changes,
+          workspaceStore: store,
+          backends: [
+            new DevspaceFileMutationBackend(executor),
+            new LocalMachineFileMutationBackend(),
+          ],
+          killSwitch,
+          effectBoundary: {
+            async revalidateWorkspace(workspaceId, canonicalRoot) {
+              const workspace = store.getWorkspace(workspaceId);
+              if (!workspace || workspace.canonicalRoot !== canonicalRoot) {
+                throw new Error('Gateway denied change-set workspace drift');
+              }
+              await freshWorkspaceFingerprint(workspaceId);
+            },
+          },
+        });
+        await changeCoordinator.reconcile();
+
         let commitCoordinator: DurableCommitCoordinator | undefined;
 
         const remotePushCoordinator = new DurableRemoteGitPushCoordinator({
@@ -490,6 +520,7 @@ export async function startRepositoryEngineeringRuntime(
           runtime.gitCommitContext = { callerContext, coordinator: commitCoordinator, autonomous: true };
         }
         runtime.remoteGitPushContext = { callerContext, coordinator: remotePushCoordinator };
+        runtime.changeSetContext = { callerContext, coordinator: changeCoordinator };
         // The single-use bootstrap token is written beside the state database rather than
         // printed, because a stdio gateway's stderr belongs to whatever spawned it — for the
         // supported deployment that is the remote-facing tunnel client, which is permitted to
@@ -529,6 +560,7 @@ export async function startRepositoryEngineeringRuntime(
         failure ??= error;
       } finally {
         workspaceIdentities.close();
+        changes.close();
         pushStore.close();
         store.close();
       }
