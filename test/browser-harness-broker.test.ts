@@ -33,7 +33,8 @@ function portFixture(mode: BrowserExecutionMode, suffix: string) {
         owner: request.owner,
         backend: 'cdp',
         executionMode: mode,
-        ownershipMode: mode === 'ATTACH_EXISTING' ? 'ATTACHED_EXISTING' : 'WAG_OWNED',
+        ownershipMode: mode === 'ATTACH_EXISTING' || mode === 'AI_TAB_GROUP'
+          ? 'ATTACHED_EXISTING' : 'WAG_OWNED',
         controlState: 'RUNNING',
         createdAt: 1,
         lastSeenAt: 1,
@@ -154,4 +155,30 @@ test('BrowserBroker routes ATTACH_EXISTING through the attached adapter with one
   assert.equal(opened.ownershipMode, 'ATTACHED_EXISTING');
   assert.equal((await broker.snapshot(OWNER, opened.browserSessionId)).browserSessionId, opened.browserSessionId);
   assert.deepEqual(attached.calls.slice(0, 2), ['open:ATTACH_EXISTING', 'snapshot']);
+});
+
+test('AI_TAB_GROUP routes through attached transport and supports visible takeover without OS input', async () => {
+  const headless = portFixture('WAG_HEADLESS', '2');
+  const visible = portFixture('WAG_VISIBLE', '3');
+  const attached = portFixture('AI_TAB_GROUP', '4');
+  const broker = createBrowserBroker({
+    headless: headless.port,
+    visible: visible.port,
+    attached: attached.port,
+  });
+
+  const opened = await broker.open({
+    profileId: 'ai-group',
+    owner: OWNER,
+    mode: 'AI_TAB_GROUP',
+    targetId: 'tab_7',
+    groupTitle: 'WAG • Test',
+  });
+  assert.equal(opened.executionMode, 'AI_TAB_GROUP');
+  assert.equal(opened.ownershipMode, 'ATTACHED_EXISTING');
+
+  assert.equal((await broker.pauseForUser(OWNER, opened.browserSessionId)).controlState, 'PAUSED_FOR_USER');
+  assert.equal((await broker.takeUserControl(OWNER, opened.browserSessionId)).controlState, 'USER_CONTROL');
+  assert.equal((await broker.resumeAutomation(OWNER, opened.browserSessionId)).controlState, 'RUNNING');
+  assert.equal(attached.calls.filter((row) => row === 'snapshot').length, 1);
 });

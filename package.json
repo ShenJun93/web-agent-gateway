@@ -61,10 +61,12 @@
     "fflate": "0.8.3",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.3.289",
+    "ws": "8.18.3",
     "zod": "4.5.4"
   },
   "devDependencies": {
     "@types/node": "25.9.1",
+    "@types/ws": "8.18.1",
     "esbuild": "0.28.2",
     "postject": "1.0.0-alpha.6",
     "resedit": "3.1.0",

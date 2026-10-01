@@ -1,0 +1,288 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { WebSocket, WebSocketServer } from 'ws';
+
+import { BROWSER_ADAPTER_EXTENSION_ID } from '../browser-adapter/native-host-distribution.js';
+import {
+  EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
+  parseExistingBrowserControlResponse,
+  parseExistingBrowserTarget,
+  type ExistingBrowserControlRequest,
+  type ExistingBrowserTarget,
+} from '../browser-adapter/existing-browser-control-protocol.js';
+import type { ExistingBrowserControlClient } from './existing-browser-control-client.js';
+
+const EXTENSION_ORIGIN = `chrome-extension://${BROWSER_ADAPTER_EXTENSION_ID}`;
+const STATE_VERSION = 1 as const;
+const DEFAULT_PORT = 17841;
+
+export interface BrowserControlPairingState {
+  version: typeof STATE_VERSION;
+  endpoint: string;
+  pairingToken: string;
+}
+
+export interface BrowserControlWebSocketServer {
+  readonly endpoint: string;
+  readonly pairingToken: string;
+  readonly client: ExistingBrowserControlClient;
+  readonly connected: () => boolean;
+  close(): Promise<void>;
+}
+
+export async function loadOrCreateBrowserControlPairingState(
+  statePath: string,
+  port = DEFAULT_PORT,
+): Promise<BrowserControlPairingState> {
+  try {
+    const value = JSON.parse(await readFile(statePath, 'utf8')) as unknown;
+    return parsePairingState(value);
+  } catch {
+    const state: BrowserControlPairingState = {
+      version: STATE_VERSION,
+      endpoint: `ws://127.0.0.1:${port}/browser-control`,
+      pairingToken: randomBytes(32).toString('base64url'),
+    };
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify(state, null, 2) + '\n', {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    return state;
+  }
+}
+
+export async function startBrowserControlWebSocketServer(options: {
+  statePath: string;
+  port?: number;
+  pairingState?: BrowserControlPairingState;
+  extensionOrigin?: string;
+  requestTimeoutMs?: number;
+}): Promise<BrowserControlWebSocketServer> {
+  const state = options.pairingState
+    ?? await loadOrCreateBrowserControlPairingState(options.statePath, options.port ?? DEFAULT_PORT);
+  const endpoint = new URL(state.endpoint);
+  const port = Number(endpoint.port);
+  const extensionOrigin = options.extensionOrigin ?? EXTENSION_ORIGIN;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
+
+  let peer: WebSocket | undefined;
+  let authenticated = false;
+  const pending = new Map<string, {
+    resolve(value: unknown): void;
+    reject(error: Error): void;
+    timer: NodeJS.Timeout;
+  }>();
+
+  const server = new WebSocketServer({
+    host: '127.0.0.1',
+    port,
+    path: '/browser-control',
+    maxPayload: 256 * 1024,
+    verifyClient: ({ origin }: { origin: string }) => origin === extensionOrigin,
+  });
+
+  server.on('connection', (socket) => {
+    let admitted = false;
+    socket.on('message', (data, isBinary) => {
+      if (isBinary) {
+        socket.close(1003, 'text only');
+        return;
+      }
+      let message: unknown;
+      try { message = JSON.parse(data.toString()); }
+      catch {
+        socket.close(1007, 'invalid json');
+        return;
+      }
+
+      if (!admitted) {
+        if (!isHello(message, state.pairingToken)) {
+          socket.close(1008, 'pairing failed');
+          return;
+        }
+        if (peer && peer !== socket) peer.close(4001, 'superseded');
+        peer = socket;
+        admitted = true;
+        authenticated = true;
+        socket.send(JSON.stringify({
+          version: EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
+          type: 'control.ready',
+        }));
+        return;
+      }
+
+      if (isPing(message)) {
+        socket.send(JSON.stringify({
+          version: EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
+          type: 'control.pong',
+        }));
+        return;
+      }
+
+      let response;
+      try { response = parseExistingBrowserControlResponse(message); }
+      catch { return; }
+      const entry = pending.get(response.requestId);
+      if (!entry) return;
+      pending.delete(response.requestId);
+      clearTimeout(entry.timer);
+      if (response.type === 'control.error') {
+        entry.reject(new Error(response.error.code + ': ' + response.error.message));
+      } else {
+        entry.resolve(response.result);
+      }
+    });
+
+    socket.on('close', () => {
+      if (peer === socket) {
+        peer = undefined;
+        authenticated = false;
+        rejectAll(new Error('Browser control extension disconnected'));
+      }
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    if (server.address()) { resolve(); return; }
+    server.once('listening', () => resolve());
+    server.once('error', reject);
+  });
+
+  function rejectAll(error: Error) {
+    for (const [id, entry] of pending) {
+      pending.delete(id);
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+  }
+
+  function request(
+    method: ExistingBrowserControlRequest['method'],
+    targetId?: string,
+    groupTitle?: string,
+    cdpMethod?: string,
+    params?: Readonly<Record<string, unknown>>,
+  ): Promise<unknown> {
+    if (!peer || !authenticated || peer.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error('Browser control extension is offline'));
+    }
+    const requestId = `bctl_${randomUUID()}`;
+    const message: ExistingBrowserControlRequest = {
+      version: EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
+      type: 'control.request',
+      requestId,
+      method,
+      ...(targetId === undefined ? {} : { targetId }),
+      ...(groupTitle === undefined ? {} : { groupTitle }),
+      ...(cdpMethod === undefined ? {} : { cdpMethod }),
+      ...(params === undefined ? {} : { params }),
+    };
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error('Browser control request timed out'));
+      }, requestTimeoutMs);
+      timer.unref?.();
+      pending.set(requestId, { resolve, reject, timer });
+      peer!.send(JSON.stringify(message), (error) => {
+        if (!error) return;
+        const entry = pending.get(requestId);
+        if (!entry) return;
+        pending.delete(requestId);
+        clearTimeout(entry.timer);
+        entry.reject(error);
+      });
+    });
+  }
+
+  const client: ExistingBrowserControlClient = {
+    async listTargets() {
+      const value = await request('targets.list');
+      if (!Array.isArray(value)) throw new Error('Browser control target list is invalid');
+      return Object.freeze(value.map(parseExistingBrowserTarget));
+    },
+    async groupTarget(targetId, title) {
+      const value = await request('target.group', targetId, title);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Browser control group response is invalid');
+      }
+      const row = value as Record<string, unknown>;
+      if (row.targetId !== targetId || typeof row.groupId !== 'string'
+          || typeof row.groupTitle !== 'string' || typeof row.activeStable !== 'boolean') {
+        throw new Error('Browser control group response is invalid');
+      }
+      return {
+        targetId,
+        groupId: row.groupId,
+        groupTitle: row.groupTitle,
+        activeStable: row.activeStable,
+      };
+    },
+    async attach(targetId) {
+      return parseExistingBrowserTarget(await request('target.attach', targetId));
+    },
+    async describe(targetId) {
+      return parseExistingBrowserTarget(await request('target.describe', targetId));
+    },
+    exec: (targetId, method, params) => request('target.exec', targetId, undefined, method, params),
+    async screenshot(targetId) {
+      const value = await request('target.screenshot', targetId);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Browser screenshot invalid');
+      const row = value as Record<string, unknown>;
+      if (row.mimeType !== 'image/png' || typeof row.dataBase64 !== 'string') throw new Error('Browser screenshot invalid');
+      return { mimeType: 'image/png', dataBase64: row.dataBase64 };
+    },
+    async release(targetId) {
+      const value = await request('target.release', targetId);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Browser release invalid');
+      const row = value as Record<string, unknown>;
+      if (row.targetId !== targetId || typeof row.released !== 'boolean') throw new Error('Browser release invalid');
+      return { targetId, released: row.released };
+    },
+  };
+
+  return {
+    endpoint: state.endpoint,
+    pairingToken: state.pairingToken,
+    client,
+    connected: () => authenticated,
+    async close() {
+      rejectAll(new Error('Browser control server closed'));
+      if (peer) peer.close(1001, 'server closing');
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+function parsePairingState(value: unknown): BrowserControlPairingState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid browser control pairing state');
+  const row = value as Record<string, unknown>;
+  if (row.version !== STATE_VERSION
+      || typeof row.endpoint !== 'string'
+      || !/^ws:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/browser-control$/.test(row.endpoint)
+      || typeof row.pairingToken !== 'string'
+      || !/^[A-Za-z0-9_-]{32,256}$/.test(row.pairingToken)) {
+    throw new Error('Invalid browser control pairing state');
+  }
+  return {
+    version: STATE_VERSION,
+    endpoint: row.endpoint,
+    pairingToken: row.pairingToken,
+  };
+}
+
+function isHello(value: unknown, token: string): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return row.version === EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION
+    && row.type === 'control.hello'
+    && row.pairingToken === token;
+}
+
+function isPing(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return row.version === EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION && row.type === 'control.ping';
+}

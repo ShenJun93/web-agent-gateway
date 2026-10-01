@@ -44,11 +44,17 @@ export function createAttachedExistingBrowserPort(options: {
 
   return {
     async open(request) {
-      if (request.mode !== 'ATTACH_EXISTING') {
-        throw new Error('Attached existing browser port requires ATTACH_EXISTING');
+      if (request.mode !== 'ATTACH_EXISTING' && request.mode !== 'AI_TAB_GROUP') {
+        throw new Error('Attached existing browser port requires ATTACH_EXISTING or AI_TAB_GROUP');
       }
       if (typeof request.targetId !== 'string' || !TARGET_ID.test(request.targetId)) {
-        throw new Error('ATTACH_EXISTING requires an exact target id');
+        throw new Error(request.mode + ' requires an exact target id');
+      }
+      const grouped = request.mode === 'AI_TAB_GROUP'
+        ? await options.control.groupTarget(request.targetId, request.groupTitle ?? `WAG • ${request.profileId}`)
+        : undefined;
+      if (grouped && !grouped.activeStable) {
+        throw new Error('AI tab grouping changed the active browser tab');
       }
       const target = await options.control.attach(request.targetId);
       if (!target.attachable || !target.attached) {
@@ -61,9 +67,10 @@ export function createAttachedExistingBrowserPort(options: {
         profileId: request.profileId,
         owner: Object.freeze({ ...request.owner }),
         backend: 'cdp',
-        executionMode: 'ATTACH_EXISTING',
+        executionMode: request.mode,
         ownershipMode: 'ATTACHED_EXISTING',
         controlState: 'RUNNING',
+        ...(grouped === undefined ? {} : { groupId: grouped.groupId, groupTitle: grouped.groupTitle }),
         createdAt,
         lastSeenAt: createdAt,
         state: 'ACTIVE',

@@ -30,6 +30,9 @@ function fixture() {
     tabs: {
       async query(queryInfo: Record<string, unknown>) {
         calls.push(['query', queryInfo]);
+        if (queryInfo.active === true && queryInfo.windowId === 5) {
+          return tabs.filter((row) => row.active);
+        }
         return tabs;
       },
       async get(tabId: number) {
@@ -37,6 +40,16 @@ function fixture() {
         const tab = tabs.find((row) => row.id === tabId);
         if (!tab) throw new Error('No tab');
         return tab;
+      },
+      async group(options: { tabIds: number[] }) {
+        calls.push(['group', options]);
+        return 9;
+      },
+    },
+    tabGroups: {
+      async update(groupId: number, options: Record<string, unknown>) {
+        calls.push(['group.update', groupId, options]);
+        return { id: groupId, ...options };
       },
     },
     debugger: {
@@ -85,6 +98,27 @@ test('existing-browser discovery is focus-free and strips query/hash secrets', a
   assert.equal(targets[1]?.attachable, false);
   assert.equal(targets[1]?.url, null);
   assert.equal(JSON.stringify(targets).includes('token=secret'), false);
+});
+
+test('AI tab grouping keeps the user active tab stable and never activates the agent target', async () => {
+  const f = fixture();
+  const control = createExistingBrowserControlV1(f.chromeApi);
+
+  const grouped = await control.group(11, 'WAG • Acceptance');
+  assert.deepEqual(grouped, {
+    tabId: 11,
+    groupId: 9,
+    groupTitle: 'WAG • Acceptance',
+    activeStable: true,
+  });
+  assert.deepEqual(f.calls, [
+    ['get', 11],
+    ['query', { active: true, windowId: 5 }],
+    ['group', { tabIds: [11] }],
+    ['group.update', 9, { title: 'WAG • Acceptance', color: 'cyan', collapsed: false }],
+    ['query', { active: true, windowId: 5 }],
+  ]);
+  assert.equal(f.calls.some((row) => row[0] === 'update' || row[0] === 'windows.update'), false);
 });
 
 test('attach/probe/release targets an exact tab without focus or browser-close operations', async () => {
@@ -173,4 +207,31 @@ test('tab description bounds title and never returns credentials or query string
   assert.equal(JSON.stringify(row).includes('user'), false);
   assert.equal(JSON.stringify(row).includes('pass'), false);
   assert.equal(JSON.stringify(row).includes('secret'), false);
+});
+
+test('fixed DOM click command is allowed but arbitrary Runtime.callFunctionOn is denied', async () => {
+  const f = fixture();
+  const control = createExistingBrowserControlV1(f.chromeApi);
+  await control.attach(11);
+
+  await assert.rejects(
+    () => control.exec(11, 'Runtime.callFunctionOn', {
+      objectId: 'object_42',
+      functionDeclaration: 'function(){return document.cookie}',
+      returnByValue: true,
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+
+  await control.exec(11, 'Runtime.callFunctionOn', {
+    objectId: 'object_42',
+    functionDeclaration: 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}',
+    returnByValue: true,
+  });
+
+  assert.equal(
+    f.calls.some((row) => row[0] === 'sendCommand' && row[2] === 'Runtime.callFunctionOn'),
+    true,
+  );
 });

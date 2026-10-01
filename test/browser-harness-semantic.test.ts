@@ -49,6 +49,12 @@ function fixture() {
           ],
         };
       }
+      if (request.method === 'DOM.resolveNode') {
+        return { object: { objectId: 'object_42' } };
+      }
+      if (request.method === 'Runtime.callFunctionOn') {
+        return { result: { value: true } };
+      }
       if (request.method === 'DOM.getBoxModel') {
         return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
       }
@@ -76,17 +82,19 @@ test('semantic snapshot produces opaque refs from accessible DOM-backed nodes on
   assert.match(snapshot.nodes[0]!.ref, /^node_00000000-0000-4000-8000-000000000101_0$/);
 });
 
-test('semantic click uses backend DOM identity and pointer input rather than screen coordinates from the caller', async () => {
+test('semantic click uses fixed in-target DOM activation without OS mouse injection', async () => {
   const f = fixture();
   const snapshot = await f.semantic.snapshot(OWNER, SESSION);
   f.calls.length = 0;
   await f.semantic.click(OWNER, SESSION, snapshot.nodes[0]!.ref);
   assert.deepEqual(f.calls, [
-    { method: 'DOM.scrollIntoViewIfNeeded', params: { backendNodeId: 42 } },
-    { method: 'DOM.getBoxModel', params: { backendNodeId: 42 } },
-    { method: 'Input.dispatchMouseEvent', params: { type: 'mouseMoved', x: 20, y: 30 } },
-    { method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: 20, y: 30, button: 'left', clickCount: 1 } },
-    { method: 'Input.dispatchMouseEvent', params: { type: 'mouseReleased', x: 20, y: 30, button: 'left', clickCount: 1 } },
+    { method: 'DOM.resolveNode', params: { backendNodeId: 42 } },
+    { method: 'Runtime.callFunctionOn', params: {
+      objectId: 'object_42',
+      functionDeclaration: 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}',
+      returnByValue: true,
+    } },
+    { method: 'Runtime.releaseObject', params: { objectId: 'object_42' } },
   ]);
 });
 

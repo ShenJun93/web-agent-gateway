@@ -12,6 +12,7 @@ export class ExistingBrowserControlError extends Error {
 
 export function createExistingBrowserControlV1(chromeApi, options = {}) {
   const tabs = chromeApi?.tabs;
+  const tabGroups = chromeApi?.tabGroups;
   const debuggerApi = chromeApi?.debugger;
   if (!tabs?.query || !tabs?.get) throw new Error('tabs API is required');
   if (!debuggerApi?.attach || !debuggerApi?.detach || !debuggerApi?.sendCommand) {
@@ -29,6 +30,27 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
   async function listTargets() {
     const rows = await tabs.query({});
     return rows.map(describeTab);
+  }
+
+  async function group(tabId, title = 'WAG • AI') {
+    const tab = await getAttachableTab(tabs, tabId);
+    if (!tabs.group || !tabGroups?.update) {
+      throw new ExistingBrowserControlError('TAB_GROUPS_UNAVAILABLE', 'Browser tab groups are unavailable');
+    }
+    const activeBefore = (await tabs.query({ active: true, windowId: tab.windowId }))[0]?.id ?? null;
+    const groupId = await tabs.group({ tabIds: [tabId] });
+    await tabGroups.update(groupId, {
+      title: boundedString(title, 64) || 'WAG • AI',
+      color: 'cyan',
+      collapsed: false,
+    });
+    const activeAfter = (await tabs.query({ active: true, windowId: tab.windowId }))[0]?.id ?? null;
+    return {
+      tabId,
+      groupId,
+      groupTitle: boundedString(title, 64) || 'WAG • AI',
+      activeStable: activeBefore === activeAfter,
+    };
   }
 
   async function attach(tabId) {
@@ -68,6 +90,7 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params))) {
       throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Browser command params are invalid');
     }
+    assertBoundedRuntimeCommand(method, params);
     return debuggerApi.sendCommand({ tabId }, method, params);
   }
 
@@ -93,7 +116,7 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     return attached.has(tabId);
   }
 
-  return { listTargets, attach, describe, probe, exec, screenshot, release, isAttached };
+  return { listTargets, group, attach, describe, probe, exec, screenshot, release, isAttached };
 }
 
 async function getAttachableTab(tabs, tabId) {
@@ -184,6 +207,9 @@ const ALLOWED_CDP_METHODS = new Set([
   'Page.navigate',
   'DOM.scrollIntoViewIfNeeded',
   'DOM.getBoxModel',
+  'DOM.resolveNode',
+  'Runtime.callFunctionOn',
+  'Runtime.releaseObject',
   'Input.dispatchMouseEvent',
   'DOM.focus',
   'Input.dispatchKeyEvent',
@@ -195,5 +221,34 @@ const ALLOWED_CDP_METHODS = new Set([
 function assertAllowedCdpMethod(method) {
   if (typeof method !== 'string' || !ALLOWED_CDP_METHODS.has(method)) {
     throw new ExistingBrowserControlError('CONTROL_METHOD_DENIED', 'Browser command is not allowed');
+  }
+}
+
+const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
+
+function assertBoundedRuntimeCommand(method, params) {
+  if (method === 'DOM.resolveNode') {
+    const keys = Object.keys(params ?? {});
+    if (keys.length !== 1 || keys[0] !== 'backendNodeId' || !Number.isInteger(params?.backendNodeId)) {
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'DOM resolve params are invalid');
+    }
+    return;
+  }
+  if (method === 'Runtime.callFunctionOn') {
+    const keys = Object.keys(params ?? {}).sort();
+    if (keys.join(',') !== 'functionDeclaration,objectId,returnByValue'
+        || typeof params?.objectId !== 'string' || params.objectId.length < 1 || params.objectId.length > 512
+        || params.functionDeclaration !== FIXED_DOM_CLICK_FUNCTION
+        || params.returnByValue !== true) {
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime call params are invalid');
+    }
+    return;
+  }
+  if (method === 'Runtime.releaseObject') {
+    const keys = Object.keys(params ?? {});
+    if (keys.length !== 1 || keys[0] !== 'objectId'
+        || typeof params?.objectId !== 'string' || params.objectId.length < 1 || params.objectId.length > 512) {
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime release params are invalid');
+    }
   }
 }

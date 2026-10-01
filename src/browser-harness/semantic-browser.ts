@@ -57,6 +57,7 @@ const REF = /^node_[0-9a-f-]{36}_[0-9]+$/;
 const MAX_TEXT_BYTES = 64 * 1024;
 const MAX_UPLOAD_FILES = 20;
 const MAX_INTERNAL_PATH_BYTES = 4096;
+const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
 const PRESS_KEYS = new Map<string, { key: string; code: string }>([
   ['Enter', { key: 'Enter', code: 'Enter' }],
   ['Tab', { key: 'Tab', code: 'Tab' }],
@@ -179,6 +180,46 @@ export function createSemanticBrowser(options: {
     async click(owner, browserSessionId, ref) {
       const target = binding(browserSessionId, ref);
       if (target.node.disabled) throw new Error('Browser semantic target is disabled');
+
+      // Prefer a fixed in-target DOM activation. The function body is hard-coded here and the
+      // extension validates the exact same string, so callers cannot smuggle arbitrary JavaScript.
+      // This works while the tab is backgrounded and never touches the operating-system pointer.
+      let objectId: string | undefined;
+      try {
+        const resolved = await options.port.exec(owner, browserSessionId, {
+          method: 'DOM.resolveNode',
+          params: { backendNodeId: target.backendDOMNodeId },
+        });
+        const candidate = typeof resolved === 'object' && resolved !== null
+          ? (resolved as { object?: { objectId?: unknown } }).object?.objectId
+          : undefined;
+        objectId = typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+        if (objectId) {
+          const invoked = await options.port.exec(owner, browserSessionId, {
+            method: 'Runtime.callFunctionOn',
+            params: {
+              objectId,
+              functionDeclaration: FIXED_DOM_CLICK_FUNCTION,
+              returnByValue: true,
+            },
+          });
+          const activated = typeof invoked === 'object' && invoked !== null
+            ? (invoked as { result?: { value?: unknown } }).result?.value === true
+            : false;
+          if (activated) return;
+        }
+      } finally {
+        if (objectId) {
+          await options.port.exec(owner, browserSessionId, {
+            method: 'Runtime.releaseObject',
+            params: { objectId },
+          }).catch(() => undefined);
+        }
+      }
+
+      // Some DOM-backed accessibility nodes do not implement click(). Fall back to CDP pointer
+      // input scoped to this target. CDP does not move the user's physical cursor or activate the
+      // tab/window, so this still does not compete for the user's mouse.
       await options.port.exec(owner, browserSessionId, {
         method: 'DOM.scrollIntoViewIfNeeded',
         params: { backendNodeId: target.backendDOMNodeId },

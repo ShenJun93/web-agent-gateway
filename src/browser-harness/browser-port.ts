@@ -11,7 +11,7 @@ export type { BrowserProfileHandle, BrowserProfileStore } from './browser-profil
 
 export type BrowserSessionState = 'ACTIVE' | 'ORPHANED' | 'RECOVERABLE' | 'CLOSING' | 'CLOSED' | 'FAILED';
 export type BrowserBackendKind = 'cdp' | 'playwright-cdp';
-export type BrowserExecutionMode = 'ATTACH_EXISTING' | 'WAG_VISIBLE' | 'WAG_HEADLESS';
+export type BrowserExecutionMode = 'ATTACH_EXISTING' | 'AI_TAB_GROUP' | 'WAG_VISIBLE' | 'WAG_HEADLESS';
 export type BrowserOpenMode = 'AUTO' | BrowserExecutionMode;
 export type BrowserOwnershipMode = 'ATTACHED_EXISTING' | 'WAG_OWNED';
 export type BrowserControlState = 'RUNNING' | 'PAUSED_FOR_USER' | 'USER_CONTROL' | 'RESUMING' | 'STOPPED';
@@ -24,6 +24,8 @@ export interface BrowserSessionHandle {
   readonly executionMode?: BrowserExecutionMode;
   readonly ownershipMode?: BrowserOwnershipMode;
   readonly controlState?: BrowserControlState;
+  readonly groupId?: string;
+  readonly groupTitle?: string;
   readonly processId?: string;
   readonly pid?: number;
   readonly createdAt: number;
@@ -36,6 +38,7 @@ export interface BrowserOpenRequest {
   readonly owner: GatewayAuthority;
   readonly mode?: BrowserOpenMode;
   readonly targetId?: string;
+  readonly groupTitle?: string;
 }
 
 export interface BrowserSnapshot {
@@ -95,7 +98,7 @@ function cloneHandle(handle: BrowserSessionHandle): BrowserSessionHandle {
 export function createBrowserPort(options: {
   backend: BrowserBackend;
   profileStore?: BrowserProfileStore;
-  executionMode?: Exclude<BrowserExecutionMode, 'ATTACH_EXISTING'>;
+  executionMode?: Exclude<BrowserExecutionMode, 'ATTACH_EXISTING' | 'AI_TAB_GROUP'>;
   ownershipMode?: BrowserOwnershipMode;
   now?: () => number;
   randomUUID?: () => string;

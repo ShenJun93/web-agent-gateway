@@ -241,3 +241,64 @@ Known remaining risk:
 Next:
 - commit Tasks 2-3 implementation and STOP 2 receipt;
 - do not promote or treat STOP 2 as PASS until trusted/signed host execution can be verified.
+
+---
+
+Task: Browser v2 STOP 2B — AI Tab Group + loopback WebSocket transport
+State: DONE / BRANCH ACCEPTED
+Evidence:
+- added `AI_TAB_GROUP` as an attached-existing-browser execution mode;
+- exact existing tabs can be grouped with `chrome.tabs.group` + `chrome.tabGroups.update` while preserving the active user tab;
+- group metadata is carried on the logical browser session;
+- grouping fails closed if active-tab identity changes;
+- Browser v2 control transport pivoted from a dedicated unsigned native executable to authenticated `ws://127.0.0.1` between the extension and WAG Local;
+- WebSocket server is loopback-only, exact-extension-Origin checked, pairing-token authenticated, payload bounded and request-correlated;
+- Browser v2 no longer requires `wag-native-browser-control.exe` for the accepted AI Tab Group path;
+- semantic fill/click operate inside the exact browser target and do not use Windows UIAutomation or operating-system pointer injection;
+- semantic click prefers a WAG-owned fixed `element.click()` function via bounded `DOM.resolveNode` + exact `Runtime.callFunctionOn`; arbitrary runtime JavaScript remains denied;
+- target-scoped CDP pointer input remains only a fallback for DOM nodes without a click method;
+- real Microsoft Edge temporary-profile acceptance PASS with authenticated local fixture;
+- acceptance verified target initially inactive, active user tab stable, fill/click SUCCEEDED, final state observed, target/browser preserved after release;
+- native Browser Control executable used = NO;
+- user real profile used = NO;
+- latest broad Browser/runtime regression = 136/136 PASS;
+- final typecheck/build/diff-check PASS.
+Files changed include:
+- browser/extension/browser-control-websocket-v1.js + d.ts
+- browser/extension/existing-browser-control-v1.js + d.ts
+- browser/extension/manifest.json
+- browser/extension/service-worker.js
+- browser/extension/native-browser-control-v1.js + d.ts (legacy protocol parity)
+- src/browser-harness/browser-control-websocket-server.ts
+- src/browser-harness/attached-existing-browser-port.ts
+- src/browser-harness/browser-broker.ts
+- src/browser-harness/browser-mcp-runtime.ts
+- src/browser-harness/browser-port.ts
+- src/browser-harness/existing-browser-control-client.ts
+- src/browser-harness/semantic-browser.ts
+- src/browser-adapter/existing-browser-control-protocol.ts
+- src/repository-engineering-runtime.ts
+- src/server.ts
+- package.json / package-lock.json
+- scripts/accept-browser-v2-ai-tab-group.ts
+- focused Browser/WebSocket/semantic tests
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop2b-ai-tab-group-websocket.md
+Tests:
+- Browser/extension/WebSocket batch A = 75/75 PASS
+- Browser MCP/semantic/private-browser batch B = 38/38 PASS
+- control protocol/runtime assembly batch C = 23/23 PASS
+- total latest broad regression = 136/136 PASS
+- real Edge AI_TAB_GROUP acceptance = PASS
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+Known remaining risk:
+- USER_REAL_PROFILE_ACCEPTANCE = NOT_EXECUTED;
+- PRODUCTION_PAIRING_UX = NOT_COMPLETE;
+- PER_TARGET_FENCING = NOT_IMPLEMENTED;
+- CROSS_PROCESS_MULTI_SESSION = NOT_PROVEN;
+- AUTO does not yet automatically select AI_TAB_GROUP;
+- live runtime remains older and is not promoted from this branch.
+Next:
+- commit STOP 2B;
+- Task 4: per-target claim epoch / fencing / stale-owner recovery before multi-session acceptance.

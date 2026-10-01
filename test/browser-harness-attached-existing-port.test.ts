@@ -26,6 +26,7 @@ function fixture() {
   };
   const control: ExistingBrowserControlClient = {
     async listTargets() { return [{ ...target, attached }]; },
+    async groupTarget(id, title) { calls.push(['group', id, title]); return { targetId: id, groupId: 'group_9', groupTitle: title, activeStable: true }; },
     async attach(id) { calls.push(['attach', id]); attached = true; return { ...target, attached }; },
     async describe(id) { calls.push(['describe', id]); return { ...target, attached }; },
     async exec(id, method, params) { calls.push(['exec', id, method, params]); return { ok: true }; },
@@ -77,4 +78,55 @@ test('attached existing BrowserPort rejects implicit or malformed target selecti
     () => port.open({ profileId: 'existing', owner: OWNER, mode: 'ATTACH_EXISTING', targetId: '7' }),
     /exact target id/,
   );
+});
+
+test('AI_TAB_GROUP groups before attach, preserves group metadata, and still only detaches on close', async () => {
+  const f = fixture();
+  const port = createAttachedExistingBrowserPort({
+    control: f.control,
+    randomUUID: () => '00000000-0000-4000-8000-000000000002',
+  });
+
+  const opened = await port.open({
+    profileId: 'acceptance',
+    owner: OWNER,
+    mode: 'AI_TAB_GROUP',
+    targetId: 'tab_7',
+    groupTitle: 'WAG • Acceptance',
+  });
+
+  assert.equal(opened.executionMode, 'AI_TAB_GROUP');
+  assert.equal(opened.groupId, 'group_9');
+  assert.equal(opened.groupTitle, 'WAG • Acceptance');
+  assert.deepEqual(f.calls.slice(0, 2), [
+    ['group', 'tab_7', 'WAG • Acceptance'],
+    ['attach', 'tab_7'],
+  ]);
+
+  await port.close(OWNER, opened.browserSessionId);
+  assert.deepEqual(f.calls.at(-1), ['release', 'tab_7']);
+  assert.equal(f.calls.some((row) => row[0] === 'close-browser'), false);
+});
+
+test('AI_TAB_GROUP fails closed if grouping changes the user active tab', async () => {
+  const f = fixture();
+  f.control.groupTarget = async (id, title) => ({
+    targetId: id,
+    groupId: 'group_9',
+    groupTitle: title,
+    activeStable: false,
+  });
+  const port = createAttachedExistingBrowserPort({ control: f.control });
+
+  await assert.rejects(
+    () => port.open({
+      profileId: 'acceptance',
+      owner: OWNER,
+      mode: 'AI_TAB_GROUP',
+      targetId: 'tab_7',
+      groupTitle: 'WAG • Acceptance',
+    }),
+    /changed the active browser tab/,
+  );
+  assert.equal(f.isAttached(), false);
 });

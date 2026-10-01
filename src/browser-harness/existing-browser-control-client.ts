@@ -31,6 +31,7 @@ export function defaultExistingBrowserControlDiscoveryPath(
 
 export interface ExistingBrowserControlClient {
   listTargets(): Promise<readonly ExistingBrowserTarget[]>;
+  groupTarget(targetId: string, title: string): Promise<{ targetId: string; groupId: string; groupTitle: string; activeStable: boolean }>;
   attach(targetId: string): Promise<ExistingBrowserTarget>;
   describe(targetId: string): Promise<ExistingBrowserTarget>;
   exec(targetId: string, method: string, params?: Readonly<Record<string, unknown>>): Promise<unknown>;
@@ -47,6 +48,7 @@ export function createExistingBrowserControlClient(options: {
   async function call(
     method: ExistingBrowserControlRequest['method'],
     targetId?: string,
+    groupTitle?: string,
     cdpMethod?: string,
     params?: Readonly<Record<string, unknown>>,
   ): Promise<unknown> {
@@ -56,6 +58,7 @@ export function createExistingBrowserControlClient(options: {
       requestId: `bctl_${randomUUID()}`,
       method,
       ...(targetId === undefined ? {} : { targetId }),
+      ...(groupTitle === undefined ? {} : { groupTitle }),
       ...(cdpMethod === undefined ? {} : { cdpMethod }),
       ...(params === undefined ? {} : { params }),
     };
@@ -69,13 +72,25 @@ export function createExistingBrowserControlClient(options: {
       if (!Array.isArray(value)) throw new Error('Browser control target list is invalid');
       return Object.freeze(value.map(parseExistingBrowserTarget));
     },
+    async groupTarget(targetId, title) {
+      const value = await call('target.group', targetId, title);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Browser control group response is invalid');
+      }
+      const row = value as Record<string, unknown>;
+      if (typeof row.groupId !== 'string' || typeof row.groupTitle !== 'string'
+          || typeof row.activeStable !== 'boolean') {
+        throw new Error('Browser control group response is invalid');
+      }
+      return { targetId, groupId: row.groupId, groupTitle: row.groupTitle, activeStable: row.activeStable };
+    },
     async attach(targetId) {
       return parseExistingBrowserTarget(await call('target.attach', targetId));
     },
     async describe(targetId) {
       return parseExistingBrowserTarget(await call('target.describe', targetId));
     },
-    exec: (targetId, method, params) => call('target.exec', targetId, method, params),
+    exec: (targetId, method, params) => call('target.exec', targetId, undefined, method, params),
     async screenshot(targetId) {
       const value = await call('target.screenshot', targetId);
       if (!value || typeof value !== 'object' || Array.isArray(value)) {

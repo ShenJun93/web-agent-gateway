@@ -14,6 +14,7 @@ export function createNativeBrowserControlV1(options: {
   connectNative(): NativeBrowserControlPort;
   control: {
     listTargets(): Promise<any[]>;
+    group(tabId: number, title?: string): Promise<{ tabId: number; groupId: number; groupTitle: string; activeStable: boolean }>;
     attach(tabId: number): Promise<any>;
     describe(tabId: number): Promise<any>;
     exec(tabId: number, method: string, params?: Record<string, unknown>): Promise<unknown>;

@@ -6,6 +6,9 @@ const ALLOWED_CDP = new Set([
   'Page.navigate',
   'DOM.scrollIntoViewIfNeeded',
   'DOM.getBoxModel',
+  'DOM.resolveNode',
+  'Runtime.callFunctionOn',
+  'Runtime.releaseObject',
   'Input.dispatchMouseEvent',
   'DOM.focus',
   'Input.dispatchKeyEvent',
@@ -43,6 +46,16 @@ export function createNativeBrowserControlV1({ connectNative, control }) {
     switch (request.method) {
       case 'targets.list':
         return result(request.requestId, (await control.listTargets()).map((target) => normalizeTarget(target, control)));
+      case 'target.group': {
+        const id = tabId(request.targetId);
+        const grouped = await control.group(id, request.groupTitle);
+        return result(request.requestId, {
+          targetId: request.targetId,
+          groupId: `group_${grouped.groupId}`,
+          groupTitle: grouped.groupTitle,
+          activeStable: grouped.activeStable === true,
+        });
+      }
       case 'target.attach': {
         const id = tabId(request.targetId);
         await control.attach(id);
@@ -83,6 +96,12 @@ function parseRequest(value) {
     return { version: VERSION, type: 'control.request', requestId: value.requestId, method };
   }
   if (!TARGET_ID.test(value.targetId ?? '')) throw new Error('Invalid existing browser target id');
+  if (method === 'target.group') {
+    if (typeof value.groupTitle !== 'string' || value.groupTitle.length < 1 || value.groupTitle.length > 64) {
+      throw new Error('Invalid existing browser group title');
+    }
+    return { version: VERSION, type: 'control.request', requestId: value.requestId, method, targetId: value.targetId, groupTitle: value.groupTitle };
+  }
   if (method === 'target.exec') {
     if (typeof value.cdpMethod !== 'string' || !ALLOWED_CDP.has(value.cdpMethod)) {
       const error = new Error('Existing browser CDP method denied');

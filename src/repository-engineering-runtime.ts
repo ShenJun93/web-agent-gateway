@@ -30,7 +30,10 @@ import {
   createPrivateBrowserMcpContext,
   type BrowserMcpContext,
 } from './browser-harness/browser-mcp-runtime.js';
-import { defaultExistingBrowserControlDiscoveryPath } from './browser-harness/existing-browser-control-client.js';
+import {
+  startBrowserControlWebSocketServer,
+  type BrowserControlWebSocketServer,
+} from './browser-harness/browser-control-websocket-server.js';
 import {
   createPrivateDesktopMcpContext,
   type DesktopMcpContext,
@@ -91,6 +94,8 @@ export interface RepositoryEngineeringRuntime {
 export interface RepositoryEngineeringRuntimeOptions {
   /** Injected only by tests; production always uses the real loopback operator server. */
   startOperatorServer?: typeof startOperatorServer;
+  /** Test seam for the Browser v2 loopback WebSocket transport. */
+  startBrowserControlWebSocketServer?: typeof startBrowserControlWebSocketServer;
 }
 
 /**
@@ -200,17 +205,19 @@ export async function startRepositoryEngineeringRuntime(
       : { statePath: mutationSettings.statePath + '.tool-usage.' + sessionId + '.json' }),
   });
   let browserContext: BrowserMcpContext | undefined;
+  let browserControlServer: BrowserControlWebSocketServer | undefined;
   let desktopContext: DesktopMcpContext | undefined;
   try {
+    browserControlServer = browserSettings === undefined ? undefined : await (
+      options.startBrowserControlWebSocketServer ?? startBrowserControlWebSocketServer
+    )({ statePath: mutationSettings.statePath + '.browser-control-pairing.json' });
     browserContext = browserSettings === undefined ? undefined : createPrivateBrowserMcpContext({
       owner: callerContext,
       edgeExecutablePath: browserSettings.edgeExecutablePath,
       profileRoot: browserSettings.profileRoot,
       effectStatePath: mutationSettings.statePath + '.harness-effects.sqlite',
       killSwitch,
-      ...(defaultExistingBrowserControlDiscoveryPath() === undefined ? {} : {
-        controlDiscoveryPath: defaultExistingBrowserControlDiscoveryPath(),
-      }),
+      ...(browserControlServer === undefined ? {} : { control: browserControlServer.client }),
     });
     desktopContext = desktopSettings === undefined ? undefined : createPrivateDesktopMcpContext({
       owner: callerContext,
@@ -220,6 +227,7 @@ export async function startRepositoryEngineeringRuntime(
     });
   } catch (error) {
     await browserContext?.closeAll().catch(() => undefined);
+    await browserControlServer?.close().catch(() => undefined);
     workspaceIdentities.close();
     pushStore.close();
     store.close();
@@ -503,6 +511,11 @@ export async function startRepositoryEngineeringRuntime(
       }
       try {
         await browserContext?.closeAll();
+      } catch (error) {
+        failure ??= error;
+      }
+      try {
+        await browserControlServer?.close();
       } catch (error) {
         failure ??= error;
       }

@@ -31,6 +31,7 @@ export function createExistingBrowserControlV1(
   options?: { protocolVersion?: string },
 ): {
   listTargets(): Promise<ExistingBrowserTargetV1[]>;
+  group(tabId: number, title?: string): Promise<{ tabId: number; groupId: number; groupTitle: string; activeStable: boolean }>;
   attach(tabId: number): Promise<ExistingBrowserTargetV1 & { state: 'ATTACHED' }>;
   describe(tabId: number): Promise<ExistingBrowserTargetV1 & { attached: boolean }>;
   probe(tabId: number): Promise<{

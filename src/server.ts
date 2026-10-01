@@ -1064,12 +1064,13 @@ export function createGatewayMcpServer(
       description: 'Open or recover a WAG browser session using AUTO, managed visible, managed headless, or an exact existing target.',
       inputSchema: z.object({
         profile_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
-        mode: z.enum(['AUTO', 'ATTACH_EXISTING', 'WAG_VISIBLE', 'WAG_HEADLESS']).optional(),
+        mode: z.enum(['AUTO', 'ATTACH_EXISTING', 'AI_TAB_GROUP', 'WAG_VISIBLE', 'WAG_HEADLESS']).optional(),
         target_id: z.string().regex(/^tab_[0-9]+$/).optional(),
+        group_title: z.string().min(1).max(64).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, async ({ profile_id, mode, target_id }) => toolResult(
-      await browserContext.open(profile_id, mode, target_id),
+    }, async ({ profile_id, mode, target_id, group_title }) => toolResult(
+      await browserContext.open(profile_id, mode, target_id, group_title),
     ));
 
     registerTool('browser.describe', {

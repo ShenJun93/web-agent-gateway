@@ -148,10 +148,10 @@ export function createBrowserBroker(options: {
 
     async pauseForUser(owner, browserSessionId) {
       const route = routeFor(browserSessionId);
-      if (route.executionMode !== 'WAG_VISIBLE') {
+      if (route.executionMode !== 'WAG_VISIBLE' && route.executionMode !== 'AI_TAB_GROUP') {
         throw new BrowserBrokerError(
           'BROWSER_MODE_UNAVAILABLE',
-          'User takeover is available only for WAG_VISIBLE sessions',
+          'User takeover is available only for visible WAG sessions',
         );
       }
       await route.port.describe(owner, browserSessionId);
@@ -161,7 +161,8 @@ export function createBrowserBroker(options: {
 
     async takeUserControl(owner, browserSessionId) {
       const route = routeFor(browserSessionId);
-      if (route.executionMode !== 'WAG_VISIBLE' || route.controlState !== 'PAUSED_FOR_USER') {
+      if ((route.executionMode !== 'WAG_VISIBLE' && route.executionMode !== 'AI_TAB_GROUP')
+          || route.controlState !== 'PAUSED_FOR_USER') {
         throw new BrowserBrokerError(
           'BROWSER_MODE_UNAVAILABLE',
           'Browser session is not ready for user control',
@@ -174,7 +175,7 @@ export function createBrowserBroker(options: {
 
     async resumeAutomation(owner, browserSessionId) {
       const route = routeFor(browserSessionId);
-      if (route.executionMode !== 'WAG_VISIBLE'
+      if ((route.executionMode !== 'WAG_VISIBLE' && route.executionMode !== 'AI_TAB_GROUP')
           || (route.controlState !== 'USER_CONTROL' && route.controlState !== 'PAUSED_FOR_USER')) {
         throw new BrowserBrokerError(
           'BROWSER_MODE_UNAVAILABLE',

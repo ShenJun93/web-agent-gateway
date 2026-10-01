@@ -53,6 +53,8 @@ export interface BrowserMcpSession {
   readonly executionMode?: string;
   readonly ownershipMode?: string;
   readonly controlState?: string;
+  readonly groupId?: string;
+  readonly groupTitle?: string;
   readonly processId?: string;
   readonly pid?: number;
   readonly createdAt: number;
@@ -84,7 +86,7 @@ export interface BrowserMcpEffect {
 
 export interface BrowserMcpContext {
   targets(): Promise<readonly ExistingBrowserTarget[]>;
-  open(profileId: string, mode?: BrowserOpenMode, targetId?: string): Promise<BrowserMcpSession>;
+  open(profileId: string, mode?: BrowserOpenMode, targetId?: string, groupTitle?: string): Promise<BrowserMcpSession>;
   describe(browserSessionId: string): Promise<BrowserMcpSession>;
   snapshot(browserSessionId: string): Promise<BrowserMcpSnapshot>;
   exec(
@@ -118,6 +120,8 @@ function sessionView(handle: BrowserSessionHandle): BrowserMcpSession {
     ...(handle.executionMode === undefined ? {} : { executionMode: handle.executionMode }),
     ...(handle.ownershipMode === undefined ? {} : { ownershipMode: handle.ownershipMode }),
     ...(handle.controlState === undefined ? {} : { controlState: handle.controlState }),
+    ...(handle.groupId === undefined ? {} : { groupId: handle.groupId }),
+    ...(handle.groupTitle === undefined ? {} : { groupTitle: handle.groupTitle }),
     ...(handle.processId === undefined ? {} : { processId: handle.processId }),
     ...(handle.pid === undefined ? {} : { pid: handle.pid }),
     createdAt: handle.createdAt,
@@ -187,6 +191,7 @@ export function createPrivateBrowserMcpContext(options: {
   effectStatePath: string;
   killSwitch: () => boolean;
   controlDiscoveryPath?: string;
+  control?: ExistingBrowserControlClient;
   /** Test-only seam; production omits it and receives the concrete owned-Edge backend. */
   port?: BrowserPort;
   /** Test-only semantic seam paired with port. */
@@ -222,9 +227,9 @@ export function createPrivateBrowserMcpContext(options: {
         connect: (endpointUrl) => createNodeCdpTransport({ endpointUrl }),
       }),
     });
-    control = options.controlDiscoveryPath === undefined
+    control = options.control ?? (options.controlDiscoveryPath === undefined
       ? undefined
-      : createExistingBrowserControlClient({ discoveryPath: options.controlDiscoveryPath });
+      : createExistingBrowserControlClient({ discoveryPath: options.controlDiscoveryPath }));
     broker = createBrowserBroker({
       headless: managed('WAG_HEADLESS'),
       visible: managed('WAG_VISIBLE'),
@@ -255,11 +260,11 @@ export function createPrivateBrowserMcpContext(options: {
       return control.listTargets();
     },
 
-    async open(profileId, mode, targetId) {
+    async open(profileId, mode, targetId, groupTitle) {
       assertEffectAllowed();
       const resolvedMode = resolveBrowserOpenMode(mode);
-      if (resolvedMode === 'ATTACH_EXISTING' && !targetId) {
-        throw new Error('ATTACH_EXISTING requires target_id');
+      if ((resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP') && !targetId) {
+        throw new Error(resolvedMode + ' requires target_id');
       }
       const profileKey = resolvedMode + ':' + profileId + ':' + (targetId ?? 'managed');
       const existing = byProfile.get(profileKey);
@@ -276,6 +281,7 @@ export function createPrivateBrowserMcpContext(options: {
         owner: options.owner,
         mode: resolvedMode,
         ...(targetId === undefined ? {} : { targetId }),
+        ...(groupTitle === undefined ? {} : { groupTitle }),
       });
       sessions.add(handle.browserSessionId);
       byProfile.set(profileKey, handle.browserSessionId);

@@ -100,8 +100,8 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
         attached: false,
       }];
     },
-    async open(profileId, mode, targetId) {
-      calls.push(['open', profileId, mode, targetId]);
+    async open(profileId, mode, targetId, groupTitle) {
+      calls.push(['open', profileId, mode, targetId, groupTitle]);
       return {
         browserSessionId: 'browser_00000000-0000-4000-8000-000000000001',
         profileId,
@@ -310,7 +310,7 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
     'WAG_VISIBLE',
   );
   assert.deepEqual(calls.filter((row) => row[0] === 'open').at(-1), [
-    'open', 'acceptance-visible', 'WAG_VISIBLE', undefined,
+    'open', 'acceptance-visible', 'WAG_VISIBLE', undefined, undefined,
   ]);
 
   const attached = await client.callTool({
@@ -323,7 +323,21 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
   });
   assert.equal(attached.isError === true, false);
   assert.deepEqual(calls.filter((row) => row[0] === 'open').at(-1), [
-    'open', 'acceptance-existing', 'ATTACH_EXISTING', 'tab_7',
+    'open', 'acceptance-existing', 'ATTACH_EXISTING', 'tab_7', undefined,
+  ]);
+
+  const grouped = await client.callTool({
+    name: 'browser.open',
+    arguments: {
+      profile_id: 'acceptance-ai-group',
+      mode: 'AI_TAB_GROUP',
+      target_id: 'tab_7',
+      group_title: 'WAG • Acceptance',
+    },
+  });
+  assert.equal(grouped.isError === true, false);
+  assert.deepEqual(calls.filter((row) => row[0] === 'open').at(-1), [
+    'open', 'acceptance-ai-group', 'AI_TAB_GROUP', 'tab_7', 'WAG • Acceptance',
   ]);
 
   for (const [index, type] of [
