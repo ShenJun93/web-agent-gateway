@@ -811,3 +811,67 @@ Publication boundary:
 - PUBLIC_NPM_PUBLISH = NO.
 Next:
 - reconcile this live receipt locally and keep public publication/promotion stopped until explicitly authorized.
+
+
+---
+
+Task: P0 — Immutable Multi-File Change Set
+State: DONE / LOCAL ACCEPTANCE PASS / PUBLICATION STOP
+Implementation commit:
+- 860ed6998ab5818f5bb8b4ca9a6088d977ed17f9
+Surface:
+- change.preview
+- change.apply
+- change.result
+Operations:
+- replace
+- create
+- delete
+- move
+Safety/effect contract:
+- immutable workspace + exact base HEAD + ordered operation set + base/result hashes + destination vacancy + plan digest;
+- 1..32 operations;
+- per-content bound <= 32 KiB;
+- aggregate caller content <= 256 KiB;
+- every precondition is checked before the first effect;
+- workspace identity and local autonomy kill switch are revalidated;
+- VERIFIED replay is durable/idempotent;
+- APPLYING/APPLIED recovery never blindly replays;
+- mixed post-effect state -> PARTIAL_EFFECT_DETECTED;
+- filesystem-level perfect transactions are not claimed.
+Backend/runtime:
+- local-machine exact delete = implemented;
+- pinned DevSpace exact delete = implemented and focused acceptance PASS;
+- stdio wiring = PASS;
+- direct MCP tunnel projection = PASS;
+- remote relay wiring = PASS;
+- measured full projection = 70 tools without BrowserPort / 78 with BrowserPort.
+Verification:
+- focused change-set = 6/6 PASS;
+- focused DevSpace mutation backend = 5/5 PASS;
+- direct MCP/runtime/stdio focused gates = PASS;
+- DesktopPort semantic-delta harness = PASS;
+- private BrowserPort assembly harness = PASS;
+- typecheck = PASS;
+- build = PASS;
+- git diff --check = PASS.
+Broad-suite classification:
+- initial broad run = 1187 total / 1177 pass / 4 fail / 6 todo;
+- stale DesktopPort absolute-count failure fixed; isolated rerun PASS;
+- private BrowserPort live-port collision fixed by test seam; isolated rerun PASS;
+- browser-adapter native-host acceptance remains environment-blocked by Windows spawn UNKNOWN;
+- native-host artifact acceptance remains environment-blocked by the same Windows spawn UNKNOWN;
+- no Application Control bypass or production-policy weakening was added.
+Receipt:
+- docs/benchmarks/2026-10-01-wag-immutable-multi-file-change-set-p0.md
+Publication boundary:
+- PUBLIC_PUSH = NO;
+- LIVE_RUNTIME_PROMOTION = NO;
+- PUBLIC_NPM_PUBLISH = NO;
+- PUBLIC_LAUNCH = NO.
+Remote truth:
+- origin/main = 033a913c2f05b8b9a62c376a70832e7ae9f9e91c;
+- origin/feat/wag-public-launch-p0-v1 = absent.
+Next:
+- commit receipt/progress locally;
+- keep public publication/promotion stopped until explicitly authorized.
