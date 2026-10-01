@@ -11,9 +11,15 @@ import { createNodeProcessBackend } from '../process-harness/node-process-backen
 import { createProcessPort } from '../process-harness/process-port.js';
 import {
   createBrowserPort,
+  type BrowserOpenMode,
   type BrowserPort,
   type BrowserSessionHandle,
 } from './browser-port.js';
+import {
+  createBrowserBroker,
+  resolveBrowserOpenMode,
+  type BrowserBroker,
+} from './browser-broker.js';
 import { createFileBrowserProfileStore } from './browser-profile-store.js';
 import { createNodeCdpTransport } from './node-cdp-transport.js';
 import { createOwnedEdgeCdpBackend } from './owned-edge-cdp-backend.js';
@@ -29,12 +35,18 @@ export type BrowserMcpAction =
   | { readonly type: 'navigate'; readonly url: string }
   | { readonly type: 'click'; readonly ref: string }
   | { readonly type: 'fill'; readonly ref: string; readonly text: string }
-  | { readonly type: 'press'; readonly key: string };
+  | { readonly type: 'press'; readonly key: string }
+  | { readonly type: 'pause_for_user' }
+  | { readonly type: 'take_user_control' }
+  | { readonly type: 'resume_automation' };
 
 export interface BrowserMcpSession {
   readonly browserSessionId: string;
   readonly profileId: string;
   readonly backend: string;
+  readonly executionMode?: string;
+  readonly ownershipMode?: string;
+  readonly controlState?: string;
   readonly processId?: string;
   readonly pid?: number;
   readonly createdAt: number;
@@ -65,7 +77,7 @@ export interface BrowserMcpEffect {
 }
 
 export interface BrowserMcpContext {
-  open(profileId: string): Promise<BrowserMcpSession>;
+  open(profileId: string, mode?: BrowserOpenMode): Promise<BrowserMcpSession>;
   describe(browserSessionId: string): Promise<BrowserMcpSession>;
   snapshot(browserSessionId: string): Promise<BrowserMcpSnapshot>;
   exec(
@@ -76,6 +88,9 @@ export interface BrowserMcpContext {
   effect(effectId: string): Promise<BrowserMcpEffect>;
   screenshot(browserSessionId: string): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   close(browserSessionId: string): Promise<BrowserMcpSession>;
+  pauseForUser(browserSessionId: string): Promise<BrowserMcpSession>;
+  takeUserControl(browserSessionId: string): Promise<BrowserMcpSession>;
+  resumeAutomation(browserSessionId: string): Promise<BrowserMcpSession>;
   closeAll(): Promise<void>;
 }
 
@@ -93,6 +108,9 @@ function sessionView(handle: BrowserSessionHandle): BrowserMcpSession {
     browserSessionId: handle.browserSessionId,
     profileId: handle.profileId,
     backend: handle.backend,
+    ...(handle.executionMode === undefined ? {} : { executionMode: handle.executionMode }),
+    ...(handle.ownershipMode === undefined ? {} : { ownershipMode: handle.ownershipMode }),
+    ...(handle.controlState === undefined ? {} : { controlState: handle.controlState }),
     ...(handle.processId === undefined ? {} : { processId: handle.processId }),
     ...(handle.pid === undefined ? {} : { pid: handle.pid }),
     createdAt: handle.createdAt,
@@ -169,26 +187,37 @@ export function createPrivateBrowserMcpContext(options: {
   const effects = new HarnessEffectLedger(options.effectStatePath);
   effects.reconcileExecuting();
   const coordinator = new HarnessEffectCoordinator(effects);
+  let broker: BrowserBroker | undefined;
   const port = options.port ?? (() => {
     const processes = createProcessPort({
       backend: createNodeProcessBackend(),
       effectAllowed: () => !options.killSwitch(),
     });
-    const launcher = createOwnedEdgeLauncher({
+    const profileStore = createFileBrowserProfileStore({ root: options.profileRoot });
+    const launch = (
+      executionMode: 'WAG_HEADLESS' | 'WAG_VISIBLE',
+    ) => createOwnedEdgeLauncher({
       processPort: processes,
       executablePath: options.edgeExecutablePath,
       allocateDebugPort: allocateLoopbackPort,
+      executionMode,
       waitUntilReady: async (endpointUrl, timeoutMs) => {
         await waitForLoopbackCdpReady({ endpointUrl, timeoutMs });
       },
     });
-    return createBrowserPort({
-      profileStore: createFileBrowserProfileStore({ root: options.profileRoot }),
+    const managed = (executionMode: 'WAG_HEADLESS' | 'WAG_VISIBLE') => createBrowserPort({
+      profileStore,
+      executionMode,
       backend: createOwnedEdgeCdpBackend({
-        launcher,
+        launcher: launch(executionMode),
         connect: (endpointUrl) => createNodeCdpTransport({ endpointUrl }),
       }),
     });
+    broker = createBrowserBroker({
+      headless: managed('WAG_HEADLESS'),
+      visible: managed('WAG_VISIBLE'),
+    });
+    return broker;
   })();
   const semantic = options.semantic ?? createSemanticBrowser({ port });
   const sessions = new Set<string>();
@@ -205,20 +234,22 @@ export function createPrivateBrowserMcpContext(options: {
   }
 
   return {
-    async open(profileId) {
+    async open(profileId, mode) {
       assertEffectAllowed();
-      const existing = byProfile.get(profileId);
+      const resolvedMode = resolveBrowserOpenMode(mode);
+      const profileKey = resolvedMode + ':' + profileId;
+      const existing = byProfile.get(profileKey);
       if (existing) {
         try {
           return sessionView(await port.describe(options.owner, existing));
         } catch {
-          byProfile.delete(profileId);
+          byProfile.delete(profileKey);
           sessions.delete(existing);
         }
       }
-      const handle = await port.open({ profileId, owner: options.owner });
+      const handle = await port.open({ profileId, owner: options.owner, mode: resolvedMode });
       sessions.add(handle.browserSessionId);
-      byProfile.set(profileId, handle.browserSessionId);
+      byProfile.set(profileKey, handle.browserSessionId);
       return sessionView(handle);
     },
 
@@ -266,6 +297,18 @@ export function createPrivateBrowserMcpContext(options: {
             case 'press':
               await semantic.press(options.owner, browserSessionId, action.key);
               break;
+            case 'pause_for_user':
+              if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+              await broker.pauseForUser(options.owner, browserSessionId);
+              break;
+            case 'take_user_control':
+              if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+              await broker.takeUserControl(options.owner, browserSessionId);
+              break;
+            case 'resume_automation':
+              if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+              await broker.resumeAutomation(options.owner, browserSessionId);
+              break;
           }
           return { status: 'CONFIRMED_SUCCESS', resultDigest: successDigest(action) };
         },
@@ -289,8 +332,28 @@ export function createPrivateBrowserMcpContext(options: {
       assertOpen();
       const handle = await port.close(options.owner, browserSessionId);
       sessions.delete(browserSessionId);
-      if (byProfile.get(handle.profileId) === browserSessionId) byProfile.delete(handle.profileId);
+      for (const [key, value] of byProfile) {
+        if (value === browserSessionId) byProfile.delete(key);
+      }
       return sessionView(handle);
+    },
+
+    async pauseForUser(browserSessionId) {
+      assertOpen();
+      if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+      return sessionView(await broker.pauseForUser(options.owner, browserSessionId));
+    },
+
+    async takeUserControl(browserSessionId) {
+      assertOpen();
+      if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+      return sessionView(await broker.takeUserControl(options.owner, browserSessionId));
+    },
+
+    async resumeAutomation(browserSessionId) {
+      assertOpen();
+      if (!broker) throw new Error('Browser takeover is unavailable for an injected BrowserPort');
+      return sessionView(await broker.resumeAutomation(options.owner, browserSessionId));
     },
 
     async closeAll() {

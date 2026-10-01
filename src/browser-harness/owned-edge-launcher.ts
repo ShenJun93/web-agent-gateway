@@ -1,6 +1,6 @@
 import type { GatewayAuthority } from '../caller-context.js';
 import type { ProcessHandle, ProcessPort } from '../process-harness/process-port.js';
-import type { BrowserProfileHandle } from './browser-port.js';
+import type { BrowserExecutionMode, BrowserProfileHandle } from './browser-port.js';
 import { createEdgeCdpLaunchPlan, type EdgeCdpLaunchPlan } from './edge-launch-plan.js';
 
 export interface OwnedEdgeLaunch {
@@ -17,6 +17,7 @@ export function createOwnedEdgeLauncher(options: {
   processPort: ProcessPort;
   executablePath: string;
   allocateDebugPort(): Promise<number>;
+  executionMode?: Exclude<BrowserExecutionMode, 'ATTACH_EXISTING'>;
   initialUrl?: string;
   extraArgs?: readonly string[];
   waitUntilReady(endpointUrl: string, timeoutMs: number): Promise<void>;
@@ -29,6 +30,7 @@ export function createOwnedEdgeLauncher(options: {
         executablePath: options.executablePath,
         profile,
         debugPort,
+        executionMode: options.executionMode ?? 'WAG_HEADLESS',
         ...(options.initialUrl === undefined ? {} : { initialUrl: options.initialUrl }),
         ...(options.extraArgs === undefined ? {} : { extraArgs: options.extraArgs }),
       });

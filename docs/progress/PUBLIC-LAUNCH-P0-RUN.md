@@ -127,3 +127,50 @@ Known remaining risk:
 Next:
 - commit feasibility spike;
 - proceed to BrowserBroker Task 1 with EXTENSION_DEBUGGER_FIRST as the ATTACH_EXISTING transport.
+
+---
+
+Task: Browser v2 Task 1 — BrowserBroker + managed visible/headless modes
+State: DONE
+Evidence:
+- introduced one BrowserBroker routing layer over shared BrowserPort/semantic infrastructure;
+- `AUTO` remains conservative and resolves to `WAG_HEADLESS` until existing-target discovery is implemented;
+- `WAG_HEADLESS` preserves the current dedicated WAG-owned Edge behavior;
+- `WAG_VISIBLE` uses the same owned Edge/CDP/semantic stack without `--headless=new`;
+- visible Pause -> Take Control -> Resume is implemented without adding MCP tools;
+- control transitions are bounded `browser.exec` actions and remain exact-once effects;
+- resume revalidates through a fresh snapshot before automation returns to RUNNING;
+- `ATTACH_EXISTING` fails closed until the extension/native runtime bridge lands;
+- real Windows Edge mode smoke PASS;
+- broad relevant regression = 101/101 PASS across two non-overlapping batches;
+- typecheck/build/diff-check PASS.
+Files changed:
+- src/browser-harness/browser-broker.ts
+- src/browser-harness/browser-port.ts
+- src/browser-harness/browser-mcp-runtime.ts
+- src/browser-harness/edge-launch-plan.ts
+- src/browser-harness/owned-edge-launcher.ts
+- src/server.ts
+- scripts/spike-browser-broker-modes.ts
+- test/browser-harness-broker.test.ts
+- test/browser-harness-edge-launch-plan.test.ts
+- test/browser-harness-mcp-surface.test.ts
+- test/browser-harness-owned-edge-cdp-backend.test.ts
+- docs/benchmarks/2026-10-01-wag-browser-v2-stop1-browser-broker.md
+Tests:
+- focused Task 1 = 10/10 PASS
+- BrowserPort/extension regression batch A = 71/71 PASS
+- BrowserPort/private-browser regression batch B = 30/30 PASS
+- real Edge BrowserBroker smoke = PASS
+- typecheck PASS
+- build PASS
+- git diff --check PASS
+Known remaining risk:
+- ATTACH_EXISTING runtime bridge NOT IMPLEMENTED;
+- authenticated user-profile attach acceptance NOT EXECUTED;
+- enterprise debugger policy behavior NOT MEASURED;
+- per-target claim epoch/fencing NOT IMPLEMENTED;
+- total Chromium process-tree memory NOT MEASURED.
+Next:
+- STOP 1 report;
+- after continuation, implement Tasks 2-3 existing-target discovery + native runtime/extension attach/release bridge.

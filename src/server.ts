@@ -1049,15 +1049,19 @@ export function createGatewayMcpServer(
         type: z.literal('press'),
         key: z.enum(['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']),
       }).strict(),
+      z.object({ type: z.literal('pause_for_user') }).strict(),
+      z.object({ type: z.literal('take_user_control') }).strict(),
+      z.object({ type: z.literal('resume_automation') }).strict(),
     ]);
 
     registerTool('browser.open', {
-      description: 'Open or recover one WAG-owned dedicated Edge profile on loopback CDP.',
+      description: 'Open or recover a WAG browser session using AUTO, managed visible, managed headless, or existing-tab mode.',
       inputSchema: z.object({
         profile_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/),
+        mode: z.enum(['AUTO', 'ATTACH_EXISTING', 'WAG_VISIBLE', 'WAG_HEADLESS']).optional(),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    }, async ({ profile_id }) => toolResult(await browserContext.open(profile_id)));
+    }, async ({ profile_id, mode }) => toolResult(await browserContext.open(profile_id, mode)));
 
     registerTool('browser.describe', {
       description: 'Describe one caller-owned BrowserPort session without exposing authority identifiers.',

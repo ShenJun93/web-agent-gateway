@@ -20,6 +20,7 @@ test('Edge launch plan always binds CDP to a dedicated headless profile and loop
   });
   assert.equal(plan.endpointUrl, 'http://127.0.0.1:9333');
   assert.equal(plan.userDataDir, profile.userDataDir);
+  assert.equal(plan.executionMode, 'WAG_HEADLESS');
   assert.deepEqual(plan.argv, [
     '--user-data-dir=E:\\AI-BROWSER\\profiles\\notebook99',
     '--remote-debugging-port=9333',
@@ -68,4 +69,23 @@ test('Edge launch plan rejects relative executables and invalid debug ports', ()
       debugPort,
     }), /CDP port/);
   }
+});
+
+test('Edge launch plan exposes WAG_VISIBLE without creating a separate interaction stack', () => {
+  const plan = createEdgeCdpLaunchPlan({
+    executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    profile,
+    debugPort: 9444,
+    executionMode: 'WAG_VISIBLE',
+    initialUrl: 'https://example.test/',
+  });
+  assert.equal(plan.executionMode, 'WAG_VISIBLE');
+  assert.equal(plan.argv.includes('--headless=new'), false);
+  assert.deepEqual(plan.argv, [
+    '--user-data-dir=E:\\AI-BROWSER\\profiles\\notebook99',
+    '--remote-debugging-port=9444',
+    '--no-first-run',
+    '--no-default-browser-check',
+    'https://example.test/',
+  ]);
 });

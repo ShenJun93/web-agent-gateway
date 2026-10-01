@@ -11,12 +11,19 @@ export type { BrowserProfileHandle, BrowserProfileStore } from './browser-profil
 
 export type BrowserSessionState = 'ACTIVE' | 'ORPHANED' | 'RECOVERABLE' | 'CLOSING' | 'CLOSED' | 'FAILED';
 export type BrowserBackendKind = 'cdp' | 'playwright-cdp';
+export type BrowserExecutionMode = 'ATTACH_EXISTING' | 'WAG_VISIBLE' | 'WAG_HEADLESS';
+export type BrowserOpenMode = 'AUTO' | BrowserExecutionMode;
+export type BrowserOwnershipMode = 'ATTACHED_EXISTING' | 'WAG_OWNED';
+export type BrowserControlState = 'RUNNING' | 'PAUSED_FOR_USER' | 'USER_CONTROL' | 'RESUMING' | 'STOPPED';
 
 export interface BrowserSessionHandle {
   readonly browserSessionId: string;
   readonly profileId: string;
   readonly owner: GatewayAuthority;
   readonly backend: BrowserBackendKind;
+  readonly executionMode?: BrowserExecutionMode;
+  readonly ownershipMode?: BrowserOwnershipMode;
+  readonly controlState?: BrowserControlState;
   readonly processId?: string;
   readonly pid?: number;
   readonly createdAt: number;
@@ -27,6 +34,7 @@ export interface BrowserSessionHandle {
 export interface BrowserOpenRequest {
   readonly profileId: string;
   readonly owner: GatewayAuthority;
+  readonly mode?: BrowserOpenMode;
 }
 
 export interface BrowserSnapshot {
@@ -86,12 +94,16 @@ function cloneHandle(handle: BrowserSessionHandle): BrowserSessionHandle {
 export function createBrowserPort(options: {
   backend: BrowserBackend;
   profileStore?: BrowserProfileStore;
+  executionMode?: Exclude<BrowserExecutionMode, 'ATTACH_EXISTING'>;
+  ownershipMode?: BrowserOwnershipMode;
   now?: () => number;
   randomUUID?: () => string;
 }): BrowserPort {
   const now = options.now ?? Date.now;
   const uuid = options.randomUUID ?? randomUUID;
   const profileStore = options.profileStore ?? createMemoryBrowserProfileStore();
+  const executionMode = options.executionMode ?? 'WAG_HEADLESS';
+  const ownershipMode = options.ownershipMode ?? 'WAG_OWNED';
   const sessions = new Map<string, LiveBrowserSession>();
 
   function owned(owner: GatewayAuthority, browserSessionId: string): LiveBrowserSession {
@@ -124,6 +136,9 @@ export function createBrowserPort(options: {
         profileId: request.profileId,
         owner: Object.freeze({ ...request.owner }),
         backend: options.backend.kind,
+        executionMode,
+        ownershipMode,
+        controlState: 'RUNNING',
         ...(backend.processId === undefined ? {} : { processId: backend.processId }),
         ...(backend.pid === undefined ? {} : { pid: backend.pid }),
         createdAt,

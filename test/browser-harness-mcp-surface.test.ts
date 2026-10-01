@@ -85,12 +85,13 @@ test('browser opt-in adds exactly seven BrowserPort tools to the current extende
 test('browser exact-once recovery correlates diagnostics to durable effect state without replay', async (t) => {
   const calls: unknown[][] = [];
   const browserContext: BrowserMcpContext = {
-    async open(profileId) {
-      calls.push(['open', profileId]);
+    async open(profileId, mode) {
+      calls.push(['open', profileId, mode]);
       return {
         browserSessionId: 'browser_00000000-0000-4000-8000-000000000001',
         profileId,
         backend: 'cdp',
+        ...(mode === undefined ? {} : { executionMode: mode }),
         processId: 'process_00000000-0000-4000-8000-000000000002',
         pid: 1234,
         createdAt: 1,
@@ -141,6 +142,42 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
         createdAt: 1,
         lastSeenAt: 3,
         state: 'CLOSED',
+      };
+    },
+    async pauseForUser(browserSessionId) {
+      calls.push(['pauseForUser', browserSessionId]);
+      return {
+        browserSessionId,
+        profileId: 'acceptance',
+        backend: 'cdp',
+        controlState: 'PAUSED_FOR_USER',
+        createdAt: 1,
+        lastSeenAt: 3,
+        state: 'ACTIVE',
+      };
+    },
+    async takeUserControl(browserSessionId) {
+      calls.push(['takeUserControl', browserSessionId]);
+      return {
+        browserSessionId,
+        profileId: 'acceptance',
+        backend: 'cdp',
+        controlState: 'USER_CONTROL',
+        createdAt: 1,
+        lastSeenAt: 3,
+        state: 'ACTIVE',
+      };
+    },
+    async resumeAutomation(browserSessionId) {
+      calls.push(['resumeAutomation', browserSessionId]);
+      return {
+        browserSessionId,
+        profileId: 'acceptance',
+        backend: 'cdp',
+        controlState: 'RUNNING',
+        createdAt: 1,
+        lastSeenAt: 3,
+        state: 'ACTIVE',
       };
     },
     async closeAll() {},
@@ -242,4 +279,36 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
   assert.equal(JSON.stringify(opened.structuredContent).includes('ownerId'), false);
   assert.equal(JSON.stringify(opened.structuredContent).includes('sessionId'), false);
   assert.equal((opened.structuredContent as { pid?: number } | undefined)?.pid, 1234);
+
+  const visible = await client.callTool({
+    name: 'browser.open',
+    arguments: { profile_id: 'acceptance-visible', mode: 'WAG_VISIBLE' },
+  });
+  assert.equal(visible.isError === true, false);
+  assert.equal(
+    (visible.structuredContent as { executionMode?: string } | undefined)?.executionMode,
+    'WAG_VISIBLE',
+  );
+  assert.deepEqual(calls.filter((row) => row[0] === 'open').at(-1), [
+    'open', 'acceptance-visible', 'WAG_VISIBLE',
+  ]);
+
+  for (const [index, type] of [
+    'pause_for_user',
+    'take_user_control',
+    'resume_automation',
+  ].entries()) {
+    const controlled = await client.callTool({
+      name: 'browser.exec',
+      arguments: {
+        browser_session_id: sessionId,
+        idempotency_key: `acceptance.control.${index + 1}`,
+        action: { type },
+      },
+    });
+    assert.equal(controlled.isError === true, false, type);
+    assert.deepEqual(calls.filter((row) => row[0] === 'exec').at(-1), [
+      'exec', sessionId, `acceptance.control.${index + 1}`, { type },
+    ]);
+  }
 });

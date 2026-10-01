@@ -18,6 +18,7 @@ function launchFixture() {
       profileId: 'notebook99',
       userDataDir: profile.userDataDir,
       debugPort: 9333,
+      executionMode: 'WAG_HEADLESS',
     },
     process: {
       processId: 'process_00000000-0000-4000-8000-000000000031',

@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import type { BrowserProfileHandle } from './browser-port.js';
+import type { BrowserExecutionMode, BrowserProfileHandle } from './browser-port.js';
 
 export interface EdgeCdpLaunchPlan {
   readonly executablePath: string;
@@ -8,6 +8,7 @@ export interface EdgeCdpLaunchPlan {
   readonly profileId: string;
   readonly userDataDir: string;
   readonly debugPort: number;
+  readonly executionMode: Exclude<BrowserExecutionMode, 'ATTACH_EXISTING'>;
 }
 
 const RESERVED = [
@@ -26,6 +27,7 @@ export function createEdgeCdpLaunchPlan(options: {
   executablePath: string;
   profile: BrowserProfileHandle;
   debugPort: number;
+  executionMode?: Exclude<BrowserExecutionMode, 'ATTACH_EXISTING'>;
   initialUrl?: string;
   extraArgs?: readonly string[];
 }): EdgeCdpLaunchPlan {
@@ -41,10 +43,11 @@ export function createEdgeCdpLaunchPlan(options: {
   }
 
   const initialUrl = options.initialUrl ?? 'about:blank';
+  const executionMode = options.executionMode ?? 'WAG_HEADLESS';
   const argv = Object.freeze([
     `--user-data-dir=${options.profile.userDataDir}`,
     `--remote-debugging-port=${options.debugPort}`,
-    '--headless=new',
+    ...(executionMode === 'WAG_HEADLESS' ? ['--headless=new'] : []),
     '--no-first-run',
     '--no-default-browser-check',
     ...(options.extraArgs ?? []),
@@ -58,5 +61,6 @@ export function createEdgeCdpLaunchPlan(options: {
     profileId: options.profile.profileId,
     userDataDir: options.profile.userDataDir,
     debugPort: options.debugPort,
+    executionMode,
   });
 }
