@@ -27,6 +27,15 @@ test('autonomous runtime promotion has no per-goal authority or rollover path', 
   ]) {
     assert.equal(source.includes(required), true, required + ' must remain in runtime promotion');
   }
+  for (const supportFile of [
+    'scripts/wag-local-doctor.ps1',
+    'scripts/wag-local-product-health.ps1',
+    'docs/benchmarks/devspace-pin.json',
+    'packaging/runtime-package-lock.json',
+  ]) {
+    assert.equal(source.includes(supportFile), true, supportFile + ' must ship in every promoted runtime');
+  }
+
   assert.equal(
     source.includes('claude-autonomous-wag-harness-v1'),
     false,

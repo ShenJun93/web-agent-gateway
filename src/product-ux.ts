@@ -283,7 +283,7 @@ export function createProductMcpContext(options: ProductUxOptions): ProductMcpCo
           { id: 'terminal', description: 'Run bounded argv commands and manage WAG-owned process/terminal sessions.' },
           { id: 'repository', description: 'Inspect repositories, apply reviewed mutations, verify, commit and use bounded remote push.' },
           { id: 'browser', description: 'Use the BrowserPort surface when the local browser harness is configured.' },
-          { id: 'diagnostics', description: 'Use product activity/usage plus wag doctor for product health and repair.' },
+          { id: 'diagnostics', description: 'Use product.doctor for one-shot local readiness, product activity/usage for telemetry, and CLI wag doctor --repair for bounded repair.' },
           { id: 'lifecycle', description: 'Check signed update metadata, then use explicit update/rollback/uninstall lifecycle commands for installed releases.' },
         ],
       };

@@ -37,6 +37,20 @@ const MutationState = 'E:\\AI-BROWSER\\wag-acceptance\\devspace-state\\wag-mutat
 const ExtensionReleaseState = MutationState + '.browser-control-pairing.json.extension-release.json';
 const UrlFile = MutationState + '.operator-url';
 const Capability = 'autonomous-local-runtime-v1';
+const RuntimeSupportFiles = [
+  'scripts/install-wag-local-launchers.ps1',
+  'scripts/wag-local-doctor.ps1',
+  'scripts/wag-local-product-health.ps1',
+  'scripts/wag-local-provision.ps1',
+  'scripts/wag-local-setup.ps1',
+  'scripts/wag-local-start.ps1',
+  'scripts/wag-local-supervisor.ps1',
+  'scripts/wag-local-tunnel-launcher.ps1',
+  'docs/benchmarks/devspace-pin.json',
+  'packaging/runtime-package-lock.json',
+  'LICENSE',
+  'THIRD_PARTY_NOTICES.md',
+] as const;
 
 function run(
   file: string,
@@ -507,6 +521,11 @@ function preparedRuntime(head: string): PreparedRuntime {
   for (const [source] of runtimeLauncherSources(root)) {
     if (!existsSync(source)) throw new Error('Prepared WAG launcher missing: ' + source);
   }
+  for (const relative of RuntimeSupportFiles) {
+    if (!existsSync(join(root, ...relative.split('/')))) {
+      throw new Error('Prepared WAG runtime support file missing: ' + relative);
+    }
+  }
   return {
     root,
     cli: wrapperCli(root),
@@ -559,10 +578,12 @@ function prepareRuntime(head: string): PreparedRuntime {
         + "});\n",
       'utf8',
     );
-    rmSync(join(root, 'scripts'), { recursive: true, force: true });
-    mkdirSync(join(root, 'scripts'), { recursive: true });
-    for (const name of ['wag-local-tunnel-launcher.ps1', 'wag-local-start.ps1', 'wag-local-supervisor.ps1']) {
-      cpSync(join(staging, 'scripts', name), join(root, 'scripts', name));
+    for (const relative of RuntimeSupportFiles) {
+      const source = join(staging, ...relative.split('/'));
+      const target = join(root, ...relative.split('/'));
+      if (!existsSync(source)) throw new Error('Runtime support source missing: ' + relative);
+      mkdirSync(dirname(target), { recursive: true });
+      cpSync(source, target);
     }
     ensureJunction(join(root, 'node_modules'), buildNodeModules);
     const extensionSha256 = treeSha256(join(root, 'browser', 'extension'));
