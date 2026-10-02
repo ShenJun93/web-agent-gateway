@@ -23,6 +23,7 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
   const attached = new Set();
   const continuityWatches = new Map();
   const targetActivity = new Map();
+  const downloadEventListeners = new Set();
   let activitySequence = 0;
 
   function rememberTab(tab, sequence = 0) {
@@ -51,6 +52,23 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     if (Number.isInteger(source?.tabId)) attached.delete(source.tabId);
   };
   debuggerApi.onDetach?.addListener?.(onDetach);
+  debuggerApi.onEvent?.addListener?.((source, method, params) => {
+    const tabId = source?.tabId;
+    if (!Number.isInteger(tabId) || !attached.has(tabId)) return;
+    const event = sanitizeDownloadEvent(tabId, method, params);
+    if (!event) return;
+    for (const listener of downloadEventListeners) {
+      try { listener(event); } catch {}
+    }
+  });
+
+  function onDownloadEvent(listener) {
+    if (typeof listener !== 'function') {
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Download event listener is invalid');
+    }
+    downloadEventListeners.add(listener);
+    return () => downloadEventListeners.delete(listener);
+  }
 
   async function listTargets() {
     const rows = await tabs.query({});
@@ -246,6 +264,7 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     screenshot,
     release,
     close,
+    onDownloadEvent,
     isAttached,
   };
 }
@@ -362,6 +381,7 @@ const ALLOWED_CDP_METHODS = new Set([
   'Input.insertText',
   'DOM.setFileInputFiles',
   'Page.captureScreenshot',
+  'Browser.setDownloadBehavior',
 ]);
 
 function assertAllowedCdpMethod(method) {
@@ -375,8 +395,48 @@ const FIXED_NATIVE_VALUE_FILL_FUNCTION = "function(value){let proto=null;if(this
 const FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION = "function(){if(!(this instanceof HTMLElement)||!this.isContentEditable)return false;this.focus();const selection=this.ownerDocument.getSelection();if(!selection)return false;const range=this.ownerDocument.createRange();range.selectNodeContents(this);selection.removeAllRanges();selection.addRange(range);return true;}";
 const FIXED_MEDIA_INSPECT_FUNCTION = "function(){if(!(this instanceof HTMLMediaElement))return {supported:false};const decoded=typeof this.webkitAudioDecodedByteCount===\"number\"?this.webkitAudioDecodedByteCount:null;const tracks=this.audioTracks&&typeof this.audioTracks.length===\"number\"?this.audioTracks.length:null;let captured=null;try{const stream=typeof this.captureStream===\"function\"?this.captureStream():null;captured=stream&&typeof stream.getAudioTracks===\"function\"?stream.getAudioTracks().length:null;}catch{}const duration=Number.isFinite(this.duration)?this.duration:null;const currentTime=Number.isFinite(this.currentTime)?this.currentTime:null;const error=this.error?{code:this.error.code,message:String(this.error.message||\"\").slice(0,256)}:null;return {supported:true,tag:String(this.tagName||\"\").toLowerCase(),paused:this.paused===true,ended:this.ended===true,muted:this.muted===true,volume:this.volume,duration,currentTime,playbackRate:this.playbackRate,readyState:this.readyState,networkState:this.networkState,error,audioDecodedBytes:decoded,audioTrackCount:tracks,capturedAudioTrackCount:captured,videoWidth:typeof this.videoWidth===\"number\"?this.videoWidth:null,videoHeight:typeof this.videoHeight===\"number\"?this.videoHeight:null};}";
 const MAX_FILL_TEXT_BYTES = 64 * 1024;
+const DOWNLOAD_GUID = /^[A-Za-z0-9._-]{1,200}$/;
+
+function sanitizeDownloadEvent(tabId, method, params) {
+  if (method === 'Browser.downloadWillBegin') {
+    const safeUrl = sanitizeUrl(params?.url);
+    if (!DOWNLOAD_GUID.test(params?.guid ?? '')
+        || !safeUrl
+        || typeof params?.suggestedFilename !== 'string' || params.suggestedFilename.length < 1
+        || new TextEncoder().encode(params.suggestedFilename).byteLength > 1024
+        || /[\u0000-\u001F]/.test(params.suggestedFilename)) return null;
+    return {
+      tabId,
+      method,
+      params: {
+        guid: params.guid,
+        url: safeUrl.url,
+        suggestedFilename: params.suggestedFilename,
+      },
+    };
+  }
+  if (method === 'Browser.downloadProgress') {
+    if (!DOWNLOAD_GUID.test(params?.guid ?? '')
+        || !['inProgress', 'completed', 'canceled'].includes(params?.state)) return null;
+    return { tabId, method, params: { guid: params.guid, state: params.state } };
+  }
+  return null;
+}
 
 function assertBoundedRuntimeCommand(method, params) {
+  if (method === 'Browser.setDownloadBehavior') {
+    const keys = Object.keys(params ?? {}).sort();
+    if (keys.join(',') !== 'behavior,downloadPath,eventsEnabled'
+        || params?.behavior !== 'allowAndName'
+        || typeof params?.downloadPath !== 'string'
+        || params.downloadPath.length < 3
+        || params.downloadPath.length > 4096
+        || params.downloadPath.includes('\0')
+        || params?.eventsEnabled !== true) {
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Browser download behavior params are invalid');
+    }
+    return;
+  }
   if (method === 'DOM.resolveNode') {
     const keys = Object.keys(params ?? {});
     if (keys.length !== 1 || keys[0] !== 'backendNodeId' || !Number.isInteger(params?.backendNodeId)) {

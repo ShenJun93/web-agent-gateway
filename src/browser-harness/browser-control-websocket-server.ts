@@ -6,9 +6,11 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { BROWSER_ADAPTER_EXTENSION_ID } from '../browser-adapter/native-host-distribution.js';
 import {
   EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
+  parseExistingBrowserControlEvent,
   parseExistingBrowserControlResponse,
   parseExistingBrowserTarget,
   type ExistingBrowserControlRequest,
+  type ExistingBrowserDownloadEventMethod,
   type ExistingBrowserTarget,
 } from '../browser-adapter/existing-browser-control-protocol.js';
 import type { ExistingBrowserControlClient } from './existing-browser-control-client.js';
@@ -124,6 +126,8 @@ export async function startBrowserControlWebSocketServer(options: {
   let peer: WebSocket | undefined;
   let authenticated = false;
   let closing = false;
+  const eventListeners = new Map<string, Set<(params: Readonly<Record<string, unknown>>) => void>>();
+  const eventKey = (targetId: string, method: ExistingBrowserDownloadEventMethod) => targetId + '\0' + method;
   const pending = new Map<string, {
     method: ExistingBrowserControlRequest['method'];
     maxResponseBytes: number;
@@ -219,6 +223,18 @@ export async function startBrowserControlWebSocketServer(options: {
           version: EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
           type: 'control.pong',
         }));
+        return;
+      }
+
+      if (message && typeof message === 'object' && !Array.isArray(message)
+          && (message as Record<string, unknown>).type === 'control.event') {
+        let event;
+        try { event = parseExistingBrowserControlEvent(message); } catch { return; }
+        const listeners = eventListeners.get(eventKey(event.targetId, event.method));
+        if (!listeners) return;
+        for (const listener of [...listeners]) {
+          try { listener(event.params); } catch {}
+        }
         return;
       }
 
@@ -396,6 +412,21 @@ export async function startBrowserControlWebSocketServer(options: {
       return parseExistingBrowserTarget(await request('target.describe', targetId));
     },
     exec: (targetId, method, params) => request('target.exec', targetId, undefined, undefined, method, params),
+    onEvent(targetId, method, listener) {
+      if (!/^tab_[0-9]+$/.test(targetId)
+          || !['Browser.downloadWillBegin', 'Browser.downloadProgress'].includes(method)
+          || typeof listener !== 'function') {
+        throw new Error('Browser control event subscription is invalid');
+      }
+      const key = eventKey(targetId, method);
+      const listeners = eventListeners.get(key) ?? new Set();
+      listeners.add(listener);
+      eventListeners.set(key, listeners);
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) eventListeners.delete(key);
+      };
+    },
     async screenshot(targetId) {
       const value = await request('target.screenshot', targetId);
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Browser screenshot invalid');

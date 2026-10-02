@@ -7,6 +7,7 @@ import {
   parseExistingBrowserControlResponse,
   parseExistingBrowserTarget,
   type ExistingBrowserControlRequest,
+  type ExistingBrowserDownloadEventMethod,
   type ExistingBrowserTarget,
 } from '../browser-adapter/existing-browser-control-protocol.js';
 import {
@@ -44,6 +45,11 @@ export interface ExistingBrowserControlClient {
   attach(targetId: string): Promise<ExistingBrowserTarget>;
   describe(targetId: string): Promise<ExistingBrowserTarget>;
   exec(targetId: string, method: string, params?: Readonly<Record<string, unknown>>): Promise<unknown>;
+  onEvent?(
+    targetId: string,
+    method: ExistingBrowserDownloadEventMethod,
+    listener: (params: Readonly<Record<string, unknown>>) => void,
+  ): () => void;
   screenshot(targetId: string): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   release(targetId: string): Promise<{ targetId: string; released: boolean }>;
   closeTarget(targetId: string): Promise<{ targetId: string; closed: boolean }>;

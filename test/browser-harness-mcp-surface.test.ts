@@ -18,6 +18,7 @@ const BROWSER_TOOLS = [
   'browser.media.inspect',
   'browser.exec',
   'browser.upload_file',
+  'browser.download',
   'browser.effect.get',
   'browser.screenshot',
   'browser.close',
@@ -148,6 +149,15 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
       calls.push(['uploadFile', browserSessionId, idempotencyKey, workspaceId, ref, paths]);
       return effectView(browserSessionId, 'browser.upload_file');
     },
+    async download(browserSessionId, ref, timeoutMs) {
+      calls.push(['download', browserSessionId, ref, timeoutMs]);
+      return {
+        artifactId: 'artifact_00000000-0000-4000-8000-000000000020',
+        filename: 'report.pdf',
+        sizeBytes: 123,
+        sha256: 'a'.repeat(64),
+      };
+    },
     async waitFor(browserSessionId, conditions, mode, timeoutMs, intervalMs) {
       calls.push(['waitFor', browserSessionId, conditions, mode, timeoutMs, intervalMs]);
       return {
@@ -276,6 +286,14 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
 
   const tools = (await client.listTools()).tools;
   for (const name of BROWSER_TOOLS) assert.ok(tools.some((tool) => tool.name === name), name);
+  const downloadTool = tools.find((tool) => tool.name === 'browser.download');
+  assert.ok(downloadTool);
+  assert.deepEqual(downloadTool.annotations, {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: true,
+  });
 
   const targets = await client.callTool({ name: 'browser.targets', arguments: {} });
   assert.equal(targets.isError === true, false);
@@ -323,6 +341,29 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
   ]);
   assert.equal(JSON.stringify(uploaded.structuredContent).includes('ownerId'), false);
   assert.equal(JSON.stringify(uploaded.structuredContent).includes('absolute_path'), false);
+
+  const downloaded = await client.callTool({
+    name: 'browser.download',
+    arguments: {
+      browser_session_id: sessionId,
+      ref: 'node_00000000-0000-4000-8000-000000000012_0',
+      timeout_ms: 5000,
+    },
+  });
+  assert.equal(downloaded.isError === true, false);
+  assert.deepEqual(calls.at(-1), [
+    'download',
+    sessionId,
+    'node_00000000-0000-4000-8000-000000000012_0',
+    5000,
+  ]);
+  assert.deepEqual(downloaded.structuredContent, {
+    artifact_id: 'artifact_00000000-0000-4000-8000-000000000020',
+    filename: 'report.pdf',
+    size_bytes: 123,
+    sha256: 'a'.repeat(64),
+  });
+  assert.equal(JSON.stringify(downloaded.structuredContent).includes('internalPath'), false);
 
   const waitConditions = [{ kind: 'title', operator: 'contains', value: 'Example' }] as const;
   const waited = await client.callTool({

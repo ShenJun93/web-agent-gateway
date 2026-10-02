@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  parseExistingBrowserControlEvent,
   parseExistingBrowserControlRequest,
   parseExistingBrowserControlResponse,
   parseExistingBrowserTarget,
@@ -61,6 +62,27 @@ test('existing browser control protocol accepts bounded target and semantic tran
   assert.equal(exec.targetId, 'tab_7');
   assert.equal(exec.cdpMethod, 'DOM.focus');
 
+  const downloadBehavior = parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Browser.setDownloadBehavior',
+    params: { behavior: 'allowAndName', downloadPath: 'C:\\WAG\\capture', eventsEnabled: true },
+  });
+  assert.equal(downloadBehavior.cdpMethod, 'Browser.setDownloadBehavior');
+
+  const event = parseExistingBrowserControlEvent({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Browser.downloadWillBegin',
+    params: { guid: 'download-1', url: 'https://example.test/report.pdf', suggestedFilename: 'report.pdf' },
+  });
+  assert.equal(event.targetId, 'tab_7');
+  assert.equal(event.method, 'Browser.downloadWillBegin');
+
   assert.equal(parseExistingBrowserTarget({
     targetId: 'tab_7',
     windowId: 'window_3',
@@ -88,6 +110,32 @@ test('existing browser control protocol denies raw CDP and malformed target iden
     cdpMethod: 'Runtime.evaluate',
     params: { expression: 'document.cookie' },
   }), /denied/);
+
+  assert.throws(() => parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Browser.setDownloadBehavior',
+    params: { behavior: 'allow', downloadPath: 'C:\\WAG\\capture', eventsEnabled: true },
+  }), /download behavior/);
+
+  assert.throws(() => parseExistingBrowserControlEvent({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Runtime.consoleAPICalled',
+    params: {},
+  }), /download event method/);
+
+  assert.throws(() => parseExistingBrowserControlEvent({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Browser.downloadWillBegin',
+    params: { guid: 'download-1', url: 'https://example.test/report.pdf?token=secret', suggestedFilename: 'report.pdf' },
+  }), /download begin event/);
 
   assert.throws(() => parseExistingBrowserControlRequest({
     version: 1,

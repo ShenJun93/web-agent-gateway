@@ -135,6 +135,72 @@ test('Browser Control WebSocket authenticates exact extension and routes target/
   socket.close();
 });
 
+
+test('Browser Control WebSocket routes only bounded download events to the exact target subscription', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-ws-download-events-'));
+  const port = await freePort();
+  const statePath = join(root, 'pairing.json');
+  const state = await loadOrCreateBrowserControlPairingState(statePath, port);
+  const server = await startBrowserControlWebSocketServer({ statePath, pairingState: state });
+  t.after(async () => {
+    await server.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const socket = new WebSocket(state.endpoint, { headers: { Origin: ORIGIN } });
+  await waitOpen(socket);
+  socket.send(JSON.stringify({ version: 1, type: 'control.hello', pairingToken: state.pairingToken }));
+  assert.equal((await waitMessage(socket)).type, 'control.ready');
+
+  const observed: unknown[] = [];
+  const unsubscribe = server.client.onEvent!(
+    'tab_7',
+    'Browser.downloadProgress',
+    (params) => observed.push(params),
+  );
+
+  socket.send(JSON.stringify({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_8',
+    method: 'Browser.downloadProgress',
+    params: { guid: 'download-1', state: 'completed' },
+  }));
+  socket.send(JSON.stringify({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Runtime.consoleAPICalled',
+    params: {},
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, []);
+
+  socket.send(JSON.stringify({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Browser.downloadProgress',
+    params: { guid: 'download-1', state: 'completed' },
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, [{ guid: 'download-1', state: 'completed' }]);
+
+  unsubscribe();
+  socket.send(JSON.stringify({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Browser.downloadProgress',
+    params: { guid: 'download-2', state: 'completed' },
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(observed.length, 1);
+  const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+  socket.close();
+  await closed;
+});
+
 test('Browser Control WebSocket rejects wrong extension origin before pairing', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'wag-browser-ws-origin-'));
   const port = await freePort();

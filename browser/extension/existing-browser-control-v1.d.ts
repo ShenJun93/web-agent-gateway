@@ -34,6 +34,7 @@ export function createExistingBrowserControlV1(
       detach(target: { tabId: number }): Promise<void>;
       sendCommand(target: { tabId: number }, method: string, params?: unknown): Promise<any>;
       onDetach?: { addListener(listener: (source: { tabId?: number }) => void): void };
+      onEvent?: { addListener(listener: (source: { tabId?: number }, method: string, params: any) => void): void };
     };
   },
   options?: { protocolVersion?: string },
@@ -59,5 +60,6 @@ export function createExistingBrowserControlV1(
   screenshot(tabId: number): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   release(tabId: number): Promise<{ tabId: number; released: boolean }>;
   close(tabId: number): Promise<{ tabId: number; closed: boolean }>;
+  onDownloadEvent(listener: (event: { tabId: number; method: 'Browser.downloadWillBegin' | 'Browser.downloadProgress'; params: Record<string, unknown> }) => void): () => boolean;
   isAttached(tabId: number): boolean;
 };
