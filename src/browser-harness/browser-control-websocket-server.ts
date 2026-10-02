@@ -239,6 +239,9 @@ export async function startBrowserControlWebSocketServer(options: {
       if (value.length > MAX_TARGETS) throw new Error('Browser control target list exceeds limit');
       return Object.freeze(value.map(parseExistingBrowserTarget));
     },
+    async createTarget() {
+      return parseExistingBrowserTarget(await request('target.create'));
+    },
     async watchContinuity(targetId) {
       const value = await request('target.watch', targetId);
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -308,6 +311,13 @@ export async function startBrowserControlWebSocketServer(options: {
       const row = value as Record<string, unknown>;
       if (row.targetId !== targetId || typeof row.released !== 'boolean') throw new Error('Browser release invalid');
       return { targetId, released: row.released };
+    },
+    async closeTarget(targetId) {
+      const value = await request('target.close', targetId);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Browser close invalid');
+      const row = value as Record<string, unknown>;
+      if (row.targetId !== targetId || typeof row.closed !== 'boolean') throw new Error('Browser close invalid');
+      return { targetId, closed: row.closed };
     },
   };
 

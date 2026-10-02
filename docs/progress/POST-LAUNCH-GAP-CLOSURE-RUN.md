@@ -65,14 +65,35 @@ docs/benchmarks/2026-10-02-wag-p1-browser-reliability-v1.md
 
 ### Batch C — P1 product consistency
 
-State: **PENDING**
+State: **LOCAL ACCEPTANCE PASS / PUBLICATION STOP**
 
-Planned scope:
+Scope:
 
 - create a new visible AI-owned tab without borrowing an existing user tab;
 - align `capabilities.describe` Git-push grants with actual autonomous remote policy decisions.
 
+Evidence:
+
+- explicit `AI_TAB_GROUP` without `target_id` creates one inactive WAG-owned tab: PASS;
+- `AUTO` without target remains headless for backward compatibility: PASS;
+- user-existing attached tabs remain detach-only on close: PASS;
+- AI-owned tab restart recovery reuses the same logical session/tab: PASS;
+- terminal close closes the AI-owned tab and close replay remains idempotent: PASS;
+- `target.create` / `target.close` bounded protocol + WebSocket bridge: PASS;
+- autonomous `GIT_PUSH` capability is reported as target-scoped rather than globally granted: PASS;
+- exact allowlisted autonomous push still executes; unmatched target remains fail-closed: PASS;
+- final focused regression: 70/70 PASS;
+- affected-surface regression: 100/100 PASS;
+- supplemental bridge/runtime regression: 3/3 PASS;
+- typecheck/build/diff-check: PASS.
+
+Canonical evidence:
+
+```text
+docs/benchmarks/2026-10-02-wag-p1-product-consistency-v1.md
+```
+
 ## Publication boundary
 
-Batch A+B remain local until their stacked feature branches are explicitly published/reviewed. No
+Batch A+B+C remain local until their stacked feature branches are explicitly published/reviewed. No
 live promotion is performed from this ledger without the normal public-main boundary.

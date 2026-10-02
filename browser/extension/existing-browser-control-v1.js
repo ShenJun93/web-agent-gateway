@@ -58,6 +58,18 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     return rows.map(describeTab);
   }
 
+  async function create() {
+    if (!tabs.create) {
+      throw new ExistingBrowserControlError('TAB_CREATE_UNAVAILABLE', 'Browser tab creation is unavailable');
+    }
+    const tab = await tabs.create({ url: 'about:blank', active: false });
+    if (!Number.isInteger(tab?.id)) {
+      throw new ExistingBrowserControlError('TAB_CREATE_FAILED', 'Browser tab creation returned no tab id');
+    }
+    rememberTab(tab);
+    return describeTab(tab);
+  }
+
   async function watchContinuity(tabId) {
     await getAttachableTab(tabs, tabId);
     const rows = await tabs.query({});
@@ -186,12 +198,29 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     return { tabId, released: true };
   }
 
+  async function close(tabId) {
+    if (!tabs.remove) {
+      throw new ExistingBrowserControlError('TAB_CLOSE_UNAVAILABLE', 'Browser tab close is unavailable');
+    }
+    try {
+      await tabs.get(tabId);
+    } catch {
+      attached.delete(tabId);
+      return { tabId, closed: false };
+    }
+    if (attached.has(tabId)) await release(tabId);
+    await tabs.remove(tabId);
+    attached.delete(tabId);
+    return { tabId, closed: true };
+  }
+
   function isAttached(tabId) {
     return attached.has(tabId);
   }
 
   return {
     listTargets,
+    create,
     watchContinuity,
     resolveContinuity,
     group,
@@ -201,6 +230,7 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     exec,
     screenshot,
     release,
+    close,
     isAttached,
   };
 }
@@ -233,6 +263,7 @@ export function describeExistingBrowserTab(tab) {
 
 function describeTab(tab) {
   const safe = sanitizeUrl(tab?.url);
+  const blank = tab?.url === 'about:blank';
   const id = Number.isInteger(tab?.id) ? tab.id : null;
   return {
     tabId: id,
@@ -241,7 +272,7 @@ function describeTab(tab) {
     url: safe?.url ?? null,
     origin: safe?.origin ?? null,
     active: tab?.active === true,
-    attachable: id !== null && safe !== null,
+    attachable: id !== null && (safe !== null || blank),
     ownership: 'USER_EXISTING',
   };
 }

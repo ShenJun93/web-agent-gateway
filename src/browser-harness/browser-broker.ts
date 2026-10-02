@@ -44,9 +44,9 @@ export function resolveBrowserOpenMode(
   targetId?: string,
 ): BrowserExecutionMode {
   const requested = mode ?? 'AUTO';
-  // AUTO is deterministic and never guesses a tab. Once the caller has selected an exact target
-  // from browser.targets, use the visible AI tab group so the user can observe/take over without
-  // foreground focus or OS-pointer ownership. With no exact target, preserve isolated headless.
+  // AUTO remains backward-compatible: it never borrows or creates a visible browser tab unless
+  // the caller selected an exact target. A caller that wants a fresh visible AI-owned tab asks
+  // for AI_TAB_GROUP without target_id explicitly.
   if (requested === 'AUTO') return targetId === undefined ? 'WAG_HEADLESS' : 'AI_TAB_GROUP';
   return requested;
 }
@@ -83,7 +83,7 @@ export function createBrowserBroker(options: {
           const recovered: RoutedSession = {
             port: options.attached,
             executionMode: handle.executionMode,
-            ownershipMode: 'ATTACHED_EXISTING',
+            ownershipMode: handle.ownershipMode ?? 'ATTACHED_EXISTING',
             controlState: handle.controlState ?? 'RUNNING',
           };
           routes.set(browserSessionId, recovered);
@@ -148,7 +148,7 @@ export function createBrowserBroker(options: {
       const route: RoutedSession = {
         port: options.attached,
         executionMode: handle.executionMode,
-        ownershipMode: 'ATTACHED_EXISTING',
+        ownershipMode: handle.ownershipMode ?? 'ATTACHED_EXISTING',
         controlState: handle.controlState ?? 'RUNNING',
       };
       routes.set(browserSessionId, route);
@@ -162,7 +162,7 @@ export function createBrowserBroker(options: {
       const route: RoutedSession = {
         port: selected.port,
         executionMode,
-        ownershipMode: selected.ownershipMode,
+        ownershipMode: handle.ownershipMode ?? selected.ownershipMode,
         controlState: 'RUNNING',
       };
       routes.set(handle.browserSessionId, route);

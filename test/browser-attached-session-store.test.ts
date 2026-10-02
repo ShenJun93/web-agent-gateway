@@ -36,6 +36,7 @@ function record(state: DurableAttachedBrowserSession['state'] = 'ACTIVE'): Durab
     claimExpiresAt: 20_000,
     groupId: 'group_9',
     groupTitle: 'WAG • OAuth',
+    aiOwned: false,
     claims: new Map([['tab_7', 1], ['tab_8', 2]]),
     groupedTargets: new Set(['tab_7', 'tab_8']),
     createdAt: 1_000,

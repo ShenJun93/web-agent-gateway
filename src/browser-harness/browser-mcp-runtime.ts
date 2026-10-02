@@ -404,7 +404,7 @@ export function createPrivateBrowserMcpContext(options: {
           actionType: 'recover',
           browserSessionId,
           targetId: durable.targetId,
-          ownershipMode: 'ATTACHED_EXISTING',
+          ownershipMode: durable.aiOwned ? 'WAG_OWNED' : 'ATTACHED_EXISTING',
           recovered: true,
         });
         try {
@@ -454,8 +454,8 @@ export function createPrivateBrowserMcpContext(options: {
     async open(profileId, mode, targetId, groupTitle) {
       assertEffectAllowed();
       const resolvedMode = resolveBrowserOpenMode(mode, targetId);
-      if ((resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP') && !targetId) {
-        throw new Error(resolvedMode + ' requires target_id');
+      if (resolvedMode === 'ATTACH_EXISTING' && !targetId) {
+        throw new Error('ATTACH_EXISTING requires target_id');
       }
       const key = profileKey(resolvedMode, profileId, targetId);
       const existing = byProfile.get(key);
@@ -471,24 +471,28 @@ export function createPrivateBrowserMcpContext(options: {
         }
       }
       if ((resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP')
-          && targetId !== undefined && broker && attachedSessions) {
-        const durable = attachedSessions.findRecoverable(
-          options.owner,
-          profileId,
-          resolvedMode,
-          targetId,
-        ) ?? attachedSessions.findRecoverableByTarget(
-          options.owner,
-          resolvedMode,
-          targetId,
-        );
+          && broker && attachedSessions) {
+        const durable = targetId === undefined && resolvedMode === 'AI_TAB_GROUP'
+          ? attachedSessions.findRecoverableOwned(options.owner, profileId)
+          : targetId === undefined
+            ? undefined
+            : attachedSessions.findRecoverable(
+              options.owner,
+              profileId,
+              resolvedMode,
+              targetId,
+            ) ?? attachedSessions.findRecoverableByTarget(
+              options.owner,
+              resolvedMode,
+              targetId,
+            );
         if (durable) {
           assertSessionCapacity(durable.browserSessionId);
           const finish = diagnostics.begin({
             actionType: 'recover',
             browserSessionId: durable.browserSessionId,
             targetId: durable.targetId,
-            ownershipMode: 'ATTACHED_EXISTING',
+            ownershipMode: durable.aiOwned ? 'WAG_OWNED' : 'ATTACHED_EXISTING',
             recovered: true,
           });
           try {
@@ -512,7 +516,8 @@ export function createPrivateBrowserMcpContext(options: {
       const finish = diagnostics.begin({
         actionType: 'open',
         targetId,
-        ownershipMode: resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP'
+        ownershipMode: resolvedMode === 'ATTACH_EXISTING'
+          || (resolvedMode === 'AI_TAB_GROUP' && targetId !== undefined)
           ? 'ATTACHED_EXISTING'
           : 'WAG_OWNED',
       });
@@ -897,7 +902,7 @@ export function createPrivateBrowserMcpContext(options: {
             owner: durable.owner,
             backend: 'cdp',
             executionMode: durable.executionMode,
-            ownershipMode: 'ATTACHED_EXISTING',
+            ownershipMode: durable.aiOwned ? 'WAG_OWNED' : 'ATTACHED_EXISTING',
             controlState: 'STOPPED',
             rootTargetId: durable.rootTargetId,
             targetId: durable.targetId,

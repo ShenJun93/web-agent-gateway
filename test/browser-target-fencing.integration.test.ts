@@ -47,6 +47,7 @@ test('successor epoch fences stale exec and stale close before browser transport
   });
 
   const control: ExistingBrowserControlClient = {
+    async createTarget() { return target('tab_9'); },
     async watchContinuity(id) { calls.push(['watch', id]); return { targetId: id, baselineSequence: 0 }; },
     async resolveContinuity(rootId, currentId) { calls.push(['continuity', rootId, currentId]); return { sequence: 0, reason: 'NO_CHANGE', target: null }; },
     async listTargets() { return [target('tab_7'), target('tab_8')]; },
@@ -75,6 +76,11 @@ test('successor epoch fences stale exec and stale close before browser transport
       calls.push(['release', id]);
       const released = attached.delete(id);
       return { targetId: id, released };
+    },
+    async closeTarget(id) {
+      calls.push(['close', id]);
+      attached.delete(id);
+      return { targetId: id, closed: true };
     },
   };
 

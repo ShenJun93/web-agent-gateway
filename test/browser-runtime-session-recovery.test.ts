@@ -29,6 +29,7 @@ function controlFixture(): ExistingBrowserControlClient & { attached(): boolean 
   });
   return {
     attached: () => isAttached,
+    async createTarget() { return { ...target(), targetId: 'tab_8' }; },
     async watchContinuity(targetId) {
       return { targetId, baselineSequence: 0 };
     },
@@ -59,6 +60,10 @@ function controlFixture(): ExistingBrowserControlClient & { attached(): boolean 
       const released = isAttached;
       isAttached = false;
       return { targetId, released };
+    },
+    async closeTarget(targetId) {
+      isAttached = false;
+      return { targetId, closed: true };
     },
   };
 }
@@ -155,6 +160,50 @@ test('graceful runtime restart recovers the same logical browser session at a fr
   const oldEffect = await second.effect(effect.effectId);
   assert.equal(oldEffect.state, 'SUCCEEDED');
   assert.equal(oldEffect.effectId, effect.effectId);
+});
+
+test('AI_TAB_GROUP without target recovers the same AI-owned tab across restart and closes only on terminal close', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-runtime-owned-recovery-'));
+  const base = controlFixture();
+  let createCalls = 0;
+  const closedTargets: string[] = [];
+  const control: ExistingBrowserControlClient & { attached(): boolean } = {
+    ...base,
+    async createTarget() {
+      createCalls += 1;
+      return base.createTarget();
+    },
+    async closeTarget(targetId) {
+      closedTargets.push(targetId);
+      return base.closeTarget(targetId);
+    },
+  };
+  const first = runtime(root, control);
+  let second: ReturnType<typeof runtime> | undefined;
+  t.after(async () => {
+    await first.closeAll().catch(() => undefined);
+    await second?.closeAll().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const opened = await first.open('owned-visible', 'AI_TAB_GROUP');
+  assert.equal(opened.executionMode, 'AI_TAB_GROUP');
+  assert.equal(opened.ownershipMode, 'WAG_OWNED');
+  assert.equal(opened.rootTargetId, 'tab_8');
+  assert.equal(createCalls, 1);
+
+  await first.suspendForRestart();
+  assert.equal(closedTargets.length, 0, 'restart suspension must preserve the WAG-owned tab');
+
+  second = runtime(root, control);
+  const recovered = await second.open('owned-visible', 'AI_TAB_GROUP');
+  assert.equal(recovered.browserSessionId, opened.browserSessionId);
+  assert.equal(recovered.ownershipMode, 'WAG_OWNED');
+  assert.equal(recovered.rootTargetId, 'tab_8');
+  assert.equal(createCalls, 1, 'durable recovery must not create another browser tab');
+
+  await second.close(opened.browserSessionId);
+  assert.deepEqual(closedTargets, ['tab_8']);
 });
 
 test('runtime closeAll is terminal rather than recoverable', async (t) => {

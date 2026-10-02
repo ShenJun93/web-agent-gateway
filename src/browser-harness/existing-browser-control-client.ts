@@ -31,6 +31,7 @@ export function defaultExistingBrowserControlDiscoveryPath(
 
 export interface ExistingBrowserControlClient {
   listTargets(): Promise<readonly ExistingBrowserTarget[]>;
+  createTarget(): Promise<ExistingBrowserTarget>;
   watchContinuity(targetId: string): Promise<{ targetId: string; baselineSequence: number }>;
   resolveContinuity(rootTargetId: string, currentTargetId: string): Promise<{
     sequence: number;
@@ -43,6 +44,7 @@ export interface ExistingBrowserControlClient {
   exec(targetId: string, method: string, params?: Readonly<Record<string, unknown>>): Promise<unknown>;
   screenshot(targetId: string): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   release(targetId: string): Promise<{ targetId: string; released: boolean }>;
+  closeTarget(targetId: string): Promise<{ targetId: string; closed: boolean }>;
 }
 
 export function createExistingBrowserControlClient(options: {
@@ -79,6 +81,9 @@ export function createExistingBrowserControlClient(options: {
       const value = await call('targets.list');
       if (!Array.isArray(value)) throw new Error('Browser control target list is invalid');
       return Object.freeze(value.map(parseExistingBrowserTarget));
+    },
+    async createTarget() {
+      return parseExistingBrowserTarget(await call('target.create'));
     },
     async watchContinuity(targetId) {
       const value = await call('target.watch', targetId);
@@ -148,6 +153,17 @@ export function createExistingBrowserControlClient(options: {
         throw new Error('Browser control release response is invalid');
       }
       return { targetId, released: row.released };
+    },
+    async closeTarget(targetId) {
+      const value = await call('target.close', targetId);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Browser control close response is invalid');
+      }
+      const row = value as Record<string, unknown>;
+      if (row.targetId !== targetId || typeof row.closed !== 'boolean') {
+        throw new Error('Browser control close response is invalid');
+      }
+      return { targetId, closed: row.closed };
     },
   };
 }

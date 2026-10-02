@@ -46,6 +46,8 @@ export function createNativeBrowserControlV1({ connectNative, control }) {
     switch (request.method) {
       case 'targets.list':
         return result(request.requestId, (await control.listTargets()).map((target) => normalizeTarget(target, control)));
+      case 'target.create':
+        return result(request.requestId, normalizeTarget(await control.create(), control));
       case 'target.group': {
         const id = tabId(request.targetId);
         const grouped = await control.group(id, request.groupTitle);
@@ -88,6 +90,11 @@ export function createNativeBrowserControlV1({ connectNative, control }) {
         const released = await control.release(id);
         return result(request.requestId, { targetId: request.targetId, released: released.released === true });
       }
+      case 'target.close': {
+        const id = tabId(request.targetId);
+        const closed = await control.close(id);
+        return result(request.requestId, { targetId: request.targetId, closed: closed.closed === true });
+      }
       case 'target.screenshot':
         return result(request.requestId, await control.screenshot(tabId(request.targetId)));
       case 'target.exec':
@@ -110,7 +117,7 @@ function parseRequest(value) {
     throw new Error('Invalid existing browser control request');
   }
   const method = value.method;
-  if (method === 'targets.list') {
+  if (method === 'targets.list' || method === 'target.create') {
     return { version: VERSION, type: 'control.request', requestId: value.requestId, method };
   }
   if (!TARGET_ID.test(value.targetId ?? '')) throw new Error('Invalid existing browser target id');
@@ -146,7 +153,7 @@ function parseRequest(value) {
     }
     return { ...value };
   }
-  if (!['target.attach', 'target.describe', 'target.screenshot', 'target.release'].includes(method)) {
+  if (!['target.attach', 'target.describe', 'target.screenshot', 'target.release', 'target.close'].includes(method)) {
     throw new Error('Invalid existing browser control method');
   }
   return { version: VERSION, type: 'control.request', requestId: value.requestId, method, targetId: value.targetId };

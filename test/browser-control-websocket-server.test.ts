@@ -70,6 +70,14 @@ test('Browser Control WebSocket authenticates exact extension and routes target/
         url: 'https://example.test/', origin: 'https://example.test',
         active: false, attachable: true, ownership: 'USER_EXISTING', attached: false,
       }];
+    } else if (request.method === 'target.create') {
+      result = {
+        targetId: 'tab_9', windowId: 'window_3', title: 'New tab',
+        url: null, origin: null,
+        active: false, attachable: true, ownership: 'USER_EXISTING', attached: false,
+      };
+    } else if (request.method === 'target.close') {
+      result = { targetId: request.targetId, closed: true };
     } else if (request.method === 'target.group') {
       result = {
         targetId: request.targetId,
@@ -99,6 +107,11 @@ test('Browser Control WebSocket authenticates exact extension and routes target/
 
   const targets = await server.client.listTargets();
   assert.equal(targets[0]?.targetId, 'tab_7');
+  assert.equal((await server.client.createTarget()).targetId, 'tab_9');
+  assert.deepEqual(
+    await server.client.closeTarget('tab_9'),
+    { targetId: 'tab_9', closed: true },
+  );
   assert.deepEqual(
     await server.client.groupTarget('tab_7', 'WAG • Test'),
     { targetId: 'tab_7', groupId: 'group_9', groupTitle: 'WAG • Test', activeStable: true },

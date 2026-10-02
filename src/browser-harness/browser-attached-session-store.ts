@@ -22,6 +22,7 @@ export interface DurableAttachedBrowserSession {
   readonly claimExpiresAt: number;
   readonly groupId?: string;
   readonly groupTitle?: string;
+  readonly aiOwned: boolean;
   readonly claims: ReadonlyMap<string, number>;
   readonly groupedTargets: ReadonlySet<string>;
   readonly createdAt: number;
@@ -44,6 +45,7 @@ interface SessionRow {
   claim_expires_at: number;
   group_id: string | null;
   group_title: string | null;
+  ai_owned: number;
   claims_json: string;
   grouped_targets_json: string;
   created_at: number;
@@ -119,6 +121,7 @@ function view(row: SessionRow): DurableAttachedBrowserSession {
     claimExpiresAt: Number(row.claim_expires_at),
     ...(row.group_id === null ? {} : { groupId: row.group_id }),
     ...(row.group_title === null ? {} : { groupTitle: row.group_title }),
+    aiOwned: row.ai_owned === 1,
     claims,
     groupedTargets,
     createdAt: Number(row.created_at),
@@ -152,6 +155,7 @@ export class BrowserAttachedSessionStore {
         claim_expires_at INTEGER NOT NULL,
         group_id TEXT,
         group_title TEXT,
+        ai_owned INTEGER NOT NULL DEFAULT 0 CHECK (ai_owned IN (0,1)),
         claims_json TEXT NOT NULL,
         grouped_targets_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
@@ -163,6 +167,12 @@ export class BrowserAttachedSessionStore {
       CREATE INDEX IF NOT EXISTS browser_attached_session_target_idx
         ON browser_attached_sessions(target_id, state);
     `);
+    const columns = this.#db.prepare('PRAGMA table_info(browser_attached_sessions)').all() as { name: string }[];
+    if (!columns.some((column) => column.name === 'ai_owned')) {
+      this.#db.exec(
+        'ALTER TABLE browser_attached_sessions ADD COLUMN ai_owned INTEGER NOT NULL DEFAULT 0 CHECK (ai_owned IN (0,1))',
+      );
+    }
   }
 
   close(): void {
@@ -179,6 +189,7 @@ export class BrowserAttachedSessionStore {
         || !Number.isInteger(value.claimEpoch) || value.claimEpoch < 1
         || !Number.isInteger(value.claimExpiresAt)
         || !Number.isInteger(value.createdAt) || !Number.isInteger(value.lastSeenAt)
+        || typeof value.aiOwned !== 'boolean'
         || value.claims.size < 1 || value.claims.size > MAX_CLAIMS
         || value.groupedTargets.size > MAX_CLAIMS
         || (value.groupTitle !== undefined && value.groupTitle.length > MAX_GROUP_TITLE)) {
@@ -203,9 +214,9 @@ export class BrowserAttachedSessionStore {
       INSERT INTO browser_attached_sessions (
         browser_session_id, profile_id, owner_id, session_id, adapter_id,
         execution_mode, control_state, root_target_id, target_id, target_generation,
-        claim_epoch, claim_expires_at, group_id, group_title, claims_json,
+        claim_epoch, claim_expires_at, group_id, group_title, ai_owned, claims_json,
         grouped_targets_json, created_at, last_seen_at, state
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(browser_session_id) DO UPDATE SET
         profile_id = excluded.profile_id,
         owner_id = excluded.owner_id,
@@ -220,6 +231,7 @@ export class BrowserAttachedSessionStore {
         claim_expires_at = excluded.claim_expires_at,
         group_id = excluded.group_id,
         group_title = excluded.group_title,
+        ai_owned = excluded.ai_owned,
         claims_json = excluded.claims_json,
         grouped_targets_json = excluded.grouped_targets_json,
         last_seen_at = excluded.last_seen_at,
@@ -239,6 +251,7 @@ export class BrowserAttachedSessionStore {
       value.claimExpiresAt,
       value.groupId ?? null,
       value.groupTitle ?? null,
+      value.aiOwned ? 1 : 0,
       JSON.stringify(claims),
       JSON.stringify(groupedTargets),
       value.createdAt,
@@ -290,6 +303,27 @@ export class BrowserAttachedSessionStore {
       profileId,
       executionMode,
       rootTargetId,
+    ) as SessionRow | undefined;
+    return row ? view(row) : undefined;
+  }
+
+  findRecoverableOwned(
+    owner: GatewayAuthority,
+    profileId: string,
+  ): DurableAttachedBrowserSession | undefined {
+    this.#assertOpen();
+    const row = this.#db.prepare(`
+      SELECT * FROM browser_attached_sessions
+      WHERE owner_id = ? AND session_id = ? AND adapter_id = ?
+        AND profile_id = ? AND execution_mode = 'AI_TAB_GROUP' AND ai_owned = 1
+        AND state IN ('ACTIVE','RECOVERABLE')
+      ORDER BY last_seen_at DESC
+      LIMIT 1
+    `).get(
+      owner.ownerId,
+      owner.sessionId,
+      owner.adapterId,
+      profileId,
     ) as SessionRow | undefined;
     return row ? view(row) : undefined;
   }
