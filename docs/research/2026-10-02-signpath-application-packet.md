@@ -20,7 +20,7 @@ Download/release evidence:
 - immutable unsigned preview:
   `https://github.com/ShenJun93/web-agent-gateway/releases/tag/v0.1.0-preview.1`
 - release tag target: `c1eb195f54864dee1a8997c9baeb0475ce627da6`
-- current main: `4645aeef1edd21b6193b31029b74a94f85ee0438`
+- current main: `bb9cffd3ad89b5f67955b48be59b53d0c13019d4`
 
 The preview URL is valid released-form evidence but its binary is not the current-main signing
 candidate.
@@ -65,20 +65,21 @@ This is disclosure, not a claim of broad reputation.
 ## Current-main build evidence
 
 Source:
-`4645aeef1edd21b6193b31029b74a94f85ee0438`
+`bb9cffd3ad89b5f67955b48be59b53d0c13019d4`
 
 GitHub Actions:
 - workflow: `Native Host Distribution`
-- run: `36916880632` / run number `107`
+- run: `36944044667` / run number `110`
 - conclusion: `SUCCESS`
 
 Current unexpired evidence:
-- signing-input artifact ID `11190685060`
-- candidate-evidence artifact ID `11189244843`
-- verified distribution artifact ID `11189624852`
+- signing-input artifact ID `11201696202`
+- candidate-evidence artifact ID `11201725978`
+- verified distribution artifact ID `11201656390`
 
-The old `preview.1` candidate at `c1eb195f` is not continuous with current main because multiple
-`NATIVE_HOST_BUILD_INPUTS` changed.
+Candidate continuity from `4645aeef` to current main is PASS: an exact diff restricted to
+`NATIVE_HOST_BUILD_INPUTS` is empty. The old `preview.1` candidate at `c1eb195f` is still not
+continuous with current main because multiple native-host build inputs changed before `4645aeef`.
 
 ## Provider question — Node SEA
 
