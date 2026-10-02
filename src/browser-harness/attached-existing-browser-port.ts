@@ -23,6 +23,7 @@ interface AttachedSession {
   targetGeneration: number;
   claims: Map<string, number>;
   groupedTargets: Set<string>;
+  aiOwned: boolean;
   detached: boolean;
 }
 
@@ -75,6 +76,7 @@ export function createAttachedExistingBrowserPort(options: {
       claimExpiresAt: session.handle.claimExpiresAt ?? now(),
       ...(session.handle.groupId === undefined ? {} : { groupId: session.handle.groupId }),
       ...(session.handle.groupTitle === undefined ? {} : { groupTitle: session.handle.groupTitle }),
+      aiOwned: session.aiOwned,
       claims: session.claims,
       groupedTargets: session.groupedTargets,
       createdAt: session.handle.createdAt,
@@ -278,7 +280,7 @@ export function createAttachedExistingBrowserPort(options: {
         owner: Object.freeze({ ...owner }),
         backend: 'cdp',
         executionMode: stored.executionMode,
-        ownershipMode: 'ATTACHED_EXISTING',
+        ownershipMode: stored.aiOwned ? 'WAG_OWNED' : 'ATTACHED_EXISTING',
         controlState,
         rootTargetId: stored.rootTargetId,
         targetId: stored.targetId,
@@ -299,6 +301,7 @@ export function createAttachedExistingBrowserPort(options: {
         targetGeneration: stored.targetGeneration,
         claims: recoveredClaims,
         groupedTargets,
+        aiOwned: stored.aiOwned,
         detached: false,
       };
       sessions.set(browserSessionId, session);
@@ -340,85 +343,109 @@ export function createAttachedExistingBrowserPort(options: {
       if (request.mode !== 'ATTACH_EXISTING' && request.mode !== 'AI_TAB_GROUP') {
         throw new Error('Attached existing browser port requires ATTACH_EXISTING or AI_TAB_GROUP');
       }
-      if (typeof request.targetId !== 'string' || !TARGET_ID.test(request.targetId)) {
-        throw new Error(request.mode + ' requires an exact target id');
+      if (request.mode === 'ATTACH_EXISTING'
+          && (typeof request.targetId !== 'string' || !TARGET_ID.test(request.targetId))) {
+        throw new Error('ATTACH_EXISTING requires an exact target id');
+      }
+      if (request.targetId !== undefined && !TARGET_ID.test(request.targetId)) {
+        throw new Error('Browser target id is invalid');
       }
 
+      const aiOwned = request.mode === 'AI_TAB_GROUP' && request.targetId === undefined;
+      let targetId = request.targetId;
+      if (aiOwned) {
+        const created = await options.control.createTarget();
+        if (!TARGET_ID.test(created.targetId) || !created.attachable) {
+          if (TARGET_ID.test(created.targetId)) {
+            await options.control.closeTarget(created.targetId).catch(() => undefined);
+          }
+          throw new Error('AI-owned browser target creation failed');
+        }
+        targetId = created.targetId;
+      }
+      if (targetId === undefined) throw new Error('Browser target id is unavailable');
+
       const browserSessionId = `browser_${uuid()}`;
-      const claim = options.claims.claim(
-        request.owner,
-        request.targetId,
-        browserSessionId,
-      );
-      let attached = false;
-
       try {
-        const grouped = request.mode === 'AI_TAB_GROUP'
-          ? await options.control.groupTarget(
-            request.targetId,
-            request.groupTitle ?? `WAG • ${request.profileId}`,
-          )
-          : undefined;
-        if (grouped && !grouped.activeStable) {
-          throw new Error('AI tab grouping changed the active browser tab');
-        }
-
-        const target = await options.control.attach(request.targetId);
-        attached = true;
-        if (!target.attachable || !target.attached) {
-          throw new Error('Existing browser target could not be attached');
-        }
-        await options.control.watchContinuity(request.targetId);
-
-        const createdAt = now();
-        const handle: BrowserSessionHandle = Object.freeze({
+        const claim = options.claims.claim(
+          request.owner,
+          targetId,
           browserSessionId,
-          profileId: request.profileId,
-          owner: Object.freeze({ ...request.owner }),
-          backend: 'cdp',
-          executionMode: request.mode,
-          ownershipMode: 'ATTACHED_EXISTING',
-          controlState: 'RUNNING',
-          rootTargetId: request.targetId,
-          targetId: request.targetId,
-          targetGeneration: 0,
-          claimEpoch: claim.claimEpoch,
-          claimExpiresAt: claim.expiresAt,
-          ...(grouped === undefined ? {} : {
-            groupId: grouped.groupId,
-            groupTitle: grouped.groupTitle,
-          }),
-          createdAt,
-          lastSeenAt: createdAt,
-          state: 'ACTIVE',
-        });
-        const session: AttachedSession = {
-          handle,
-          rootTargetId: request.targetId,
-          targetId: request.targetId,
-          claimEpoch: claim.claimEpoch,
-          targetGeneration: 0,
-          claims: new Map([[request.targetId, claim.claimEpoch]]),
-          groupedTargets: new Set(grouped === undefined ? [] : [request.targetId]),
-          detached: false,
-        };
-        sessions.set(browserSessionId, session);
-        persist(session);
-        return clone(handle);
-      } catch (error) {
-        if (attached) {
-          await options.control.release(request.targetId).catch(() => undefined);
-        }
+        );
+        let attached = false;
+
         try {
-          options.claims.release(
-            request.owner,
-            request.targetId,
+          const grouped = request.mode === 'AI_TAB_GROUP'
+            ? await options.control.groupTarget(
+              targetId,
+              request.groupTitle ?? `WAG • ${request.profileId}`,
+            )
+            : undefined;
+          if (grouped && !grouped.activeStable) {
+            throw new Error('AI tab grouping changed the active browser tab');
+          }
+
+          const target = await options.control.attach(targetId);
+          attached = true;
+          if (!target.attachable || !target.attached) {
+            throw new Error('Existing browser target could not be attached');
+          }
+          await options.control.watchContinuity(targetId);
+
+          const createdAt = now();
+          const handle: BrowserSessionHandle = Object.freeze({
             browserSessionId,
-            claim.claimEpoch,
-          );
-        } catch {
-          // Preserve the original open failure. The short claim lease will expire safely.
+            profileId: request.profileId,
+            owner: Object.freeze({ ...request.owner }),
+            backend: 'cdp',
+            executionMode: request.mode,
+            ownershipMode: aiOwned ? 'WAG_OWNED' : 'ATTACHED_EXISTING',
+            controlState: 'RUNNING',
+            rootTargetId: targetId,
+            targetId,
+            targetGeneration: 0,
+            claimEpoch: claim.claimEpoch,
+            claimExpiresAt: claim.expiresAt,
+            ...(grouped === undefined ? {} : {
+              groupId: grouped.groupId,
+              groupTitle: grouped.groupTitle,
+            }),
+            createdAt,
+            lastSeenAt: createdAt,
+            state: 'ACTIVE',
+          });
+          const session: AttachedSession = {
+            handle,
+            rootTargetId: targetId,
+            targetId,
+            claimEpoch: claim.claimEpoch,
+            targetGeneration: 0,
+            claims: new Map([[targetId, claim.claimEpoch]]),
+            groupedTargets: new Set(grouped === undefined ? [] : [targetId]),
+            aiOwned,
+            detached: false,
+          };
+          sessions.set(browserSessionId, session);
+          persist(session);
+          return clone(handle);
+        } catch (error) {
+          if (attached) {
+            await options.control.release(targetId).catch(() => undefined);
+          }
+          try {
+            options.claims.release(
+              request.owner,
+              targetId,
+              browserSessionId,
+              claim.claimEpoch,
+            );
+          } catch {
+            // Preserve the original open failure. The short claim lease will expire safely.
+          }
+          throw error;
         }
+      } catch (error) {
+        if (aiOwned) await options.control.closeTarget(targetId).catch(() => undefined);
         throw error;
       }
     },
@@ -483,6 +510,22 @@ export function createAttachedExistingBrowserPort(options: {
         try {
           await options.control.release(session.targetId);
           session.detached = true;
+        } catch (error) {
+          session.handle = Object.freeze({
+            ...session.handle,
+            state: 'CLOSING',
+            lastSeenAt: now(),
+          });
+          persist(session, 'ACTIVE');
+          throw error;
+        }
+      }
+
+      if (session.aiOwned) {
+        try {
+          for (const targetId of session.claims.keys()) {
+            await options.control.closeTarget(targetId);
+          }
         } catch (error) {
           session.handle = Object.freeze({
             ...session.handle,

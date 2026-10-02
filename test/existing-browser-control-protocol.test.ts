@@ -13,6 +13,12 @@ test('existing browser control protocol accepts bounded target and semantic tran
   assert.equal(parseExistingBrowserControlRequest({
     version: 1, type: 'control.request', requestId: ID, method: 'targets.list',
   }).method, 'targets.list');
+  assert.equal(parseExistingBrowserControlRequest({
+    version: 1, type: 'control.request', requestId: ID, method: 'target.create',
+  }).method, 'target.create');
+  assert.equal(parseExistingBrowserControlRequest({
+    version: 1, type: 'control.request', requestId: ID, method: 'target.close', targetId: 'tab_7',
+  }).method, 'target.close');
 
   const grouped = parseExistingBrowserControlRequest({
     version: 1,

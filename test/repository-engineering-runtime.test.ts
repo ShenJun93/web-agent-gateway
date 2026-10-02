@@ -497,11 +497,11 @@ test('autonomous remote Git push policy removes per-push Human authority for con
       };
     };
     assert.deepEqual(authority.capabilities.GIT_PUSH, {
-      granted: true,
-      denied: false,
+      granted: false,
+      denied: true,
       grantable: true,
       requires_human: false,
-      reason: 'AUTONOMOUS_REMOTE_POLICY',
+      reason: 'AUTONOMOUS_REMOTE_POLICY_TARGET_SCOPED',
     });
   } finally {
     await runtime.close();

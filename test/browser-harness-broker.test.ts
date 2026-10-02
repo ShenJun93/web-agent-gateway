@@ -33,7 +33,8 @@ function portFixture(mode: BrowserExecutionMode, suffix: string) {
         owner: request.owner,
         backend: 'cdp',
         executionMode: mode,
-        ownershipMode: mode === 'ATTACH_EXISTING' || mode === 'AI_TAB_GROUP'
+        ownershipMode: mode === 'ATTACH_EXISTING'
+          || (mode === 'AI_TAB_GROUP' && request.targetId !== undefined)
           ? 'ATTACHED_EXISTING' : 'WAG_OWNED',
         controlState: 'RUNNING',
         createdAt: 1,
@@ -70,7 +71,7 @@ function portFixture(mode: BrowserExecutionMode, suffix: string) {
   return { port, calls };
 }
 
-test('BrowserBroker AUTO uses headless without a target and AI tab group for an exact target', async () => {
+test('BrowserBroker AUTO stays headless without a target and uses AI tab group for an exact target', async () => {
   const headless = portFixture('WAG_HEADLESS', '1');
   const visible = portFixture('WAG_VISIBLE', '2');
   const attached = portFixture('AI_TAB_GROUP', '3');

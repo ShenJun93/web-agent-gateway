@@ -3,6 +3,7 @@ export const EXISTING_BROWSER_CONTROL_MAX_BYTES = 256 * 1024;
 
 export type ExistingBrowserControlMethod =
   | 'targets.list'
+  | 'target.create'
   | 'target.group'
   | 'target.watch'
   | 'target.continuity'
@@ -10,7 +11,8 @@ export type ExistingBrowserControlMethod =
   | 'target.describe'
   | 'target.exec'
   | 'target.screenshot'
-  | 'target.release';
+  | 'target.release'
+  | 'target.close';
 
 export interface ExistingBrowserTarget {
   targetId: string;
@@ -87,20 +89,21 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
     throw new Error('Invalid existing browser control request id');
   }
   const methods: ExistingBrowserControlMethod[] = [
-    'targets.list', 'target.group', 'target.watch', 'target.continuity', 'target.attach', 'target.describe', 'target.exec', 'target.screenshot', 'target.release',
+    'targets.list', 'target.create', 'target.group', 'target.watch', 'target.continuity',
+    'target.attach', 'target.describe', 'target.exec', 'target.screenshot', 'target.release', 'target.close',
   ];
   if (!methods.includes(row.method as ExistingBrowserControlMethod)) {
     throw new Error('Invalid existing browser control method');
   }
   const method = row.method as ExistingBrowserControlMethod;
-  if (method === 'targets.list') {
+  if (method === 'targets.list' || method === 'target.create') {
     if (row.targetId !== undefined || row.currentTargetId !== undefined || row.groupTitle !== undefined || row.cdpMethod !== undefined || row.params !== undefined) {
-      throw new Error('Invalid existing browser target list request');
+      throw new Error(method === 'targets.list'
+        ? 'Invalid existing browser target list request'
+        : 'Invalid existing browser target create request');
     }
-  } else {
-    if (typeof row.targetId !== 'string' || !TARGET_ID.test(row.targetId)) {
-      throw new Error('Invalid existing browser target id');
-    }
+  } else if (typeof row.targetId !== 'string' || !TARGET_ID.test(row.targetId)) {
+    throw new Error('Invalid existing browser target id');
   }
   if (method === 'target.continuity') {
     if (typeof row.currentTargetId !== 'string' || !TARGET_ID.test(row.currentTargetId)) {

@@ -26,6 +26,7 @@ test('native browser control routes bounded target operations over one native po
   };
   const control = {
     async listTargets() { calls.push(['list']); return [target]; },
+    async create() { calls.push(['create']); return { ...target, tabId: 8, title: 'WAG' }; },
     async watchContinuity(tabId: number) { calls.push(['watch', tabId]); return { tabId, baselineSequence: 0 }; },
     async resolveContinuity(rootTabId: number, currentTabId: number) { calls.push(['continuity', rootTabId, currentTabId]); return { sequence: 0, reason: 'NO_CHANGE', target: null }; },
     async group(tabId: number, title = 'WAG • AI') { calls.push(['group', tabId, title]); return { tabId, groupId: 9, groupTitle: title, activeStable: true }; },
@@ -37,6 +38,7 @@ test('native browser control routes bounded target operations over one native po
     },
     async screenshot(tabId: number) { calls.push(['screenshot', tabId]); return { mimeType: 'image/png' as const, dataBase64: 'cG5n' }; },
     async release(tabId: number) { calls.push(['release', tabId]); const released = attached.delete(tabId); return { tabId, released }; },
+    async close(tabId: number) { calls.push(['close', tabId]); attached.delete(tabId); return { tabId, closed: true }; },
     isAttached(tabId: number) { return attached.has(tabId); },
   };
 
@@ -57,23 +59,31 @@ test('native browser control routes bounded target operations over one native po
     active: false, attachable: true, ownership: 'USER_EXISTING', attached: false,
   });
 
-  port.onMessage.emit(request(2, 'target.attach', { targetId: 'tab_7' }));
+  port.onMessage.emit(request(2, 'target.create'));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal((port.messages[1] as any).result.attached, true);
+  assert.equal((port.messages[1] as any).result.targetId, 'tab_8');
 
-  port.onMessage.emit(request(3, 'target.exec', {
+  port.onMessage.emit(request(3, 'target.close', { targetId: 'tab_8' }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((port.messages[2] as any).result.closed, true);
+
+  port.onMessage.emit(request(4, 'target.attach', { targetId: 'tab_7' }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((port.messages[3] as any).result.attached, true);
+
+  port.onMessage.emit(request(5, 'target.exec', {
     targetId: 'tab_7', cdpMethod: 'Accessibility.getFullAXTree',
   }));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual((port.messages[2] as any).result, { nodes: [] });
+  assert.deepEqual((port.messages[4] as any).result, { nodes: [] });
 
-  port.onMessage.emit(request(4, 'target.screenshot', { targetId: 'tab_7' }));
+  port.onMessage.emit(request(6, 'target.screenshot', { targetId: 'tab_7' }));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal((port.messages[3] as any).result.dataBase64, 'cG5n');
+  assert.equal((port.messages[5] as any).result.dataBase64, 'cG5n');
 
-  port.onMessage.emit(request(5, 'target.release', { targetId: 'tab_7' }));
+  port.onMessage.emit(request(7, 'target.release', { targetId: 'tab_7' }));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal((port.messages[4] as any).result.released, true);
+  assert.equal((port.messages[6] as any).result.released, true);
   assert.ok(calls.some((row) => row[0] === 'exec'));
 });
 
@@ -84,6 +94,7 @@ test('native browser control rejects arbitrary Runtime.evaluate before control d
     connectNative: () => port as never,
     control: {
       async listTargets() { return []; },
+      async create() { return {}; },
       async watchContinuity(tabId: number) { return { tabId, baselineSequence: 0 }; },
       async resolveContinuity() { return { sequence: 0, reason: 'NO_CHANGE', target: null }; },
       async group(tabId: number, title = 'WAG • AI') { return { tabId, groupId: 9, groupTitle: title, activeStable: true }; },
@@ -92,6 +103,7 @@ test('native browser control rejects arbitrary Runtime.evaluate before control d
       async exec() { execCalled = true; return {}; },
       async screenshot() { return { mimeType: 'image/png' as const, dataBase64: '' }; },
       async release(tabId: number) { return { tabId, released: false }; },
+      async close(tabId: number) { return { tabId, closed: false }; },
       isAttached() { return false; },
     },
   });

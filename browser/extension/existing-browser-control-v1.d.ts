@@ -20,6 +20,8 @@ export function createExistingBrowserControlV1(
     tabs: {
       query(queryInfo: Record<string, unknown>): Promise<any[]>;
       get(tabId: number): Promise<any>;
+      create?(options: { url: string; active: boolean }): Promise<any>;
+      remove?(tabId: number): Promise<void>;
       group?(options: { tabIds: number[] }): Promise<number>;
       onCreated?: { addListener(listener: (tab: any) => void): void };
       onUpdated?: { addListener(listener: (tabId: number, changeInfo: any, tab: any) => void): void };
@@ -37,6 +39,7 @@ export function createExistingBrowserControlV1(
   options?: { protocolVersion?: string },
 ): {
   listTargets(): Promise<ExistingBrowserTargetV1[]>;
+  create(): Promise<ExistingBrowserTargetV1>;
   watchContinuity(tabId: number): Promise<{ tabId: number; baselineSequence: number }>;
   resolveContinuity(rootTabId: number, currentTabId: number): Promise<{
     sequence: number;
@@ -55,5 +58,6 @@ export function createExistingBrowserControlV1(
   exec(tabId: number, method: string, params?: Record<string, unknown>): Promise<any>;
   screenshot(tabId: number): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   release(tabId: number): Promise<{ tabId: number; released: boolean }>;
+  close(tabId: number): Promise<{ tabId: number; closed: boolean }>;
   isAttached(tabId: number): boolean;
 };

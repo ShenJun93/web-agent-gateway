@@ -42,6 +42,17 @@ function fixture() {
         if (!tab) throw new Error('No tab');
         return tab;
       },
+      async create(options: { url: string; active: boolean }) {
+        calls.push(['create', options]);
+        const tab = { id: 13, windowId: 5, title: 'New tab', url: options.url, active: options.active };
+        tabs.push(tab);
+        return tab;
+      },
+      async remove(tabId: number) {
+        calls.push(['remove', tabId]);
+        const index = tabs.findIndex((row) => row.id === tabId);
+        if (index >= 0) tabs.splice(index, 1);
+      },
       async group(options: { tabIds: number[] }) {
         calls.push(['group', options]);
         return 9;
@@ -99,6 +110,24 @@ test('existing-browser discovery is focus-free and strips query/hash secrets', a
   assert.equal(targets[1]?.attachable, false);
   assert.equal(targets[1]?.url, null);
   assert.equal(JSON.stringify(targets).includes('token=secret'), false);
+});
+
+test('AI-owned target creation is inactive and close removes only that created tab', async () => {
+  const f = fixture();
+  const control = createExistingBrowserControlV1(f.chromeApi);
+
+  const created = await control.create();
+  assert.equal(created.tabId, 13);
+  assert.equal(created.active, false);
+  assert.equal(created.attachable, true);
+  assert.deepEqual(f.calls[0], ['create', { url: 'about:blank', active: false }]);
+
+  const closed = await control.close(13);
+  assert.deepEqual(closed, { tabId: 13, closed: true });
+  assert.deepEqual(f.calls.at(-1), ['remove', 13]);
+
+  const replay = await control.close(13);
+  assert.deepEqual(replay, { tabId: 13, closed: false });
 });
 
 test('AI tab grouping keeps the user active tab stable and never activates the agent target', async () => {

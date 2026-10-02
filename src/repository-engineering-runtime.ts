@@ -395,11 +395,16 @@ export async function startRepositoryEngineeringRuntime(
                 reason: executionEnabled ? 'REMOTE_EFFECT_GRANT_REQUIRED' : 'KILL_SWITCH_ENGAGED',
               }
               : {
-                granted: executionEnabled,
-                denied: !executionEnabled,
+                // The autonomous policy is evaluated against the resolved push URL and
+                // destination ref only after git.push has built a concrete plan. A workspace-level
+                // capability description cannot truthfully grant every possible target.
+                granted: false,
+                denied: true,
                 grantable: true,
                 requires_human: false,
-                reason: executionEnabled ? 'AUTONOMOUS_REMOTE_POLICY' : 'KILL_SWITCH_ENGAGED',
+                reason: executionEnabled
+                  ? 'AUTONOMOUS_REMOTE_POLICY_TARGET_SCOPED'
+                  : 'KILL_SWITCH_ENGAGED',
               },
           },
         };

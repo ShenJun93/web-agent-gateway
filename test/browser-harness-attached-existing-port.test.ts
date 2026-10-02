@@ -31,6 +31,7 @@ function fixture() {
     active: false, attachable: true, ownership: 'USER_EXISTING' as const,
   };
   const control: ExistingBrowserControlClient = {
+    async createTarget() { calls.push(['create']); return { ...target, attached, targetId: 'tab_8' }; },
     async watchContinuity(id) { calls.push(['watch', id]); return { targetId: id, baselineSequence: 0 }; },
     async resolveContinuity(rootId, currentId) { calls.push(['continuity', rootId, currentId]); return { sequence: 0, reason: 'NO_CHANGE', target: null }; },
     async listTargets() { return [{ ...target, attached }]; },
@@ -40,6 +41,7 @@ function fixture() {
     async exec(id, method, params) { calls.push(['exec', id, method, params]); return { ok: true }; },
     async screenshot(id) { calls.push(['screenshot', id]); return { mimeType: 'image/png', dataBase64: 'cG5n' }; },
     async release(id) { calls.push(['release', id]); const released = attached; attached = false; return { targetId: id, released }; },
+    async closeTarget(id) { calls.push(['close', id]); attached = false; return { targetId: id, closed: true }; },
   };
   const claim = (
     owner: GatewayAuthority,
@@ -176,6 +178,35 @@ test('AI_TAB_GROUP groups before attach, preserves group metadata, and still onl
   await port.close(OWNER, opened.browserSessionId);
   assert.deepEqual(f.calls.at(-1), ['release', 'tab_7']);
   assert.equal(f.calls.some((row) => row[0] === 'close-browser'), false);
+});
+
+test('AI_TAB_GROUP without target creates and owns a fresh tab without closing user tabs', async () => {
+  const f = fixture();
+  const port = createAttachedExistingBrowserPort({
+    control: f.control,
+    claims: f.claims,
+    randomUUID: () => '00000000-0000-4000-8000-000000000009',
+  });
+
+  const opened = await port.open({
+    profileId: 'ai-owned',
+    owner: OWNER,
+    mode: 'AI_TAB_GROUP',
+    groupTitle: 'WAG • Owned',
+  });
+
+  assert.equal(opened.executionMode, 'AI_TAB_GROUP');
+  assert.equal(opened.ownershipMode, 'WAG_OWNED');
+  assert.equal(opened.rootTargetId, 'tab_8');
+  assert.deepEqual(f.calls.slice(0, 3), [
+    ['create'],
+    ['group', 'tab_8', 'WAG • Owned'],
+    ['attach', 'tab_8'],
+  ]);
+
+  await port.close(OWNER, opened.browserSessionId);
+  assert.ok(f.calls.some((row) => row[0] === 'close' && row[1] === 'tab_8'));
+  assert.equal(f.calls.some((row) => row[0] === 'close' && row[1] === 'tab_7'), false);
 });
 
 test('AI_TAB_GROUP fails closed if grouping changes the user active tab', async () => {
