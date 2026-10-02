@@ -46,7 +46,8 @@ function fixture() {
         calls.push(['create', options]);
         const tab = { id: 13, windowId: 5, title: 'New tab', url: options.url, active: options.active };
         tabs.push(tab);
-        return tab;
+        // Edge may resolve tabs.create() before url metadata is populated.
+        return { id: tab.id, windowId: tab.windowId, title: tab.title, active: tab.active };
       },
       async remove(tabId: number) {
         calls.push(['remove', tabId]);

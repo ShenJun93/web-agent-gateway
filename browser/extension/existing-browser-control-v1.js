@@ -67,7 +67,22 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
       throw new ExistingBrowserControlError('TAB_CREATE_FAILED', 'Browser tab creation returned no tab id');
     }
     rememberTab(tab);
-    return describeTab(tab);
+
+    // Edge can resolve tabs.create() before the created tab's URL metadata has settled.
+    // Do not broaden attachability for arbitrary blank/internal tabs; only re-read this exact
+    // extension-created target for a bounded period and require it to settle to about:blank.
+    let current = tab;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const described = describeTab(current);
+      if (described.attachable) return described;
+      if (current?.url !== undefined && current?.url !== '' && current?.url !== 'about:blank') {
+        return described;
+      }
+      current = await tabs.get(tab.id);
+      rememberTab(current);
+      if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return describeTab(current);
   }
 
   async function watchContinuity(tabId) {
