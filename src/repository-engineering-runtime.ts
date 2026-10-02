@@ -103,6 +103,8 @@ export interface RepositoryEngineeringRuntimeOptions {
   startOperatorServer?: typeof startOperatorServer;
   /** Test seam for the Browser v2 loopback WebSocket transport. */
   startBrowserControlWebSocketServer?: typeof startBrowserControlWebSocketServer;
+  /** Health self-probes publish the browser MCP surface without binding the single-owner control socket. */
+  skipBrowserControlServer?: boolean;
 }
 
 /**
@@ -223,9 +225,9 @@ export async function startRepositoryEngineeringRuntime(
   try {
     const runtimeIdentity = detectRuntimeIdentity();
     const browserPairingStatePath = mutationSettings.statePath + '.browser-control-pairing.json';
-    browserControlServer = browserSettings === undefined ? undefined : await (
-      options.startBrowserControlWebSocketServer ?? startBrowserControlWebSocketServer
-    )({
+    browserControlServer = browserSettings === undefined || options.skipBrowserControlServer === true
+      ? undefined
+      : await (options.startBrowserControlWebSocketServer ?? startBrowserControlWebSocketServer)({
       statePath: browserPairingStatePath,
       ...(runtimeIdentity.source_head === undefined ? {} : {
         expectedExtensionSourceHead: runtimeIdentity.source_head,

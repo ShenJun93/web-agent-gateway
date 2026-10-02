@@ -47,3 +47,49 @@ test('serve-stdio forwards the private BrowserPort context without allocating it
   assert.equal(stdioOptions.length, 1);
   assert.equal(stdioOptions[0]!.browserContext, browserContext);
 });
+
+
+test('product health self-probe tells repository engineering to skip the single-owner browser control socket', async () => {
+  const stdioOptions: Record<string, unknown>[] = [];
+  const observed: unknown[] = [];
+  const engineering: RepositoryEngineeringRuntime = {
+    profile: { inspect: true, mutation: true, gitCommit: false, browser: true },
+    browserContext: {} as BrowserMcpContext,
+    async attach() {},
+    async close() {},
+  };
+  const deps: CliDependencies = {
+    env: { WAG_PRODUCT_HEALTH_PROBE: '1' },
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    loadConfig: async () => ({
+      allowedRoots: [process.cwd()],
+      devspace: {
+        baseUrl: 'http://127.0.0.1:7676',
+        resourceUrl: 'http://127.0.0.1:7676/mcp',
+      },
+      verifyProfiles: {},
+    }),
+    bootstrap: async () => ({
+      gateway: {} as never,
+      executor: {} as never,
+      health: { status: 'ok', executor: 'devspace', protocolVersion: 'test', toolCount: 6 },
+      async close() {},
+    }),
+    startStdio: async (options) => {
+      stdioOptions.push(options as unknown as Record<string, unknown>);
+      return { async close() {} };
+    },
+    waitForShutdown: async () => {},
+    telemetry: { record() {} },
+    startRepositoryEngineering: async (_config, options) => {
+      observed.push(options);
+      return engineering;
+    },
+  };
+
+  assert.equal(await main(['serve-stdio', '--config', resolve('private.json')], deps), 0);
+  assert.deepEqual(observed, [{ skipBrowserControlServer: true }]);
+  assert.equal(stdioOptions.length, 1);
+});

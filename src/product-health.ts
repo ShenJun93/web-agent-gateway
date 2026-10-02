@@ -105,6 +105,19 @@ function parseMajor(version: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+function classifyMcpProbeFailure(value: string): string {
+  if (/REPOSITORY_ENGINEERING_START_FAILED/.test(value)) return 'WAG_MCP_PROBE_REPOSITORY_START';
+  if (/STDIO_START_FAILED/.test(value)) return 'WAG_MCP_PROBE_STDIO_START';
+  if (/DEVSPACE_AUTH_FAILED|DEVSPACE_OWNER_TOKEN_MISSING/.test(value)) return 'WAG_MCP_PROBE_DEVSPACE_AUTH';
+  if (/CONFIG_INVALID/.test(value)) return 'WAG_MCP_PROBE_CONFIG';
+  if (/EADDRINUSE|address already in use/i.test(value)) return 'WAG_MCP_PROBE_PORT_BUSY';
+  if (/SQLITE_BUSY|database is locked|database table is locked/i.test(value)) return 'WAG_MCP_PROBE_SQLITE_BUSY';
+  if (/DEVSPACE_AUTH|unauthor|forbidden|\b401\b|\b403\b/i.test(value)) return 'WAG_MCP_PROBE_AUTH';
+  if (/CONFIG_INVALID|config/i.test(value)) return 'WAG_MCP_PROBE_CONFIG';
+  if (/Connection closed|transport|ECONNRESET|EPIPE/i.test(value)) return 'WAG_MCP_PROBE_TRANSPORT';
+  return 'WAG_MCP_PROBE_UNKNOWN';
+}
+
 async function collectMcp(cliPath: string, configPath: string) {
   const ownerToken = process.env.DEVSPACE_OAUTH_OWNER_TOKEN;
   if (!ownerToken) throw new Error('DEVSPACE_OWNER_TOKEN_MISSING');
@@ -114,6 +127,7 @@ async function collectMcp(cliPath: string, configPath: string) {
     args: [cliPath, 'serve-stdio', '--config', configPath],
     env: {
       ...getDefaultEnvironment(),
+      WAG_PRODUCT_HEALTH_PROBE: '1',
       DEVSPACE_OAUTH_OWNER_TOKEN: ownerToken,
     },
     stderr: 'pipe',
@@ -154,6 +168,9 @@ async function collectMcp(cliPath: string, configPath: string) {
       },
       stderrHadSecret: stderr.includes(ownerToken),
     };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(classifyMcpProbeFailure(message + '\n' + stderr));
   } finally {
     await client.close().catch(() => undefined);
   }
@@ -406,11 +423,14 @@ export async function collectReceipt() {
         severity: 'ERROR',
         message: 'health.mcpToolCount does not match MCP listTools.',
       });
-    } catch {
+    } catch (error) {
+      const failure = error instanceof Error && /^WAG_MCP_PROBE_[A-Z_]+$/.test(error.message)
+        ? error.message
+        : 'WAG_MCP_PROBE_UNKNOWN';
       diagnostics.push({
         code: 'WAG_MCP_ROUNDTRIP_FAILED',
         severity: 'ERROR',
-        message: 'A fresh local stdio MCP client could not complete health/listTools.',
+        message: 'A fresh local stdio MCP client could not complete health/listTools (' + failure + ').',
       });
     }
   }
