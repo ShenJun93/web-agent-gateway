@@ -8,6 +8,7 @@ import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageCorrelation, ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 import type { ProductMcpContext } from './product-ux.js';
+import { buildProductDoctorMcpReport, collectProductDoctorLocalSnapshot } from './product-doctor-mcp.js';
 import { RelayResultChunkStore } from './relay-result-chunks.js';
 import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
 import type { DesktopMcpContext } from './desktop-harness/desktop-mcp-runtime.js';
@@ -1847,6 +1848,30 @@ export function createGatewayMcpServer(
       inputSchema: z.object({}).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     }, async () => toolResult(await productContext.updateCheck()));
+
+    registerTool('product.doctor', {
+      description: 'Return one read-only local WAG readiness report covering runtime, extension, supervisor, tunnel, DevSpace, browser bridge, Git policy, media/upload capabilities, and CLI doctor support.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async () => {
+      const gatewayHealth = await gateway.health();
+      const browserExtension = await browserReleaseContext?.status();
+      let productConfig: object;
+      try {
+        productConfig = productContext.configGet();
+      } catch {
+        productConfig = { schema: 'WAG_LOCAL_PRODUCT_CONFIG_INVALID' };
+      }
+      const local = await collectProductDoctorLocalSnapshot(runtimeIdentity);
+      return toolResult(buildProductDoctorMcpReport({
+        gatewayHealth,
+        runtime: runtimeIdentity,
+        browserExtension,
+        productConfig,
+        mcpTools: [...publishedToolNames],
+        local,
+      }));
+    });
 
     registerTool('product.help', {
       description: 'Return concise WAG Local workflow discovery without performing any local, remote, browser, process, Git, or filesystem action.',

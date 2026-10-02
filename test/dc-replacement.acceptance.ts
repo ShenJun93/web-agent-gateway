@@ -88,6 +88,7 @@ const EXTENDED_TOOLS = [
   'product.activity.recent',
   'product.usage',
   'product.update.check',
+  'product.doctor',
   'product.help',
 ];
 
