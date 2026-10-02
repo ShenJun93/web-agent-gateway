@@ -8,6 +8,12 @@ import { createGatewayMcpServer, type GatewayApi } from '../src/server.js';
 import { ToolUsageDiagnostics } from '../src/tool-usage-diagnostics.js';
 import { projectedTools } from '../scripts/prepare-direct-mcp-tunnel.js';
 
+const ARTIFACT_TOOLS = [
+  'artifact.list',
+  'artifact.describe',
+  'artifact.export',
+] as const;
+
 const BROWSER_TOOLS = [
   'browser.targets',
   'browser.open',
@@ -59,6 +65,12 @@ function fullBrowserConfig(): PrivateGatewayConfig {
         ownerId: 'local.private.stdio',
       },
       gitCommit: {},
+      remoteGitPush: {
+        autonomous: {
+          allowedPushUrls: ['https://github.com/example/example.git'],
+          allowedDestinationRefs: ['refs/heads/feat/test'],
+        },
+      },
       browser: {
         edgeExecutablePath: join(root, 'fake-msedge.exe'),
         profileRoot: join(root, '.wag-browser-profiles'),
@@ -78,9 +90,12 @@ test('browser opt-in adds the bounded BrowserPort target/session surface to the 
   const projected = await projectedTools(config);
   assert.equal(baseline.missing.length, 0);
   assert.equal(projected.missing.length, 0);
-  assert.equal(projected.tools.length, baseline.tools.length + BROWSER_TOOLS.length);
+  assert.equal(projected.tools.length, baseline.tools.length + BROWSER_TOOLS.length + ARTIFACT_TOOLS.length);
   assert.ok(projected.tools.includes('result.chunk'));
-  for (const name of BROWSER_TOOLS) {
+  for (const name of ['git.remote.inspect', 'git.push', 'git.push.result']) {
+    assert.ok(projected.tools.includes(name), name + ' must reflect configured remote Git push');
+  }
+  for (const name of [...BROWSER_TOOLS, ...ARTIFACT_TOOLS]) {
     assert.equal(baseline.tools.includes(name), false, name + ' must be browser opt-in only');
     assert.ok(projected.tools.includes(name), name);
   }

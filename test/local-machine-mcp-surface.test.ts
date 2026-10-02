@@ -32,6 +32,7 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
       sha256: 'a'.repeat(64),
       data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
     }),
+    createBinaryFile: async (id, path, bytes, sha256) => record('createBinaryFile', id, path, bytes, sha256) as never,
     resolveBrowserUploadFiles: async (id, paths) => record('resolveBrowserUploadFiles', id, paths) as never,
     inspectMedia: async (id, path, analysisSeconds) => record('inspectMedia', id, path, analysisSeconds) as never,
     verifyMedia: async (id, path, analysisSeconds) => record('verifyMedia', id, path, analysisSeconds) as never,

@@ -4,14 +4,17 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { main, type CliDependencies } from '../src/cli.js';
 import type { BrowserMcpContext } from '../src/browser-harness/browser-mcp-runtime.js';
+import type { ArtifactMcpContext } from '../src/artifact-harness/artifact-mcp-runtime.js';
 import type { RepositoryEngineeringRuntime } from '../src/repository-engineering-runtime.js';
 
 test('serve-stdio forwards the private BrowserPort context without allocating it in the CLI', async () => {
   const browserContext = {} as BrowserMcpContext;
+  const artifactContext = {} as ArtifactMcpContext;
   const stdioOptions: Record<string, unknown>[] = [];
   const engineering: RepositoryEngineeringRuntime = {
     profile: { inspect: true, mutation: true, gitCommit: false, browser: true },
     browserContext,
+    artifactContext,
     async attach() {},
     async close() {},
   };
@@ -46,6 +49,7 @@ test('serve-stdio forwards the private BrowserPort context without allocating it
   assert.equal(await main(['serve-stdio', '--config', resolve('private.json')], deps), 0);
   assert.equal(stdioOptions.length, 1);
   assert.equal(stdioOptions[0]!.browserContext, browserContext);
+  assert.equal(stdioOptions[0]!.artifactContext, artifactContext);
 });
 
 

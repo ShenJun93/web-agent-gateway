@@ -8,6 +8,7 @@ import type { GatewayCallerContext } from './caller-context.js';
 import type { LocalMachineContext, LocalMachineImageRead } from './local-machine-runtime.js';
 import type { ToolUsageCorrelation, ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
 import type { ProductMcpContext } from './product-ux.js';
+import type { ArtifactMcpContext } from './artifact-harness/artifact-mcp-runtime.js';
 import { buildProductDoctorMcpReport, collectProductDoctorLocalSnapshot } from './product-doctor-mcp.js';
 import { RelayResultChunkStore } from './relay-result-chunks.js';
 import type { BrowserMcpContext } from './browser-harness/browser-mcp-runtime.js';
@@ -493,7 +494,7 @@ export interface BrowserReleaseMcpContext {
 
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, changeSetContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, productContext, browserContext, browserReleaseContext, desktopContext }: {
+  { inspect, mutationContext, changeSetContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, artifactContext, productContext, browserContext, browserReleaseContext, desktopContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     changeSetContext?: ChangeSetMcpContext;
@@ -503,6 +504,7 @@ export function createGatewayMcpServer(
     capabilityContext?: CapabilityMcpContext;
     machineContext?: LocalMachineContext;
     diagnosticsContext?: ToolUsageDiagnostics;
+    artifactContext?: ArtifactMcpContext;
     productContext?: ProductMcpContext;
     browserContext?: BrowserMcpContext;
     browserReleaseContext?: BrowserReleaseMcpContext;
@@ -1071,6 +1073,67 @@ export function createGatewayMcpServer(
     }, async ({ workspace_id, terminal_id }) => toolResult(
       await machineContext.terminalClose(workspace_id, terminal_id),
     ));
+  }
+
+  if (artifactContext) {
+    const artifactId = z.string().regex(/^artifact_[0-9a-f-]{36}$/);
+
+    registerTool('artifact.list', {
+      description: 'List bounded metadata for caller-owned WAG artifacts without exposing internal filesystem paths or bytes.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ limit }) => {
+      const artifacts = await artifactContext.list(limit);
+      return toolResult({
+        artifacts: artifacts.map((artifact) => ({
+          artifact_id: artifact.artifactId,
+          filename: artifact.filename,
+          size_bytes: artifact.sizeBytes,
+          sha256: artifact.sha256,
+          created_at: new Date(artifact.createdAt).toISOString(),
+        })),
+      });
+    });
+
+    registerTool('artifact.describe', {
+      description: 'Describe one caller-owned WAG artifact and verify its stored bytes against the manifest.',
+      inputSchema: z.object({ artifact_id: artifactId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ artifact_id }) => {
+      const artifact = await artifactContext.describe(artifact_id);
+      return toolResult({
+        artifact_id: artifact.artifactId,
+        filename: artifact.filename,
+        size_bytes: artifact.sizeBytes,
+        sha256: artifact.sha256,
+        created_at: new Date(artifact.createdAt).toISOString(),
+      });
+    });
+
+    registerTool('artifact.export', {
+      description: 'Export one verified caller-owned WAG artifact into an already opened local-machine workspace. Creates a new file or accepts an exact same-byte replay; never overwrites different bytes.',
+      inputSchema: z.object({
+        artifact_id: artifactId,
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ artifact_id, workspace_id, path }) => {
+      const exported = await artifactContext.export(artifact_id, workspace_id, path);
+      return toolResult({
+        artifact_id: exported.artifact.artifactId,
+        filename: exported.artifact.filename,
+        size_bytes: exported.sizeBytes,
+        sha256: exported.sha256,
+        destination: {
+          workspace_id: exported.workspaceId,
+          path: exported.path,
+          state: exported.state,
+        },
+      });
+    });
   }
 
   if (browserContext) {

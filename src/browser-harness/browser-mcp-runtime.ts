@@ -271,6 +271,7 @@ export function createPrivateBrowserMcpContext(options: {
   killSwitch: () => boolean;
   controlDiscoveryPath?: string;
   control?: ExistingBrowserControlClient;
+  artifactPort?: ArtifactPort;
   /** Test-only seam; production omits it and receives the concrete owned-Edge backend. */
   port?: BrowserPort;
   /** Test-only semantic seam paired with port. */
@@ -343,7 +344,7 @@ export function createPrivateBrowserMcpContext(options: {
   const sessions = new Set<string>();
   const byProfile = new Map<string, string>();
   const fencing = new Map<string, { targetId: string; claimEpoch: number }>();
-  const artifacts = new ArtifactPort({
+  const artifacts = options.artifactPort ?? new ArtifactPort({
     root: options.effectStatePath + '.browser-artifacts',
     authorizeSource: async () => { throw new Error('Browser download artifacts do not import arbitrary source paths'); },
   });
