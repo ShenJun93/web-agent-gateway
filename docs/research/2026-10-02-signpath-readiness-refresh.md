@@ -9,9 +9,11 @@ This document supersedes only the **current-state** and **candidate-continuity**
 
 - repository: `ShenJun93/web-agent-gateway`
 - repository visibility: public
-- current public `main`: `4645aeef1edd21b6193b31029b74a94f85ee0438`
+- current public `main`: `bb9cffd3ad89b5f67955b48be59b53d0c13019d4`
 - Public Launch P0 PR: #67, merged
-- live local runtime promoted from the same main commit
+- SignPath docs refresh PR: #68, merged
+- native-host PR-path filter PR: #69, merged
+- live local runtime remains at `4645aeef1edd21b6193b31029b74a94f85ee0438`; no runtime promotion is required for #68/#69 because they changed only docs/workflow/test files
 - package version: `0.1.0`
 - npm publication: not performed; `package.json` remains `"private": true`
 
@@ -58,10 +60,14 @@ Do not claim candidate continuity from `c1eb195f` to current main.
 
 ## Current-main unsigned candidate evidence
 
-GitHub Actions workflow **Native Host Distribution #107** ran on current main:
+Candidate continuity from `4645aeef1edd21b6193b31029b74a94f85ee0438` to current main
+`bb9cffd3ad89b5f67955b48be59b53d0c13019d4` is PASS for native-host build inputs:
+an exact diff restricted to `NATIVE_HOST_BUILD_INPUTS` is empty.
 
-- run ID: `36916880632`
-- source: `4645aeef1edd21b6193b31029b74a94f85ee0438`
+GitHub Actions workflow **Native Host Distribution #110** ran on current main:
+
+- run ID: `36944044667`
+- source: `bb9cffd3ad89b5f67955b48be59b53d0c13019d4`
 - conclusion: `SUCCESS`
 - GitHub-hosted build path: PASS
 - typecheck: PASS
@@ -74,22 +80,22 @@ GitHub Actions workflow **Native Host Distribution #107** ran on current main:
 Unexpired artifacts as of 2026-10-02:
 
 1. signing input
-   - artifact ID: `11190685060`
-   - name: `wag-native-host-signing-input-4645aeef1edd21b6193b31029b74a94f85ee0438-attempt-1`
-   - digest: `sha256:086a152dc3f2cf65f85593c4de535a9e283b7ed77b62b9079d155ab3d0912e3b`
-   - expiry: `2026-10-15T19:49:49Z`
+   - artifact ID: `11201696202`
+   - name: `wag-native-host-signing-input-bb9cffd3ad89b5f67955b48be59b53d0c13019d4-attempt-1`
+   - digest: `sha256:39ac4a1031c1083a2ed3f32cb3a4f9a00a873861e0fface6c79d8400df1a04b1`
+   - expiry: `2026-10-16T00:05:06Z`
 
 2. verified Windows x64 distribution
-   - artifact ID: `11189624852`
-   - name: `wag-native-host-windows-x64-4645aeef1edd21b6193b31029b74a94f85ee0438-attempt-1`
-   - digest: `sha256:d414c938749083fa0d6e4210ae6caf580df251d1b6e1dc793c17f7666671de77`
-   - expiry: `2026-10-15T19:49:57Z`
+   - artifact ID: `11201656390`
+   - name: `wag-native-host-windows-x64-bb9cffd3ad89b5f67955b48be59b53d0c13019d4-attempt-1`
+   - digest: `sha256:e3a8a7ed0a624a0344540bffc3a46a02f998c21d5a5e248db8a067bcd6e3c0bf`
+   - expiry: `2026-10-16T00:05:12Z`
 
 3. candidate evidence
-   - artifact ID: `11189244843`
-   - name: `wag-native-host-candidate-evidence-4645aeef1edd21b6193b31029b74a94f85ee0438-attempt-1`
-   - digest: `sha256:4d7c54df82e236c4808e31a7da0f9b8e362ac7082c5e1e7f651f4c7cbcade3c5`
-   - expiry: `2026-10-15T19:49:48Z`
+   - artifact ID: `11201725978`
+   - name: `wag-native-host-candidate-evidence-bb9cffd3ad89b5f67955b48be59b53d0c13019d4-attempt-1`
+   - digest: `sha256:fe981f83090351ba66f9773353bb2564dbddba78aef5ee688baf94bd3f24e8e9`
+   - expiry: `2026-10-16T00:05:05Z`
 
 These are build/signing evidence, not official release assets.
 
