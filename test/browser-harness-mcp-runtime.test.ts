@@ -38,6 +38,7 @@ test('browser MCP exact-once coordinator never replays a succeeded semantic effe
     async click() { clicks += 1; },
     async fill() { throw new Error('unused'); },
     async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
     async press() { throw new Error('unused'); },
   };
   const runtime = createPrivateBrowserMcpContext({
@@ -86,6 +87,7 @@ test('browser MCP outcome-unknown blocks blind replay after an uncertain semanti
     },
     async fill() { throw new Error('unused'); },
     async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
     async press() { throw new Error('unused'); },
   };
   const runtime = createPrivateBrowserMcpContext({
@@ -150,6 +152,7 @@ test('attached browser effect fingerprint binds target id and claim epoch', asyn
     async click() { clicks += 1; },
     async fill() { throw new Error('unused'); },
     async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
     async press() { throw new Error('unused'); },
   };
   const runtime = createPrivateBrowserMcpContext({
@@ -201,6 +204,7 @@ test('browser upload resolves workspace-relative paths at effect time and replay
       selections += 1;
       selected.push([...paths]);
     },
+    async inspectMedia() { throw new Error('unused'); },
     async press() { throw new Error('unused'); },
   };
   const runtime = createPrivateBrowserMcpContext({
@@ -257,4 +261,130 @@ test('browser upload resolves workspace-relative paths at effect time and replay
     /conflicts with a different effect plan/i,
   );
   assert.equal(selections, 1);
+});
+
+
+test('browser wait_for polls semantic state while assert observes exactly once', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-wait-'));
+  let snapshots = 0;
+  const port: BrowserPort = {
+    async open() { throw new Error('unused'); },
+    async describe() {
+      return {
+        browserSessionId: SESSION,
+        profileId: 'wait',
+        owner: OWNER,
+        backend: 'cdp',
+        executionMode: 'WAG_HEADLESS',
+        ownershipMode: 'WAG_OWNED',
+        controlState: 'RUNNING',
+        createdAt: 1,
+        lastSeenAt: 1,
+        state: 'ACTIVE',
+      };
+    },
+    async snapshot() { throw new Error('unused'); },
+    async exec() { throw new Error('unused'); },
+    async screenshot() { throw new Error('unused'); },
+    async close() {
+      return {
+        browserSessionId: SESSION,
+        profileId: 'wait',
+        owner: OWNER,
+        backend: 'cdp',
+        executionMode: 'WAG_HEADLESS',
+        ownershipMode: 'WAG_OWNED',
+        controlState: 'STOPPED',
+        createdAt: 1,
+        lastSeenAt: 2,
+        state: 'CLOSED',
+      };
+    },
+  };
+  const semantic: SemanticBrowser = {
+    async snapshot() {
+      snapshots += 1;
+      const ready = snapshots >= 2;
+      const suffix = String(snapshots).padStart(2, '0');
+      return {
+        snapshotId: '00000000-0000-4000-8000-0000000007' + suffix,
+        browserSessionId: SESSION,
+        url: 'https://example.test/upload',
+        title: ready ? 'Upload ready' : 'Processing',
+        nodes: ready ? [{
+          ref: 'node_00000000-0000-4000-8000-0000000007' + suffix + '_0',
+          role: 'status',
+          name: 'Checks complete',
+          disabled: false,
+          editable: false,
+          focusable: false,
+        }] : [],
+        truncated: false,
+      };
+    },
+    async navigate() { throw new Error('unused'); },
+    async click() { throw new Error('unused'); },
+    async fill() { throw new Error('unused'); },
+    async setFiles() { throw new Error('unused'); },
+    async inspectMedia() {
+      return {
+        tag: 'video',
+        paused: false,
+        ended: false,
+        muted: false,
+        volume: 1,
+        duration_seconds: 10,
+        current_time_seconds: 1,
+        playback_rate: 1,
+        ready_state: 4,
+        network_state: 1,
+        error: null,
+        audio_evidence: 'PRESENT',
+      };
+    },
+    async press() { throw new Error('unused'); },
+  };
+  const runtime = createPrivateBrowserMcpContext({
+    owner: OWNER,
+    edgeExecutablePath: join(root, 'msedge.exe'),
+    profileRoot: join(root, 'profiles'),
+    effectStatePath: join(root, 'effects.sqlite'),
+    killSwitch: () => false,
+    port,
+    semantic,
+  });
+  t.after(async () => {
+    await runtime.closeAll();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const waited = await runtime.waitFor(SESSION, [
+    { kind: 'title', operator: 'contains', value: 'ready' },
+    { kind: 'node', role: 'status', name: 'Checks complete' },
+  ], 'all', 500, 50);
+  assert.equal(waited.matched, true);
+  assert.equal(waited.attempts, 2);
+  assert.equal(snapshots, 2);
+
+  const beforeAssert = snapshots;
+  const asserted = await runtime.assertSemantic(SESSION, [
+    { kind: 'url', operator: 'contains', value: '/upload' },
+  ]);
+  assert.equal(asserted.matched, true);
+  assert.equal(asserted.attempts, 1);
+  assert.equal(snapshots, beforeAssert + 1, 'browser.assert must make exactly one semantic observation');
+
+  await assert.rejects(
+    () => runtime.assertSemantic(SESSION, [
+      { kind: 'node', name: 'Processing failed' },
+    ]),
+    /semantic assertion failed/i,
+  );
+  assert.equal(snapshots, beforeAssert + 2);
+
+  const media = await runtime.inspectMedia(
+    SESSION,
+    'node_00000000-0000-4000-8000-000000000702_0',
+  );
+  assert.equal(media.audio_evidence, 'PRESENT');
 });

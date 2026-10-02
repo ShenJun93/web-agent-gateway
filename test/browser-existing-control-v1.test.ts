@@ -6,6 +6,7 @@ import {
   createExistingBrowserControlV1,
   describeExistingBrowserTab,
 } from '../browser/extension/existing-browser-control-v1.js';
+import { FIXED_MEDIA_INSPECT_FUNCTION } from '../src/browser-harness/semantic-browser.js';
 
 function fixture() {
   const tabs = [
@@ -300,6 +301,40 @@ test('fixed contenteditable selection function is exact and cannot be widened', 
     () => control.exec(11, 'Runtime.callFunctionOn', {
       objectId: 'object_45',
       functionDeclaration: fixed.replace('return true', 'return document.cookie'),
+      returnByValue: true,
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+});
+
+
+test('fixed media inspection function is exact and parameter-widening is denied', async () => {
+  const f = fixture();
+  const control = createExistingBrowserControlV1(f.chromeApi);
+  await control.attach(11);
+
+  await control.exec(11, 'Runtime.callFunctionOn', {
+    objectId: 'object_46',
+    functionDeclaration: FIXED_MEDIA_INSPECT_FUNCTION,
+    returnByValue: true,
+  });
+
+  await assert.rejects(
+    () => control.exec(11, 'Runtime.callFunctionOn', {
+      objectId: 'object_46',
+      functionDeclaration: FIXED_MEDIA_INSPECT_FUNCTION,
+      arguments: [],
+      returnByValue: true,
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+
+  await assert.rejects(
+    () => control.exec(11, 'Runtime.callFunctionOn', {
+      objectId: 'object_46',
+      functionDeclaration: FIXED_MEDIA_INSPECT_FUNCTION.replace('supported:true', 'supported:true,leak:document.cookie'),
       returnByValue: true,
     }),
     (error: unknown) => error instanceof ExistingBrowserControlError

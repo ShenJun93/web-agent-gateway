@@ -114,6 +114,12 @@ test('BrowserBroker keeps one logical session routed despite mode-specific trans
     dataBase64: 'cG5n',
   });
   assert.equal((await broker.close(OWNER, opened.browserSessionId)).browserSessionId, opened.browserSessionId);
+  assert.throws(
+    () => broker.describe(OWNER, opened.browserSessionId),
+    (error: unknown) => error instanceof BrowserBrokerError
+      && error.code === 'BROWSER_SESSION_NOT_ROUTED',
+    'successful close must remove the broker route',
+  );
 });
 
 test('visible Pause -> Take Control blocks effects until Resume revalidates target', async () => {

@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { GatewayAuthority } from '../src/caller-context.js';
 import type { BrowserPort } from '../src/browser-harness/browser-port.js';
-import { createSemanticBrowser } from '../src/browser-harness/semantic-browser.js';
+import {
+  createSemanticBrowser,
+  FIXED_MEDIA_INSPECT_FUNCTION,
+} from '../src/browser-harness/semantic-browser.js';
 
 const OWNER: GatewayAuthority = { ownerId: 'owner', sessionId: 'session', adapterId: 'private.stdio.v1' };
 const SESSION = 'browser_00000000-0000-4000-8000-000000000099';
@@ -56,6 +59,13 @@ function fixture() {
                 { name: 'editable', value: { value: 'richtext' } },
               ],
             },
+            {
+              ignored: false,
+              role: { value: 'video' },
+              name: { value: 'Demo video' },
+              backendDOMNodeId: 46,
+              properties: [{ name: 'focusable', value: { value: true } }],
+            },
             { ignored: true, role: { value: 'generic' }, backendDOMNodeId: 44 },
           ],
         };
@@ -81,6 +91,32 @@ function fixture() {
         if (typeof declaration === 'string' && declaration.includes('isContentEditable')) {
           return { result: { value: objectId === 'object_45' } };
         }
+        if (declaration === FIXED_MEDIA_INSPECT_FUNCTION) {
+          return {
+            result: {
+              value: objectId === 'object_46'
+                ? {
+                    supported: true,
+                    tag: 'video',
+                    paused: false,
+                    ended: false,
+                    muted: false,
+                    volume: 0.8,
+                    duration: 12.5,
+                    currentTime: 3.25,
+                    playbackRate: 1,
+                    readyState: 4,
+                    networkState: 1,
+                    error: null,
+                    audioDecodedBytes: 4096,
+                    audioTrackCount: null,
+                    videoWidth: 1280,
+                    videoHeight: 720,
+                  }
+                : { supported: false },
+            },
+          };
+        }
         return { result: { value: true } };
       }
       if (request.method === 'DOM.getBoxModel') {
@@ -102,11 +138,12 @@ function fixture() {
 test('semantic snapshot produces opaque refs from accessible DOM-backed nodes only', async () => {
   const f = fixture();
   const snapshot = await f.semantic.snapshot(OWNER, SESSION);
-  assert.equal(snapshot.nodes.length, 3);
+  assert.equal(snapshot.nodes.length, 4);
   assert.deepEqual(snapshot.nodes.map((node) => ({ role: node.role, name: node.name, editable: node.editable })), [
     { role: 'button', name: 'Submit', editable: false },
     { role: 'textbox', name: 'Question', editable: true },
     { role: 'generic', name: 'ProseMirror', editable: true },
+    { role: 'video', name: 'Demo video', editable: false },
   ]);
   assert.match(snapshot.nodes[0]!.ref, /^node_00000000-0000-4000-8000-000000000101_0$/);
 });
@@ -222,5 +259,44 @@ test('semantic file selection accepts only bounded internal absolute paths and c
   await assert.rejects(
     () => f.semantic.setFiles(OWNER, SESSION, snapshot.nodes[0]!.ref, ['E:\\safe.txt']),
     /stale or unknown/,
+  );
+});
+
+
+test('semantic media inspection uses only the fixed WAG-owned function and returns bounded playback evidence', async () => {
+  const f = fixture();
+  const snapshot = await f.semantic.snapshot(OWNER, SESSION);
+  f.calls.length = 0;
+  const media = await f.semantic.inspectMedia(OWNER, SESSION, snapshot.nodes[3]!.ref);
+
+  assert.deepEqual(media, {
+    tag: 'video',
+    paused: false,
+    ended: false,
+    muted: false,
+    volume: 0.8,
+    duration_seconds: 12.5,
+    current_time_seconds: 3.25,
+    playback_rate: 1,
+    ready_state: 4,
+    network_state: 1,
+    error: null,
+    audio_evidence: 'PRESENT',
+    audio_decoded_bytes: 4096,
+    video_width: 1280,
+    video_height: 720,
+  });
+  assert.deepEqual(f.calls, [
+    { method: 'DOM.resolveNode', params: { backendNodeId: 46 } },
+    { method: 'Runtime.callFunctionOn', params: {
+      objectId: 'object_46',
+      functionDeclaration: FIXED_MEDIA_INSPECT_FUNCTION,
+      returnByValue: true,
+    } },
+    { method: 'Runtime.releaseObject', params: { objectId: 'object_46' } },
+  ]);
+  await assert.rejects(
+    () => f.semantic.inspectMedia(OWNER, SESSION, snapshot.nodes[0]!.ref),
+    /not a media element/i,
   );
 });

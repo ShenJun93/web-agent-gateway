@@ -327,6 +327,7 @@ function assertAllowedCdpMethod(method) {
 const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
 const FIXED_NATIVE_VALUE_FILL_FUNCTION = "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}";
 const FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION = "function(){if(!(this instanceof HTMLElement)||!this.isContentEditable)return false;this.focus();const selection=this.ownerDocument.getSelection();if(!selection)return false;const range=this.ownerDocument.createRange();range.selectNodeContents(this);selection.removeAllRanges();selection.addRange(range);return true;}";
+const FIXED_MEDIA_INSPECT_FUNCTION = "function(){if(!(this instanceof HTMLMediaElement))return {supported:false};const decoded=typeof this.webkitAudioDecodedByteCount===\"number\"?this.webkitAudioDecodedByteCount:null;const tracks=this.audioTracks&&typeof this.audioTracks.length===\"number\"?this.audioTracks.length:null;const duration=Number.isFinite(this.duration)?this.duration:null;const currentTime=Number.isFinite(this.currentTime)?this.currentTime:null;const error=this.error?{code:this.error.code,message:String(this.error.message||\"\").slice(0,256)}:null;return {supported:true,tag:String(this.tagName||\"\").toLowerCase(),paused:this.paused===true,ended:this.ended===true,muted:this.muted===true,volume:this.volume,duration,currentTime,playbackRate:this.playbackRate,readyState:this.readyState,networkState:this.networkState,error,audioDecodedBytes:decoded,audioTrackCount:tracks,videoWidth:typeof this.videoWidth===\"number\"?this.videoWidth:null,videoHeight:typeof this.videoHeight===\"number\"?this.videoHeight:null};}";
 const MAX_FILL_TEXT_BYTES = 64 * 1024;
 
 function assertBoundedRuntimeCommand(method, params) {
@@ -372,6 +373,14 @@ function assertBoundedRuntimeCommand(method, params) {
           || arg.value.includes('\0')
           || new TextEncoder().encode(arg.value).byteLength > MAX_FILL_TEXT_BYTES) {
         throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime fill params are invalid');
+      }
+      return;
+    }
+
+    if (params.functionDeclaration === FIXED_MEDIA_INSPECT_FUNCTION) {
+      const keys = Object.keys(params ?? {}).sort();
+      if (keys.join(',') !== 'functionDeclaration,objectId,returnByValue') {
+        throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Runtime media inspect params are invalid');
       }
       return;
     }

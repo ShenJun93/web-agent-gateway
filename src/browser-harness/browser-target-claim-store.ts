@@ -48,6 +48,11 @@ export interface BrowserTargetClaimPort {
     browserSessionId: string,
     claimEpoch: number,
   ): BrowserTargetClaim;
+  releaseMany(
+    owner: GatewayAuthority,
+    browserSessionId: string,
+    claims: ReadonlyMap<string, number>,
+  ): ReadonlyMap<string, BrowserTargetClaim>;
 }
 
 export class BrowserTargetClaimError extends Error {
@@ -384,31 +389,62 @@ export class BrowserTargetClaimStore implements BrowserTargetClaimPort {
     browserSessionId: string,
     claimEpoch: number,
   ): BrowserTargetClaim {
+    const released = this.releaseMany(
+      owner,
+      browserSessionId,
+      new Map([[targetId, claimEpoch]]),
+    ).get(targetId);
+    if (!released) throw new Error('Browser target release result disappeared');
+    return released;
+  }
+
+  releaseMany(
+    owner: GatewayAuthority,
+    browserSessionId: string,
+    claims: ReadonlyMap<string, number>,
+  ): ReadonlyMap<string, BrowserTargetClaim> {
     this.#assertOpen();
-    validateIdentity(targetId, browserSessionId);
+    if (!BROWSER_SESSION_ID.test(browserSessionId)) {
+      throw new Error('Browser target release browser session id is invalid');
+    }
+    if (!(claims instanceof Map) || claims.size < 1 || claims.size > 32) {
+      throw new Error('Browser target release claim set is invalid');
+    }
     const now = this.#now();
 
     this.#db.exec('BEGIN IMMEDIATE');
     try {
-      const current = this.#required(targetId);
-      if (current.claimEpoch !== claimEpoch
-          || current.browserSessionId !== browserSessionId
-          || !sameAuthorityTuple(current.owner, owner)) {
-        throw new BrowserTargetClaimError('TARGET_FENCED', 'Browser target claim is fenced');
+      const rows: Array<{ targetId: string; claimEpoch: number }> = [];
+      for (const [targetId, claimEpoch] of claims) {
+        validateIdentity(targetId, browserSessionId);
+        if (!Number.isInteger(claimEpoch) || claimEpoch < 1) {
+          throw new Error('Browser target release epoch is invalid');
+        }
+        const current = this.#required(targetId);
+        if (current.claimEpoch !== claimEpoch
+            || current.browserSessionId !== browserSessionId
+            || !sameAuthorityTuple(current.owner, owner)) {
+          throw new BrowserTargetClaimError('TARGET_FENCED', 'Browser target claim is fenced');
+        }
+        if (current.state !== 'ACTIVE') {
+          throw new BrowserTargetClaimError('TARGET_STALE', 'Browser target claim is not active');
+        }
+        rows.push({ targetId, claimEpoch });
       }
-      if (current.state !== 'ACTIVE') {
-        throw new BrowserTargetClaimError('TARGET_STALE', 'Browser target claim is not active');
+
+      for (const { targetId, claimEpoch } of rows) {
+        const updated = this.#db.prepare(`
+          UPDATE browser_target_claims
+          SET state = 'RELEASED', heartbeat_at = ?, expires_at = ?
+          WHERE target_id = ? AND claim_epoch = ? AND state = 'ACTIVE'
+        `).run(now, now, targetId, claimEpoch);
+        if (Number(updated.changes) !== 1) {
+          throw new BrowserTargetClaimError('TARGET_FENCED', 'Browser target claim lost its epoch');
+        }
       }
-      const updated = this.#db.prepare(`
-        UPDATE browser_target_claims
-        SET state = 'RELEASED', heartbeat_at = ?, expires_at = ?
-        WHERE target_id = ? AND claim_epoch = ? AND state = 'ACTIVE'
-      `).run(now, now, targetId, claimEpoch);
-      if (Number(updated.changes) !== 1) {
-        throw new BrowserTargetClaimError('TARGET_FENCED', 'Browser target claim lost its epoch');
-      }
+
       this.#db.exec('COMMIT');
-      return this.#required(targetId);
+      return new Map(rows.map(({ targetId }) => [targetId, this.#required(targetId)]));
     } catch (error) {
       this.#rollback();
       throw error;

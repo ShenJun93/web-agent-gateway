@@ -13,6 +13,9 @@ const BROWSER_TOOLS = [
   'browser.open',
   'browser.describe',
   'browser.snapshot',
+  'browser.wait_for',
+  'browser.assert',
+  'browser.media.inspect',
   'browser.exec',
   'browser.upload_file',
   'browser.effect.get',
@@ -145,6 +148,50 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
       calls.push(['uploadFile', browserSessionId, idempotencyKey, workspaceId, ref, paths]);
       return effectView(browserSessionId, 'browser.upload_file');
     },
+    async waitFor(browserSessionId, conditions, mode, timeoutMs, intervalMs) {
+      calls.push(['waitFor', browserSessionId, conditions, mode, timeoutMs, intervalMs]);
+      return {
+        matched: true,
+        mode: mode ?? 'all',
+        results: [],
+        browser_session_id: browserSessionId,
+        snapshot_id: 'snapshot_wait',
+        attempts: 2,
+        elapsed_ms: 50,
+      };
+    },
+    async assertSemantic(browserSessionId, conditions, mode) {
+      calls.push(['assertSemantic', browserSessionId, conditions, mode]);
+      return {
+        matched: true,
+        mode: mode ?? 'all',
+        results: [],
+        browser_session_id: browserSessionId,
+        snapshot_id: 'snapshot_assert',
+        attempts: 1,
+        elapsed_ms: 1,
+      };
+    },
+    async inspectMedia(browserSessionId, ref) {
+      calls.push(['inspectMedia', browserSessionId, ref]);
+      return {
+        tag: 'video',
+        paused: false,
+        ended: false,
+        muted: false,
+        volume: 1,
+        duration_seconds: 30,
+        current_time_seconds: 1,
+        playback_rate: 1,
+        ready_state: 4,
+        network_state: 1,
+        error: null,
+        audio_evidence: 'PRESENT',
+        audio_decoded_bytes: 123,
+        video_width: 1280,
+        video_height: 720,
+      };
+    },
     async effect(effectId) {
       calls.push(['effect', effectId]);
       return effectView('browser_00000000-0000-4000-8000-000000000001');
@@ -276,6 +323,51 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
   ]);
   assert.equal(JSON.stringify(uploaded.structuredContent).includes('ownerId'), false);
   assert.equal(JSON.stringify(uploaded.structuredContent).includes('absolute_path'), false);
+
+  const waitConditions = [{ kind: 'title', operator: 'contains', value: 'Example' }] as const;
+  const waited = await client.callTool({
+    name: 'browser.wait_for',
+    arguments: {
+      browser_session_id: sessionId,
+      conditions: waitConditions,
+      mode: 'all',
+      timeout_ms: 1000,
+      poll_interval_ms: 100,
+    },
+  });
+  assert.equal(waited.isError === true, false);
+  assert.deepEqual(calls.at(-1), ['waitFor', sessionId, waitConditions, 'all', 1000, 100]);
+  assert.equal((waited.structuredContent as { matched?: boolean }).matched, true);
+
+  const asserted = await client.callTool({
+    name: 'browser.assert',
+    arguments: {
+      browser_session_id: sessionId,
+      conditions: [{ kind: 'url', operator: 'contains', value: 'example.test' }],
+    },
+  });
+  assert.equal(asserted.isError === true, false);
+  assert.deepEqual(calls.at(-1), [
+    'assertSemantic',
+    sessionId,
+    [{ kind: 'url', operator: 'contains', value: 'example.test' }],
+    undefined,
+  ]);
+
+  const media = await client.callTool({
+    name: 'browser.media.inspect',
+    arguments: {
+      browser_session_id: sessionId,
+      ref: 'node_00000000-0000-4000-8000-000000000012_0',
+    },
+  });
+  assert.equal(media.isError === true, false);
+  assert.deepEqual(calls.at(-1), [
+    'inspectMedia',
+    sessionId,
+    'node_00000000-0000-4000-8000-000000000012_0',
+  ]);
+  assert.equal((media.structuredContent as { audio_evidence?: string }).audio_evidence, 'PRESENT');
 
   const recentResponse = await client.callTool({
     name: 'diagnostics.recent',

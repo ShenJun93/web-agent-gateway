@@ -102,6 +102,7 @@ test('browser MCP snapshot caps returned semantic nodes to 500 and propagates tr
     async click() { throw new Error('unused'); },
     async fill() { throw new Error('unused'); },
     async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
     async press() { throw new Error('unused'); },
   };
   const runtime = createPrivateBrowserMcpContext({
@@ -160,6 +161,7 @@ test('browser runtime refuses a 33rd active session before opening backend resou
     async click() { throw new Error('unused'); },
     async fill() { throw new Error('unused'); },
     async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
     async press() { throw new Error('unused'); },
   };
   const runtime = createPrivateBrowserMcpContext({
@@ -204,6 +206,7 @@ test('browser screenshot rejects oversized base64 before returning it to the cal
     async click() { throw new Error('unused'); },
     async fill() { throw new Error('unused'); },
     async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
     async press() { throw new Error('unused'); },
   };
   const runtime = createPrivateBrowserMcpContext({

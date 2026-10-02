@@ -203,3 +203,27 @@ test('multi-target recovery is atomic when one retained OAuth target is fenced',
     'failed multi-target recovery must roll back every earlier epoch update',
   );
 });
+
+
+test('multi-target release is atomic when one retained target is fenced', async (t) => {
+  const f = await stores(t);
+  const root = f.first.claim(A, 'tab_81', A_BROWSER);
+  const successor = f.first.claim(A, 'tab_82', A_BROWSER);
+
+  f.first.release(A, 'tab_82', A_BROWSER, successor.claimEpoch);
+  const foreign = f.second.claim(B, 'tab_82', B_BROWSER);
+  assert.equal(foreign.claimEpoch, successor.claimEpoch + 1);
+
+  assert.throws(
+    () => f.first.releaseMany(A, A_BROWSER, new Map([
+      ['tab_81', root.claimEpoch],
+      ['tab_82', successor.claimEpoch],
+    ])),
+    (error: unknown) => error instanceof BrowserTargetClaimError
+      && error.code === 'TARGET_FENCED',
+  );
+
+  const stillOwned = f.first.heartbeat(A, 'tab_81', A_BROWSER, root.claimEpoch);
+  assert.equal(stillOwned.state, 'ACTIVE', 'failed releaseMany must roll back earlier target release');
+  f.first.release(A, 'tab_81', A_BROWSER, root.claimEpoch);
+});

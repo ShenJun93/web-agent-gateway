@@ -1084,6 +1084,32 @@ export function createGatewayMcpServer(
       z.object({ type: z.literal('take_user_control') }).strict(),
       z.object({ type: z.literal('resume_automation') }).strict(),
     ]);
+    const browserTextCondition = z.object({
+      kind: z.enum(['url', 'title']),
+      operator: z.enum(['equals', 'contains']),
+      value: z.string().min(1).max(4096),
+      ignoreCase: z.boolean().optional(),
+    }).strict();
+    const browserNodeCondition = z.object({
+      kind: z.literal('node'),
+      present: z.boolean().optional(),
+      operator: z.enum(['equals', 'contains']).optional(),
+      role: z.string().max(512).optional(),
+      name: z.string().max(1024).optional(),
+      value: z.string().max(2048).optional(),
+      disabled: z.boolean().optional(),
+      editable: z.boolean().optional(),
+      focusable: z.boolean().optional(),
+      ignoreCase: z.boolean().optional(),
+    }).strict().refine((condition) =>
+      condition.role !== undefined
+      || condition.name !== undefined
+      || condition.value !== undefined
+      || condition.disabled !== undefined
+      || condition.editable !== undefined
+      || condition.focusable !== undefined,
+    'node condition requires at least one predicate');
+    const browserCondition = z.union([browserTextCondition, browserNodeCondition]);
 
     registerTool('browser.targets', {
       description: 'List sanitized existing Edge/Chrome targets eligible for ATTACH_EXISTING without changing foreground focus.',
@@ -1115,6 +1141,43 @@ export function createGatewayMcpServer(
       inputSchema: z.object({ browser_session_id: browserSessionId }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     }, async ({ browser_session_id }) => toolResult(await browserContext.snapshot(browser_session_id)));
+
+    registerTool('browser.wait_for', {
+      description: 'Poll bounded semantic browser state until all/any URL, title or accessible-node conditions match; no arbitrary selectors or JavaScript are accepted.',
+      inputSchema: z.object({
+        browser_session_id: browserSessionId,
+        conditions: z.array(browserCondition).min(1).max(8),
+        mode: z.enum(['all', 'any']).optional(),
+        timeout_ms: z.number().int().min(1).max(120_000).optional(),
+        poll_interval_ms: z.number().int().min(50).max(5_000).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async ({ browser_session_id, conditions, mode, timeout_ms, poll_interval_ms }) => toolResult(
+      await browserContext.waitFor(browser_session_id, conditions, mode, timeout_ms, poll_interval_ms),
+    ));
+
+    registerTool('browser.assert', {
+      description: 'Assert bounded semantic browser state in one observation; returns structured evidence on success and fails the tool when the assertion does not match.',
+      inputSchema: z.object({
+        browser_session_id: browserSessionId,
+        conditions: z.array(browserCondition).min(1).max(8),
+        mode: z.enum(['all', 'any']).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async ({ browser_session_id, conditions, mode }) => toolResult(
+      await browserContext.assertSemantic(browser_session_id, conditions, mode),
+    ));
+
+    registerTool('browser.media.inspect', {
+      description: 'Inspect one semantic video/audio element with a fixed WAG-owned function: playback state, duration, muted/volume, error, dimensions and bounded audio evidence.',
+      inputSchema: z.object({
+        browser_session_id: browserSessionId,
+        ref: z.string().min(1).max(256),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async ({ browser_session_id, ref }) => toolResult(
+      await browserContext.inspectMedia(browser_session_id, ref),
+    ));
 
     registerTool('browser.exec', {
       description: 'Execute one exact-once semantic browser action. Raw CDP methods and host shell execution are not accepted.',

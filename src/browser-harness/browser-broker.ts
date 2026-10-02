@@ -175,6 +175,7 @@ export function createBrowserBroker(options: {
       const route = routeFor(browserSessionId);
       const handle = await route.port.close(owner, browserSessionId);
       route.controlState = 'STOPPED';
+      routes.delete(browserSessionId);
       return decorate(handle, route);
     },
 
