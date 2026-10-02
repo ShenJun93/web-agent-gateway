@@ -579,9 +579,12 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
         mime_type: 'image/png',
         size_bytes: 8,
         sha256: 'b'.repeat(64),
-        data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
+        data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0a, 0x1a, 0x0a]).toString('base64'),
       };
     },
+    async resolveBrowserUploadFiles() { throw new Error('not used'); },
+    async inspectMedia() { throw new Error('not used'); },
+    async verifyMedia() { throw new Error('not used'); },
     async extractPdf() { throw new Error('not used'); },
     async inspectDocx() { throw new Error('not used'); },
     async createDocx() { throw new Error('not used'); },

@@ -14,6 +14,7 @@ const BROWSER_TOOLS = [
   'browser.describe',
   'browser.snapshot',
   'browser.exec',
+  'browser.upload_file',
   'browser.effect.get',
   'browser.screenshot',
   'browser.close',
@@ -140,6 +141,10 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
       calls.push(['exec', browserSessionId, idempotencyKey, action]);
       return effectView(browserSessionId, `browser.${action.type}`);
     },
+    async uploadFile(browserSessionId, idempotencyKey, workspaceId, ref, paths) {
+      calls.push(['uploadFile', browserSessionId, idempotencyKey, workspaceId, ref, paths]);
+      return effectView(browserSessionId, 'browser.upload_file');
+    },
     async effect(effectId) {
       calls.push(['effect', effectId]);
       return effectView('browser_00000000-0000-4000-8000-000000000001');
@@ -249,6 +254,28 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
   assert.equal(JSON.stringify(executed.structuredContent).includes('ownerId'), false);
   assert.equal(JSON.stringify(executed.structuredContent).includes('sessionId'), false);
   assert.equal(JSON.stringify(executed.structuredContent).includes('idempotencyKey'), false);
+
+  const uploaded = await client.callTool({
+    name: 'browser.upload_file',
+    arguments: {
+      browser_session_id: sessionId,
+      idempotency_key: 'acceptance.upload.1',
+      workspace_id: 'ws_upload',
+      ref: 'node_00000000-0000-4000-8000-000000000011_0',
+      paths: ['demo.mp4'],
+    },
+  });
+  assert.equal(uploaded.isError === true, false);
+  assert.deepEqual(calls.at(-1), [
+    'uploadFile',
+    sessionId,
+    'acceptance.upload.1',
+    'ws_upload',
+    'node_00000000-0000-4000-8000-000000000011_0',
+    ['demo.mp4'],
+  ]);
+  assert.equal(JSON.stringify(uploaded.structuredContent).includes('ownerId'), false);
+  assert.equal(JSON.stringify(uploaded.structuredContent).includes('absolute_path'), false);
 
   const recentResponse = await client.callTool({
     name: 'diagnostics.recent',

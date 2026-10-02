@@ -670,6 +670,30 @@ export function createGatewayMcpServer(
       await machineContext.readImage(workspace_id, path),
     ));
 
+    registerTool('machine.media.inspect', {
+      description: 'Inspect one caller-owned local media file with fixed ffprobe/ffmpeg analysis for duration, streams, codecs, resolution, loudness and black frames.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        analysis_seconds: z.number().min(1).max(600).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path, analysis_seconds }) => toolResult(
+      await machineContext.inspectMedia(workspace_id, path, analysis_seconds),
+    ));
+
+    registerTool('verify.media', {
+      description: 'Run the mandatory web-demo media preflight: video/audio presence, codecs, resolution, measurable non-silent loudness, black-frame analysis and coverage.',
+      inputSchema: z.object({
+        workspace_id: z.string().min(1).max(256),
+        path: z.string().min(1).max(4096),
+        analysis_seconds: z.number().min(1).max(600).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async ({ workspace_id, path, analysis_seconds }) => toolResult(
+      await machineContext.verifyMedia(workspace_id, path, analysis_seconds),
+    ));
+
     registerTool('machine.pdf.extract', {
       description: 'Extract bounded text from one local PDF in an isolated worker with page and character limits.',
       inputSchema: z.object({
@@ -1102,6 +1126,20 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     }, async ({ browser_session_id, idempotency_key, action }) => toolResult(
       await browserContext.exec(browser_session_id, idempotency_key, action),
+    ));
+
+    registerTool('browser.upload_file', {
+      description: 'Select one or more caller-owned workspace files into a semantic <input type=file> without opening the native file chooser or accepting arbitrary absolute paths.',
+      inputSchema: z.object({
+        browser_session_id: browserSessionId,
+        idempotency_key: z.string().min(1).max(200).regex(/^[A-Za-z0-9._:-]+$/),
+        workspace_id: z.string().min(1).max(256),
+        ref: z.string().min(1).max(256),
+        paths: z.array(z.string().min(1).max(4096)).min(1).max(20),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    }, async ({ browser_session_id, idempotency_key, workspace_id, ref, paths }) => toolResult(
+      await browserContext.uploadFile(browser_session_id, idempotency_key, workspace_id, ref, paths),
     ));
 
     registerTool('browser.effect.get', {

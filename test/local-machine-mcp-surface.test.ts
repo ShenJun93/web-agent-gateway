@@ -32,6 +32,9 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
       sha256: 'a'.repeat(64),
       data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
     }),
+    resolveBrowserUploadFiles: async (id, paths) => record('resolveBrowserUploadFiles', id, paths) as never,
+    inspectMedia: async (id, path, analysisSeconds) => record('inspectMedia', id, path, analysisSeconds) as never,
+    verifyMedia: async (id, path, analysisSeconds) => record('verifyMedia', id, path, analysisSeconds) as never,
     extractPdf: async (id, path, options) => record('extractPdf', id, path, options),
     inspectDocx: async (id, path, options) => record('inspectDocx', id, path, options),
     createDocx: async (id, path, paragraphs) => record('createDocx', id, path, paragraphs),
@@ -113,6 +116,18 @@ test('machine MCP surface routes DC-parity verbs to LocalMachineContext with str
   assert.notEqual(image.isError, true);
   assert.equal((image.structuredContent as { mime_type?: string }).mime_type, 'image/png');
   assert.equal((image.content[0] as { type?: string }).type, 'image');
+
+  assert.equal((await invoke('machine.media.inspect', {
+    workspace_id: workspaceId,
+    path: 'demo.mp4',
+    analysis_seconds: 45,
+  })).name, 'inspectMedia');
+
+  assert.equal((await invoke('verify.media', {
+    workspace_id: workspaceId,
+    path: 'demo.mp4',
+    analysis_seconds: 45,
+  })).name, 'verifyMedia');
 
   assert.equal((await invoke('machine.pdf.extract', {
     workspace_id: workspaceId,

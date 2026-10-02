@@ -229,6 +229,7 @@ export async function startRepositoryEngineeringRuntime(
       attachedSessionStatePath: mutationSettings.statePath + '.browser-attached-sessions.sqlite',
       diagnosticsStatePath: mutationSettings.statePath + '.browser-diagnostics.json',
       killSwitch,
+      resolveUploadFiles: (workspaceId, paths) => machineContext.resolveBrowserUploadFiles(workspaceId, paths),
       ...(browserControlServer === undefined ? {} : { control: browserControlServer.client }),
     });
     desktopContext = desktopSettings === undefined ? undefined : createPrivateDesktopMcpContext({

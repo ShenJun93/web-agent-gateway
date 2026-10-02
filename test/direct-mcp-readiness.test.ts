@@ -55,6 +55,8 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['machine.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.read_many', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.image.read', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['machine.media.inspect', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['verify.media', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.pdf.extract', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.docx.inspect', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['machine.docx.create', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
