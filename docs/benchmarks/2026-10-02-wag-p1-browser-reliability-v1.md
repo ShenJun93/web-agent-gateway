@@ -93,7 +93,7 @@ Observed:
 ```text
 browser.wait_for = PASS
 wait attempts = 4
-wait elapsed = 613 ms
+wait elapsed = 607 ms
 browser.assert = PASS
 
 browser.media.inspect:
@@ -131,6 +131,12 @@ The exact fixed media-inspection function is also allowlisted in the existing-br
 
 If local in-memory routing disappears, WAG discards only stale in-memory route/fence state, consults durable attached-session state and recovers only the exact caller-owned session. No target is guessed.
 
+### Fresh profile alias on the same owned target
+
+If a fresh chat/profile alias requests the same exact target under the same authority and execution mode, WAG now reuses the durable logical browser session instead of creating a second target claim. This prevents the common recovery loop where a lost route led to a new profile id and then `TARGET_OWNED_BY_OTHER_SESSION`.
+
+The fallback is scoped to the same owner tuple, exact root target and attached execution mode. It never crosses authorities and never guesses a target.
+
 ### Active foreign/session claim
 
 `TARGET_OWNED_BY_OTHER_SESSION` remains fail-closed. Batch B intentionally does not auto-steal an active target. A crashed owner may recover only after its lease is released or expires, and stale epochs remain fenced.
@@ -158,7 +164,7 @@ Focused:
 ```text
 browser-harness-semantic.test.ts               8/8 PASS
 browser-semantic-condition.test.ts             3/3 PASS
-browser-harness-broker.test.ts                 6/6 PASS
+browser-harness-broker.test.ts                 7/7 PASS
 browser-runtime-session-recovery.test.ts       3/3 PASS
 browser-harness-attached-existing-port.test.ts 7/7 PASS
 browser-target-claim-store.test.ts             8/8 PASS
@@ -169,7 +175,7 @@ direct-mcp-readiness.test.ts                  10/10 PASS
 Affected-surface broad regression:
 
 ```text
-83/83 PASS
+84/84 PASS
 ```
 
 Build gates:

@@ -49,11 +49,12 @@ Evidence:
 - real media inspect: playback state, duration, error, dimensions and decoded-audio evidence PASS;
 - existing-browser fixed media function allowlist + arbitrary-JS denial: PASS;
 - missing broker-route recovery preserves the durable caller-owned session: PASS;
+- fresh profile alias on the same exact owned target reuses the durable logical session instead of creating a conflicting claim: PASS;
 - active foreign/session target claim remains fail-closed: PASS;
 - detach timeout keeps claims retryable: PASS;
 - atomic multi-target claim cleanup: PASS;
 - successful close deletes broker route and attached close replay is idempotent: PASS;
-- affected-surface regression: 83/83 PASS;
+- affected-surface regression: 84/84 PASS;
 - typecheck/build/diff-check: PASS.
 
 Canonical evidence:

@@ -477,6 +477,10 @@ export function createPrivateBrowserMcpContext(options: {
           profileId,
           resolvedMode,
           targetId,
+        ) ?? attachedSessions.findRecoverableByTarget(
+          options.owner,
+          resolvedMode,
+          targetId,
         );
         if (durable) {
           assertSessionCapacity(durable.browserSessionId);

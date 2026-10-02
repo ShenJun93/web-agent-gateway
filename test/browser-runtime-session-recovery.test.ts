@@ -93,6 +93,14 @@ test('graceful runtime restart recovers the same logical browser session at a fr
   assert.equal(opened.claimEpoch, 1);
   assert.equal(control.attached(), true);
 
+  const aliased = await first.open('fresh-chat-profile', 'AI_TAB_GROUP', 'tab_7', 'WAG • Recovery');
+  assert.equal(
+    aliased.browserSessionId,
+    opened.browserSessionId,
+    'a fresh logical profile on the same owned exact target must reuse the existing session instead of creating a conflicting claim',
+  );
+  assert.equal(aliased.claimEpoch, opened.claimEpoch);
+
   const effect = await first.exec(opened.browserSessionId, 'restart.navigate.once', {
     type: 'navigate',
     url: 'https://example.test/next',
