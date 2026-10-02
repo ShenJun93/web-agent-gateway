@@ -109,6 +109,13 @@ export interface BrowserMcpContext {
     idempotencyKey: string,
     action: BrowserMcpAction,
   ): Promise<BrowserMcpEffect>;
+  uploadFile(
+    browserSessionId: string,
+    idempotencyKey: string,
+    workspaceId: string,
+    ref: string,
+    paths: readonly string[],
+  ): Promise<BrowserMcpEffect>;
   effect(effectId: string): Promise<BrowserMcpEffect>;
   screenshot(browserSessionId: string): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   close(browserSessionId: string): Promise<BrowserMcpSession>;
@@ -203,8 +210,8 @@ async function allocateLoopbackPort(): Promise<number> {
   return port;
 }
 
-function successDigest(action: BrowserMcpAction): string {
-  return `sha256_${createHash('sha256').update(JSON.stringify(action), 'utf8').digest('hex')}`;
+function successDigest(value: unknown): string {
+  return `sha256_${createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex')}`;
 }
 
 export function createPrivateBrowserMcpContext(options: {
@@ -222,6 +229,10 @@ export function createPrivateBrowserMcpContext(options: {
   port?: BrowserPort;
   /** Test-only semantic seam paired with port. */
   semantic?: SemanticBrowser;
+  resolveUploadFiles?: (
+    workspaceId: string,
+    paths: readonly string[],
+  ) => Promise<readonly { relative_path: string; absolute_path: string; size_bytes: number }[]>;
 }): BrowserMcpContext {
   const effects = new HarnessEffectLedger(options.effectStatePath);
   effects.reconcileExecuting();
@@ -567,6 +578,95 @@ export function createPrivateBrowserMcpContext(options: {
                 break;
             }
             return { status: 'CONFIRMED_SUCCESS', resultDigest: successDigest(action) };
+          },
+        );
+        let completion: {
+          targetId?: string;
+          ownershipMode?: string;
+          targetChanged?: boolean;
+        } = {};
+        try {
+          const handle = await port.describe(options.owner, browserSessionId);
+          completion = {
+            targetId: handle.targetId,
+            ownershipMode: handle.ownershipMode,
+            targetChanged: rememberFencing(handle),
+          };
+        } catch {
+          // Diagnostics must never turn a completed exact-once effect into a caller-visible failure.
+        }
+        finish(record.state === 'SUCCEEDED', undefined, completion);
+        return effectView(record);
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
+    },
+
+    async uploadFile(browserSessionId, idempotencyKey, workspaceId, ref, paths) {
+      assertEffectAllowed();
+      await ensureSession(browserSessionId);
+      if (!options.resolveUploadFiles) throw new Error('Browser upload source authority is unavailable');
+      if (!Array.isArray(paths) || paths.length < 1 || paths.length > 20
+          || paths.some((path) => typeof path !== 'string' || path.length < 1
+            || path.includes('\0') || Buffer.byteLength(path, 'utf8') > 4096)) {
+        throw new Error('Browser upload path set is invalid');
+      }
+      const expectedFence = fencing.get(browserSessionId);
+      const finish = diagnostics.begin({
+        actionType: 'upload_file',
+        browserSessionId,
+        targetId: expectedFence?.targetId,
+        ownershipMode: expectedFence === undefined ? undefined : 'ATTACHED_EXISTING',
+      });
+      try {
+        const request = {
+          workspaceId,
+          ref,
+          paths: [...paths],
+        };
+        let effectArguments = request as unknown as CanonicalValue;
+        if (expectedFence) {
+          const binding = await port.describe(options.owner, browserSessionId);
+          if (binding.targetId !== expectedFence.targetId
+              || binding.claimEpoch !== expectedFence.claimEpoch) {
+            throw new Error('Browser target fencing binding changed');
+          }
+          effectArguments = {
+            request: request as unknown as CanonicalValue,
+            targetId: expectedFence.targetId,
+            claimEpoch: expectedFence.claimEpoch,
+          } as unknown as CanonicalValue;
+        }
+        const record = await coordinator.execute(
+          options.owner,
+          idempotencyKey,
+          {
+            kind: 'browser.upload_file',
+            resourceId: browserSessionId,
+            arguments: effectArguments,
+          },
+          async () => {
+            assertEffectAllowed();
+            const files = await options.resolveUploadFiles!(workspaceId, paths);
+            if (files.length !== paths.length) throw new Error('Browser upload source resolution mismatch');
+            assertEffectAllowed();
+            await semantic.setFiles(
+              options.owner,
+              browserSessionId,
+              ref,
+              files.map((file) => file.absolute_path),
+            );
+            return {
+              status: 'CONFIRMED_SUCCESS',
+              resultDigest: successDigest({
+                request,
+                files: files.map((file) => ({
+                  relative_path: file.relative_path,
+                  size_bytes: file.size_bytes,
+                })),
+              }),
+            };
           },
         );
         let completion: {

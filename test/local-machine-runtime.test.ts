@@ -361,3 +361,33 @@ test('search lifecycle enforces a bounded active-session capacity', async (t) =>
     0,
   );
 });
+
+
+test('browser upload file resolution is workspace-relative, contained and file-only', async (t) => {
+  const { root, context } = await fixture(t);
+  const opened = await context.open(root) as { workspace_id: string };
+
+  const accepted = await context.resolveBrowserUploadFiles(opened.workspace_id, ['note.txt']);
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0]?.relative_path, 'note.txt');
+  assert.equal(await realpath(accepted[0]!.absolute_path), join(root, 'note.txt'));
+  assert.ok((accepted[0]?.size_bytes ?? 0) > 0);
+
+  await assert.rejects(
+    () => context.resolveBrowserUploadFiles(opened.workspace_id, ['../escape.txt']),
+    /denied|rejected|invalid/i,
+  );
+  await assert.rejects(
+    () => context.resolveBrowserUploadFiles(opened.workspace_id, ['C:/outside.txt']),
+    /denied|rejected|invalid/i,
+  );
+  await context.mkdir(opened.workspace_id, 'upload-dir');
+  await assert.rejects(
+    () => context.resolveBrowserUploadFiles(opened.workspace_id, ['upload-dir']),
+    /not a file/i,
+  );
+  await assert.rejects(
+    () => context.resolveBrowserUploadFiles(opened.workspace_id, []),
+    /file count/i,
+  );
+});

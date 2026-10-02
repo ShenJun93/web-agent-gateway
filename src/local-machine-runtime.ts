@@ -26,6 +26,12 @@ import {
   type LocalMachineDocumentContext,
 } from './local-machine-document-runtime.js';
 import {
+  inspectMediaFile,
+  verifyMediaInspection,
+  type MediaInspection,
+  type MediaVerification,
+} from './local-machine-media.js';
+import {
   assertGenericExecutionRemoteEffectPolicy,
   nextTerminalRemoteEffectPolicyBuffer,
 } from './remote-effect-policy.js';
@@ -273,6 +279,12 @@ export interface LocalMachineImageRead {
   data_base64: string;
 }
 
+export interface LocalMachineBrowserUploadFile {
+  relative_path: string;
+  absolute_path: string;
+  size_bytes: number;
+}
+
 interface StartedProcess {
   readonly processId: string;
   readonly workspaceRoot: string;
@@ -332,6 +344,9 @@ export interface LocalMachineContext extends LocalMachineDocumentContext {
   read(workspaceId: string, path: string, options?: LocalMachineReadOptions): Promise<object>;
   readMany(workspaceId: string, paths: readonly string[], options?: LocalMachineReadOptions): Promise<object>;
   readImage(workspaceId: string, path: string): Promise<LocalMachineImageRead>;
+  resolveBrowserUploadFiles(workspaceId: string, paths: readonly string[]): Promise<readonly LocalMachineBrowserUploadFile[]>;
+  inspectMedia(workspaceId: string, path: string, analysisSeconds?: number): Promise<MediaInspection>;
+  verifyMedia(workspaceId: string, path: string, analysisSeconds?: number): Promise<MediaVerification>;
   extractPdf(workspaceId: string, path: string, options?: LocalMachinePdfExtractOptions): Promise<object>;
   mkdir(workspaceId: string, path: string): Promise<object>;
   move(workspaceId: string, from: string, to: string): Promise<object>;
@@ -739,6 +754,24 @@ export function createLocalMachineContext(options: {
       sha256: createHash('sha256').update(bytes).digest('hex'),
       data_base64: bytes.toString('base64'),
     };
+  }
+
+  async function inspectLocalMedia(
+    root: string,
+    path: string,
+    analysisSeconds?: number,
+  ): Promise<MediaInspection> {
+    const safePath = validateReadPath(path.replace(/\\/g, '/'));
+    await assertReadTarget(root, safePath);
+    const target = await realpath(resolve(root, safePath));
+    const meta = await stat(target);
+    if (!meta.isFile()) throw new Error('Gateway rejected media target is not a file');
+    return inspectMediaFile({
+      relativePath: safePath,
+      absolutePath: target,
+      sizeBytes: meta.size,
+      ...(analysisSeconds === undefined ? {} : { analysisSeconds }),
+    });
   }
 
   function validateSearchQuery(query: string): void {
@@ -1205,6 +1238,39 @@ export function createLocalMachineContext(options: {
     async readImage(workspaceId, path) {
       const { workspace } = await ownedWorkspace(workspaceId);
       return readLocalImage(workspace.canonicalRoot, path);
+    },
+
+    async resolveBrowserUploadFiles(workspaceId, paths) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      if (!Array.isArray(paths) || paths.length < 1 || paths.length > 20) {
+        throw new Error('Gateway rejected browser upload file count');
+      }
+      const resolved: LocalMachineBrowserUploadFile[] = [];
+      for (const requested of paths) {
+        const normalized = requested.replace(/\\/g, '/');
+        const safePath = validateReadPath(normalized);
+        await assertReadTarget(workspace.canonicalRoot, safePath);
+        const absolutePath = await realpath(resolve(workspace.canonicalRoot, safePath));
+        const meta = await stat(absolutePath);
+        if (!meta.isFile()) throw new Error('Gateway rejected browser upload target is not a file');
+        resolved.push({
+          relative_path: safePath,
+          absolute_path: absolutePath,
+          size_bytes: meta.size,
+        });
+      }
+      return Object.freeze(resolved);
+    },
+
+    async inspectMedia(workspaceId, path, analysisSeconds) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      return inspectLocalMedia(workspace.canonicalRoot, path, analysisSeconds);
+    },
+
+    async verifyMedia(workspaceId, path, analysisSeconds) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const inspection = await inspectLocalMedia(workspace.canonicalRoot, path, analysisSeconds);
+      return verifyMediaInspection(inspection);
     },
 
     async extractPdf(workspaceId, path, extractOptions = {}) {

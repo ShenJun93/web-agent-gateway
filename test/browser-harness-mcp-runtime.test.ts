@@ -185,3 +185,76 @@ test('attached browser effect fingerprint binds target id and claim epoch', asyn
   );
   assert.equal(clicks, 1, 'epoch change must never replay an idempotent attached-browser effect');
 });
+
+
+test('browser upload resolves workspace-relative paths at effect time and replays exactly once', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-upload-effect-'));
+  let resolutions = 0;
+  let selections = 0;
+  const selected: string[][] = [];
+  const semantic: SemanticBrowser = {
+    async snapshot() { throw new Error('unused'); },
+    async navigate() { throw new Error('unused'); },
+    async click() { throw new Error('unused'); },
+    async fill() { throw new Error('unused'); },
+    async setFiles(_owner, _session, _ref, paths) {
+      selections += 1;
+      selected.push([...paths]);
+    },
+    async press() { throw new Error('unused'); },
+  };
+  const runtime = createPrivateBrowserMcpContext({
+    owner: OWNER,
+    edgeExecutablePath: join(root, 'msedge.exe'),
+    profileRoot: join(root, 'profiles'),
+    effectStatePath: join(root, 'effects.sqlite'),
+    killSwitch: () => false,
+    port: unusedPort(),
+    semantic,
+    resolveUploadFiles: async (workspaceId, paths) => {
+      resolutions += 1;
+      assert.equal(workspaceId, 'ws_upload');
+      assert.deepEqual(paths, ['demo.mp4']);
+      return [{
+        relative_path: 'demo.mp4',
+        absolute_path: join(root, 'workspace', 'demo.mp4'),
+        size_bytes: 1234,
+      }];
+    },
+  });
+  t.after(async () => {
+    await runtime.closeAll();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const ref = 'node_00000000-0000-4000-8000-000000000666_0';
+  const first = await runtime.uploadFile(
+    SESSION,
+    'browser.upload.once',
+    'ws_upload',
+    ref,
+    ['demo.mp4'],
+  );
+  assert.equal(first.state, 'SUCCEEDED');
+  assert.equal(resolutions, 1);
+  assert.equal(selections, 1);
+  assert.deepEqual(selected, [[join(root, 'workspace', 'demo.mp4')]]);
+
+  const replay = await runtime.uploadFile(
+    SESSION,
+    'browser.upload.once',
+    'ws_upload',
+    ref,
+    ['demo.mp4'],
+  );
+  assert.equal(replay.effectId, first.effectId);
+  assert.equal(replay.state, 'SUCCEEDED');
+  assert.equal(resolutions, 1, 'successful retry must not re-resolve workspace files');
+  assert.equal(selections, 1, 'successful retry must not dispatch DOM.setFileInputFiles again');
+
+  await assert.rejects(
+    () => runtime.uploadFile(SESSION, 'browser.upload.once', 'ws_upload', ref, ['other.mp4']),
+    /conflicts with a different effect plan/i,
+  );
+  assert.equal(selections, 1);
+});

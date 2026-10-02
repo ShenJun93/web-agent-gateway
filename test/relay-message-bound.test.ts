@@ -86,6 +86,13 @@ function machineContext(): LocalMachineContext {
       sha256: 'c'.repeat(64),
       data_base64: IMAGE_BASE64,
     }),
+    resolveBrowserUploadFiles: async (_id, paths) => paths.map((path) => ({
+      relative_path: path,
+      absolute_path: 'C:/relay-bound/' + path,
+      size_bytes: 1,
+    })),
+    inspectMedia: async () => ({ path: 'demo.mp4' }) as never,
+    verifyMedia: async () => ({ state: 'PASS' }) as never,
     extractPdf: async () => hugePdf(),
     inspectDocx: async () => ({ format: 'docx', paragraphs: Array.from({ length: 5 }, () => LARGE), truncated: true, sha256: 'd'.repeat(64) }),
     createDocx: async () => ({ created: true, sha256: 'd'.repeat(64), size_bytes: 100 }),
