@@ -55,6 +55,7 @@ test('browser opt-in assembles a private BrowserPort context without allocating 
 
   assert.equal(runtime.profile.browser, true);
   assert.ok(runtime.browserContext, 'browser config must assemble the private BrowserPort context');
+  assert.ok(runtime.artifactContext, 'browser config must assemble the shared artifact lifecycle context');
   assert.equal(runtime.operator, undefined, 'assembly alone must not bind the operator review server');
 
   const listed = await import('node:fs/promises').then(({ readdir }) => readdir(root));
@@ -99,6 +100,7 @@ test('health self-probe keeps browser tool context but skips the single-owner co
 
   assert.equal(controlStarts, 0);
   assert.ok(runtime.browserContext, 'browser MCP tools must remain present in health self-probe mode');
+  assert.ok(runtime.artifactContext, 'artifact lifecycle tools must remain present in health self-probe mode');
   assert.equal(runtime.browserReleaseContext, undefined,
     'health self-probe must not claim live extension release ownership');
 });

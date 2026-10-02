@@ -86,6 +86,7 @@ function machineContext(): LocalMachineContext {
       sha256: 'c'.repeat(64),
       data_base64: IMAGE_BASE64,
     }),
+    createBinaryFile: async (_id, path, bytes, sha256) => ({ path, size_bytes: bytes.length, sha256, state: 'CREATED' as const }),
     resolveBrowserUploadFiles: async (_id, paths) => paths.map((path) => ({
       relative_path: path,
       absolute_path: 'C:/relay-bound/' + path,

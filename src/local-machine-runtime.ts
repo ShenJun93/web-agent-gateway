@@ -48,6 +48,7 @@ const MAX_PAGED_READ_BYTES = 16 * 1024 * 1024;
 const MAX_READ_LINES = 1_000;
 const MAX_READ_MANY_FILES = 20;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_BINARY_CREATE_BYTES = 32 * 1024 * 1024;
 const MAX_PDF_BYTES = 16 * 1024 * 1024;
 const DEFAULT_PDF_PAGES = 10;
 const MAX_PDF_PAGES = 50;
@@ -344,6 +345,12 @@ export interface LocalMachineContext extends LocalMachineDocumentContext {
   read(workspaceId: string, path: string, options?: LocalMachineReadOptions): Promise<object>;
   readMany(workspaceId: string, paths: readonly string[], options?: LocalMachineReadOptions): Promise<object>;
   readImage(workspaceId: string, path: string): Promise<LocalMachineImageRead>;
+  createBinaryFile(
+    workspaceId: string,
+    path: string,
+    bytes: Uint8Array,
+    expectedSha256: string,
+  ): Promise<{ path: string; size_bytes: number; sha256: string; state: 'CREATED' | 'ALREADY_PRESENT' }>;
   resolveBrowserUploadFiles(workspaceId: string, paths: readonly string[]): Promise<readonly LocalMachineBrowserUploadFile[]>;
   inspectMedia(workspaceId: string, path: string, analysisSeconds?: number): Promise<MediaInspection>;
   verifyMedia(workspaceId: string, path: string, analysisSeconds?: number): Promise<MediaVerification>;
@@ -1238,6 +1245,69 @@ export function createLocalMachineContext(options: {
     async readImage(workspaceId, path) {
       const { workspace } = await ownedWorkspace(workspaceId);
       return readLocalImage(workspace.canonicalRoot, path);
+    },
+
+    async createBinaryFile(workspaceId, path, bytesInput, expectedSha256) {
+      const { workspace } = await ownedWorkspace(workspaceId);
+      const normalized = path.replace(/\\/g, '/');
+      const safePath = validateReadPath(normalized);
+      if (!(bytesInput instanceof Uint8Array)) throw new Error('Gateway rejected binary file bytes');
+      const bytes = Buffer.from(bytesInput);
+      if (bytes.length > MAX_BINARY_CREATE_BYTES) throw new Error('Gateway rejected binary file size');
+      if (!/^[a-f0-9]{64}$/.test(expectedSha256)) throw new Error('Gateway rejected binary file sha256');
+      const digest = createHash('sha256').update(bytes).digest('hex');
+      if (digest !== expectedSha256) throw new Error('Gateway rejected binary file sha256 mismatch');
+      const target = resolve(workspace.canonicalRoot, safePath);
+
+      const existing = async () => {
+        let meta;
+        try { meta = await lstat(target); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+          throw error;
+        }
+        if (meta.isSymbolicLink() || !meta.isFile()) {
+          throw new Error('Gateway rejected binary export target conflict');
+        }
+        await assertReadTarget(workspace.canonicalRoot, safePath);
+        const current = await readFile(target);
+        const currentSha = createHash('sha256').update(current).digest('hex');
+        if (current.length !== bytes.length || currentSha !== expectedSha256) {
+          throw new Error('Gateway rejected binary export target conflict');
+        }
+        return {
+          path: safePath,
+          size_bytes: current.length,
+          sha256: currentSha,
+          state: 'ALREADY_PRESENT' as const,
+        };
+      };
+
+      const present = await existing();
+      if (present) return present;
+      assertEffectAllowed();
+      await assertCreateTarget(workspace.canonicalRoot, safePath);
+      assertEffectAllowed();
+      try {
+        await writeFile(target, bytes, { flag: 'wx' });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const raced = await existing();
+        if (raced) return raced;
+        throw error;
+      }
+      const written = await readFile(target);
+      const writtenSha = createHash('sha256').update(written).digest('hex');
+      if (written.length !== bytes.length || writtenSha !== expectedSha256) {
+        await rm(target, { force: true }).catch(() => undefined);
+        throw new Error('Gateway binary export verification failed');
+      }
+      return {
+        path: safePath,
+        size_bytes: written.length,
+        sha256: writtenSha,
+        state: 'CREATED' as const,
+      };
     },
 
     async resolveBrowserUploadFiles(workspaceId, paths) {

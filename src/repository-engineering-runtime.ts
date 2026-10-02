@@ -3,6 +3,11 @@ import { rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { adapterCorrelationDigest } from './adapter-admission.js';
 import { sameAuthorityTuple } from './authority-tuple.js';
+import { ArtifactPort } from './artifact-harness/artifact-port.js';
+import {
+  createArtifactMcpContext,
+  type ArtifactMcpContext,
+} from './artifact-harness/artifact-mcp-runtime.js';
 import { createGatewayCallerContext, type GatewayCallerContext } from './caller-context.js';
 import { DurableMutationCoordinator } from './durable-mutation.js';
 import { DurableChangeSetCoordinator } from './change-set.js';
@@ -87,6 +92,8 @@ export interface RepositoryEngineeringRuntime {
   machineContext?: LocalMachineContext;
   /** Bounded process-local MCP tool usage diagnostics; never stores arguments or output. */
   diagnosticsContext?: ToolUsageDiagnostics;
+  /** Caller-owned generated/downloaded artifact lifecycle and bounded workspace export surface. */
+  artifactContext?: ArtifactMcpContext;
   /** Optional outbound BrowserPort surface. It shares identity, not filesystem/Git authority. */
   browserContext?: BrowserMcpContext;
   /** Live browser-extension release identity reported through health. */
@@ -218,6 +225,15 @@ export async function startRepositoryEngineeringRuntime(
       ? {}
       : { statePath: mutationSettings.statePath + '.tool-usage.' + sessionId + '.json' }),
   });
+  const artifactPort = browserSettings === undefined ? undefined : new ArtifactPort({
+    root: mutationSettings.statePath + '.harness-effects.sqlite.browser-artifacts',
+    authorizeSource: async () => { throw new Error('Browser artifacts do not import arbitrary source paths'); },
+  });
+  const artifactContext = artifactPort === undefined ? undefined : createArtifactMcpContext({
+    owner: callerContext,
+    artifacts: artifactPort,
+    machineContext,
+  });
   let browserContext: BrowserMcpContext | undefined;
   let browserControlServer: BrowserControlWebSocketServer | undefined;
   let browserReleaseContext: BrowserReleaseMcpContext | undefined;
@@ -246,6 +262,7 @@ export async function startRepositoryEngineeringRuntime(
       attachedSessionStatePath: mutationSettings.statePath + '.browser-attached-sessions.sqlite',
       diagnosticsStatePath: mutationSettings.statePath + '.browser-diagnostics.json',
       killSwitch,
+      artifactPort,
       resolveUploadFiles: (workspaceId, paths) => machineContext.resolveBrowserUploadFiles(workspaceId, paths),
       ...(browserControlServer === undefined ? {} : { control: browserControlServer.client }),
     });
@@ -334,6 +351,7 @@ export async function startRepositoryEngineeringRuntime(
     },
     machineContext,
     diagnosticsContext,
+    ...(artifactContext === undefined ? {} : { artifactContext }),
     ...(browserContext === undefined ? {} : { browserContext }),
     ...(browserReleaseContext === undefined ? {} : { browserReleaseContext }),
     ...(desktopContext === undefined ? {} : { desktopContext }),

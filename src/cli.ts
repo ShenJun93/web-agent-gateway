@@ -250,6 +250,7 @@ export async function main(
       capabilityContext: engineering.capabilityContext,
       machineContext: engineering.machineContext,
       diagnosticsContext: engineering.diagnosticsContext,
+      artifactContext: engineering.artifactContext,
       productContext,
       browserContext: engineering.browserContext,
       browserReleaseContext: engineering.browserReleaseContext,

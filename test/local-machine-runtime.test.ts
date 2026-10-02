@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -389,5 +390,42 @@ test('browser upload file resolution is workspace-relative, contained and file-o
   await assert.rejects(
     () => context.resolveBrowserUploadFiles(opened.workspace_id, []),
     /file count/i,
+  );
+});
+
+
+test('binary export is create-only and exact-hash replay is idempotent', async (t) => {
+  const { root, context } = await fixture(t);
+  const opened = await context.open(root) as { workspace_id: string };
+  const bytes = Buffer.from([0, 1, 2, 3, 255, 10]);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+  const first = await context.createBinaryFile(opened.workspace_id, 'export.bin', bytes, sha256);
+  assert.deepEqual(first, {
+    path: 'export.bin',
+    size_bytes: bytes.length,
+    sha256,
+    state: 'CREATED',
+  });
+  assert.deepEqual(await readFile(join(root, 'export.bin')), bytes);
+
+  const replay = await context.createBinaryFile(opened.workspace_id, 'export.bin', bytes, sha256);
+  assert.equal(replay.state, 'ALREADY_PRESENT');
+  assert.deepEqual(await readFile(join(root, 'export.bin')), bytes);
+
+  await writeFile(join(root, 'conflict.bin'), Buffer.from('different', 'utf8'));
+  await assert.rejects(
+    () => context.createBinaryFile(opened.workspace_id, 'conflict.bin', bytes, sha256),
+    /target conflict/i,
+  );
+  assert.equal(await readFile(join(root, 'conflict.bin'), 'utf8'), 'different');
+
+  await assert.rejects(
+    () => context.createBinaryFile(opened.workspace_id, '../escape.bin', bytes, sha256),
+    /denied|rejected|invalid/i,
+  );
+  await assert.rejects(
+    () => context.createBinaryFile(opened.workspace_id, 'bad.bin', bytes, '0'.repeat(64)),
+    /sha256 mismatch/i,
   );
 });

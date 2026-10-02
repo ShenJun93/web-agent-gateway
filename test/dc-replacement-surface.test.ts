@@ -582,6 +582,7 @@ test('frozen 16-tool snapshots reach local-machine work through existing tool na
         data_base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0a, 0x1a, 0x0a]).toString('base64'),
       };
     },
+    async createBinaryFile() { throw new Error('not used'); },
     async resolveBrowserUploadFiles() { throw new Error('not used'); },
     async inspectMedia() { throw new Error('not used'); },
     async verifyMedia() { throw new Error('not used'); },

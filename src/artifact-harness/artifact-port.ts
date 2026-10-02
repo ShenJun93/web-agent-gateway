@@ -14,6 +14,11 @@ export interface ArtifactHandle {
   readonly internalPath: string;
 }
 
+export interface ArtifactRead {
+  readonly artifact: ArtifactHandle;
+  readonly bytes: Uint8Array;
+}
+
 interface ArtifactMeta {
   readonly version: 1;
   readonly artifactId: string;
@@ -96,7 +101,7 @@ export class ArtifactPort {
     return this.#persistBytes(owner, safeFilename(filename), bytes);
   }
 
-  async get(owner: GatewayAuthority, artifactId: string): Promise<ArtifactHandle> {
+  async readBytes(owner: GatewayAuthority, artifactId: string): Promise<ArtifactRead> {
     const root = await this.#rootPath();
     const meta = await this.#readMeta(root, artifactId);
     if (!sameAuthorityTuple(meta.owner, owner)) throw new Error('ArtifactPort artifact is owned by another authority');
@@ -106,7 +111,11 @@ export class ArtifactPort {
     if (bytes.length !== meta.sizeBytes || digest !== meta.sha256) {
       throw new Error('ArtifactPort artifact content diverged from manifest');
     }
-    return handle(meta, root);
+    return Object.freeze({ artifact: handle(meta, root), bytes: Uint8Array.from(bytes) });
+  }
+
+  async get(owner: GatewayAuthority, artifactId: string): Promise<ArtifactHandle> {
+    return (await this.readBytes(owner, artifactId)).artifact;
   }
 
   async list(owner: GatewayAuthority): Promise<readonly ArtifactHandle[]> {
