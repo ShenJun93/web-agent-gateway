@@ -58,15 +58,24 @@ test('native host PR validation covers production candidate recording, signature
   assert.match(workflow, /test\/native-host-signature\.test\.ts/);
   assert.match(workflow, /test\/native-host-preview-release-prep\.test\.ts/);
 });
-test('native host main push matches exact publication inputs while PR validation stays unfiltered', async () => {
+test('native host PR and main push use the exact native-host publication input allowlist', async () => {
   const workflow = (await workflowText()).replace(/\r\n/g, '\n');
-  assert.match(workflow, /pull_request:\n    branches: \[main\]\n  push:/);
+  const expectedPullRequestTrigger = [
+    '  pull_request:',
+    '    branches: [main]',
+    '    paths:',
+    ...expectedPushPaths.map((path) => `      - '${path}'`),
+  ].join('\n');
   const expectedPushTrigger = [
     '  push:',
     '    branches: [main]',
     '    paths:',
     ...expectedPushPaths.map((path) => `      - '${path}'`),
   ].join('\n');
+  assert.ok(
+    workflow.includes(`${expectedPullRequestTrigger}\n  push:`),
+    'pull_request trigger must use the exact native-host publication input allowlist',
+  );
   assert.ok(
     workflow.includes(`${expectedPushTrigger}\n\npermissions:`),
     'push trigger must use the exact native-host publication input allowlist',

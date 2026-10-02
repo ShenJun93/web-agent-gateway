@@ -3,6 +3,27 @@ name: Native Host Distribution
 on:
   pull_request:
     branches: [main]
+    paths:
+      - '.github/workflows/native-host-distribution.yml'
+      - '.gitattributes'
+      - 'browser/native-host/**'
+      - 'src/**'
+      - 'scripts/build-native-host.ts'
+      - 'scripts/native-host-pe-metadata.ts'
+      - 'scripts/verify-native-host-version-info.ps1'
+      - 'scripts/verify-native-host-license-compliance.ts'
+      - 'scripts/record-native-host-unsigned-candidate.ts'
+      - 'scripts/inspect-native-host-signature.ps1'
+      - 'browser/native-host/third-party-components.json'
+      - 'third_party/native-host/**'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
+      - 'scripts/package-native-host-distribution.ts'
+      - 'scripts/verify-native-host-distribution.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'tsconfig.build.json'
   push:
     branches: [main]
     paths:
