@@ -110,6 +110,7 @@ function fixture() {
                     error: null,
                     audioDecodedBytes: 4096,
                     audioTrackCount: null,
+                    capturedAudioTrackCount: 1,
                     videoWidth: 1280,
                     videoHeight: 720,
                   }
@@ -283,6 +284,7 @@ test('semantic media inspection uses only the fixed WAG-owned function and retur
     error: null,
     audio_evidence: 'PRESENT',
     audio_decoded_bytes: 4096,
+    captured_audio_track_count: 1,
     video_width: 1280,
     video_height: 720,
   });

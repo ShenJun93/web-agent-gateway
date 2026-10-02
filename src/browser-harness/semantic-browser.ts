@@ -37,6 +37,7 @@ export interface BrowserMediaInspection {
   readonly audio_evidence: 'PRESENT' | 'ABSENT' | 'UNKNOWN';
   readonly audio_decoded_bytes?: number;
   readonly audio_track_count?: number;
+  readonly captured_audio_track_count?: number;
   readonly video_width?: number;
   readonly video_height?: number;
 }
@@ -82,7 +83,7 @@ const MAX_INTERNAL_PATH_BYTES = 4096;
 const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
 const FIXED_NATIVE_VALUE_FILL_FUNCTION = "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}";
 const FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION = "function(){if(!(this instanceof HTMLElement)||!this.isContentEditable)return false;this.focus();const selection=this.ownerDocument.getSelection();if(!selection)return false;const range=this.ownerDocument.createRange();range.selectNodeContents(this);selection.removeAllRanges();selection.addRange(range);return true;}";
-export const FIXED_MEDIA_INSPECT_FUNCTION = "function(){if(!(this instanceof HTMLMediaElement))return {supported:false};const decoded=typeof this.webkitAudioDecodedByteCount===\"number\"?this.webkitAudioDecodedByteCount:null;const tracks=this.audioTracks&&typeof this.audioTracks.length===\"number\"?this.audioTracks.length:null;const duration=Number.isFinite(this.duration)?this.duration:null;const currentTime=Number.isFinite(this.currentTime)?this.currentTime:null;const error=this.error?{code:this.error.code,message:String(this.error.message||\"\").slice(0,256)}:null;return {supported:true,tag:String(this.tagName||\"\").toLowerCase(),paused:this.paused===true,ended:this.ended===true,muted:this.muted===true,volume:this.volume,duration,currentTime,playbackRate:this.playbackRate,readyState:this.readyState,networkState:this.networkState,error,audioDecodedBytes:decoded,audioTrackCount:tracks,videoWidth:typeof this.videoWidth===\"number\"?this.videoWidth:null,videoHeight:typeof this.videoHeight===\"number\"?this.videoHeight:null};}";
+export const FIXED_MEDIA_INSPECT_FUNCTION = "function(){if(!(this instanceof HTMLMediaElement))return {supported:false};const decoded=typeof this.webkitAudioDecodedByteCount===\"number\"?this.webkitAudioDecodedByteCount:null;const tracks=this.audioTracks&&typeof this.audioTracks.length===\"number\"?this.audioTracks.length:null;let captured=null;try{const stream=typeof this.captureStream===\"function\"?this.captureStream():null;captured=stream&&typeof stream.getAudioTracks===\"function\"?stream.getAudioTracks().length:null;}catch{}const duration=Number.isFinite(this.duration)?this.duration:null;const currentTime=Number.isFinite(this.currentTime)?this.currentTime:null;const error=this.error?{code:this.error.code,message:String(this.error.message||\"\").slice(0,256)}:null;return {supported:true,tag:String(this.tagName||\"\").toLowerCase(),paused:this.paused===true,ended:this.ended===true,muted:this.muted===true,volume:this.volume,duration,currentTime,playbackRate:this.playbackRate,readyState:this.readyState,networkState:this.networkState,error,audioDecodedBytes:decoded,audioTrackCount:tracks,capturedAudioTrackCount:captured,videoWidth:typeof this.videoWidth===\"number\"?this.videoWidth:null,videoHeight:typeof this.videoHeight===\"number\"?this.videoHeight:null};}";
 const PRESS_KEYS = new Map<string, { key: string; code: string }>([
   ['Enter', { key: 'Enter', code: 'Enter' }],
   ['Tab', { key: 'Tab', code: 'Tab' }],
@@ -441,10 +442,15 @@ export function createSemanticBrowser(options: {
         }
         const decoded = row.audioDecodedBytes === null ? undefined : row.audioDecodedBytes;
         const tracks = row.audioTrackCount === null ? undefined : row.audioTrackCount;
+        const capturedTracks = row.capturedAudioTrackCount === null ? undefined : row.capturedAudioTrackCount;
         if (decoded !== undefined && (typeof decoded !== 'number' || !Number.isFinite(decoded) || decoded < 0)) {
           throw new Error('Browser media inspection returned invalid audio evidence');
         }
         if (tracks !== undefined && (!Number.isInteger(tracks) || Number(tracks) < 0 || Number(tracks) > 64)) {
+          throw new Error('Browser media inspection returned invalid audio evidence');
+        }
+        if (capturedTracks !== undefined
+            && (!Number.isInteger(capturedTracks) || Number(capturedTracks) < 0 || Number(capturedTracks) > 64)) {
           throw new Error('Browser media inspection returned invalid audio evidence');
         }
         let error: BrowserMediaInspection['error'] = null;
@@ -466,9 +472,13 @@ export function createSemanticBrowser(options: {
         const audioEvidence: BrowserMediaInspection['audio_evidence'] =
           tag === 'audio' && duration !== null && duration > 0
             ? 'PRESENT'
-            : (typeof decoded === 'number' && decoded > 0) || (typeof tracks === 'number' && tracks > 0)
+            : (typeof decoded === 'number' && decoded > 0)
+                || (typeof tracks === 'number' && tracks > 0)
+                || (typeof capturedTracks === 'number' && capturedTracks > 0)
               ? 'PRESENT'
-              : typeof tracks === 'number' && tracks === 0 && typeof decoded === 'number' && decoded === 0
+              : typeof tracks === 'number' && tracks === 0
+                  && typeof capturedTracks === 'number' && capturedTracks === 0
+                  && typeof decoded === 'number' && decoded === 0
                 ? 'ABSENT'
                 : 'UNKNOWN';
 
@@ -496,6 +506,7 @@ export function createSemanticBrowser(options: {
           audio_evidence: audioEvidence,
           ...(decoded === undefined ? {} : { audio_decoded_bytes: decoded }),
           ...(tracks === undefined ? {} : { audio_track_count: Number(tracks) }),
+          ...(capturedTracks === undefined ? {} : { captured_audio_track_count: Number(capturedTracks) }),
           ...(videoWidth === undefined ? {} : { video_width: Number(videoWidth) }),
           ...(videoHeight === undefined ? {} : { video_height: Number(videoHeight) }),
         });

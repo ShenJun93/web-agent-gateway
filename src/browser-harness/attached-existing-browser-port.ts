@@ -23,6 +23,7 @@ interface AttachedSession {
   targetGeneration: number;
   claims: Map<string, number>;
   groupedTargets: Set<string>;
+  detached: boolean;
 }
 
 export interface AttachedExistingBrowserPort extends BrowserPort {
@@ -298,6 +299,7 @@ export function createAttachedExistingBrowserPort(options: {
         targetGeneration: stored.targetGeneration,
         claims: recoveredClaims,
         groupedTargets,
+        detached: false,
       };
       sessions.set(browserSessionId, session);
       persist(session);
@@ -398,6 +400,7 @@ export function createAttachedExistingBrowserPort(options: {
           targetGeneration: 0,
           claims: new Map([[request.targetId, claim.claimEpoch]]),
           groupedTargets: new Set(grouped === undefined ? [] : [request.targetId]),
+          detached: false,
         };
         sessions.set(browserSessionId, session);
         persist(session);
@@ -465,9 +468,9 @@ export function createAttachedExistingBrowserPort(options: {
     async close(owner, browserSessionId) {
       const session = ownedForClose(owner, browserSessionId);
 
-      // Revalidate and extend the lease before the first detach attempt. If a detach times out,
-      // keep the exact claims live and the session retryable rather than releasing ownership under
-      // an attachment whose outcome is unknown.
+      // Revalidate and extend the lease before the first detach attempt. If detach has an unknown
+      // outcome, keep the claims active and retryable. Once detach is confirmed, remember that fact
+      // in runtime memory so a claim-cleanup retry never replays target.release.
       if (session.handle.state === 'ACTIVE') heartbeat(session);
       session.handle = Object.freeze({
         ...session.handle,
@@ -476,30 +479,45 @@ export function createAttachedExistingBrowserPort(options: {
       });
       persist(session, 'ACTIVE');
 
+      if (!session.detached) {
+        try {
+          await options.control.release(session.targetId);
+          session.detached = true;
+        } catch (error) {
+          session.handle = Object.freeze({
+            ...session.handle,
+            state: 'CLOSING',
+            lastSeenAt: now(),
+          });
+          persist(session, 'ACTIVE');
+          throw error;
+        }
+      }
+
       try {
-        await options.control.release(session.targetId);
         options.claims.releaseMany(owner, browserSessionId, session.claims);
-        session.claims.clear();
-        session.handle = Object.freeze({
-          ...session.handle,
-          state: 'CLOSED',
-          controlState: 'STOPPED',
-          lastSeenAt: now(),
-        });
-        options.sessionStore?.markClosed(owner, browserSessionId, 'CLOSED', now());
-        sessions.delete(browserSessionId);
-        return clone(session.handle);
       } catch (error) {
         session.handle = Object.freeze({
           ...session.handle,
           state: 'CLOSING',
           lastSeenAt: now(),
         });
-        // Durable state remains ACTIVE so a crashed close attempt is recoverable only after the
-        // lease rules permit it. This deliberately never marks a half-cleaned session CLOSED.
+        // The debugger is already detached. Keep durable claims active until cleanup can be retried;
+        // this prevents another session from taking the target while the close result is incomplete.
         persist(session, 'ACTIVE');
         throw error;
       }
+
+      session.claims.clear();
+      session.handle = Object.freeze({
+        ...session.handle,
+        state: 'CLOSED',
+        controlState: 'STOPPED',
+        lastSeenAt: now(),
+      });
+      options.sessionStore?.markClosed(owner, browserSessionId, 'CLOSED', now());
+      sessions.delete(browserSessionId);
+      return clone(session.handle);
     },
 
     async suspendForRestart() {
@@ -509,12 +527,15 @@ export function createAttachedExistingBrowserPort(options: {
       let failure: unknown;
       for (const [browserSessionId, session] of sessions) {
         if (session.handle.state !== 'ACTIVE' && session.handle.state !== 'CLOSING') continue;
-        let detached = false;
-        try {
-          await options.control.release(session.targetId);
-          detached = true;
-        } catch (error) {
-          failure ??= error;
+        let detached = session.detached;
+        if (!detached) {
+          try {
+            await options.control.release(session.targetId);
+            session.detached = true;
+            detached = true;
+          } catch (error) {
+            failure ??= error;
+          }
         }
         if (detached) {
           try {
@@ -523,6 +544,7 @@ export function createAttachedExistingBrowserPort(options: {
               browserSessionId,
               session.claims,
             );
+            session.claims.clear();
           } catch (error) {
             failure ??= error;
           }

@@ -79,7 +79,8 @@ Returned bounded evidence includes:
 - video width/height;
 - audio evidence: `PRESENT`, `ABSENT` or `UNKNOWN`;
 - decoded audio byte count when Chromium exposes it;
-- audio track count when the browser exposes it.
+- audio track count when the browser exposes it;
+- captured-stream audio track count when Chromium exposes it.
 
 The tool never claims audio exists when evidence is unavailable.
 
@@ -92,7 +93,7 @@ Observed:
 ```text
 browser.wait_for = PASS
 wait attempts = 4
-wait elapsed = 618 ms
+wait elapsed = 613 ms
 browser.assert = PASS
 
 browser.media.inspect:
@@ -102,12 +103,13 @@ browser.media.inspect:
   muted = true
   volume = 1
   duration = 3 s
-  current time = 0.376934 s
+  current time > 0 s
   readyState = 4
   networkState = 1
   error = null
   audio_evidence = PRESENT
-  audio_decoded_bytes = 5954
+  audio_decoded_bytes > 0
+  captured_audio_track_count = 1
   video = 640x360
 ```
 
@@ -167,7 +169,7 @@ direct-mcp-readiness.test.ts                  10/10 PASS
 Affected-surface broad regression:
 
 ```text
-85/85 PASS
+83/83 PASS
 ```
 
 Build gates:

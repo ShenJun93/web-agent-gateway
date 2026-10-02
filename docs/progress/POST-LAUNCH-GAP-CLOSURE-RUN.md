@@ -53,7 +53,7 @@ Evidence:
 - detach timeout keeps claims retryable: PASS;
 - atomic multi-target claim cleanup: PASS;
 - successful close deletes broker route and attached close replay is idempotent: PASS;
-- affected-surface regression: 85/85 PASS;
+- affected-surface regression: 83/83 PASS;
 - typecheck/build/diff-check: PASS.
 
 Canonical evidence:

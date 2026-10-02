@@ -93,7 +93,7 @@ async function main(): Promise<void> {
     assert.ok((media.duration_seconds ?? 0) > 2);
     assert.ok((media.video_width ?? 0) >= 640);
     assert.ok((media.video_height ?? 0) >= 360);
-    assert.ok(['PRESENT', 'UNKNOWN'].includes(media.audio_evidence));
+    assert.equal(media.audio_evidence, 'PRESENT');
 
     console.log(JSON.stringify({
       state: 'PASS',
@@ -115,6 +115,7 @@ async function main(): Promise<void> {
         audio_evidence: media.audio_evidence,
         audio_decoded_bytes: media.audio_decoded_bytes,
         audio_track_count: media.audio_track_count,
+        captured_audio_track_count: media.captured_audio_track_count,
         video_width: media.video_width,
         video_height: media.video_height,
       },
