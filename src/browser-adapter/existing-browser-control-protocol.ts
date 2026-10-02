@@ -40,6 +40,18 @@ export interface ExistingBrowserControlRequest {
   params?: Readonly<Record<string, unknown>>;
 }
 
+export type ExistingBrowserDownloadEventMethod =
+  | 'Browser.downloadWillBegin'
+  | 'Browser.downloadProgress';
+
+export interface ExistingBrowserControlEvent {
+  version: typeof EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION;
+  type: 'control.event';
+  targetId: string;
+  method: ExistingBrowserDownloadEventMethod;
+  params: Readonly<Record<string, unknown>>;
+}
+
 export interface ExistingBrowserControlResult {
   version: typeof EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION;
   type: 'control.result';
@@ -75,6 +87,7 @@ const ALLOWED_CDP = new Set([
   'Input.insertText',
   'DOM.setFileInputFiles',
   'Page.captureScreenshot',
+  'Browser.setDownloadBehavior',
 ]);
 
 export function isAllowedExistingBrowserCdpMethod(method: string): boolean {
@@ -128,6 +141,18 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
     if (row.params !== undefined && !isPlainRecord(row.params)) {
       throw new Error('Invalid existing browser exec params');
     }
+    if (row.cdpMethod === 'Browser.setDownloadBehavior') {
+      const params = record(row.params, 'download behavior params');
+      exactKeys(params, ['behavior', 'downloadPath', 'eventsEnabled']);
+      if (params.behavior !== 'allowAndName'
+          || typeof params.downloadPath !== 'string'
+          || params.downloadPath.length < 3
+          || params.downloadPath.length > 4096
+          || params.downloadPath.includes('\0')
+          || params.eventsEnabled !== true) {
+        throw new Error('Invalid browser download behavior params');
+      }
+    }
   } else if (row.cdpMethod !== undefined || row.params !== undefined) {
     throw new Error('Unexpected existing browser exec fields');
   }
@@ -142,6 +167,42 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
     ...(row.cdpMethod === undefined ? {} : { cdpMethod: row.cdpMethod as string }),
     ...(row.params === undefined ? {} : { params: row.params as Readonly<Record<string, unknown>> }),
   };
+}
+
+export function parseExistingBrowserControlEvent(value: unknown): ExistingBrowserControlEvent {
+  const row = record(value, 'control event');
+  exactKeys(row, ['version', 'type', 'targetId', 'method', 'params']);
+  if (row.version !== EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION || row.type !== 'control.event'
+      || typeof row.targetId !== 'string' || !TARGET_ID.test(row.targetId)) {
+    throw new Error('Invalid existing browser control event');
+  }
+  if (row.method !== 'Browser.downloadWillBegin' && row.method !== 'Browser.downloadProgress') {
+    throw new Error('Invalid existing browser download event method');
+  }
+  const params = record(row.params, 'download event params');
+  if (row.method === 'Browser.downloadWillBegin') {
+    exactKeys(params, ['guid', 'url', 'suggestedFilename']);
+    if (typeof params.guid !== 'string' || !/^[A-Za-z0-9._-]{1,200}$/.test(params.guid)
+        || typeof params.url !== 'string' || params.url.length < 1 || params.url.length > 16 * 1024
+        || typeof params.suggestedFilename !== 'string' || params.suggestedFilename.length < 1
+        || Buffer.byteLength(params.suggestedFilename, 'utf8') > 1024
+        || /[\u0000-\u001F]/.test(params.suggestedFilename)) {
+      throw new Error('Invalid existing browser download begin event');
+    }
+  } else {
+    exactKeys(params, ['guid', 'state']);
+    if (typeof params.guid !== 'string' || !/^[A-Za-z0-9._-]{1,200}$/.test(params.guid)
+        || !['inProgress', 'completed', 'canceled'].includes(String(params.state))) {
+      throw new Error('Invalid existing browser download progress event');
+    }
+  }
+  return {
+    version: EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
+    type: 'control.event',
+    targetId: row.targetId,
+    method: row.method,
+    params,
+  } as ExistingBrowserControlEvent;
 }
 
 export function parseExistingBrowserControlResponse(value: unknown): ExistingBrowserControlResponse {

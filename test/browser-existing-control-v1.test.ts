@@ -27,6 +27,7 @@ function fixture() {
   ];
   const calls: unknown[][] = [];
   let detachListener: ((source: { tabId?: number }) => void) | undefined;
+  let debuggerEventListener: ((source: { tabId?: number }, method: string, params: Record<string, unknown>) => void) | undefined;
   const chromeApi = {
     tabs: {
       async query(queryInfo: Record<string, unknown>) {
@@ -72,8 +73,8 @@ function fixture() {
       async detach(target: { tabId: number }) {
         calls.push(['detach', target]);
       },
-      async sendCommand(target: { tabId: number }, method: string) {
-        calls.push(['sendCommand', target, method]);
+      async sendCommand(target: { tabId: number }, method: string, params?: Record<string, unknown>) {
+        calls.push(params === undefined ? ['sendCommand', target, method] : ['sendCommand', target, method, params]);
         return {
           frameTree: {
             frame: {
@@ -87,9 +88,20 @@ function fixture() {
           detachListener = listener;
         },
       },
+      onEvent: {
+        addListener(listener: (source: { tabId?: number }, method: string, params: Record<string, unknown>) => void) {
+          debuggerEventListener = listener;
+        },
+      },
     },
   };
-  return { chromeApi, calls, detach: (tabId: number) => detachListener?.({ tabId }) };
+  return {
+    chromeApi,
+    calls,
+    detach: (tabId: number) => detachListener?.({ tabId }),
+    debuggerEvent: (tabId: number, method: string, params: Record<string, unknown>) =>
+      debuggerEventListener?.({ tabId }, method, params),
+  };
 }
 
 test('existing-browser discovery is focus-free and strips query/hash secrets', async () => {
@@ -177,6 +189,66 @@ test('attach/probe/release targets an exact tab without focus or browser-close o
     ['sendCommand', { tabId: 11 }, 'Page.getFrameTree'],
     ['detach', { tabId: 11 }],
   ]);
+});
+
+test('download control is bounded and forwards only sanitized events for an attached tab', async () => {
+  const f = fixture();
+  const control = createExistingBrowserControlV1(f.chromeApi);
+  await control.attach(11);
+  const events: unknown[] = [];
+  const unsubscribe = control.onDownloadEvent((event) => events.push(event));
+
+  await control.exec(11, 'Browser.setDownloadBehavior', {
+    behavior: 'allowAndName',
+    downloadPath: 'C:\\WAG\\capture',
+    eventsEnabled: true,
+  });
+  assert.deepEqual(f.calls.at(-1), [
+    'sendCommand',
+    { tabId: 11 },
+    'Browser.setDownloadBehavior',
+    { behavior: 'allowAndName', downloadPath: 'C:\\WAG\\capture', eventsEnabled: true },
+  ]);
+
+  f.debuggerEvent(11, 'Runtime.consoleAPICalled', { type: 'log' });
+  f.debuggerEvent(12, 'Browser.downloadWillBegin', {
+    guid: 'ignored', url: 'https://example.test/ignored', suggestedFilename: 'ignored.bin',
+  });
+  assert.deepEqual(events, []);
+
+  f.debuggerEvent(11, 'Browser.downloadWillBegin', {
+    frameId: 'frame-secret',
+    guid: 'download-1',
+    url: 'https://example.test/report.pdf?signature=secret#fragment',
+    suggestedFilename: 'report.pdf',
+  });
+  f.debuggerEvent(11, 'Browser.downloadProgress', {
+    guid: 'download-1',
+    state: 'completed',
+    receivedBytes: 999,
+    filePath: 'C:\\untrusted\\report.pdf',
+  });
+  assert.deepEqual(events, [
+    {
+      tabId: 11,
+      method: 'Browser.downloadWillBegin',
+      params: { guid: 'download-1', url: 'https://example.test/report.pdf', suggestedFilename: 'report.pdf' },
+    },
+    {
+      tabId: 11,
+      method: 'Browser.downloadProgress',
+      params: { guid: 'download-1', state: 'completed' },
+    },
+  ]);
+
+  await assert.rejects(
+    () => control.exec(11, 'Browser.setDownloadBehavior', {
+      behavior: 'allow', downloadPath: 'C:\\WAG\\capture', eventsEnabled: true,
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+  unsubscribe();
 });
 
 test('external debugger detach invalidates local attachment state', async () => {

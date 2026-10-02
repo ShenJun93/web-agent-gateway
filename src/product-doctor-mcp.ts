@@ -193,6 +193,7 @@ function nextAction(check: ProductDoctorCheck): string | null {
     git_policy: 'Reconcile Git tool publication with the configured remote Git policy.',
     media_preflight: 'Restore machine.media.inspect and verify.media on the published MCP surface.',
     browser_upload: 'Restore browser.upload_file before workflows that require file upload.',
+    browser_download: 'Restore browser.download before workflows that require file downloads.',
     browser_reliability: 'Restore browser.wait_for, browser.assert, and browser.media.inspect.',
     mcp_surface: 'Restart WAG with a coherent published MCP surface.',
     cli_doctor_support: 'Promote a runtime that includes the packaged doctor/health support files.',
@@ -338,6 +339,14 @@ export function buildProductDoctorMcpReport(input: ProductDoctorMcpInput): objec
         ? 'Semantic browser file upload is published.'
         : 'Browser upload is not required while browser integration is disabled.')
       : makeCheck('browser_upload', 'FAIL', 'WAG_DOCTOR_BROWSER_UPLOAD_MISSING', 'Semantic browser file upload is missing.'),
+  );
+
+  checks.push(
+    !browserEnabled || toolSet.has('browser.download')
+      ? makeCheck('browser_download', 'PASS', 'WAG_DOCTOR_BROWSER_DOWNLOAD_READY', browserEnabled
+        ? 'Semantic browser download capture is published.'
+        : 'Browser download is not required while browser integration is disabled.')
+      : makeCheck('browser_download', 'FAIL', 'WAG_DOCTOR_BROWSER_DOWNLOAD_MISSING', 'Semantic browser download capture is missing.'),
   );
 
   checks.push(

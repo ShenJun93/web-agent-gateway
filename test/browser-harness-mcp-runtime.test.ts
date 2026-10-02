@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -387,4 +388,178 @@ test('browser wait_for polls semantic state while assert observes exactly once',
     'node_00000000-0000-4000-8000-000000000702_0',
   );
   assert.equal(media.audio_evidence, 'PRESENT');
+});
+
+
+test('browser download captures one attached-tab download into an authority-owned artifact', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-download-runtime-'));
+  const sessionId = 'browser_00000000-0000-4000-8000-000000000888';
+  const handle = {
+    browserSessionId: sessionId,
+    profileId: 'download',
+    owner: OWNER,
+    backend: 'cdp' as const,
+    executionMode: 'AI_TAB_GROUP' as const,
+    ownershipMode: 'WAG_OWNED' as const,
+    controlState: 'RUNNING' as const,
+    targetId: 'tab_7',
+    claimEpoch: 1,
+    claimExpiresAt: Date.now() + 30_000,
+    createdAt: 1,
+    lastSeenAt: 1,
+    state: 'ACTIVE' as const,
+  };
+  const port: BrowserPort = {
+    async open() { return handle; },
+    async describe() { return handle; },
+    async snapshot() { throw new Error('unused'); },
+    async exec() { throw new Error('unused'); },
+    async screenshot() { throw new Error('unused'); },
+    async close() { return { ...handle, state: 'CLOSED' as const }; },
+  };
+  const listeners = new Map<string, Set<(params: Readonly<Record<string, unknown>>) => void>>();
+  let downloadPath = '';
+  const control = {
+    async exec(targetId: string, method: string, params?: Readonly<Record<string, unknown>>) {
+      assert.equal(targetId, 'tab_7');
+      assert.equal(method, 'Browser.setDownloadBehavior');
+      assert.equal(params?.behavior, 'allowAndName');
+      assert.equal(params?.eventsEnabled, true);
+      downloadPath = String(params?.downloadPath ?? '');
+      return {};
+    },
+    onEvent(targetId: string, method: string, listener: (params: Readonly<Record<string, unknown>>) => void) {
+      assert.equal(targetId, 'tab_7');
+      const key = targetId + ':' + method;
+      const set = listeners.get(key) ?? new Set();
+      set.add(listener);
+      listeners.set(key, set);
+      return () => {
+        set.delete(listener);
+        if (set.size === 0) listeners.delete(key);
+      };
+    },
+  } as any;
+  const bytes = Buffer.from('WAG M11 download fixture\n', 'utf8');
+  const semantic: SemanticBrowser = {
+    async snapshot() { throw new Error('unused'); },
+    async navigate() { throw new Error('unused'); },
+    async click(_owner, actualSession, ref) {
+      assert.equal(actualSession, sessionId);
+      assert.equal(ref, 'node_00000000-0000-4000-8000-000000000889_0');
+      assert.ok(downloadPath.length > 0, 'download capture must be armed before click');
+      await mkdir(downloadPath, { recursive: true });
+      await writeFile(join(downloadPath, 'download-1'), bytes);
+      for (const listener of listeners.get('tab_7:Browser.downloadWillBegin') ?? []) {
+        listener({
+          guid: 'download-1',
+          url: 'https://example.test/report.txt',
+          suggestedFilename: 'report.txt',
+        });
+      }
+      for (const listener of listeners.get('tab_7:Browser.downloadProgress') ?? []) {
+        listener({ guid: 'download-1', state: 'completed' });
+      }
+    },
+    async fill() { throw new Error('unused'); },
+    async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
+    async press() { throw new Error('unused'); },
+  };
+  const effectStatePath = join(root, 'effects.sqlite');
+  const runtime = createPrivateBrowserMcpContext({
+    owner: OWNER,
+    edgeExecutablePath: join(root, 'msedge.exe'),
+    profileRoot: join(root, 'profiles'),
+    effectStatePath,
+    killSwitch: () => false,
+    port,
+    semantic,
+    control,
+  });
+  t.after(async () => {
+    await runtime.closeAll();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const opened = await runtime.open('download', 'AI_TAB_GROUP', undefined, 'WAG M11');
+  assert.equal(opened.browserSessionId, sessionId);
+  const artifact = await runtime.download(
+    sessionId,
+    'node_00000000-0000-4000-8000-000000000889_0',
+    5_000,
+  );
+  assert.equal(artifact.filename, 'report.txt');
+  assert.equal(artifact.sizeBytes, bytes.length);
+  assert.equal(artifact.sha256, createHash('sha256').update(bytes).digest('hex'));
+  const persisted = await readFile(join(
+    effectStatePath + '.browser-artifacts',
+    artifact.artifactId,
+    artifact.filename,
+  ));
+  assert.deepEqual(persisted, bytes);
+  assert.equal(listeners.size, 0, 'download event subscriptions must be released after completion');
+});
+
+test('browser download fails before click when the attached control bridge cannot stream download events', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-download-no-events-'));
+  const sessionId = 'browser_00000000-0000-4000-8000-000000000890';
+  const handle = {
+    browserSessionId: sessionId,
+    profileId: 'download-no-events',
+    owner: OWNER,
+    backend: 'cdp' as const,
+    executionMode: 'ATTACH_EXISTING' as const,
+    ownershipMode: 'ATTACHED_EXISTING' as const,
+    controlState: 'RUNNING' as const,
+    targetId: 'tab_7',
+    claimEpoch: 1,
+    claimExpiresAt: Date.now() + 30_000,
+    createdAt: 1,
+    lastSeenAt: 1,
+    state: 'ACTIVE' as const,
+  };
+  const port: BrowserPort = {
+    async open() { return handle; },
+    async describe() { return handle; },
+    async snapshot() { throw new Error('unused'); },
+    async exec() { throw new Error('unused'); },
+    async screenshot() { throw new Error('unused'); },
+    async close() { return { ...handle, state: 'CLOSED' as const }; },
+  };
+  let clicks = 0;
+  const semantic: SemanticBrowser = {
+    async snapshot() { throw new Error('unused'); },
+    async navigate() { throw new Error('unused'); },
+    async click() { clicks += 1; },
+    async fill() { throw new Error('unused'); },
+    async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
+    async press() { throw new Error('unused'); },
+  };
+  const runtime = createPrivateBrowserMcpContext({
+    owner: OWNER,
+    edgeExecutablePath: join(root, 'msedge.exe'),
+    profileRoot: join(root, 'profiles'),
+    effectStatePath: join(root, 'effects.sqlite'),
+    killSwitch: () => false,
+    port,
+    semantic,
+    control: { async exec() { return {}; } } as any,
+  });
+  t.after(async () => {
+    await runtime.closeAll();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await runtime.open('download-no-events', 'ATTACH_EXISTING', 'tab_7');
+  await assert.rejects(
+    () => runtime.download(
+      sessionId,
+      'node_00000000-0000-4000-8000-000000000891_0',
+      5_000,
+    ),
+    /download capture is unavailable/i,
+  );
+  assert.equal(clicks, 0, 'missing event bridge must fail before the download-triggering click');
 });

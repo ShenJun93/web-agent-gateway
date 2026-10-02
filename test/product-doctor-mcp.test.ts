@@ -56,6 +56,7 @@ function healthyInput(): ProductDoctorMcpInput {
       'machine.media.inspect',
       'verify.media',
       'browser.upload_file',
+      'browser.download',
       'browser.wait_for',
       'browser.assert',
       'browser.media.inspect',
@@ -156,4 +157,27 @@ test('MCP product doctor does not require browser-only capabilities when browser
   for (const id of ['extension_release', 'browser_upload', 'browser_reliability']) {
     assert.equal(report.checks.find((check) => check.id === id)?.status, 'PASS');
   }
+});
+
+
+test('MCP product doctor fails when browser download capability is missing from a browser-enabled surface', () => {
+  const input = healthyInput();
+  input.mcpTools = input.mcpTools.filter((name) => name !== 'browser.download');
+  const report = buildProductDoctorMcpReport(input) as {
+    status: string;
+    blockers: string[];
+    checks: Array<{ id: string; status: string; code: string }>;
+  };
+
+  assert.equal(report.status, 'FAIL');
+  assert.ok(report.blockers.includes('browser_download'));
+  assert.deepEqual(
+    report.checks.find((check) => check.id === 'browser_download'),
+    {
+      id: 'browser_download',
+      status: 'FAIL',
+      code: 'WAG_DOCTOR_BROWSER_DOWNLOAD_MISSING',
+      message: 'Semantic browser download capture is missing.',
+    },
+  );
 });

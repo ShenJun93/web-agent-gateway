@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import type { GatewayAuthority } from '../caller-context.js';
+import { ArtifactPort } from '../artifact-harness/artifact-port.js';
 import { HarnessEffectCoordinator } from '../harness-effect-coordinator.js';
 import {
   HarnessEffectLedger,
@@ -52,6 +53,11 @@ import {
   type BrowserSemanticEvaluation,
 } from './browser-semantic-condition.js';
 import { waitForLoopbackCdpReady } from './cdp-readiness.js';
+import { createBrowserDownloadController } from './browser-download.js';
+import {
+  createCdpBrowserDownloadDriver,
+  createFileBrowserDownloadStorage,
+} from './cdp-download-driver.js';
 
 export type BrowserMcpAction =
   | { readonly type: 'navigate'; readonly url: string }
@@ -99,6 +105,13 @@ export interface BrowserMcpWaitResult extends BrowserSemanticEvaluation {
   readonly elapsed_ms: number;
 }
 
+export interface BrowserMcpDownload {
+  readonly artifactId: string;
+  readonly filename: string;
+  readonly sizeBytes: number;
+  readonly sha256: string;
+}
+
 export interface BrowserMcpEffect {
   readonly effectId: string;
   readonly kind: string;
@@ -130,6 +143,7 @@ export interface BrowserMcpContext {
     ref: string,
     paths: readonly string[],
   ): Promise<BrowserMcpEffect>;
+  download(browserSessionId: string, ref: string, timeoutMs?: number): Promise<BrowserMcpDownload>;
   waitFor(
     browserSessionId: string,
     conditions: readonly BrowserSemanticCondition[],
@@ -273,7 +287,7 @@ export function createPrivateBrowserMcpContext(options: {
     statePath: options.diagnosticsStatePath ?? options.effectStatePath + '.browser-diagnostics.json',
   });
   let broker: BrowserBroker | undefined;
-  let control: ExistingBrowserControlClient | undefined;
+  let control: ExistingBrowserControlClient | undefined = options.control;
   let targetClaims: BrowserTargetClaimStore | undefined;
   let attachedSessions: BrowserAttachedSessionStore | undefined;
   let attachedPort: AttachedExistingBrowserPort | undefined;
@@ -302,9 +316,9 @@ export function createPrivateBrowserMcpContext(options: {
         connect: (endpointUrl) => createNodeCdpTransport({ endpointUrl }),
       }),
     });
-    control = options.control ?? (options.controlDiscoveryPath === undefined
+    control ??= options.controlDiscoveryPath === undefined
       ? undefined
-      : createExistingBrowserControlClient({ discoveryPath: options.controlDiscoveryPath }));
+      : createExistingBrowserControlClient({ discoveryPath: options.controlDiscoveryPath });
     if (control !== undefined) {
       targetClaims = new BrowserTargetClaimStore(
         options.targetClaimStatePath ?? options.effectStatePath + '.target-claims.sqlite',
@@ -329,6 +343,33 @@ export function createPrivateBrowserMcpContext(options: {
   const sessions = new Set<string>();
   const byProfile = new Map<string, string>();
   const fencing = new Map<string, { targetId: string; claimEpoch: number }>();
+  const artifacts = new ArtifactPort({
+    root: options.effectStatePath + '.browser-artifacts',
+    authorizeSource: async () => { throw new Error('Browser download artifacts do not import arbitrary source paths'); },
+  });
+  const downloadDriver = createCdpBrowserDownloadDriver({
+    storage: createFileBrowserDownloadStorage({ root: options.effectStatePath + '.browser-downloads' }),
+    client: {
+      async call(owner, browserSessionId, method, params) {
+        if (owner !== options.owner) throw new Error('Browser download authority mismatch');
+        if (!control?.onEvent) throw new Error('Browser download capture is unavailable for this session backend');
+        const fence = fencing.get(browserSessionId);
+        if (!fence) throw new Error('Browser download capture requires an attached existing browser target');
+        return control.exec(fence.targetId, method, params);
+      },
+      onEvent(owner, browserSessionId, method, listener) {
+        if (owner !== options.owner) throw new Error('Browser download authority mismatch');
+        if (!control?.onEvent) throw new Error('Browser download capture is unavailable for this session backend');
+        const fence = fencing.get(browserSessionId);
+        if (!fence) throw new Error('Browser download capture requires an attached existing browser target');
+        if (method !== 'Browser.downloadWillBegin' && method !== 'Browser.downloadProgress') {
+          throw new Error('Browser download event method is denied');
+        }
+        return control.onEvent(fence.targetId, method, listener);
+      },
+    },
+  });
+  const downloads = createBrowserDownloadController({ driver: downloadDriver, artifacts });
   let closed = false;
 
   function rememberFencing(handle: BrowserSessionHandle): boolean {
@@ -743,6 +784,57 @@ export function createPrivateBrowserMcpContext(options: {
         }
         finish(record.state === 'SUCCEEDED', undefined, completion);
         return effectView(record);
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
+    },
+
+    async download(browserSessionId, ref, timeoutMs) {
+      assertEffectAllowed();
+      await ensureSession(browserSessionId);
+      if (!control?.onEvent) {
+        throw new Error('Browser download capture is unavailable for this session backend');
+      }
+      const expectedFence = fencing.get(browserSessionId);
+      if (!expectedFence) {
+        throw new Error('Browser download capture requires an attached existing browser target');
+      }
+      const binding = await port.describe(options.owner, browserSessionId);
+      if (binding.targetId !== expectedFence.targetId || binding.claimEpoch !== expectedFence.claimEpoch) {
+        throw new Error('Browser target fencing binding changed');
+      }
+      const finish = diagnostics.begin({
+        actionType: 'download',
+        browserSessionId,
+        targetId: expectedFence.targetId,
+        ownershipMode: binding.ownershipMode,
+      });
+      try {
+        const artifact = await downloads.download(
+          options.owner,
+          browserSessionId,
+          async () => {
+            assertEffectAllowed();
+            const current = fencing.get(browserSessionId);
+            if (!current || current.targetId !== expectedFence.targetId || current.claimEpoch !== expectedFence.claimEpoch) {
+              throw new Error('Browser target fencing binding changed');
+            }
+            await semantic.click(options.owner, browserSessionId, ref);
+          },
+          { timeoutMs },
+        );
+        finish(true, undefined, {
+          targetId: expectedFence.targetId,
+          ownershipMode: binding.ownershipMode,
+          targetChanged: false,
+        });
+        return Object.freeze({
+          artifactId: artifact.artifactId,
+          filename: artifact.filename,
+          sizeBytes: artifact.sizeBytes,
+          sha256: artifact.sha256,
+        });
       } catch (error) {
         finish(false, error);
         throw error;

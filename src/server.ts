@@ -1213,6 +1213,24 @@ export function createGatewayMcpServer(
       await browserContext.uploadFile(browser_session_id, idempotency_key, workspace_id, ref, paths),
     ));
 
+    registerTool('browser.download', {
+      description: 'Arm bounded download capture, click one semantic ref, and persist exactly one completed download as a caller-owned artifact. This tool is intentionally non-idempotent.',
+      inputSchema: z.object({
+        browser_session_id: browserSessionId,
+        ref: z.string().min(1).max(256),
+        timeout_ms: z.number().int().min(1_000).max(120_000).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ browser_session_id, ref, timeout_ms }) => {
+      const artifact = await browserContext.download(browser_session_id, ref, timeout_ms);
+      return toolResult({
+        artifact_id: artifact.artifactId,
+        filename: artifact.filename,
+        size_bytes: artifact.sizeBytes,
+        sha256: artifact.sha256,
+      });
+    });
+
     registerTool('browser.effect.get', {
       description: 'Read the durable exact-once state for one caller-owned browser effect after a response-stream interruption; this never replays the effect.',
       inputSchema: z.object({ effect_id: effectId }).strict(),

@@ -35,7 +35,14 @@ test('extension WebSocket transport pairs and returns bounded control responses'
     }
   };
 
+  let downloadListener: ((event: any) => void) | undefined;
+  let downloadSubscriptions = 0;
   const control = {
+    onDownloadEvent(listener: (event: any) => void) {
+      downloadSubscriptions += 1;
+      downloadListener = listener;
+      return () => { if (downloadListener === listener) downloadListener = undefined; };
+    },
     async listTargets() {
       return [{
         tabId: 7,
@@ -80,11 +87,29 @@ test('extension WebSocket transport pairs and returns bounded control responses'
   assert.deepEqual(JSON.parse(socket.sent[0]!), {
     version: 1,
     type: 'control.hello',
+    extensionRelease: {
+      schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',
+      sourceHead: 'development',
+    },
     pairingToken: 'x'.repeat(43),
   });
 
   socket.emit('message', { data: JSON.stringify({ version: 1, type: 'control.ready' }) });
   assert.equal(transport.isConnected(), true);
+  assert.equal(downloadSubscriptions, 1);
+  assert.ok(downloadListener);
+  downloadListener!({
+    tabId: 7,
+    method: 'Browser.downloadProgress',
+    params: { guid: 'download-1', state: 'completed' },
+  });
+  assert.deepEqual(JSON.parse(socket.sent.at(-1)!), {
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Browser.downloadProgress',
+    params: { guid: 'download-1', state: 'completed' },
+  });
 
   socket.emit('message', { data: JSON.stringify({
     version: 1,
@@ -99,6 +124,14 @@ test('extension WebSocket transport pairs and returns bounded control responses'
   assert.equal(response.requestId, 'bctl_00000000-0000-4000-8000-000000000001');
   assert.equal(response.result[0].targetId, 'tab_7');
   assert.equal(response.result[0].attached, false);
+
+  transport.stop();
+  assert.equal(downloadListener, undefined);
+  await transport.configure({
+    endpoint: 'ws://127.0.0.1:17841/browser-control',
+    pairingToken: 'a'.repeat(64),
+  });
+  assert.equal(downloadSubscriptions, 2, 'start after stop must restore download event forwarding');
 
   await transport.clearConfig();
   assert.equal(transport.isConnected(), false);
