@@ -177,7 +177,9 @@ export async function main(
   }
   let engineering: RepositoryEngineeringRuntime;
   try {
-    engineering = await (deps.startRepositoryEngineering ?? startRepositoryEngineeringRuntime)(config);
+    engineering = await (deps.startRepositoryEngineering ?? startRepositoryEngineeringRuntime)(config, {
+      skipBrowserControlServer: deps.env.WAG_PRODUCT_HEALTH_PROBE === '1',
+    });
   } catch (error) {
     emitError(deps.stderr, 'REPOSITORY_ENGINEERING_START_FAILED', error);
     return 1;

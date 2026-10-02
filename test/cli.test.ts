@@ -5,6 +5,7 @@ import test from 'node:test';
 import { main, type CliDependencies } from '../src/cli.js';
 import type { PrivateGatewayConfig } from '../src/private-config.js';
 import { PrivateRuntimeError } from '../src/private-runtime.js';
+import { startRepositoryEngineeringRuntime } from '../src/repository-engineering-runtime.js';
 
 class CaptureWritable extends Writable {
   private chunks: string[] = [];
@@ -195,6 +196,19 @@ test('product update, rollback, and uninstall dispatch only bounded lifecycle ar
   relative.deps.runRollback = async () => 0;
   assert.equal(await main(['rollback', '--output', 'relative.json'], relative.deps), 1);
   assert.match(relative.stderr.text(), /"code":"CLI_USAGE"/);
+});
+
+test('health self-probe env skips only the browser control server during CLI assembly', async () => {
+  const h = makeCliHarness();
+  h.deps.env.WAG_PRODUCT_HEALTH_PROBE = '1';
+  let observedSkip: boolean | undefined;
+  h.deps.startRepositoryEngineering = async (loaded, options) => {
+    observedSkip = options?.skipBrowserControlServer;
+    return startRepositoryEngineeringRuntime(loaded, options);
+  };
+
+  assert.equal(await main(['doctor', '--config', resolve('private.json')], h.deps), 0);
+  assert.equal(observedSkip, true);
 });
 
 test('doctor --config preserves the legacy runtime preflight', async () => {
