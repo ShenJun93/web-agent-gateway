@@ -183,7 +183,7 @@ export function parseExistingBrowserControlEvent(value: unknown): ExistingBrowse
   if (row.method === 'Browser.downloadWillBegin') {
     exactKeys(params, ['guid', 'url', 'suggestedFilename']);
     if (typeof params.guid !== 'string' || !/^[A-Za-z0-9._-]{1,200}$/.test(params.guid)
-        || typeof params.url !== 'string' || params.url.length < 1 || params.url.length > 16 * 1024
+        || !validSanitizedDownloadUrl(params.url)
         || typeof params.suggestedFilename !== 'string' || params.suggestedFilename.length < 1
         || Buffer.byteLength(params.suggestedFilename, 'utf8') > 1024
         || /[\u0000-\u001F]/.test(params.suggestedFilename)) {
@@ -254,6 +254,17 @@ export function parseExistingBrowserTarget(value: unknown): ExistingBrowserTarge
     throw new Error('Invalid existing browser target');
   }
   return row as unknown as ExistingBrowserTarget;
+}
+
+function validSanitizedDownloadUrl(value: unknown): boolean {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 16 * 1024) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && url.username === '' && url.password === '' && url.search === '' && url.hash === '';
+  } catch {
+    return false;
+  }
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

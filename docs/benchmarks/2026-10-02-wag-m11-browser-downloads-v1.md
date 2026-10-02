@@ -46,8 +46,8 @@ The tool intentionally does not expose the internal capture directory or arbitra
 - No `chrome.downloads` permission was added.
 - No generic debugger/CDP event subscription became model-facing.
 - Download events are pushed only for tabs already attached by WAG.
-- Extension sanitizes event payloads and drops all unrelated debugger events.
-- WAG protocol independently validates the two event schemas.
+- Extension sanitizes event payloads, strips download URL credentials/query/fragment, and drops all unrelated debugger events.
+- WAG protocol independently validates the two event schemas and rejects unsanitized download URLs.
 - `Browser.setDownloadBehavior` is exact-shape and exact-value bounded.
 - Target ID + claim epoch are rechecked at the click dispatch boundary.
 - The model never supplies a download filesystem path.
@@ -60,6 +60,7 @@ The tool intentionally does not expose the internal capture directory or arbitra
 - Supported path: attached existing Edge tabs and AI_TAB_GROUP sessions backed by the existing-browser control bridge.
 - WAG headless/owned backends without that bounded event bridge fail closed before click.
 - MIME inference is not claimed in v1; output contains filename, size and SHA-256 plus the artifact handle.
+- Artifact inspect/export is a follow-up product surface; M11 preserves the accepted Full Harness boundary that download results are owned ArtifactHandles rather than arbitrary local paths.
 
 ## Acceptance
 

@@ -129,6 +129,14 @@ test('existing browser control protocol denies raw CDP and malformed target iden
     params: {},
   }), /download event method/);
 
+  assert.throws(() => parseExistingBrowserControlEvent({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Browser.downloadWillBegin',
+    params: { guid: 'download-1', url: 'https://example.test/report.pdf?token=secret', suggestedFilename: 'report.pdf' },
+  }), /download begin event/);
+
   assert.throws(() => parseExistingBrowserControlRequest({
     version: 1,
     type: 'control.request',
