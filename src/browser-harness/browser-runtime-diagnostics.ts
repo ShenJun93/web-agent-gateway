@@ -10,6 +10,8 @@ export type BrowserDiagnosticAction =
   | 'fill'
   | 'upload_file'
   | 'download'
+  | 'dialog_get'
+  | 'dialog_respond'
   | 'wait_for'
   | 'assert'
   | 'media_inspect'
@@ -85,6 +87,8 @@ const ACTIONS = new Set<BrowserDiagnosticAction>([
   'fill',
   'upload_file',
   'download',
+  'dialog_get',
+  'dialog_respond',
   'wait_for',
   'assert',
   'media_inspect',

@@ -27,7 +27,11 @@ export function createNativeBrowserControlV1(options: {
     screenshot(tabId: number): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
     release(tabId: number): Promise<{ tabId: number; released: boolean }>;
     close(tabId: number): Promise<{ tabId: number; closed: boolean }>;
-    onDownloadEvent?(listener: (event: { tabId: number; method: 'Browser.downloadWillBegin' | 'Browser.downloadProgress'; params: Record<string, unknown> }) => void): () => unknown;
+    onControlEvent?(listener: (event: {
+      tabId: number;
+      method: 'Browser.downloadWillBegin' | 'Browser.downloadProgress' | 'Page.javascriptDialogOpening' | 'Page.javascriptDialogClosed';
+      params: Record<string, unknown>;
+    }) => void): () => unknown;
     isAttached(tabId: number): boolean;
   };
 }): NativeBrowserControlV1;

@@ -186,6 +186,7 @@ test('attach/probe/release targets an exact tab without focus or browser-close o
   assert.deepEqual(f.calls, [
     ['get', 11],
     ['attach', { tabId: 11 }, '1.3'],
+    ['sendCommand', { tabId: 11 }, 'Page.enable'],
     ['sendCommand', { tabId: 11 }, 'Page.getFrameTree'],
     ['detach', { tabId: 11 }],
   ]);
@@ -196,7 +197,7 @@ test('download control is bounded and forwards only sanitized events for an atta
   const control = createExistingBrowserControlV1(f.chromeApi);
   await control.attach(11);
   const events: unknown[] = [];
-  const unsubscribe = control.onDownloadEvent((event) => events.push(event));
+  const unsubscribe = control.onControlEvent((event) => events.push(event));
 
   await control.exec(11, 'Browser.setDownloadBehavior', {
     behavior: 'allowAndName',
@@ -442,4 +443,68 @@ test('fixed media inspection function is exact and parameter-widening is denied'
     (error: unknown) => error instanceof ExistingBrowserControlError
       && error.code === 'CONTROL_PARAMS_INVALID',
   );
+});
+
+
+test('javascript dialog events are sanitized and response command is strictly bounded', async () => {
+  const f = fixture();
+  const control = createExistingBrowserControlV1(f.chromeApi);
+  await control.attach(11);
+  const events: unknown[] = [];
+  const unsubscribe = control.onControlEvent((event) => events.push(event));
+
+  f.debuggerEvent(12, 'Page.javascriptDialogOpening', {
+    url: 'https://ignored.example.test/?token=secret',
+    message: 'Ignored',
+    type: 'confirm',
+    defaultPrompt: '',
+  });
+  f.debuggerEvent(11, 'Runtime.consoleAPICalled', { type: 'log' });
+  assert.deepEqual(events, []);
+
+  f.debuggerEvent(11, 'Page.javascriptDialogOpening', {
+    url: 'https://user:pass@app.example.test/account?token=secret#fragment',
+    message: 'Continue?',
+    type: 'confirm',
+    defaultPrompt: '',
+    hasBrowserHandler: true,
+  });
+  assert.deepEqual(events, [{
+    tabId: 11,
+    method: 'Page.javascriptDialogOpening',
+    params: {
+      url: 'https://app.example.test/account',
+      message: 'Continue?',
+      type: 'confirm',
+      defaultPrompt: '',
+    },
+  }]);
+
+  await control.exec(11, 'Page.handleJavaScriptDialog', { accept: false });
+  assert.deepEqual(f.calls.at(-1), [
+    'sendCommand',
+    { tabId: 11 },
+    'Page.handleJavaScriptDialog',
+    { accept: false },
+  ]);
+
+  await assert.rejects(
+    () => control.exec(11, 'Page.handleJavaScriptDialog', {
+      accept: true,
+      promptText: 'x'.repeat(5000),
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+
+  f.debuggerEvent(11, 'Page.javascriptDialogClosed', {
+    result: false,
+    userInput: 'do-not-forward',
+  });
+  assert.deepEqual(events.at(-1), {
+    tabId: 11,
+    method: 'Page.javascriptDialogClosed',
+    params: { result: false },
+  });
+  unsubscribe();
 });

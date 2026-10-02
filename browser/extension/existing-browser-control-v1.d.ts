@@ -60,6 +60,10 @@ export function createExistingBrowserControlV1(
   screenshot(tabId: number): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   release(tabId: number): Promise<{ tabId: number; released: boolean }>;
   close(tabId: number): Promise<{ tabId: number; closed: boolean }>;
-  onDownloadEvent(listener: (event: { tabId: number; method: 'Browser.downloadWillBegin' | 'Browser.downloadProgress'; params: Record<string, unknown> }) => void): () => boolean;
+  onControlEvent(listener: (event: {
+    tabId: number;
+    method: 'Browser.downloadWillBegin' | 'Browser.downloadProgress' | 'Page.javascriptDialogOpening' | 'Page.javascriptDialogClosed';
+    params: Record<string, unknown>;
+  }) => void): () => boolean;
   isAttached(tabId: number): boolean;
 };

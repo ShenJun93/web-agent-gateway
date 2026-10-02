@@ -23,11 +23,11 @@ export function createBrowserControlWebSocketV1(options) {
   let connected = false;
   let stopping = false;
 
-  let unsubscribeDownloadEvents;
+  let unsubscribeControlEvents;
 
-  function ensureDownloadEventSubscription() {
-    if (unsubscribeDownloadEvents !== undefined || typeof options.control?.onDownloadEvent !== 'function') return;
-    unsubscribeDownloadEvents = options.control.onDownloadEvent((event) => {
+  function ensureControlEventSubscription() {
+    if (unsubscribeControlEvents !== undefined || typeof options.control?.onControlEvent !== 'function') return;
+    unsubscribeControlEvents = options.control.onControlEvent((event) => {
       const current = socket;
       if (!connected || !current || current.readyState !== WebSocketImpl.OPEN) return;
       current.send(JSON.stringify({
@@ -65,7 +65,7 @@ export function createBrowserControlWebSocketV1(options) {
     if (stopping || socket) return;
     const config = await loadConfig();
     if (!config) return;
-    ensureDownloadEventSubscription();
+    ensureControlEventSubscription();
     connect(config);
   }
 
@@ -176,8 +176,8 @@ export function createBrowserControlWebSocketV1(options) {
   function stop() {
     stopping = true;
     disconnect();
-    try { unsubscribeDownloadEvents?.(); } catch {}
-    unsubscribeDownloadEvents = undefined;
+    try { unsubscribeControlEvents?.(); } catch {}
+    unsubscribeControlEvents = undefined;
   }
 
   return {

@@ -40,15 +40,22 @@ export interface ExistingBrowserControlRequest {
   params?: Readonly<Record<string, unknown>>;
 }
 
-export type ExistingBrowserDownloadEventMethod =
+export type ExistingBrowserControlEventMethod =
   | 'Browser.downloadWillBegin'
-  | 'Browser.downloadProgress';
+  | 'Browser.downloadProgress'
+  | 'Page.javascriptDialogOpening'
+  | 'Page.javascriptDialogClosed';
+
+export type ExistingBrowserDownloadEventMethod = Extract<
+  ExistingBrowserControlEventMethod,
+  'Browser.downloadWillBegin' | 'Browser.downloadProgress'
+>;
 
 export interface ExistingBrowserControlEvent {
   version: typeof EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION;
   type: 'control.event';
   targetId: string;
-  method: ExistingBrowserDownloadEventMethod;
+  method: ExistingBrowserControlEventMethod;
   params: Readonly<Record<string, unknown>>;
 }
 
@@ -87,6 +94,7 @@ const ALLOWED_CDP = new Set([
   'Input.insertText',
   'DOM.setFileInputFiles',
   'Page.captureScreenshot',
+  'Page.handleJavaScriptDialog',
   'Browser.setDownloadBehavior',
 ]);
 
@@ -141,6 +149,17 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
     if (row.params !== undefined && !isPlainRecord(row.params)) {
       throw new Error('Invalid existing browser exec params');
     }
+    if (row.cdpMethod === 'Page.handleJavaScriptDialog') {
+      const params = record(row.params, 'javascript dialog response params');
+      exactKeys(params, ['accept', 'promptText']);
+      if (typeof params.accept !== 'boolean'
+          || (params.promptText !== undefined
+            && (typeof params.promptText !== 'string'
+              || Buffer.byteLength(params.promptText, 'utf8') > 4 * 1024
+              || params.promptText.includes('\0')))) {
+        throw new Error('Invalid javascript dialog response params');
+      }
+    }
     if (row.cdpMethod === 'Browser.setDownloadBehavior') {
       const params = record(row.params, 'download behavior params');
       exactKeys(params, ['behavior', 'downloadPath', 'eventsEnabled']);
@@ -176,10 +195,14 @@ export function parseExistingBrowserControlEvent(value: unknown): ExistingBrowse
       || typeof row.targetId !== 'string' || !TARGET_ID.test(row.targetId)) {
     throw new Error('Invalid existing browser control event');
   }
-  if (row.method !== 'Browser.downloadWillBegin' && row.method !== 'Browser.downloadProgress') {
-    throw new Error('Invalid existing browser download event method');
+  const methods: ExistingBrowserControlEventMethod[] = [
+    'Browser.downloadWillBegin', 'Browser.downloadProgress',
+    'Page.javascriptDialogOpening', 'Page.javascriptDialogClosed',
+  ];
+  if (!methods.includes(row.method as ExistingBrowserControlEventMethod)) {
+    throw new Error('Invalid existing browser control event method');
   }
-  const params = record(row.params, 'download event params');
+  const params = record(row.params, 'browser control event params');
   if (row.method === 'Browser.downloadWillBegin') {
     exactKeys(params, ['guid', 'url', 'suggestedFilename']);
     if (typeof params.guid !== 'string' || !/^[A-Za-z0-9._-]{1,200}$/.test(params.guid)
@@ -189,11 +212,27 @@ export function parseExistingBrowserControlEvent(value: unknown): ExistingBrowse
         || /[\u0000-\u001F]/.test(params.suggestedFilename)) {
       throw new Error('Invalid existing browser download begin event');
     }
-  } else {
+  } else if (row.method === 'Browser.downloadProgress') {
     exactKeys(params, ['guid', 'state']);
     if (typeof params.guid !== 'string' || !/^[A-Za-z0-9._-]{1,200}$/.test(params.guid)
         || !['inProgress', 'completed', 'canceled'].includes(String(params.state))) {
       throw new Error('Invalid existing browser download progress event');
+    }
+  } else if (row.method === 'Page.javascriptDialogOpening') {
+    exactKeys(params, ['url', 'message', 'type', 'defaultPrompt']);
+    if (!validSanitizedDialogUrl(params.url)
+        || typeof params.message !== 'string' || Buffer.byteLength(params.message, 'utf8') > 8 * 1024
+        || params.message.includes('\0')
+        || !['alert', 'confirm', 'prompt', 'beforeunload'].includes(String(params.type))
+        || typeof params.defaultPrompt !== 'string'
+        || Buffer.byteLength(params.defaultPrompt, 'utf8') > 4 * 1024
+        || params.defaultPrompt.includes('\0')) {
+      throw new Error('Invalid existing browser dialog opening event');
+    }
+  } else {
+    exactKeys(params, ['result']);
+    if (typeof params.result !== 'boolean') {
+      throw new Error('Invalid existing browser dialog closed event');
     }
   }
   return {
@@ -254,6 +293,10 @@ export function parseExistingBrowserTarget(value: unknown): ExistingBrowserTarge
     throw new Error('Invalid existing browser target');
   }
   return row as unknown as ExistingBrowserTarget;
+}
+
+function validSanitizedDialogUrl(value: unknown): boolean {
+  return value === null || validSanitizedDownloadUrl(value);
 }
 
 function validSanitizedDownloadUrl(value: unknown): boolean {

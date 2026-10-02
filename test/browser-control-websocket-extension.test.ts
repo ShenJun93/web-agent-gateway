@@ -38,7 +38,7 @@ test('extension WebSocket transport pairs and returns bounded control responses'
   let downloadListener: ((event: any) => void) | undefined;
   let downloadSubscriptions = 0;
   const control = {
-    onDownloadEvent(listener: (event: any) => void) {
+    onControlEvent(listener: (event: any) => void) {
       downloadSubscriptions += 1;
       downloadListener = listener;
       return () => { if (downloadListener === listener) downloadListener = undefined; };

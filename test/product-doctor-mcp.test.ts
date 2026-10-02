@@ -57,6 +57,8 @@ function healthyInput(): ProductDoctorMcpInput {
       'verify.media',
       'browser.upload_file',
       'browser.download',
+      'browser.dialog.get',
+      'browser.dialog.respond',
       'artifact.list',
       'artifact.describe',
       'artifact.export',
@@ -157,7 +159,7 @@ test('MCP product doctor does not require browser-only capabilities when browser
   };
 
   assert.equal(report.status, 'PASS');
-  for (const id of ['extension_release', 'browser_upload', 'browser_download', 'artifact_lifecycle', 'browser_reliability']) {
+  for (const id of ['extension_release', 'browser_upload', 'browser_download', 'browser_dialog', 'artifact_lifecycle', 'browser_reliability']) {
     assert.equal(report.checks.find((check) => check.id === id)?.status, 'PASS');
   }
 });
@@ -181,6 +183,28 @@ test('MCP product doctor fails when browser download capability is missing from 
       status: 'FAIL',
       code: 'WAG_DOCTOR_BROWSER_DOWNLOAD_MISSING',
       message: 'Semantic browser download capture is missing.',
+    },
+  );
+});
+
+test('MCP product doctor fails when browser dialog capability is incomplete', () => {
+  const input = healthyInput();
+  input.mcpTools = input.mcpTools.filter((name) => name !== 'browser.dialog.respond');
+  const report = buildProductDoctorMcpReport(input) as {
+    status: string;
+    blockers: string[];
+    checks: Array<{ id: string; status: string; code: string }>;
+  };
+
+  assert.equal(report.status, 'FAIL');
+  assert.ok(report.blockers.includes('browser_dialog'));
+  assert.deepEqual(
+    report.checks.find((check) => check.id === 'browser_dialog'),
+    {
+      id: 'browser_dialog',
+      status: 'FAIL',
+      code: 'WAG_DOCTOR_BROWSER_DIALOG_MISSING',
+      message: 'Browser dialog handling surface is incomplete.',
     },
   );
 });

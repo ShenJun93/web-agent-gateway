@@ -194,6 +194,7 @@ function nextAction(check: ProductDoctorCheck): string | null {
     media_preflight: 'Restore machine.media.inspect and verify.media on the published MCP surface.',
     browser_upload: 'Restore browser.upload_file before workflows that require file upload.',
     browser_download: 'Restore browser.download before workflows that require file downloads.',
+    browser_dialog: 'Restore browser.dialog.get and browser.dialog.respond for bounded JavaScript dialog handling.',
     artifact_lifecycle: 'Restore artifact.list, artifact.describe, and artifact.export so downloaded artifacts remain usable.',
     browser_reliability: 'Restore browser.wait_for, browser.assert, and browser.media.inspect.',
     mcp_surface: 'Restart WAG with a coherent published MCP surface.',
@@ -348,6 +349,14 @@ export function buildProductDoctorMcpReport(input: ProductDoctorMcpInput): objec
         ? 'Semantic browser download capture is published.'
         : 'Browser download is not required while browser integration is disabled.')
       : makeCheck('browser_download', 'FAIL', 'WAG_DOCTOR_BROWSER_DOWNLOAD_MISSING', 'Semantic browser download capture is missing.'),
+  );
+
+  checks.push(
+    !browserEnabled || ['browser.dialog.get', 'browser.dialog.respond'].every((name) => toolSet.has(name))
+      ? makeCheck('browser_dialog', 'PASS', 'WAG_DOCTOR_BROWSER_DIALOG_READY', browserEnabled
+        ? 'Bounded JavaScript dialog observation and response tools are published.'
+        : 'Browser dialog tools are not required while browser integration is disabled.')
+      : makeCheck('browser_dialog', 'FAIL', 'WAG_DOCTOR_BROWSER_DIALOG_MISSING', 'Browser dialog handling surface is incomplete.'),
   );
 
   checks.push(
