@@ -12,6 +12,9 @@ export interface NativeBrowserControlV1 {
 
 export function createNativeBrowserControlV1(options: {
   connectNative(): NativeBrowserControlPort;
+  extensionReleaseIdentity?: { schema?: string; sourceHead?: string };
+  reloadExtension?: () => void;
+  setTimeoutImpl?: (callback: () => void, delay?: number) => unknown;
   control: {
     listTargets(): Promise<any[]>;
     create(): Promise<any>;

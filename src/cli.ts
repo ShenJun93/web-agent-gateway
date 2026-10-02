@@ -250,6 +250,7 @@ export async function main(
       diagnosticsContext: engineering.diagnosticsContext,
       productContext,
       browserContext: engineering.browserContext,
+      browserReleaseContext: engineering.browserReleaseContext,
       desktopContext: engineering.desktopContext,
     });
   } catch (error) {

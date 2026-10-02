@@ -17,7 +17,13 @@ const ALLOWED_CDP = new Set([
   'Page.captureScreenshot',
 ]);
 
-export function createNativeBrowserControlV1({ connectNative, control }) {
+export function createNativeBrowserControlV1({
+  connectNative,
+  control,
+  extensionReleaseIdentity = { sourceHead: 'development' },
+  reloadExtension,
+  setTimeoutImpl = globalThis.setTimeout,
+}) {
   let port;
 
   function ensureConnected() {
@@ -44,6 +50,18 @@ export function createNativeBrowserControlV1({ connectNative, control }) {
   async function handle(message) {
     const request = parseRequest(message);
     switch (request.method) {
+      case 'extension.status':
+        return result(request.requestId, extensionStatus(extensionReleaseIdentity));
+      case 'extension.reload': {
+        if (typeof reloadExtension !== 'function') {
+          const error = new Error('Extension reload is unavailable');
+          error.code = 'EXTENSION_RELOAD_UNAVAILABLE';
+          throw error;
+        }
+        const status = extensionStatus(extensionReleaseIdentity);
+        setTimeoutImpl(() => { try { reloadExtension(); } catch {} }, 50);
+        return result(request.requestId, { accepted: true, ...status });
+      }
       case 'targets.list':
         return result(request.requestId, (await control.listTargets()).map((target) => normalizeTarget(target, control)));
       case 'target.create':
@@ -117,7 +135,8 @@ function parseRequest(value) {
     throw new Error('Invalid existing browser control request');
   }
   const method = value.method;
-  if (method === 'targets.list' || method === 'target.create') {
+  if (method === 'extension.status' || method === 'extension.reload'
+      || method === 'targets.list' || method === 'target.create') {
     return { version: VERSION, type: 'control.request', requestId: value.requestId, method };
   }
   if (!TARGET_ID.test(value.targetId ?? '')) throw new Error('Invalid existing browser target id');
@@ -157,6 +176,17 @@ function parseRequest(value) {
     throw new Error('Invalid existing browser control method');
   }
   return { version: VERSION, type: 'control.request', requestId: value.requestId, method, targetId: value.targetId };
+}
+
+function extensionStatus(identity) {
+  const sourceHead = typeof identity?.sourceHead === 'string'
+    && (/^[a-f0-9]{40}$/.test(identity.sourceHead) || identity.sourceHead === 'development')
+    ? identity.sourceHead
+    : 'development';
+  return {
+    schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',
+    sourceHead,
+  };
 }
 
 function tabId(targetId) {

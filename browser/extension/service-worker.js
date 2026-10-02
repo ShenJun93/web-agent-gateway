@@ -15,6 +15,7 @@ import {
 } from './delegated-observation-v5.js';
 import { createExistingBrowserControlV1 } from './existing-browser-control-v1.js';
 import { createBrowserControlWebSocketV1 } from './browser-control-websocket-v1.js';
+import { EXTENSION_RELEASE_IDENTITY } from './release-identity.js';
 
 /**
  * The shipped entry point, now the operator adapter (ADR-0026).
@@ -68,6 +69,8 @@ const existingBrowserControl = createExistingBrowserControlV1(chrome);
 const browserControlWebSocket = createBrowserControlWebSocketV1({
   storage: chrome.storage.local,
   control: existingBrowserControl,
+  extensionReleaseIdentity: EXTENSION_RELEASE_IDENTITY,
+  reloadExtension: () => chrome.runtime.reload(),
 });
 // Browser v2 no longer requires a separately signed native executable. The extension connects
 // outbound to the WAG loopback server only after first-time pairing has stored endpoint + token.

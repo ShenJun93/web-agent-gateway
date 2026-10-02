@@ -70,6 +70,7 @@ export async function startRemoteRelayDeviceRuntime(
     machineContext: options.engineering.machineContext,
     diagnosticsContext: options.engineering.diagnosticsContext,
     browserContext: options.engineering.browserContext,
+    browserReleaseContext: options.engineering.browserReleaseContext,
     desktopContext: options.engineering.desktopContext,
   }));
 

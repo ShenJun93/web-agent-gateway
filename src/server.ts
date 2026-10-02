@@ -486,9 +486,13 @@ export interface CapabilityMcpContext {
   describe(workspaceId: string): object | Promise<object>;
 }
 
+export interface BrowserReleaseMcpContext {
+  status(): object | Promise<object>;
+}
+
 export function createGatewayMcpServer(
   gateway: GatewayApi,
-  { inspect, mutationContext, changeSetContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, productContext, browserContext, desktopContext }: {
+  { inspect, mutationContext, changeSetContext, gitCommitContext, remoteGitPushContext, commandContext, capabilityContext, machineContext, diagnosticsContext, productContext, browserContext, browserReleaseContext, desktopContext }: {
     inspect?: boolean;
     mutationContext?: MutationMcpContext;
     changeSetContext?: ChangeSetMcpContext;
@@ -500,6 +504,7 @@ export function createGatewayMcpServer(
     diagnosticsContext?: ToolUsageDiagnostics;
     productContext?: ProductMcpContext;
     browserContext?: BrowserMcpContext;
+    browserReleaseContext?: BrowserReleaseMcpContext;
     desktopContext?: DesktopMcpContext;
   } = {},
 ): McpServer {
@@ -548,12 +553,14 @@ export function createGatewayMcpServer(
   }, async () => {
     const base = await gateway.health();
     const usage = diagnosticsContext?.usage();
+    const browserExtension = await browserReleaseContext?.status();
     return toolResult({
       ...base,
       mcpToolCount: publishedToolNames.length,
       mcpTools: [...publishedToolNames],
       ...(machineContext === undefined ? {} : { authorityMode: 'AUTONOMOUS_LOCAL' }),
       runtime: runtimeIdentity,
+      ...(browserExtension === undefined ? {} : { browserExtension }),
       ...(usage === undefined ? {} : {
         diagnostics: {
           retained_events: usage.retained_events,

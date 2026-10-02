@@ -7,6 +7,8 @@ export interface RuntimeIdentity {
   cli_path: string;
   runtime_root?: string;
   source_head?: string;
+  extension_source_head?: string;
+  extension_sha256?: string;
   capability?: string;
   deployed: boolean;
 }
@@ -38,10 +40,20 @@ export function detectRuntimeIdentity(
   try {
     const parsed = JSON.parse(readFileSync(markerPath, 'utf8')) as {
       sourceHead?: unknown;
+      extensionSourceHead?: unknown;
+      extensionSha256?: unknown;
       capability?: unknown;
     };
     const sourceHead = typeof parsed.sourceHead === 'string' && /^[a-f0-9]{40}$/.test(parsed.sourceHead)
       ? parsed.sourceHead
+      : undefined;
+    const extensionSourceHead = typeof parsed.extensionSourceHead === 'string'
+      && /^[a-f0-9]{40}$/.test(parsed.extensionSourceHead)
+      ? parsed.extensionSourceHead
+      : undefined;
+    const extensionSha256 = typeof parsed.extensionSha256 === 'string'
+      && /^[a-f0-9]{64}$/.test(parsed.extensionSha256)
+      ? parsed.extensionSha256
       : undefined;
     const capability = typeof parsed.capability === 'string' && parsed.capability.length <= 128
       ? parsed.capability
@@ -53,6 +65,8 @@ export function detectRuntimeIdentity(
       cli_path: cli,
       runtime_root: root,
       ...(sourceHead === undefined ? {} : { source_head: sourceHead }),
+      ...(extensionSourceHead === undefined ? {} : { extension_source_head: extensionSourceHead }),
+      ...(extensionSha256 === undefined ? {} : { extension_sha256: extensionSha256 }),
       ...(capability === undefined ? {} : { capability }),
       deployed: true,
     };

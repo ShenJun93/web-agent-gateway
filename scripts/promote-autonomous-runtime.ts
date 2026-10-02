@@ -1,11 +1,14 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -25,10 +28,14 @@ const LocalBase = join(process.env.LOCALAPPDATA ?? '', 'WAG-Local');
 const Launcher = join(LocalBase, 'Start-WagLocalTunnel.ps1');
 const Starter = join(LocalBase, 'Start-WagLocal.ps1');
 const Supervisor = join(LocalBase, 'Start-WagLocalSupervisor.ps1');
-const LauncherSource = join(Repo, 'scripts', 'wag-local-tunnel-launcher.ps1');
-const StarterSource = join(Repo, 'scripts', 'wag-local-start.ps1');
-const SupervisorSource = join(Repo, 'scripts', 'wag-local-supervisor.ps1');
-const UrlFile = 'E:\\AI-BROWSER\\wag-acceptance\\devspace-state\\wag-mutation.sqlite.operator-url';
+const InstalledExtension = join(LocalBase, 'browser-extension-v2');
+const LocalState = join(LocalBase, 'state');
+const MaintenanceLease = join(LocalState, 'maintenance-v1.json');
+const MaintenanceAck = join(LocalState, 'maintenance-v1.ack.json');
+const SupervisorPidFile = join(LocalBase, 'logs', 'wag-local-supervisor.pid');
+const MutationState = 'E:\\AI-BROWSER\\wag-acceptance\\devspace-state\\wag-mutation.sqlite';
+const ExtensionReleaseState = MutationState + '.browser-control-pairing.json.extension-release.json';
+const UrlFile = MutationState + '.operator-url';
 const Capability = 'autonomous-local-runtime-v1';
 
 function run(
@@ -65,6 +72,37 @@ function assertHead(value: string | undefined): asserts value is string {
   if (!/^[a-f0-9]{40}$/.test(value ?? '')) {
     throw new Error('Expected an exact 40-hex source HEAD');
   }
+}
+
+function treeSha256(root: string): string {
+  const files: string[] = [];
+  const visit = (dir: string, prefix = '') => {
+    for (const name of readdirSync(dir).sort()) {
+      const absolute = join(dir, name);
+      const relative = prefix ? prefix + '/' + name : name;
+      const stat = statSync(absolute);
+      if (stat.isDirectory()) visit(absolute, relative);
+      else if (stat.isFile()) files.push(relative);
+      else throw new Error('Unsupported runtime asset type: ' + absolute);
+    }
+  };
+  visit(root);
+  const hash = createHash('sha256');
+  for (const relative of files) {
+    hash.update(relative.replaceAll('\\', '/'), 'utf8');
+    hash.update('\0');
+    hash.update(readFileSync(join(root, ...relative.split('/'))));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+function runtimeLauncherSources(root: string): readonly (readonly [string, string])[] {
+  return [
+    [join(root, 'scripts', 'wag-local-tunnel-launcher.ps1'), Launcher],
+    [join(root, 'scripts', 'wag-local-start.ps1'), Starter],
+    [join(root, 'scripts', 'wag-local-supervisor.ps1'), Supervisor],
+  ] as const;
 }
 
 function ensureJunction(path: string, target: string): void {
@@ -156,17 +194,231 @@ function windowsPidAlive(pid: number): boolean {
   ).status === 0;
 }
 
-function syncLocalLaunchers(): void {
+function syncLocalLaunchers(runtimeRoot: string): void {
   if (!process.env.LOCALAPPDATA) throw new Error('LOCALAPPDATA is required for WAG launchers');
-  for (const [source, target] of [[LauncherSource, Launcher], [StarterSource, Starter], [SupervisorSource, Supervisor]] as const) {
-    if (!existsSync(source)) throw new Error('Canonical WAG launcher missing: ' + source);
+  for (const [source, target] of runtimeLauncherSources(runtimeRoot)) {
+    if (!existsSync(source)) throw new Error('Prepared WAG launcher missing: ' + source);
     mkdirSync(dirname(target), { recursive: true });
     cpSync(source, target);
   }
 }
 
+function verifiedSupervisorPid(): number | undefined {
+  if (!existsSync(SupervisorPidFile)) return undefined;
+  const value = Number(readFileSync(SupervisorPidFile, 'utf8').trim());
+  if (!Number.isSafeInteger(value) || value <= 0) return undefined;
+  const check = run('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+    "$p=Get-CimInstance Win32_Process -Filter 'ProcessId=" + String(value)
+      + "' -ErrorAction SilentlyContinue; if($null -eq $p){exit 1};"
+      + "if($p.Name -ne 'pwsh.exe' -or $p.CommandLine -notmatch 'Start-WagLocalSupervisor\\.ps1'){exit 2};"
+      + "Write-Output $p.ProcessId",
+  ], { allowFailure: true });
+  return check.status === 0 ? value : undefined;
+}
+
+function stopSupervisor(pid: number): void {
+  run('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+    "Stop-Process -Id " + String(pid) + " -Force -ErrorAction Stop",
+  ]);
+  rmSync(SupervisorPidFile, { force: true });
+}
+
+function startSupervisor(): number {
+  rmSync(SupervisorPidFile, { force: true });
+  const command = [
+    "$ErrorActionPreference='Stop'",
+    "$pwsh=(Get-Command pwsh.exe -ErrorAction Stop).Source",
+    "$p=Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',"
+      + psSingleQuote(Supervisor) + ") -WindowStyle Hidden -PassThru",
+    "Write-Output $p.Id",
+  ].join(';');
+  const launched = run('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command,
+  ]);
+  const pid = Number(launched.stdout.trim());
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('WAG supervisor restart PID missing');
+  return pid;
+}
+
+interface MaintenanceToken {
+  readonly leaseId: string;
+  readonly restartSupervisor: boolean;
+  readonly supervisorPid?: number;
+}
+
+async function acquireMaintenance(head: string): Promise<MaintenanceToken> {
+  mkdirSync(LocalState, { recursive: true });
+  const leaseId = 'maint_' + randomUUID();
+  const lease = {
+    schema: 'WAG_LOCAL_MAINTENANCE_V1',
+    leaseId,
+    sourceHead: head,
+    issuedAtUtc: new Date().toISOString(),
+    expiresAtUtc: new Date(Date.now() + 10 * 60_000).toISOString(),
+  };
+  const temp = MaintenanceLease + '.' + randomUUID() + '.tmp';
+  writeFileSync(temp, JSON.stringify(lease, null, 2) + '\n', 'utf8');
+  renameSync(temp, MaintenanceLease);
+  rmSync(MaintenanceAck, { force: true });
+
+  const pid = verifiedSupervisorPid();
+  const installedSupportsLease = existsSync(Supervisor)
+    && readFileSync(Supervisor, 'utf8').includes('WAG_LOCAL_MAINTENANCE_V1');
+  if (pid === undefined) return { leaseId, restartSupervisor: true };
+
+  if (!installedSupportsLease) {
+    try {
+      stopSupervisor(pid);
+      return { leaseId, restartSupervisor: true, supervisorPid: pid };
+    } catch (error) {
+      rmSync(MaintenanceLease, { force: true });
+      rmSync(MaintenanceAck, { force: true });
+      throw error;
+    }
+  }
+
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (!existsSync(MaintenanceAck)) continue;
+    try {
+      const ack = JSON.parse(readFileSync(MaintenanceAck, 'utf8')) as Record<string, unknown>;
+      if (ack.schema === 'WAG_LOCAL_MAINTENANCE_ACK_V1'
+          && ack.leaseId === leaseId
+          && Number(ack.supervisorPid) === pid) {
+        return { leaseId, restartSupervisor: false, supervisorPid: pid };
+      }
+    } catch { /* retry bounded */ }
+  }
+  rmSync(MaintenanceLease, { force: true });
+  rmSync(MaintenanceAck, { force: true });
+  throw new Error('WAG supervisor did not acknowledge maintenance lease');
+}
+
+function releaseMaintenance(token: MaintenanceToken): number | undefined {
+  rmSync(MaintenanceLease, { force: true });
+  rmSync(MaintenanceAck, { force: true });
+  return token.restartSupervisor ? startSupervisor() : token.supervisorPid;
+}
+
+interface AssetTransaction {
+  readonly root: string;
+  readonly extensionBackup?: string;
+  readonly launcherBackups: readonly { target: string; backup?: string }[];
+}
+
+function deployPreparedAssets(prepared: PreparedRuntime): AssetTransaction {
+  mkdirSync(LocalState, { recursive: true });
+  const root = join(LocalState, 'promotion-' + prepared.root.split(/[\\/]/).at(-1)! + '-' + randomUUID());
+  const nextExtension = join(root, 'browser-extension-v2.next');
+  const extensionBackup = join(root, 'browser-extension-v2.previous');
+  const launcherBackupRoot = join(root, 'launchers');
+  mkdirSync(root, { recursive: true });
+  cpSync(prepared.extensionRoot, nextExtension, { recursive: true });
+  if (treeSha256(nextExtension) !== prepared.extensionSha256) {
+    throw new Error('Staged extension SHA256 mismatch');
+  }
+
+  let previousExtension: string | undefined;
+  if (existsSync(InstalledExtension)) {
+    renameSync(InstalledExtension, extensionBackup);
+    previousExtension = extensionBackup;
+  }
+  try {
+    renameSync(nextExtension, InstalledExtension);
+    const launcherBackups: { target: string; backup?: string }[] = [];
+    mkdirSync(launcherBackupRoot, { recursive: true });
+    for (const [, target] of runtimeLauncherSources(prepared.root)) {
+      if (existsSync(target)) {
+        const backup = join(launcherBackupRoot, target.split(/[\\/]/).at(-1)!);
+        cpSync(target, backup);
+        launcherBackups.push({ target, backup });
+      } else {
+        launcherBackups.push({ target });
+      }
+    }
+    syncLocalLaunchers(prepared.root);
+    if (treeSha256(InstalledExtension) !== prepared.extensionSha256) {
+      throw new Error('Installed extension SHA256 mismatch');
+    }
+    return { root, extensionBackup: previousExtension, launcherBackups };
+  } catch (error) {
+    rmSync(InstalledExtension, { recursive: true, force: true });
+    if (previousExtension && existsSync(previousExtension)) renameSync(previousExtension, InstalledExtension);
+    throw error;
+  }
+}
+
+function rollbackPreparedAssets(transaction: AssetTransaction): void {
+  rmSync(InstalledExtension, { recursive: true, force: true });
+  if (transaction.extensionBackup && existsSync(transaction.extensionBackup)) {
+    renameSync(transaction.extensionBackup, InstalledExtension);
+  }
+  for (const entry of transaction.launcherBackups) {
+    if (entry.backup && existsSync(entry.backup)) cpSync(entry.backup, entry.target);
+    else rmSync(entry.target, { force: true });
+  }
+  rmSync(transaction.root, { recursive: true, force: true });
+}
+
+function commitPreparedAssets(transaction: AssetTransaction): void {
+  rmSync(transaction.root, { recursive: true, force: true });
+}
+
+interface ExtensionReleaseObservation {
+  readonly connected?: boolean;
+  readonly observedSourceHead?: string | null;
+  readonly expectedSourceHead?: string | null;
+  readonly match?: boolean | null;
+  readonly reloadRequested?: boolean;
+  readonly reloadAccepted?: boolean;
+  readonly lastError?: string | null;
+}
+
+async function waitForExtensionRelease(head: string, timeoutMs = 30_000): Promise<{
+  matched: boolean;
+  legacyBootstrap: boolean;
+  deferred: boolean;
+  observation?: ExtensionReleaseObservation;
+}> {
+  const deadline = Date.now() + timeoutMs;
+  let observation: ExtensionReleaseObservation | undefined;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (!existsSync(ExtensionReleaseState)) continue;
+    try {
+      observation = JSON.parse(readFileSync(ExtensionReleaseState, 'utf8')) as ExtensionReleaseObservation;
+      if (observation.connected === true
+          && observation.expectedSourceHead === head
+          && observation.observedSourceHead === head
+          && observation.match === true) {
+        return { matched: true, legacyBootstrap: false, deferred: false, observation };
+      }
+      if (observation.connected === true
+          && observation.expectedSourceHead === head
+          && observation.observedSourceHead == null
+          && observation.reloadRequested === true
+          && observation.lastError) {
+        return { matched: false, legacyBootstrap: true, deferred: false, observation };
+      }
+    } catch { /* keep polling a bounded state file */ }
+  }
+  const deferred = observation?.connected === false
+    && observation.observedSourceHead == null
+    && observation.reloadRequested !== true;
+  return {
+    matched: false,
+    legacyBootstrap: observation?.observedSourceHead == null
+      && observation?.reloadRequested === true
+      && Boolean(observation?.lastError),
+    deferred,
+    ...(observation === undefined ? {} : { observation }),
+  };
+}
+
 function startWagTunnel(tag: string) {
-  syncLocalLaunchers();
   mkdirSync(LogDir, { recursive: true });
   const stdout = join(LogDir, 'wag-' + tag + '.stdout.log');
   const stderr = join(LogDir, 'wag-' + tag + '.stderr.log');
@@ -225,6 +477,9 @@ interface PreparedRuntime {
   readonly root: string;
   readonly cli: string;
   readonly receipt: string;
+  readonly extensionRoot: string;
+  readonly extensionSha256: string;
+  readonly launcherRoot: string;
 }
 
 function preparedRuntime(head: string): PreparedRuntime {
@@ -238,13 +493,27 @@ function preparedRuntime(head: string): PreparedRuntime {
   const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as {
     sourceHead?: unknown;
     capability?: unknown;
+    extensionSourceHead?: unknown;
+    extensionSha256?: unknown;
   };
   if (marker.sourceHead !== head) throw new Error('Prepared runtime sourceHead mismatch');
   if (marker.capability !== Capability) throw new Error('Prepared runtime capability mismatch');
+  if (marker.extensionSourceHead !== head) throw new Error('Prepared extension sourceHead mismatch');
+  const extensionRoot = join(root, 'browser', 'extension');
+  if (!existsSync(extensionRoot)) throw new Error('Prepared browser extension is missing');
+  const extensionSha256 = treeSha256(extensionRoot);
+  if (marker.extensionSha256 !== extensionSha256) throw new Error('Prepared extension SHA256 mismatch');
+  const launcherRoot = join(root, 'scripts');
+  for (const [source] of runtimeLauncherSources(root)) {
+    if (!existsSync(source)) throw new Error('Prepared WAG launcher missing: ' + source);
+  }
   return {
     root,
     cli: wrapperCli(root),
     receipt: join(LogDir, 'activate-' + short + '.json'),
+    extensionRoot,
+    extensionSha256,
+    launcherRoot,
   };
 }
 
@@ -280,14 +549,33 @@ function prepareRuntime(head: string): PreparedRuntime {
     rmSync(join(root, 'dist'), { recursive: true, force: true });
     cpSync(join(staging, 'dist'), join(root, 'dist'), { recursive: true });
     cpSync(join(staging, 'package.json'), join(root, 'package.json'));
+    rmSync(join(root, 'browser'), { recursive: true, force: true });
+    cpSync(join(staging, 'browser', 'extension'), join(root, 'browser', 'extension'), { recursive: true });
+    writeFileSync(
+      join(root, 'browser', 'extension', 'release-identity.js'),
+      "export const EXTENSION_RELEASE_IDENTITY = Object.freeze({\n"
+        + "  schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',\n"
+        + "  sourceHead: '" + head + "',\n"
+        + "});\n",
+      'utf8',
+    );
+    rmSync(join(root, 'scripts'), { recursive: true, force: true });
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    for (const name of ['wag-local-tunnel-launcher.ps1', 'wag-local-start.ps1', 'wag-local-supervisor.ps1']) {
+      cpSync(join(staging, 'scripts', name), join(root, 'scripts', name));
+    }
     ensureJunction(join(root, 'node_modules'), buildNodeModules);
+    const extensionSha256 = treeSha256(join(root, 'browser', 'extension'));
     writeFileSync(
       join(root, 'RUNTIME.json'),
       JSON.stringify({
+        schema: 'WAG_ATOMIC_RUNTIME_RELEASE_V1',
         sourceHead: head,
         sourceWorktree: Repo,
         preparedAtUtc: new Date().toISOString(),
         capability: Capability,
+        extensionSourceHead: head,
+        extensionSha256,
       }, null, 2) + '\n',
       'utf8',
     );
@@ -315,51 +603,83 @@ async function activateWorker(head: string): Promise<void> {
   const prepared = preparedRuntime(head);
   const previousCli = currentWrapperCli();
 
-  if (previousCli === prepared.cli) {
-    writeReceipt(prepared.receipt, {
-      state: 'ALREADY_ACTIVE',
-      sourceHead: head,
-      cli: prepared.cli,
-      completedAtUtc: new Date().toISOString(),
-    });
-    return;
-  }
-
+  let maintenance: MaintenanceToken | undefined;
+  let transaction: AssetTransaction | undefined;
   let wrapperChanged = false;
   let oldTunnelStopped = false;
   try {
-    switchWrapper(previousCli, prepared.cli);
-    wrapperChanged = true;
+    maintenance = await acquireMaintenance(head);
+    transaction = deployPreparedAssets(prepared);
+
+    if (previousCli !== prepared.cli) {
+      switchWrapper(previousCli, prepared.cli);
+      wrapperChanged = true;
+    }
     await stopWagTunnel();
     oldTunnelStopped = true;
     rmSync(UrlFile, { force: true });
+    rmSync(ExtensionReleaseState, { force: true });
 
     const started = startWagTunnel('activate-' + head.slice(0, 12));
     await waitForWag(started, 'Activated autonomous WAG runtime');
+    const extension = await waitForExtensionRelease(head);
+    if (!extension.matched && !extension.legacyBootstrap && !extension.deferred) {
+      throw new Error(
+        'Activated browser extension did not converge to runtime source HEAD: '
+        + JSON.stringify(extension.observation ?? null),
+      );
+    }
+
+    commitPreparedAssets(transaction);
+    transaction = undefined;
+    const supervisorPid = releaseMaintenance(maintenance);
+    maintenance = undefined;
+
     writeReceipt(prepared.receipt, {
-      state: 'SUCCEEDED',
+      state: extension.matched
+        ? 'SUCCEEDED'
+        : extension.legacyBootstrap
+          ? 'SUCCEEDED_EXTENSION_RELOAD_REQUIRED'
+          : 'SUCCEEDED_EXTENSION_DEFERRED',
       sourceHead: head,
       previousCli,
       cli: prepared.cli,
       launcherPid: started.hostPid,
       stdoutLog: started.stdout,
       stderrLog: started.stderr,
+      extensionSha256: prepared.extensionSha256,
+      extension,
+      supervisorPid: supervisorPid ?? null,
       completedAtUtc: new Date().toISOString(),
     });
   } catch (error) {
     let rollback = 'not-required';
-    if (wrapperChanged) {
+    try {
+      if (oldTunnelStopped) await stopWagTunnel();
+      if (wrapperChanged) switchWrapper(prepared.cli, previousCli);
+      if (transaction) {
+        rollbackPreparedAssets(transaction);
+        transaction = undefined;
+      }
+      if (oldTunnelStopped) {
+        rmSync(UrlFile, { force: true });
+        rmSync(ExtensionReleaseState, { force: true });
+        const restored = startWagTunnel('rollback-' + head.slice(0, 12));
+        await waitForWag(restored, 'Rollback WAG runtime');
+      }
+      rollback = 'succeeded';
+    } catch (rollbackError) {
+      rollback = 'failed:' + (rollbackError instanceof Error ? rollbackError.message : String(rollbackError));
+    }
+
+    let supervisorPid: number | undefined;
+    if (maintenance) {
       try {
-        switchWrapper(prepared.cli, previousCli);
-        if (oldTunnelStopped) {
-          await stopWagTunnel();
-          rmSync(UrlFile, { force: true });
-          const restored = startWagTunnel('rollback-' + head.slice(0, 12));
-          await waitForWag(restored, 'Rollback WAG runtime');
-        }
-        rollback = 'succeeded';
-      } catch (rollbackError) {
-        rollback = 'failed:' + (rollbackError instanceof Error ? rollbackError.message : String(rollbackError));
+        supervisorPid = releaseMaintenance(maintenance);
+        maintenance = undefined;
+      } catch (releaseError) {
+        rollback += ';maintenance-release-failed:'
+          + (releaseError instanceof Error ? releaseError.message : String(releaseError));
       }
     }
 
@@ -370,6 +690,7 @@ async function activateWorker(head: string): Promise<void> {
       cli: prepared.cli,
       error: error instanceof Error ? error.message : String(error),
       rollback,
+      supervisorPid: supervisorPid ?? null,
       completedAtUtc: new Date().toISOString(),
     });
     throw error;

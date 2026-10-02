@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -287,6 +287,96 @@ test('Browser Control WebSocket gives Accessibility tree a bounded larger respon
     assert.equal(typeof value, 'object');
   } finally {
     socket.terminate();
+    await server.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Browser Control WebSocket requests extension self-reload on release mismatch and converges on reconnect', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-ws-release-'));
+  const port = await freePort();
+  const statePath = join(root, 'pairing.json');
+  const releaseStatePath = join(root, 'extension-release.json');
+  const state = await loadOrCreateBrowserControlPairingState(statePath, port);
+  const expected = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const previous = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const server = await startBrowserControlWebSocketServer({
+    statePath,
+    pairingState: state,
+    expectedExtensionSourceHead: expected,
+    extensionReleaseStatePath: releaseStatePath,
+  });
+
+  const first = new WebSocket(state.endpoint, { headers: { Origin: ORIGIN } });
+  try {
+    await waitOpen(first);
+    const reloadRequestPromise = new Promise<any>((resolve, reject) => {
+      const onMessage = (data: Buffer) => {
+        let message: any;
+        try { message = JSON.parse(data.toString()); } catch { return; }
+        if (message?.type !== 'control.request' || message?.method !== 'extension.reload') return;
+        first.off('message', onMessage);
+        first.off('error', onError);
+        resolve(message);
+      };
+      const onError = (error: Error) => {
+        first.off('message', onMessage);
+        reject(error);
+      };
+      first.on('message', onMessage);
+      first.once('error', onError);
+    });
+    first.send(JSON.stringify({
+      version: 1,
+      type: 'control.hello',
+      pairingToken: state.pairingToken,
+      extensionRelease: {
+        schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',
+        sourceHead: previous,
+      },
+    }));
+    const reloadRequest = await reloadRequestPromise;
+    assert.equal(reloadRequest.type, 'control.request');
+    assert.equal(reloadRequest.method, 'extension.reload');
+    first.send(JSON.stringify({
+      version: 1,
+      type: 'control.result',
+      requestId: reloadRequest.requestId,
+      result: {
+        accepted: true,
+        schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',
+        sourceHead: previous,
+      },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    first.close();
+
+    const second = new WebSocket(state.endpoint, { headers: { Origin: ORIGIN } });
+    try {
+      await waitOpen(second);
+      second.send(JSON.stringify({
+        version: 1,
+        type: 'control.hello',
+        pairingToken: state.pairingToken,
+        extensionRelease: {
+          schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',
+          sourceHead: expected,
+        },
+      }));
+      assert.equal((await waitMessage(second)).type, 'control.ready');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const release = JSON.parse(await readFile(releaseStatePath, 'utf8')) as Record<string, unknown>;
+      assert.equal(release.connected, true);
+      assert.equal(release.expectedSourceHead, expected);
+      assert.equal(release.observedSourceHead, expected);
+      assert.equal(release.match, true);
+      assert.equal(release.reloadRequested, false);
+      assert.equal(release.lastError, null);
+    } finally {
+      second.close();
+    }
+  } finally {
+    first.terminate();
     await server.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }

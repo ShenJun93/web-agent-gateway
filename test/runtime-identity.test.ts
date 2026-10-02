@@ -14,6 +14,8 @@ test('runtime identity reports promoted source metadata without shell fallback',
   await writeFile(cli, '// fixture\n', 'utf8');
   await writeFile(join(root, 'RUNTIME.json'), JSON.stringify({
     sourceHead: '1234567890abcdef1234567890abcdef12345678',
+    extensionSourceHead: '1234567890abcdef1234567890abcdef12345678',
+    extensionSha256: 'a'.repeat(64),
     capability: 'autonomous-local-runtime-v1',
   }), 'utf8');
 
@@ -23,6 +25,8 @@ test('runtime identity reports promoted source metadata without shell fallback',
     cli_path: cli,
     runtime_root: root,
     source_head: '1234567890abcdef1234567890abcdef12345678',
+    extension_source_head: '1234567890abcdef1234567890abcdef12345678',
+    extension_sha256: 'a'.repeat(64),
     capability: 'autonomous-local-runtime-v1',
     deployed: true,
   });

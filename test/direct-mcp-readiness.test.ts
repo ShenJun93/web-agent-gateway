@@ -175,6 +175,19 @@ async function openDirectSurface(t: TestContext) {
       get: () => async () => { throw new Error('not exercised: this test asserts the declaration'); },
     }) as never,
     diagnosticsContext: new ToolUsageDiagnostics(),
+    browserReleaseContext: {
+      status: () => ({
+        schema: 'WAG_BROWSER_EXTENSION_RELEASE_STATE_V1',
+        connected: true,
+        observedSourceHead: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        expectedSourceHead: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        match: true,
+        reloadRequested: false,
+        reloadAccepted: false,
+        lastError: null,
+        updatedAtUtc: '2026-10-02T00:00:00.000Z',
+      }),
+    },
     productContext: {
       configGet: () => ({}),
       configUpdate: () => ({}),
@@ -214,6 +227,12 @@ test('health reports the full live private-stdio surface through the frozen heal
     mcpTools: string[];
     authorityMode?: string;
     runtime?: { pid: number; parent_pid: number; cli_path: string; deployed: boolean };
+    browserExtension?: {
+      connected: boolean;
+      observedSourceHead: string | null;
+      expectedSourceHead: string | null;
+      match: boolean | null;
+    };
     diagnostics?: { total_calls: number; retained_events: number; capacity: number };
   };
   assert.equal(firstView.toolCount, REQUIRED_DEVSPACE_TOOLS.length,
@@ -225,6 +244,10 @@ test('health reports the full live private-stdio surface through the frozen heal
   assert.ok((firstView.runtime?.parent_pid ?? -1) >= 0);
   assert.equal(typeof firstView.runtime?.cli_path, 'string');
   assert.equal(typeof firstView.runtime?.deployed, 'boolean');
+  assert.equal(firstView.browserExtension?.connected, true);
+  assert.equal(firstView.browserExtension?.match, true);
+  assert.equal(firstView.browserExtension?.observedSourceHead, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(firstView.browserExtension?.expectedSourceHead, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   assert.equal(firstView.diagnostics?.total_calls, 0,
     'the in-flight health call must not count itself before its result exists');
 

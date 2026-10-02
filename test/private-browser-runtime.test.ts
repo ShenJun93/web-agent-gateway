@@ -34,6 +34,17 @@ test('browser opt-in assembles a private BrowserPort context without allocating 
       pairingToken: 'fixture-pairing-token',
       client: {} as never,
       connected: () => false,
+      releaseState: () => ({
+        schema: 'WAG_BROWSER_EXTENSION_RELEASE_STATE_V1' as const,
+        connected: false,
+        observedSourceHead: null,
+        expectedSourceHead: null,
+        match: null,
+        reloadRequested: false,
+        reloadAccepted: false,
+        lastError: null,
+        updatedAtUtc: new Date().toISOString(),
+      }),
       close: async () => {},
     }),
   });
