@@ -69,12 +69,33 @@ export function createBrowserBroker(options: {
 }): BrowserBroker {
   const routes = new Map<string, RoutedSession>();
 
-  function routeFor(browserSessionId: string): RoutedSession {
-    const route = routes.get(browserSessionId);
-    if (!route) {
-      throw new BrowserBrokerError('BROWSER_SESSION_NOT_ROUTED', 'Browser session is not routed');
+  async function routeFor(
+    owner: GatewayAuthority,
+    browserSessionId: string,
+  ): Promise<RoutedSession> {
+    const existing = routes.get(browserSessionId);
+    if (existing) return existing;
+
+    if (options.attached?.recover) {
+      try {
+        const handle = await options.attached.recover(owner, browserSessionId);
+        if (handle.executionMode === 'ATTACH_EXISTING' || handle.executionMode === 'AI_TAB_GROUP') {
+          const recovered: RoutedSession = {
+            port: options.attached,
+            executionMode: handle.executionMode,
+            ownershipMode: 'ATTACHED_EXISTING',
+            controlState: handle.controlState ?? 'RUNNING',
+          };
+          routes.set(browserSessionId, recovered);
+          return recovered;
+        }
+      } catch {
+        // Preserve the stable broker-level error below. The attached port remains authority for
+        // whether a durable logical session is actually recoverable.
+      }
     }
-    return route;
+
+    throw new BrowserBrokerError('BROWSER_SESSION_NOT_ROUTED', 'Browser session is not routed');
   }
 
   function portFor(mode: BrowserExecutionMode): {
@@ -148,38 +169,39 @@ export function createBrowserBroker(options: {
       return decorate(handle, route);
     },
 
-    describe(owner, browserSessionId) {
-      const route = routeFor(browserSessionId);
+    async describe(owner, browserSessionId) {
+      const route = await routeFor(owner, browserSessionId);
       return described(owner, browserSessionId, route);
     },
 
     async snapshot(owner, browserSessionId): Promise<BrowserSnapshot> {
-      const route = routeFor(browserSessionId);
+      const route = await routeFor(owner, browserSessionId);
       assertAutomationAllowed(route);
       return route.port.snapshot(owner, browserSessionId);
     },
 
     async exec(owner, browserSessionId, request: BrowserExecRequest) {
-      const route = routeFor(browserSessionId);
+      const route = await routeFor(owner, browserSessionId);
       assertAutomationAllowed(route);
       return route.port.exec(owner, browserSessionId, request);
     },
 
     async screenshot(owner, browserSessionId) {
-      const route = routeFor(browserSessionId);
+      const route = await routeFor(owner, browserSessionId);
       assertAutomationAllowed(route);
       return route.port.screenshot(owner, browserSessionId);
     },
 
     async close(owner, browserSessionId) {
-      const route = routeFor(browserSessionId);
+      const route = await routeFor(owner, browserSessionId);
       const handle = await route.port.close(owner, browserSessionId);
       route.controlState = 'STOPPED';
+      routes.delete(browserSessionId);
       return decorate(handle, route);
     },
 
     async pauseForUser(owner, browserSessionId) {
-      const route = routeFor(browserSessionId);
+      const route = await routeFor(owner, browserSessionId);
       if (route.executionMode !== 'WAG_VISIBLE' && route.executionMode !== 'AI_TAB_GROUP') {
         throw new BrowserBrokerError(
           'BROWSER_MODE_UNAVAILABLE',
@@ -192,7 +214,7 @@ export function createBrowserBroker(options: {
     },
 
     async takeUserControl(owner, browserSessionId) {
-      const route = routeFor(browserSessionId);
+      const route = await routeFor(owner, browserSessionId);
       if ((route.executionMode !== 'WAG_VISIBLE' && route.executionMode !== 'AI_TAB_GROUP')
           || route.controlState !== 'PAUSED_FOR_USER') {
         throw new BrowserBrokerError(
@@ -206,7 +228,7 @@ export function createBrowserBroker(options: {
     },
 
     async resumeAutomation(owner, browserSessionId) {
-      const route = routeFor(browserSessionId);
+      const route = await routeFor(owner, browserSessionId);
       if ((route.executionMode !== 'WAG_VISIBLE' && route.executionMode !== 'AI_TAB_GROUP')
           || (route.controlState !== 'USER_CONTROL' && route.controlState !== 'PAUSED_FOR_USER')) {
         throw new BrowserBrokerError(

@@ -33,17 +33,35 @@ docs/benchmarks/2026-10-02-wag-p0-upload-media-preflight-v1.md
 
 ### Batch B — P1 browser reliability
 
-State: **PENDING**
+State: **LOCAL ACCEPTANCE PASS / PUBLICATION STOP**
 
-Planned scope:
+Scope:
 
 - `browser.wait_for`
 - `browser.assert`
 - `browser.media.inspect`
-- session recovery/release improvements for:
-  - session is not routed;
-  - target owned by another session;
-  - timeout/reconnect cleanup.
+- session recovery/release hardening.
+
+Evidence:
+
+- real managed Edge semantic wait: PASS without caller sleep;
+- real semantic assert: PASS;
+- real media inspect: playback state, duration, error, dimensions and decoded-audio evidence PASS;
+- existing-browser fixed media function allowlist + arbitrary-JS denial: PASS;
+- missing broker-route recovery preserves the durable caller-owned session: PASS;
+- fresh profile alias on the same exact owned target reuses the durable logical session instead of creating a conflicting claim: PASS;
+- active foreign/session target claim remains fail-closed: PASS;
+- detach timeout keeps claims retryable: PASS;
+- atomic multi-target claim cleanup: PASS;
+- successful close deletes broker route and attached close replay is idempotent: PASS;
+- affected-surface regression: 84/84 PASS;
+- typecheck/build/diff-check: PASS.
+
+Canonical evidence:
+
+```text
+docs/benchmarks/2026-10-02-wag-p1-browser-reliability-v1.md
+```
 
 ### Batch C — P1 product consistency
 
@@ -56,5 +74,5 @@ Planned scope:
 
 ## Publication boundary
 
-Batch A remains local until its feature branch is explicitly published/reviewed. No live promotion is
-performed from this ledger without the normal public-main boundary.
+Batch A+B remain local until their stacked feature branches are explicitly published/reviewed. No
+live promotion is performed from this ledger without the normal public-main boundary.

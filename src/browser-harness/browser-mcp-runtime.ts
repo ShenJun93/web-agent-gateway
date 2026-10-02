@@ -16,6 +16,7 @@ import {
   type BrowserSessionHandle,
 } from './browser-port.js';
 import {
+  BrowserBrokerError,
   createBrowserBroker,
   resolveBrowserOpenMode,
   type BrowserBroker,
@@ -41,9 +42,15 @@ import { createOwnedEdgeCdpBackend } from './owned-edge-cdp-backend.js';
 import { createOwnedEdgeLauncher } from './owned-edge-launcher.js';
 import {
   createSemanticBrowser,
+  type BrowserMediaInspection,
   type SemanticBrowser,
   type SemanticNode,
 } from './semantic-browser.js';
+import {
+  evaluateBrowserSemanticConditions,
+  type BrowserSemanticCondition,
+  type BrowserSemanticEvaluation,
+} from './browser-semantic-condition.js';
 import { waitForLoopbackCdpReady } from './cdp-readiness.js';
 
 export type BrowserMcpAction =
@@ -85,6 +92,13 @@ export interface BrowserMcpSnapshot {
   readonly truncated: boolean;
 }
 
+export interface BrowserMcpWaitResult extends BrowserSemanticEvaluation {
+  readonly browser_session_id: string;
+  readonly snapshot_id: string;
+  readonly attempts: number;
+  readonly elapsed_ms: number;
+}
+
 export interface BrowserMcpEffect {
   readonly effectId: string;
   readonly kind: string;
@@ -116,6 +130,19 @@ export interface BrowserMcpContext {
     ref: string,
     paths: readonly string[],
   ): Promise<BrowserMcpEffect>;
+  waitFor(
+    browserSessionId: string,
+    conditions: readonly BrowserSemanticCondition[],
+    mode?: 'all' | 'any',
+    timeoutMs?: number,
+    intervalMs?: number,
+  ): Promise<BrowserMcpWaitResult>;
+  assertSemantic(
+    browserSessionId: string,
+    conditions: readonly BrowserSemanticCondition[],
+    mode?: 'all' | 'any',
+  ): Promise<BrowserMcpWaitResult>;
+  inspectMedia(browserSessionId: string, ref: string): Promise<BrowserMediaInspection>;
   effect(effectId: string): Promise<BrowserMcpEffect>;
   screenshot(browserSessionId: string): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   close(browserSessionId: string): Promise<BrowserMcpSession>;
@@ -130,6 +157,11 @@ const MAX_SNAPSHOT_NODES = 500;
 const MAX_ACTIVE_BROWSER_SESSIONS = 32;
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_SCREENSHOT_BASE64_CHARS = 4 * Math.ceil(MAX_SCREENSHOT_BYTES / 3);
+const DEFAULT_WAIT_TIMEOUT_MS = 15_000;
+const MAX_WAIT_TIMEOUT_MS = 120_000;
+const DEFAULT_WAIT_INTERVAL_MS = 250;
+const MIN_WAIT_INTERVAL_MS = 50;
+const MAX_WAIT_INTERVAL_MS = 5_000;
 
 function truncateUtf8(value: string, maxBytes: number): string {
   const bytes = Buffer.from(value, 'utf8');
@@ -349,9 +381,20 @@ export function createPrivateBrowserMcpContext(options: {
 
   async function ensureSession(browserSessionId: string): Promise<BrowserSessionHandle | undefined> {
     if (sessions.has(browserSessionId)) {
-      const handle = await port.describe(options.owner, browserSessionId);
-      rememberFencing(handle);
-      return handle;
+      try {
+        const handle = await port.describe(options.owner, browserSessionId);
+        rememberFencing(handle);
+        return handle;
+      } catch (error) {
+        const routeLost = error instanceof BrowserBrokerError
+          && error.code === 'BROWSER_SESSION_NOT_ROUTED';
+        if (!(routeLost && broker && attachedSessions && fencing.has(browserSessionId))) throw error;
+        sessions.delete(browserSessionId);
+        fencing.delete(browserSessionId);
+        for (const [key, value] of byProfile) {
+          if (value === browserSessionId) byProfile.delete(key);
+        }
+      }
     }
     if (broker && attachedSessions) {
       const durable = attachedSessions.get(options.owner, browserSessionId);
@@ -381,6 +424,22 @@ export function createPrivateBrowserMcpContext(options: {
       }
     }
     return undefined;
+  }
+
+  async function captureSemantic(browserSessionId: string): Promise<BrowserMcpSnapshot> {
+    await ensureSession(browserSessionId);
+    const value = await semantic.snapshot(options.owner, browserSessionId);
+    const handle = await port.describe(options.owner, browserSessionId);
+    rememberFencing(handle);
+    const nodes = value.nodes.slice(0, MAX_SNAPSHOT_NODES).map(boundedNode);
+    return Object.freeze({
+      snapshotId: value.snapshotId,
+      browserSessionId: value.browserSessionId,
+      url: truncateUtf8(value.url, 4096),
+      title: truncateUtf8(value.title, 1024),
+      nodes: Object.freeze(nodes),
+      truncated: value.truncated === true || value.nodes.length > nodes.length,
+    });
   }
 
   return {
@@ -416,6 +475,10 @@ export function createPrivateBrowserMcpContext(options: {
         const durable = attachedSessions.findRecoverable(
           options.owner,
           profileId,
+          resolvedMode,
+          targetId,
+        ) ?? attachedSessions.findRecoverableByTarget(
+          options.owner,
           resolvedMode,
           targetId,
         );
@@ -492,23 +555,12 @@ export function createPrivateBrowserMcpContext(options: {
         ownershipMode: initialFence === undefined ? undefined : 'ATTACHED_EXISTING',
       });
       try {
-        await ensureSession(browserSessionId);
-        const value = await semantic.snapshot(options.owner, browserSessionId);
+        const result = await captureSemantic(browserSessionId);
         const handle = await port.describe(options.owner, browserSessionId);
-        const targetChanged = rememberFencing(handle);
-        const nodes = value.nodes.slice(0, MAX_SNAPSHOT_NODES).map(boundedNode);
-        const result = Object.freeze({
-          snapshotId: value.snapshotId,
-          browserSessionId: value.browserSessionId,
-          url: truncateUtf8(value.url, 4096),
-          title: truncateUtf8(value.title, 1024),
-          nodes: Object.freeze(nodes),
-          truncated: value.truncated === true || value.nodes.length > nodes.length,
-        });
         finish(true, undefined, {
           targetId: handle.targetId,
           ownershipMode: handle.ownershipMode,
-          targetChanged,
+          targetChanged: rememberFencing(handle),
         });
         return result;
       } catch (error) {
@@ -692,6 +744,112 @@ export function createPrivateBrowserMcpContext(options: {
       }
     },
 
+    async waitFor(browserSessionId, conditions, mode = 'all', timeoutMs = DEFAULT_WAIT_TIMEOUT_MS, intervalMs = DEFAULT_WAIT_INTERVAL_MS) {
+      assertOpen();
+      if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_TIMEOUT_MS) {
+        throw new Error('Browser wait timeout is invalid');
+      }
+      if (!Number.isInteger(intervalMs) || intervalMs < MIN_WAIT_INTERVAL_MS || intervalMs > MAX_WAIT_INTERVAL_MS) {
+        throw new Error('Browser wait interval is invalid');
+      }
+      const initialFence = fencing.get(browserSessionId);
+      const finish = diagnostics.begin({
+        actionType: 'wait_for',
+        browserSessionId,
+        targetId: initialFence?.targetId,
+        ownershipMode: initialFence === undefined ? undefined : 'ATTACHED_EXISTING',
+      });
+      const startedAt = Date.now();
+      const deadline = startedAt + timeoutMs;
+      let attempts = 0;
+      try {
+        while (true) {
+          attempts += 1;
+          const snapshot = await captureSemantic(browserSessionId);
+          const evaluation = evaluateBrowserSemanticConditions(snapshot, conditions, mode);
+          if (evaluation.matched) {
+            const handle = await port.describe(options.owner, browserSessionId);
+            finish(true, undefined, {
+              targetId: handle.targetId,
+              ownershipMode: handle.ownershipMode,
+              targetChanged: rememberFencing(handle),
+            });
+            return Object.freeze({
+              ...evaluation,
+              browser_session_id: browserSessionId,
+              snapshot_id: snapshot.snapshotId,
+              attempts,
+              elapsed_ms: Date.now() - startedAt,
+            });
+          }
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) throw new Error('Browser wait condition timed out');
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(intervalMs, remaining)));
+        }
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
+    },
+
+    async assertSemantic(browserSessionId, conditions, mode = 'all') {
+      assertOpen();
+      const initialFence = fencing.get(browserSessionId);
+      const finish = diagnostics.begin({
+        actionType: 'assert',
+        browserSessionId,
+        targetId: initialFence?.targetId,
+        ownershipMode: initialFence === undefined ? undefined : 'ATTACHED_EXISTING',
+      });
+      const startedAt = Date.now();
+      try {
+        const snapshot = await captureSemantic(browserSessionId);
+        const evaluation = evaluateBrowserSemanticConditions(snapshot, conditions, mode);
+        if (!evaluation.matched) throw new Error('Browser semantic assertion failed');
+        const handle = await port.describe(options.owner, browserSessionId);
+        finish(true, undefined, {
+          targetId: handle.targetId,
+          ownershipMode: handle.ownershipMode,
+          targetChanged: rememberFencing(handle),
+        });
+        return Object.freeze({
+          ...evaluation,
+          browser_session_id: browserSessionId,
+          snapshot_id: snapshot.snapshotId,
+          attempts: 1,
+          elapsed_ms: Date.now() - startedAt,
+        });
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
+    },
+
+    async inspectMedia(browserSessionId, ref) {
+      assertOpen();
+      await ensureSession(browserSessionId);
+      const initialFence = fencing.get(browserSessionId);
+      const finish = diagnostics.begin({
+        actionType: 'media_inspect',
+        browserSessionId,
+        targetId: initialFence?.targetId,
+        ownershipMode: initialFence === undefined ? undefined : 'ATTACHED_EXISTING',
+      });
+      try {
+        const result = await semantic.inspectMedia(options.owner, browserSessionId, ref);
+        const handle = await port.describe(options.owner, browserSessionId);
+        finish(true, undefined, {
+          targetId: handle.targetId,
+          ownershipMode: handle.ownershipMode,
+          targetChanged: rememberFencing(handle),
+        });
+        return result;
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
+    },
+
     async effect(effectId) {
       assertOpen();
       return effectView(effects.get(options.owner, effectId));
@@ -730,6 +888,30 @@ export function createPrivateBrowserMcpContext(options: {
 
     async close(browserSessionId) {
       assertOpen();
+      if (!sessions.has(browserSessionId) && !fencing.has(browserSessionId) && attachedSessions) {
+        const durable = attachedSessions.get(options.owner, browserSessionId);
+        if (durable?.state === 'CLOSED') {
+          return sessionView({
+            browserSessionId: durable.browserSessionId,
+            profileId: durable.profileId,
+            owner: durable.owner,
+            backend: 'cdp',
+            executionMode: durable.executionMode,
+            ownershipMode: 'ATTACHED_EXISTING',
+            controlState: 'STOPPED',
+            rootTargetId: durable.rootTargetId,
+            targetId: durable.targetId,
+            targetGeneration: durable.targetGeneration,
+            claimEpoch: durable.claimEpoch,
+            claimExpiresAt: durable.claimExpiresAt,
+            ...(durable.groupId === undefined ? {} : { groupId: durable.groupId }),
+            ...(durable.groupTitle === undefined ? {} : { groupTitle: durable.groupTitle }),
+            createdAt: durable.createdAt,
+            lastSeenAt: durable.lastSeenAt,
+            state: 'CLOSED',
+          });
+        }
+      }
       await ensureSession(browserSessionId);
       const handle = await port.close(options.owner, browserSessionId);
       sessions.delete(browserSessionId);

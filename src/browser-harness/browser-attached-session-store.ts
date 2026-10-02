@@ -294,6 +294,30 @@ export class BrowserAttachedSessionStore {
     return row ? view(row) : undefined;
   }
 
+  findRecoverableByTarget(
+    owner: GatewayAuthority,
+    executionMode: Extract<BrowserExecutionMode, 'ATTACH_EXISTING' | 'AI_TAB_GROUP'>,
+    rootTargetId: string,
+  ): DurableAttachedBrowserSession | undefined {
+    this.#assertOpen();
+    if (!TARGET_ID.test(rootTargetId)) throw new Error('Durable browser session root target is invalid');
+    const row = this.#db.prepare(`
+      SELECT * FROM browser_attached_sessions
+      WHERE owner_id = ? AND session_id = ? AND adapter_id = ?
+        AND execution_mode = ? AND root_target_id = ?
+        AND state IN ('ACTIVE','RECOVERABLE')
+      ORDER BY last_seen_at DESC
+      LIMIT 1
+    `).get(
+      owner.ownerId,
+      owner.sessionId,
+      owner.adapterId,
+      executionMode,
+      rootTargetId,
+    ) as SessionRow | undefined;
+    return row ? view(row) : undefined;
+  }
+
   markRecoverable(owner: GatewayAuthority, browserSessionId: string, lastSeenAt: number): void {
     this.#assertOpen();
     const current = this.required(owner, browserSessionId);

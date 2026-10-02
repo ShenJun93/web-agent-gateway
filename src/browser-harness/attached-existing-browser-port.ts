@@ -23,6 +23,7 @@ interface AttachedSession {
   targetGeneration: number;
   claims: Map<string, number>;
   groupedTargets: Set<string>;
+  detached: boolean;
 }
 
 export interface AttachedExistingBrowserPort extends BrowserPort {
@@ -95,6 +96,19 @@ export function createAttachedExistingBrowserPort(options: {
     }
     if (session.handle.state !== 'ACTIVE') {
       throw new Error(`Browser session is not active: ${session.handle.state}`);
+    }
+    return session;
+  }
+
+  function ownedForClose(owner: GatewayAuthority, browserSessionId: string): AttachedSession {
+    if (!SESSION_ID.test(browserSessionId)) throw new Error('Browser session id is invalid');
+    const session = sessions.get(browserSessionId);
+    if (!session) throw new Error('Browser session not found');
+    if (!sameAuthorityTuple(session.handle.owner, owner)) {
+      throw new Error('Browser session is owned by another authority');
+    }
+    if (session.handle.state !== 'ACTIVE' && session.handle.state !== 'CLOSING') {
+      throw new Error(`Browser session cannot be closed from state: ${session.handle.state}`);
     }
     return session;
   }
@@ -285,6 +299,7 @@ export function createAttachedExistingBrowserPort(options: {
         targetGeneration: stored.targetGeneration,
         claims: recoveredClaims,
         groupedTargets,
+        detached: false,
       };
       sessions.set(browserSessionId, session);
       persist(session);
@@ -305,7 +320,7 @@ export function createAttachedExistingBrowserPort(options: {
   const heartbeatTimer = setInterval(() => {
     if (stopped) return;
     for (const session of sessions.values()) {
-      if (session.handle.state !== 'ACTIVE') continue;
+      if (session.handle.state !== 'ACTIVE' && session.handle.state !== 'CLOSING') continue;
       try {
         heartbeat(session);
       } catch {
@@ -385,6 +400,7 @@ export function createAttachedExistingBrowserPort(options: {
           targetGeneration: 0,
           claims: new Map([[request.targetId, claim.claimEpoch]]),
           groupedTargets: new Set(grouped === undefined ? [] : [request.targetId]),
+          detached: false,
         };
         sessions.set(browserSessionId, session);
         persist(session);
@@ -450,47 +466,55 @@ export function createAttachedExistingBrowserPort(options: {
     },
 
     async close(owner, browserSessionId) {
-      const session = owned(owner, browserSessionId);
+      const session = ownedForClose(owner, browserSessionId);
 
-      // Revalidate and extend the lease before detach. While this lease is current, no successor
-      // can claim the target, so an old owner can never detach a newer owner's debugger session.
-      heartbeat(session);
+      // Revalidate and extend the lease before the first detach attempt. If detach has an unknown
+      // outcome, keep the claims active and retryable. Once detach is confirmed, remember that fact
+      // in runtime memory so a claim-cleanup retry never replays target.release.
+      if (session.handle.state === 'ACTIVE') heartbeat(session);
       session.handle = Object.freeze({
         ...session.handle,
         state: 'CLOSING',
         lastSeenAt: now(),
       });
+      persist(session, 'ACTIVE');
 
-      let failure: unknown;
-      try {
-        await options.control.release(session.targetId);
-        for (const [targetId, claimEpoch] of session.claims) {
-          options.claims.release(
-            owner,
-            targetId,
-            browserSessionId,
-            claimEpoch,
-          );
+      if (!session.detached) {
+        try {
+          await options.control.release(session.targetId);
+          session.detached = true;
+        } catch (error) {
+          session.handle = Object.freeze({
+            ...session.handle,
+            state: 'CLOSING',
+            lastSeenAt: now(),
+          });
+          persist(session, 'ACTIVE');
+          throw error;
         }
-        session.claims.clear();
-        session.handle = Object.freeze({
-          ...session.handle,
-          state: 'CLOSED',
-          controlState: 'STOPPED',
-          lastSeenAt: now(),
-        });
+      }
+
+      try {
+        options.claims.releaseMany(owner, browserSessionId, session.claims);
       } catch (error) {
-        failure = error;
         session.handle = Object.freeze({
           ...session.handle,
-          state: 'FAILED',
+          state: 'CLOSING',
           lastSeenAt: now(),
         });
+        // The debugger is already detached. Keep durable claims active until cleanup can be retried;
+        // this prevents another session from taking the target while the close result is incomplete.
+        persist(session, 'ACTIVE');
+        throw error;
       }
-      if (failure) {
-        options.sessionStore?.markClosed(owner, browserSessionId, 'FAILED', now());
-        throw failure;
-      }
+
+      session.claims.clear();
+      session.handle = Object.freeze({
+        ...session.handle,
+        state: 'CLOSED',
+        controlState: 'STOPPED',
+        lastSeenAt: now(),
+      });
       options.sessionStore?.markClosed(owner, browserSessionId, 'CLOSED', now());
       sessions.delete(browserSessionId);
       return clone(session.handle);
@@ -502,26 +526,27 @@ export function createAttachedExistingBrowserPort(options: {
       clearInterval(heartbeatTimer);
       let failure: unknown;
       for (const [browserSessionId, session] of sessions) {
-        if (session.handle.state !== 'ACTIVE') continue;
-        let detached = false;
-        try {
-          await options.control.release(session.targetId);
-          detached = true;
-        } catch (error) {
-          failure ??= error;
+        if (session.handle.state !== 'ACTIVE' && session.handle.state !== 'CLOSING') continue;
+        let detached = session.detached;
+        if (!detached) {
+          try {
+            await options.control.release(session.targetId);
+            session.detached = true;
+            detached = true;
+          } catch (error) {
+            failure ??= error;
+          }
         }
         if (detached) {
-          for (const [targetId, claimEpoch] of session.claims) {
-            try {
-              options.claims.release(
-                session.handle.owner,
-                targetId,
-                browserSessionId,
-                claimEpoch,
-              );
-            } catch (error) {
-              failure ??= error;
-            }
+          try {
+            options.claims.releaseMany(
+              session.handle.owner,
+              browserSessionId,
+              session.claims,
+            );
+            session.claims.clear();
+          } catch (error) {
+            failure ??= error;
           }
         }
         session.handle = Object.freeze({

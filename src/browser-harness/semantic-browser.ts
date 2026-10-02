@@ -22,12 +22,33 @@ export interface SemanticSnapshot {
   readonly truncated?: boolean;
 }
 
+export interface BrowserMediaInspection {
+  readonly tag: 'video' | 'audio';
+  readonly paused: boolean;
+  readonly ended: boolean;
+  readonly muted: boolean;
+  readonly volume: number;
+  readonly duration_seconds: number | null;
+  readonly current_time_seconds: number | null;
+  readonly playback_rate: number;
+  readonly ready_state: number;
+  readonly network_state: number;
+  readonly error: null | { readonly code: number; readonly message: string };
+  readonly audio_evidence: 'PRESENT' | 'ABSENT' | 'UNKNOWN';
+  readonly audio_decoded_bytes?: number;
+  readonly audio_track_count?: number;
+  readonly captured_audio_track_count?: number;
+  readonly video_width?: number;
+  readonly video_height?: number;
+}
+
 export interface SemanticBrowser {
   snapshot(owner: GatewayAuthority, browserSessionId: string): Promise<SemanticSnapshot>;
   navigate(owner: GatewayAuthority, browserSessionId: string, url: string): Promise<void>;
   click(owner: GatewayAuthority, browserSessionId: string, ref: string): Promise<void>;
   fill(owner: GatewayAuthority, browserSessionId: string, ref: string, text: string): Promise<void>;
   setFiles(owner: GatewayAuthority, browserSessionId: string, ref: string, internalPaths: readonly string[]): Promise<void>;
+  inspectMedia(owner: GatewayAuthority, browserSessionId: string, ref: string): Promise<BrowserMediaInspection>;
   press(owner: GatewayAuthority, browserSessionId: string, key: string): Promise<void>;
 }
 
@@ -62,6 +83,7 @@ const MAX_INTERNAL_PATH_BYTES = 4096;
 const FIXED_DOM_CLICK_FUNCTION = 'function(){if(typeof this.click==="function"){this.click();return true;}return false;}';
 const FIXED_NATIVE_VALUE_FILL_FUNCTION = "function(value){let proto=null;if(this instanceof HTMLInputElement)proto=HTMLInputElement.prototype;else if(this instanceof HTMLTextAreaElement)proto=HTMLTextAreaElement.prototype;else return {supported:false,value:null};const descriptor=Object.getOwnPropertyDescriptor(proto,\"value\");if(!descriptor||typeof descriptor.set!==\"function\")return {supported:false,value:null};descriptor.set.call(this,value);this.dispatchEvent(new Event(\"input\",{bubbles:true}));this.dispatchEvent(new Event(\"change\",{bubbles:true}));return {supported:true,value:this.value};}";
 const FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION = "function(){if(!(this instanceof HTMLElement)||!this.isContentEditable)return false;this.focus();const selection=this.ownerDocument.getSelection();if(!selection)return false;const range=this.ownerDocument.createRange();range.selectNodeContents(this);selection.removeAllRanges();selection.addRange(range);return true;}";
+export const FIXED_MEDIA_INSPECT_FUNCTION = "function(){if(!(this instanceof HTMLMediaElement))return {supported:false};const decoded=typeof this.webkitAudioDecodedByteCount===\"number\"?this.webkitAudioDecodedByteCount:null;const tracks=this.audioTracks&&typeof this.audioTracks.length===\"number\"?this.audioTracks.length:null;let captured=null;try{const stream=typeof this.captureStream===\"function\"?this.captureStream():null;captured=stream&&typeof stream.getAudioTracks===\"function\"?stream.getAudioTracks().length:null;}catch{}const duration=Number.isFinite(this.duration)?this.duration:null;const currentTime=Number.isFinite(this.currentTime)?this.currentTime:null;const error=this.error?{code:this.error.code,message:String(this.error.message||\"\").slice(0,256)}:null;return {supported:true,tag:String(this.tagName||\"\").toLowerCase(),paused:this.paused===true,ended:this.ended===true,muted:this.muted===true,volume:this.volume,duration,currentTime,playbackRate:this.playbackRate,readyState:this.readyState,networkState:this.networkState,error,audioDecodedBytes:decoded,audioTrackCount:tracks,capturedAudioTrackCount:captured,videoWidth:typeof this.videoWidth===\"number\"?this.videoWidth:null,videoHeight:typeof this.videoHeight===\"number\"?this.videoHeight:null};}";
 const PRESS_KEYS = new Map<string, { key: string; code: string }>([
   ['Enter', { key: 'Enter', code: 'Enter' }],
   ['Tab', { key: 'Tab', code: 'Tab' }],
@@ -366,6 +388,136 @@ export function createSemanticBrowser(options: {
         method: 'DOM.setFileInputFiles',
         params: { files, backendNodeId: target.backendDOMNodeId },
       });
+    },
+
+    async inspectMedia(owner, browserSessionId, ref) {
+      const target = binding(browserSessionId, ref);
+      let objectId: string | undefined;
+      try {
+        const resolved = await options.port.exec(owner, browserSessionId, {
+          method: 'DOM.resolveNode',
+          params: { backendNodeId: target.backendDOMNodeId },
+        });
+        const candidate = typeof resolved === 'object' && resolved !== null
+          ? (resolved as { object?: { objectId?: unknown } }).object?.objectId
+          : undefined;
+        objectId = typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+        if (!objectId) throw new Error('Browser media target could not be resolved');
+
+        const invoked = await options.port.exec(owner, browserSessionId, {
+          method: 'Runtime.callFunctionOn',
+          params: {
+            objectId,
+            functionDeclaration: FIXED_MEDIA_INSPECT_FUNCTION,
+            returnByValue: true,
+          },
+        });
+        const raw = typeof invoked === 'object' && invoked !== null
+          ? (invoked as { result?: { value?: unknown } }).result?.value
+          : undefined;
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+          throw new Error('Browser media inspection returned invalid data');
+        }
+        const row = raw as Record<string, unknown>;
+        if (row.supported !== true) throw new Error('Browser semantic target is not a media element');
+        if ((row.tag !== 'video' && row.tag !== 'audio')
+            || typeof row.paused !== 'boolean'
+            || typeof row.ended !== 'boolean'
+            || typeof row.muted !== 'boolean'
+            || typeof row.volume !== 'number' || !Number.isFinite(row.volume)
+            || row.volume < 0 || row.volume > 1
+            || typeof row.playbackRate !== 'number' || !Number.isFinite(row.playbackRate)
+            || !Number.isInteger(row.readyState) || Number(row.readyState) < 0 || Number(row.readyState) > 4
+            || !Number.isInteger(row.networkState) || Number(row.networkState) < 0 || Number(row.networkState) > 3) {
+          throw new Error('Browser media inspection returned invalid data');
+        }
+        const finiteOrNull = (value: unknown): number | null => {
+          if (value === null) return null;
+          return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : Number.NaN;
+        };
+        const duration = finiteOrNull(row.duration);
+        const currentTime = finiteOrNull(row.currentTime);
+        if (Number.isNaN(duration) || Number.isNaN(currentTime)) {
+          throw new Error('Browser media inspection returned invalid timing');
+        }
+        const decoded = row.audioDecodedBytes === null ? undefined : row.audioDecodedBytes;
+        const tracks = row.audioTrackCount === null ? undefined : row.audioTrackCount;
+        const capturedTracks = row.capturedAudioTrackCount === null ? undefined : row.capturedAudioTrackCount;
+        if (decoded !== undefined && (typeof decoded !== 'number' || !Number.isFinite(decoded) || decoded < 0)) {
+          throw new Error('Browser media inspection returned invalid audio evidence');
+        }
+        if (tracks !== undefined && (!Number.isInteger(tracks) || Number(tracks) < 0 || Number(tracks) > 64)) {
+          throw new Error('Browser media inspection returned invalid audio evidence');
+        }
+        if (capturedTracks !== undefined
+            && (!Number.isInteger(capturedTracks) || Number(capturedTracks) < 0 || Number(capturedTracks) > 64)) {
+          throw new Error('Browser media inspection returned invalid audio evidence');
+        }
+        let error: BrowserMediaInspection['error'] = null;
+        if (row.error !== null) {
+          if (!row.error || typeof row.error !== 'object' || Array.isArray(row.error)) {
+            throw new Error('Browser media inspection returned invalid playback error');
+          }
+          const mediaError = row.error as Record<string, unknown>;
+          if (!Number.isInteger(mediaError.code) || Number(mediaError.code) < 1 || Number(mediaError.code) > 4
+              || typeof mediaError.message !== 'string') {
+            throw new Error('Browser media inspection returned invalid playback error');
+          }
+          error = {
+            code: Number(mediaError.code),
+            message: mediaError.message.slice(0, 256),
+          };
+        }
+        const tag = row.tag as 'video' | 'audio';
+        const audioEvidence: BrowserMediaInspection['audio_evidence'] =
+          tag === 'audio' && duration !== null && duration > 0
+            ? 'PRESENT'
+            : (typeof decoded === 'number' && decoded > 0)
+                || (typeof tracks === 'number' && tracks > 0)
+                || (typeof capturedTracks === 'number' && capturedTracks > 0)
+              ? 'PRESENT'
+              : typeof tracks === 'number' && tracks === 0
+                  && typeof capturedTracks === 'number' && capturedTracks === 0
+                  && typeof decoded === 'number' && decoded === 0
+                ? 'ABSENT'
+                : 'UNKNOWN';
+
+        const videoWidth = row.videoWidth === null ? undefined : row.videoWidth;
+        const videoHeight = row.videoHeight === null ? undefined : row.videoHeight;
+        if (videoWidth !== undefined && (!Number.isInteger(videoWidth) || Number(videoWidth) < 0)) {
+          throw new Error('Browser media inspection returned invalid video dimensions');
+        }
+        if (videoHeight !== undefined && (!Number.isInteger(videoHeight) || Number(videoHeight) < 0)) {
+          throw new Error('Browser media inspection returned invalid video dimensions');
+        }
+
+        return Object.freeze({
+          tag,
+          paused: row.paused,
+          ended: row.ended,
+          muted: row.muted,
+          volume: row.volume,
+          duration_seconds: duration,
+          current_time_seconds: currentTime,
+          playback_rate: row.playbackRate,
+          ready_state: Number(row.readyState),
+          network_state: Number(row.networkState),
+          error,
+          audio_evidence: audioEvidence,
+          ...(decoded === undefined ? {} : { audio_decoded_bytes: decoded }),
+          ...(tracks === undefined ? {} : { audio_track_count: Number(tracks) }),
+          ...(capturedTracks === undefined ? {} : { captured_audio_track_count: Number(capturedTracks) }),
+          ...(videoWidth === undefined ? {} : { video_width: Number(videoWidth) }),
+          ...(videoHeight === undefined ? {} : { video_height: Number(videoHeight) }),
+        });
+      } finally {
+        if (objectId) {
+          await options.port.exec(owner, browserSessionId, {
+            method: 'Runtime.releaseObject',
+            params: { objectId },
+          }).catch(() => undefined);
+        }
+      }
     },
 
     async press(owner, browserSessionId, key) {

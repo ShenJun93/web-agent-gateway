@@ -114,6 +114,12 @@ test('BrowserBroker keeps one logical session routed despite mode-specific trans
     dataBase64: 'cG5n',
   });
   assert.equal((await broker.close(OWNER, opened.browserSessionId)).browserSessionId, opened.browserSessionId);
+  await assert.rejects(
+    () => broker.describe(OWNER, opened.browserSessionId),
+    (error: unknown) => error instanceof BrowserBrokerError
+      && error.code === 'BROWSER_SESSION_NOT_ROUTED',
+    'successful close must remove the broker route',
+  );
 });
 
 test('visible Pause -> Take Control blocks effects until Resume revalidates target', async () => {
@@ -196,4 +202,67 @@ test('AI_TAB_GROUP routes through attached transport and supports visible takeov
   assert.equal((await broker.takeUserControl(OWNER, opened.browserSessionId)).controlState, 'USER_CONTROL');
   assert.equal((await broker.resumeAutomation(OWNER, opened.browserSessionId)).controlState, 'RUNNING');
   assert.equal(attached.calls.filter((row) => row === 'snapshot').length, 1);
+});
+
+
+test('BrowserBroker rebuilds a missing attached route from the durable logical session', async () => {
+  const headless = portFixture('WAG_HEADLESS', '5');
+  const visible = portFixture('WAG_VISIBLE', '6');
+  const base = portFixture('ATTACH_EXISTING', '7');
+  const browserSessionId = 'browser_00000000-0000-4000-8000-000000000077';
+  const recoveredHandle: BrowserSessionHandle = {
+    browserSessionId,
+    profileId: 'recovered',
+    owner: OWNER,
+    backend: 'cdp',
+    executionMode: 'ATTACH_EXISTING',
+    ownershipMode: 'ATTACHED_EXISTING',
+    controlState: 'RUNNING',
+    rootTargetId: 'tab_7',
+    targetId: 'tab_7',
+    targetGeneration: 0,
+    claimEpoch: 2,
+    claimExpiresAt: 999,
+    createdAt: 1,
+    lastSeenAt: 2,
+    state: 'ACTIVE',
+  };
+  const attached = {
+    ...base.port,
+    async recover(owner: GatewayAuthority, id: string) {
+      assert.deepEqual(owner, OWNER);
+      assert.equal(id, browserSessionId);
+      base.calls.push('recover');
+      return recoveredHandle;
+    },
+    async describe(_owner: GatewayAuthority, id: string) {
+      base.calls.push('describe');
+      assert.equal(id, browserSessionId);
+      return recoveredHandle;
+    },
+    async snapshot(_owner: GatewayAuthority, id: string) {
+      base.calls.push('snapshot');
+      return {
+        browserSessionId: id,
+        url: 'https://example.test/recovered',
+        title: 'Recovered',
+        targetId: 'tab_7',
+        observedAt: 2,
+      };
+    },
+  };
+  const broker = createBrowserBroker({
+    headless: headless.port,
+    visible: visible.port,
+    attached,
+  });
+
+  const described = await broker.describe(OWNER, browserSessionId);
+  assert.equal(described.browserSessionId, browserSessionId);
+  assert.equal(described.claimEpoch, 2);
+  assert.deepEqual(base.calls.slice(0, 2), ['recover', 'describe']);
+
+  const snapshot = await broker.snapshot(OWNER, browserSessionId);
+  assert.equal(snapshot.url, 'https://example.test/recovered');
+  assert.equal(base.calls.filter((row) => row === 'recover').length, 1, 'route should remain rebuilt');
 });

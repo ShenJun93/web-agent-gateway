@@ -93,6 +93,14 @@ test('graceful runtime restart recovers the same logical browser session at a fr
   assert.equal(opened.claimEpoch, 1);
   assert.equal(control.attached(), true);
 
+  const aliased = await first.open('fresh-chat-profile', 'AI_TAB_GROUP', 'tab_7', 'WAG • Recovery');
+  assert.equal(
+    aliased.browserSessionId,
+    opened.browserSessionId,
+    'a fresh logical profile on the same owned exact target must reuse the existing session instead of creating a conflicting claim',
+  );
+  assert.equal(aliased.claimEpoch, opened.claimEpoch);
+
   const effect = await first.exec(opened.browserSessionId, 'restart.navigate.once', {
     type: 'navigate',
     url: 'https://example.test/next',
@@ -112,8 +120,15 @@ test('graceful runtime restart recovers the same logical browser session at a fr
   assert.equal(control.attached(), false);
 
   second = runtime(root, control);
-  const recovered = await second.open('recovery', 'AI_TAB_GROUP', 'tab_7', 'WAG • Recovery');
-  assert.equal(recovered.browserSessionId, opened.browserSessionId);
+  const recovered = await second.describe(opened.browserSessionId);
+  assert.equal(
+    recovered.browserSessionId,
+    opened.browserSessionId,
+    'direct describe must restore a durable attached session even though the new broker has no route',
+  );
+  const reopened = await second.open('recovery', 'AI_TAB_GROUP', 'tab_7', 'WAG • Recovery');
+  assert.equal(reopened.browserSessionId, opened.browserSessionId);
+  assert.equal(reopened.claimEpoch, recovered.claimEpoch);
   const recoveryEvents = second.diagnostics?.recent({ limit: 20 }).events.filter((event) =>
     event.action_type === 'recover' && event.browser_session_id === opened.browserSessionId) ?? [];
   assert.equal(recoveryEvents.some((event) => event.recovered && !event.success), true);
@@ -162,4 +177,34 @@ test('runtime closeAll is terminal rather than recoverable', async (t) => {
     () => second!.describe(opened.browserSessionId),
     /Browser session/,
   );
+});
+
+
+test('attached browser close replay returns durable CLOSED without reattaching or rerunning release', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-runtime-close-replay-'));
+  let releaseCalls = 0;
+  const base = controlFixture();
+  const control: ExistingBrowserControlClient = {
+    ...base,
+    async release(targetId) {
+      releaseCalls += 1;
+      return base.release(targetId);
+    },
+  };
+  const instance = runtime(root, control);
+  t.after(async () => {
+    await instance.closeAll().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const opened = await instance.open('close-replay', 'ATTACH_EXISTING', 'tab_7');
+  const first = await instance.close(opened.browserSessionId);
+  assert.equal(first.state, 'CLOSED');
+  assert.equal(releaseCalls, 1);
+  assert.equal(base.attached(), false);
+
+  const replay = await instance.close(opened.browserSessionId);
+  assert.equal(replay.state, 'CLOSED');
+  assert.equal(replay.browserSessionId, opened.browserSessionId);
+  assert.equal(releaseCalls, 1, 'close replay must not dispatch a second detach');
 });

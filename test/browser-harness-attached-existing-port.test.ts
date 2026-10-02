@@ -92,6 +92,14 @@ function fixture() {
       claimCalls.push(['release', targetId, browserSessionId, claimEpoch]);
       return claim(owner, targetId, browserSessionId, 'RELEASED');
     },
+    releaseMany(owner, browserSessionId, claimSet) {
+      claimState = 'RELEASED';
+      claimCalls.push(['releaseMany', browserSessionId, [...claimSet]]);
+      return new Map([...claimSet].map(([targetId]) => [
+        targetId,
+        claim(owner, targetId, browserSessionId, 'RELEASED'),
+      ]));
+    },
   };
   return { control, claims, calls, claimCalls, isAttached: () => attached };
 }
@@ -299,8 +307,84 @@ test('AI_TAB_GROUP follows an OAuth successor while keeping one logical browser 
 
   await port.close(OWNER, opened.browserSessionId);
   assert.equal(attached.size, 0);
-  const releasedClaims = f.claimCalls.filter((row) => row[0] === 'release').map((row) => row[1]);
-  assert.ok(releasedClaims.includes('tab_7'));
-  assert.ok(releasedClaims.includes('tab_8'));
+  const released = f.claimCalls.find((row) => row[0] === 'releaseMany');
+  assert.ok(released, 'close must release retained OAuth claims atomically');
+  const releasedClaims = (released?.[2] as Array<[string, number]>).map(([targetId]) => targetId);
+  assert.deepEqual(new Set(releasedClaims), new Set(['tab_7', 'tab_8']));
+  port.shutdown();
+});
+
+
+test('attached close keeps claims retryable when debugger detach times out', async () => {
+  const f = fixture();
+  const originalRelease = f.control.release.bind(f.control);
+  let releaseAttempts = 0;
+  f.control.release = async (targetId) => {
+    releaseAttempts += 1;
+    if (releaseAttempts === 1) throw new Error('Browser control request timed out');
+    return originalRelease(targetId);
+  };
+
+  const port = createAttachedExistingBrowserPort({
+    control: f.control,
+    claims: f.claims,
+    randomUUID: () => '00000000-0000-4000-8000-000000000091',
+    now: (() => { let n = 1; return () => n++; })(),
+  });
+  const opened = await port.open({
+    profileId: 'detach-retry',
+    owner: OWNER,
+    mode: 'ATTACH_EXISTING',
+    targetId: 'tab_7',
+  });
+
+  await assert.rejects(
+    () => port.close(OWNER, opened.browserSessionId),
+    /timed out/i,
+  );
+  assert.equal(f.isAttached(), true, 'unknown detach outcome must not release ownership claims');
+  assert.equal(f.claimCalls.some((row) => row[0] === 'releaseMany'), false);
+
+  const closed = await port.close(OWNER, opened.browserSessionId);
+  assert.equal(closed.state, 'CLOSED');
+  assert.equal(f.isAttached(), false);
+  assert.equal(releaseAttempts, 2);
+  assert.equal(f.claimCalls.filter((row) => row[0] === 'releaseMany').length, 1);
+  port.shutdown();
+});
+
+test('attached close retries atomic claim cleanup after debugger detach succeeded', async () => {
+  const f = fixture();
+  const originalReleaseMany = f.claims.releaseMany.bind(f.claims);
+  let claimReleaseAttempts = 0;
+  f.claims.releaseMany = (owner, browserSessionId, claimSet) => {
+    claimReleaseAttempts += 1;
+    if (claimReleaseAttempts === 1) throw new Error('claim cleanup interrupted');
+    return originalReleaseMany(owner, browserSessionId, claimSet);
+  };
+
+  const port = createAttachedExistingBrowserPort({
+    control: f.control,
+    claims: f.claims,
+    randomUUID: () => '00000000-0000-4000-8000-000000000092',
+    now: (() => { let n = 1; return () => n++; })(),
+  });
+  const opened = await port.open({
+    profileId: 'claim-retry',
+    owner: OWNER,
+    mode: 'ATTACH_EXISTING',
+    targetId: 'tab_7',
+  });
+
+  await assert.rejects(
+    () => port.close(OWNER, opened.browserSessionId),
+    /claim cleanup interrupted/i,
+  );
+  assert.equal(f.isAttached(), false, 'debugger detach may complete before claim cleanup retry');
+
+  const closed = await port.close(OWNER, opened.browserSessionId);
+  assert.equal(closed.state, 'CLOSED');
+  assert.equal(claimReleaseAttempts, 2);
+  assert.equal(f.isAttached(), false);
   port.shutdown();
 });
