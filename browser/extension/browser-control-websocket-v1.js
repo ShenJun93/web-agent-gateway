@@ -12,6 +12,9 @@ export function createBrowserControlWebSocketV1(options) {
   const dispatcher = createNativeBrowserControlV1({
     connectNative: () => { throw new Error('Native transport is disabled for Browser v2 WebSocket control'); },
     control: options.control,
+    extensionReleaseIdentity: options.extensionReleaseIdentity,
+    reloadExtension: options.reloadExtension,
+    setTimeoutImpl: schedule,
   });
 
   let socket;
@@ -63,6 +66,12 @@ export function createBrowserControlWebSocketV1(options) {
       current.send(JSON.stringify({
         version: 1,
         type: 'control.hello',
+        extensionRelease: {
+          schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',
+          sourceHead: typeof options.extensionReleaseIdentity?.sourceHead === 'string'
+            ? options.extensionReleaseIdentity.sourceHead
+            : 'development',
+        },
         pairingToken: config.pairingToken,
       }));
     });

@@ -20,7 +20,7 @@ import { isKillSwitchEngaged } from './autonomy-kill-switch.js';
 import type { DevspaceExecutor } from './executor/devspace.js';
 import { startOperatorServer, type OperatorServer } from './operator-server.js';
 import type { PrivateGatewayConfig } from './private-config.js';
-import type { CapabilityMcpContext, ChangeSetMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext, RemoteGitPushMcpContext } from './server.js';
+import type { BrowserReleaseMcpContext, CapabilityMcpContext, ChangeSetMcpContext, CommandMcpContext, GitCommitMcpContext, MutationMcpContext, RemoteGitPushMcpContext } from './server.js';
 import { WorkspaceIdentityRegistry } from './workspace-identity.js';
 import {
   createLocalMachineContext,
@@ -28,6 +28,7 @@ import {
   type LocalMachineContext,
 } from './local-machine-runtime.js';
 import { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import { detectRuntimeIdentity } from './runtime-identity.js';
 import {
   createPrivateBrowserMcpContext,
   type BrowserMcpContext,
@@ -88,6 +89,8 @@ export interface RepositoryEngineeringRuntime {
   diagnosticsContext?: ToolUsageDiagnostics;
   /** Optional outbound BrowserPort surface. It shares identity, not filesystem/Git authority. */
   browserContext?: BrowserMcpContext;
+  /** Live browser-extension release identity reported through health. */
+  browserReleaseContext?: BrowserReleaseMcpContext;
   /** Optional native Windows DesktopPort surface, restricted to WAG-owned processes. */
   desktopContext?: DesktopMcpContext;
   /** Present only after a successful attach with mutation enabled. */
@@ -215,11 +218,23 @@ export async function startRepositoryEngineeringRuntime(
   });
   let browserContext: BrowserMcpContext | undefined;
   let browserControlServer: BrowserControlWebSocketServer | undefined;
+  let browserReleaseContext: BrowserReleaseMcpContext | undefined;
   let desktopContext: DesktopMcpContext | undefined;
   try {
+    const runtimeIdentity = detectRuntimeIdentity();
+    const browserPairingStatePath = mutationSettings.statePath + '.browser-control-pairing.json';
     browserControlServer = browserSettings === undefined ? undefined : await (
       options.startBrowserControlWebSocketServer ?? startBrowserControlWebSocketServer
-    )({ statePath: mutationSettings.statePath + '.browser-control-pairing.json' });
+    )({
+      statePath: browserPairingStatePath,
+      ...(runtimeIdentity.source_head === undefined ? {} : {
+        expectedExtensionSourceHead: runtimeIdentity.source_head,
+        extensionReleaseStatePath: browserPairingStatePath + '.extension-release.json',
+      }),
+    });
+    if (browserControlServer !== undefined) {
+      browserReleaseContext = { status: () => browserControlServer!.releaseState() };
+    }
     browserContext = browserSettings === undefined ? undefined : createPrivateBrowserMcpContext({
       owner: callerContext,
       edgeExecutablePath: browserSettings.edgeExecutablePath,
@@ -318,6 +333,7 @@ export async function startRepositoryEngineeringRuntime(
     machineContext,
     diagnosticsContext,
     ...(browserContext === undefined ? {} : { browserContext }),
+    ...(browserReleaseContext === undefined ? {} : { browserReleaseContext }),
     ...(desktopContext === undefined ? {} : { desktopContext }),
     openWorkspaceId: (canonicalRoot) => store.openWorkspaceRecord({
       ownerId: callerContext.ownerId,

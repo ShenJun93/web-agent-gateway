@@ -27,9 +27,16 @@ param(
     $starterStdout = Join-Path $logs 'wag-local-supervisor-starter.stdout.log'
     $starterStderr = Join-Path $logs 'wag-local-supervisor-starter.stderr.log'
     $pidFile = Join-Path $logs 'wag-local-supervisor.pid'
-    $mutexName = 'Local\WAG-Local-Supervisor-v1'
+    $state = Join-Path $base 'state'
+    $maintenanceLease = Join-Path $state 'maintenance-v1.json'
+    $maintenanceAck = Join-Path $state 'maintenance-v1.ack.json'
+    $baseBytes = [Text.Encoding]::UTF8.GetBytes($base.ToLowerInvariant())
+    $baseHash = [Security.Cryptography.SHA256]::HashData($baseBytes)
+    $mutexSuffix = [Convert]::ToHexString($baseHash).Substring(0, 16)
+    $mutexName = 'Local\WAG-Local-Supervisor-v1-' + $mutexSuffix
 
     New-Item -ItemType Directory -Path $logs -Force | Out-Null
+    New-Item -ItemType Directory -Path $state -Force | Out-Null
 
     if (-not (Test-Path -LiteralPath $starter -PathType Leaf)) {
         throw "STOP: missing WAG starter: $starter"
@@ -62,12 +69,74 @@ param(
             (Test-HttpOk 'http://127.0.0.1:7677/.well-known/oauth-authorization-server')
     }
 
+    function Get-MaintenanceLease {
+        if (-not (Test-Path -LiteralPath $maintenanceLease -PathType Leaf)) { return $null }
+        try {
+            $lease = Get-Content -LiteralPath $maintenanceLease -Raw | ConvertFrom-Json
+            if ([string]$lease.schema -ne 'WAG_LOCAL_MAINTENANCE_V1') { return $null }
+            $leaseId = [string]$lease.leaseId
+            if ($leaseId.Length -ne 42 -or $leaseId -notmatch '^maint_[0-9a-f-]{36}') { return $null }
+            $rawExpires = $lease.expiresAtUtc
+            if ($rawExpires -is [DateTime]) {
+                $expires = $rawExpires.ToUniversalTime()
+            }
+            elseif ($rawExpires -is [DateTimeOffset]) {
+                $expires = $rawExpires.UtcDateTime
+            }
+            else {
+                $expires = [DateTimeOffset]::Parse([string]$rawExpires, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).UtcDateTime
+            }
+            if ($expires -le [DateTime]::UtcNow) {
+                Remove-Item -LiteralPath $maintenanceLease, $maintenanceAck -Force -ErrorAction SilentlyContinue
+                return $null
+            }
+            return $lease
+        }
+        catch {
+            Write-SupervisorLog 'WAG_SUPERVISOR_MAINTENANCE_INVALID' ('reason=parse error=' + $_.Exception.Message)
+            return $null
+        }
+    }
+
+    function Confirm-MaintenanceLease($Lease) {
+        $payload = [ordered]@{
+            schema = 'WAG_LOCAL_MAINTENANCE_ACK_V1'
+            leaseId = [string]$Lease.leaseId
+            supervisorPid = $PID
+            acknowledgedAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+        $temp = $maintenanceAck + '.tmp'
+        [IO.File]::WriteAllText($temp, (($payload | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temp -Destination $maintenanceAck -Force
+    }
+
     [IO.File]::WriteAllText($pidFile, [string]$PID)
     Write-SupervisorLog 'WAG_SUPERVISOR_START' "pid=$PID"
     Write-Output "WAG_SUPERVISOR_PID=$PID"
 
+    $lastMaintenanceLeaseId = $null
     try {
         do {
+            $lease = Get-MaintenanceLease
+            if ($null -ne $lease) {
+                Confirm-MaintenanceLease $lease
+                if ($lastMaintenanceLeaseId -ne [string]$lease.leaseId) {
+                    Write-SupervisorLog 'WAG_SUPERVISOR_MAINTENANCE_PAUSE' ('leaseId=' + [string]$lease.leaseId)
+                    $lastMaintenanceLeaseId = [string]$lease.leaseId
+                }
+                if ($Once) {
+                    Write-Output 'WAG_SUPERVISOR_MAINTENANCE=True'
+                    break
+                }
+                Start-Sleep -Milliseconds 500
+                continue
+            }
+            if ($null -ne $lastMaintenanceLeaseId) {
+                Write-SupervisorLog 'WAG_SUPERVISOR_MAINTENANCE_RESUME' ('leaseId=' + $lastMaintenanceLeaseId)
+                $lastMaintenanceLeaseId = $null
+                Remove-Item -LiteralPath $maintenanceAck -Force -ErrorAction SilentlyContinue
+            }
+
             if (Test-WagReady) {
                 if ($Once) {
                     Write-Output 'WAG_SUPERVISOR_READY=True'

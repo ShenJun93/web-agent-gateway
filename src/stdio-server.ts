@@ -2,6 +2,7 @@ import type { Readable, Writable } from 'node:stream';
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import {
   createGatewayMcpServer,
+  type BrowserReleaseMcpContext,
   type CapabilityMcpContext,
   type ChangeSetMcpContext,
   type CommandMcpContext,
@@ -31,6 +32,7 @@ export interface GatewayStdioServerOptions {
   diagnosticsContext?: ToolUsageDiagnostics;
   productContext?: ProductMcpContext;
   browserContext?: BrowserMcpContext;
+  browserReleaseContext?: BrowserReleaseMcpContext;
   desktopContext?: DesktopMcpContext;
 }
 
@@ -53,6 +55,7 @@ export function createPrivateGatewayMcpServer(
     diagnosticsContext: options.diagnosticsContext,
     productContext: options.productContext,
     browserContext: options.browserContext,
+    browserReleaseContext: options.browserReleaseContext,
     desktopContext: options.desktopContext,
   });
 }

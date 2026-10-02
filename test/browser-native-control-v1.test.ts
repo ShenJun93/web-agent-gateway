@@ -119,3 +119,57 @@ test('native browser control rejects arbitrary Runtime.evaluate before control d
   assert.equal((port.messages[0] as any).type, 'control.error');
   assert.equal((port.messages[0] as any).error.code, 'CONTROL_METHOD_DENIED');
 });
+
+test('native browser control exposes release identity and accepts bounded self-reload', async () => {
+  let reloads = 0;
+  const timers: Array<() => void> = [];
+  const native = createNativeBrowserControlV1({
+    connectNative: () => { throw new Error('not used'); },
+    control: {
+      async listTargets() { return []; },
+      async create() { return {}; },
+      async watchContinuity(tabId: number) { return { tabId, baselineSequence: 0 }; },
+      async resolveContinuity() { return { sequence: 0, reason: 'NO_CHANGE', target: null }; },
+      async group(tabId: number, title = 'WAG • AI') { return { tabId, groupId: 9, groupTitle: title, activeStable: true }; },
+      async attach() { return {}; },
+      async describe() { return {}; },
+      async exec() { return {}; },
+      async screenshot() { return { mimeType: 'image/png' as const, dataBase64: '' }; },
+      async release(tabId: number) { return { tabId, released: false }; },
+      async close(tabId: number) { return { tabId, closed: false }; },
+      isAttached() { return false; },
+    },
+    extensionReleaseIdentity: {
+      schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',
+      sourceHead: '0123456789abcdef0123456789abcdef01234567',
+    },
+    reloadExtension: () => { reloads += 1; },
+    setTimeoutImpl: (callback: () => void) => {
+      timers.push(callback);
+      return 1;
+    },
+  });
+
+  const status = await native.handle({
+    version: 1,
+    type: 'control.request',
+    requestId: 'bctl_00000000-0000-4000-8000-000000000101',
+    method: 'extension.status',
+  }) as any;
+  assert.deepEqual(status.result, {
+    schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1',
+    sourceHead: '0123456789abcdef0123456789abcdef01234567',
+  });
+
+  const reload = await native.handle({
+    version: 1,
+    type: 'control.request',
+    requestId: 'bctl_00000000-0000-4000-8000-000000000102',
+    method: 'extension.reload',
+  }) as any;
+  assert.equal(reload.result.accepted, true);
+  assert.equal(reloads, 0, 'reload must be deferred until the response is sent');
+  assert.equal(timers.length, 1);
+  timers[0]!();
+  assert.equal(reloads, 1);
+});

@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 
@@ -30,11 +30,24 @@ export interface BrowserControlPairingState {
   pairingToken: string;
 }
 
+export interface BrowserExtensionReleaseState {
+  schema: 'WAG_BROWSER_EXTENSION_RELEASE_STATE_V1';
+  connected: boolean;
+  observedSourceHead: string | null;
+  expectedSourceHead: string | null;
+  match: boolean | null;
+  reloadRequested: boolean;
+  reloadAccepted: boolean;
+  lastError: string | null;
+  updatedAtUtc: string;
+}
+
 export interface BrowserControlWebSocketServer {
   readonly endpoint: string;
   readonly pairingToken: string;
   readonly client: ExistingBrowserControlClient;
   readonly connected: () => boolean;
+  readonly releaseState: () => BrowserExtensionReleaseState;
   close(): Promise<void>;
 }
 
@@ -72,6 +85,8 @@ export async function startBrowserControlWebSocketServer(options: {
   pairingState?: BrowserControlPairingState;
   extensionOrigin?: string;
   requestTimeoutMs?: number;
+  expectedExtensionSourceHead?: string;
+  extensionReleaseStatePath?: string;
 }): Promise<BrowserControlWebSocketServer> {
   const state = options.pairingState
     ?? await loadOrCreateBrowserControlPairingState(options.statePath, options.port ?? DEFAULT_PORT);
@@ -79,9 +94,36 @@ export async function startBrowserControlWebSocketServer(options: {
   const port = Number(endpoint.port);
   const extensionOrigin = options.extensionOrigin ?? EXTENSION_ORIGIN;
   const requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
+  const expectedExtensionSourceHead = validSourceHead(options.expectedExtensionSourceHead)
+    ? options.expectedExtensionSourceHead!
+    : undefined;
+  const extensionReleaseStatePath = options.extensionReleaseStatePath
+    ?? options.statePath + '.extension-release.json';
+  let extensionReleaseState: BrowserExtensionReleaseState = {
+    schema: 'WAG_BROWSER_EXTENSION_RELEASE_STATE_V1',
+    connected: false,
+    observedSourceHead: null,
+    expectedSourceHead: expectedExtensionSourceHead ?? null,
+    match: expectedExtensionSourceHead === undefined ? null : false,
+    reloadRequested: false,
+    reloadAccepted: false,
+    lastError: null,
+    updatedAtUtc: new Date().toISOString(),
+  };
+  await persistExtensionReleaseState(extensionReleaseStatePath, extensionReleaseState);
+  let extensionReleaseWrite: Promise<void> = Promise.resolve();
+  const queueExtensionReleaseState = (): Promise<void> => {
+    const snapshot = { ...extensionReleaseState };
+    extensionReleaseWrite = extensionReleaseWrite
+      .catch(() => undefined)
+      .then(() => persistExtensionReleaseState(extensionReleaseStatePath, snapshot))
+      .catch(() => undefined);
+    return extensionReleaseWrite;
+  };
 
   let peer: WebSocket | undefined;
   let authenticated = false;
+  let closing = false;
   const pending = new Map<string, {
     method: ExistingBrowserControlRequest['method'];
     maxResponseBytes: number;
@@ -123,10 +165,52 @@ export async function startBrowserControlWebSocketServer(options: {
         peer = socket;
         admitted = true;
         authenticated = true;
+        const observedSourceHead = extensionHelloSourceHead(message);
+        extensionReleaseState = {
+          ...extensionReleaseState,
+          connected: true,
+          observedSourceHead: observedSourceHead ?? null,
+          match: expectedExtensionSourceHead === undefined
+            ? null
+            : observedSourceHead === expectedExtensionSourceHead,
+          reloadRequested: false,
+          reloadAccepted: false,
+          lastError: null,
+          updatedAtUtc: new Date().toISOString(),
+        };
+        void queueExtensionReleaseState();
         socket.send(JSON.stringify({
           version: EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION,
           type: 'control.ready',
         }));
+        if (expectedExtensionSourceHead !== undefined
+            && observedSourceHead !== expectedExtensionSourceHead) {
+          extensionReleaseState = {
+            ...extensionReleaseState,
+            reloadRequested: true,
+            updatedAtUtc: new Date().toISOString(),
+          };
+          void queueExtensionReleaseState();
+          void request('extension.reload').then((value) => {
+            const row = value && typeof value === 'object' && !Array.isArray(value)
+              ? value as Record<string, unknown> : {};
+            extensionReleaseState = {
+              ...extensionReleaseState,
+              reloadAccepted: row.accepted === true,
+              lastError: row.accepted === true ? null : 'EXTENSION_RELOAD_NOT_ACCEPTED',
+              updatedAtUtc: new Date().toISOString(),
+            };
+            return queueExtensionReleaseState();
+          }).catch((error) => {
+            extensionReleaseState = {
+              ...extensionReleaseState,
+              reloadAccepted: false,
+              lastError: String(error instanceof Error ? error.message : error).slice(0, 512),
+              updatedAtUtc: new Date().toISOString(),
+            };
+            return queueExtensionReleaseState();
+          });
+        }
         return;
       }
 
@@ -164,6 +248,12 @@ export async function startBrowserControlWebSocketServer(options: {
       if (peer === socket) {
         peer = undefined;
         authenticated = false;
+        extensionReleaseState = {
+          ...extensionReleaseState,
+          connected: false,
+          updatedAtUtc: new Date().toISOString(),
+        };
+        if (!closing) void queueExtensionReleaseState();
         rejectAll(new Error('Browser control extension disconnected'));
       }
     });
@@ -233,6 +323,18 @@ export async function startBrowserControlWebSocketServer(options: {
   }
 
   const client: ExistingBrowserControlClient = {
+    async extensionStatus() {
+      return parseExtensionReleaseResult(await request('extension.status'));
+    },
+    async reloadExtension() {
+      const value = await request('extension.reload');
+      const status = parseExtensionReleaseResult(value);
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+          || (value as Record<string, unknown>).accepted !== true) {
+        throw new Error('Browser extension reload response is invalid');
+      }
+      return { accepted: true, ...status };
+    },
     async listTargets() {
       const value = await request('targets.list');
       if (!Array.isArray(value)) throw new Error('Browser control target list is invalid');
@@ -326,12 +428,49 @@ export async function startBrowserControlWebSocketServer(options: {
     pairingToken: state.pairingToken,
     client,
     connected: () => authenticated,
+    releaseState: () => ({ ...extensionReleaseState }),
     async close() {
+      closing = true;
       rejectAll(new Error('Browser control server closed'));
       if (peer) peer.close(1001, 'server closing');
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      await extensionReleaseWrite.catch(() => undefined);
     },
   };
+}
+
+function validSourceHead(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+}
+
+function extensionHelloSourceHead(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const release = (value as Record<string, unknown>).extensionRelease;
+  if (!release || typeof release !== 'object' || Array.isArray(release)) return undefined;
+  const row = release as Record<string, unknown>;
+  if (row.schema !== 'WAG_BROWSER_EXTENSION_RELEASE_V1') return undefined;
+  return validSourceHead(row.sourceHead) || row.sourceHead === 'development'
+    ? row.sourceHead as string
+    : undefined;
+}
+
+function parseExtensionReleaseResult(value: unknown): { schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1'; sourceHead: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Browser extension release response is invalid');
+  }
+  const row = value as Record<string, unknown>;
+  if (row.schema !== 'WAG_BROWSER_EXTENSION_RELEASE_V1'
+      || !(validSourceHead(row.sourceHead) || row.sourceHead === 'development')) {
+    throw new Error('Browser extension release response is invalid');
+  }
+  return { schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1', sourceHead: row.sourceHead as string };
+}
+
+async function persistExtensionReleaseState(path: string, state: BrowserExtensionReleaseState): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const temp = path + '.' + randomUUID() + '.tmp';
+  await writeFile(temp, JSON.stringify(state, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  await rename(temp, path);
 }
 
 function parsePairingState(value: unknown): BrowserControlPairingState {

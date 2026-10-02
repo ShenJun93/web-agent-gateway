@@ -30,6 +30,8 @@ export function defaultExistingBrowserControlDiscoveryPath(
 }
 
 export interface ExistingBrowserControlClient {
+  extensionStatus?(): Promise<{ schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1'; sourceHead: string }>;
+  reloadExtension?(): Promise<{ accepted: boolean; schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1'; sourceHead: string }>;
   listTargets(): Promise<readonly ExistingBrowserTarget[]>;
   createTarget(): Promise<ExistingBrowserTarget>;
   watchContinuity(targetId: string): Promise<{ targetId: string; baselineSequence: number }>;
@@ -45,6 +47,19 @@ export interface ExistingBrowserControlClient {
   screenshot(targetId: string): Promise<{ mimeType: 'image/png'; dataBase64: string }>;
   release(targetId: string): Promise<{ targetId: string; released: boolean }>;
   closeTarget(targetId: string): Promise<{ targetId: string; closed: boolean }>;
+}
+
+function parseExtensionStatus(value: unknown): { schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1'; sourceHead: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Browser extension release status is invalid');
+  }
+  const row = value as Record<string, unknown>;
+  if (row.schema !== 'WAG_BROWSER_EXTENSION_RELEASE_V1'
+      || typeof row.sourceHead !== 'string'
+      || (!/^[a-f0-9]{40}$/.test(row.sourceHead) && row.sourceHead !== 'development')) {
+    throw new Error('Browser extension release status is invalid');
+  }
+  return { schema: 'WAG_BROWSER_EXTENSION_RELEASE_V1', sourceHead: row.sourceHead };
 }
 
 export function createExistingBrowserControlClient(options: {
@@ -77,6 +92,18 @@ export function createExistingBrowserControlClient(options: {
   }
 
   return {
+    async extensionStatus() {
+      return parseExtensionStatus(await call('extension.status'));
+    },
+    async reloadExtension() {
+      const value = await call('extension.reload');
+      const status = parseExtensionStatus(value);
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+          || (value as Record<string, unknown>).accepted !== true) {
+        throw new Error('Browser extension reload response is invalid');
+      }
+      return { accepted: true, ...status };
+    },
     async listTargets() {
       const value = await call('targets.list');
       if (!Array.isArray(value)) throw new Error('Browser control target list is invalid');

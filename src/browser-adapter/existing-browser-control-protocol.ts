@@ -2,6 +2,8 @@ export const EXISTING_BROWSER_CONTROL_PROTOCOL_VERSION = 1 as const;
 export const EXISTING_BROWSER_CONTROL_MAX_BYTES = 256 * 1024;
 
 export type ExistingBrowserControlMethod =
+  | 'extension.status'
+  | 'extension.reload'
   | 'targets.list'
   | 'target.create'
   | 'target.group'
@@ -89,6 +91,7 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
     throw new Error('Invalid existing browser control request id');
   }
   const methods: ExistingBrowserControlMethod[] = [
+    'extension.status', 'extension.reload',
     'targets.list', 'target.create', 'target.group', 'target.watch', 'target.continuity',
     'target.attach', 'target.describe', 'target.exec', 'target.screenshot', 'target.release', 'target.close',
   ];
@@ -96,11 +99,10 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
     throw new Error('Invalid existing browser control method');
   }
   const method = row.method as ExistingBrowserControlMethod;
-  if (method === 'targets.list' || method === 'target.create') {
+  if (method === 'extension.status' || method === 'extension.reload'
+      || method === 'targets.list' || method === 'target.create') {
     if (row.targetId !== undefined || row.currentTargetId !== undefined || row.groupTitle !== undefined || row.cdpMethod !== undefined || row.params !== undefined) {
-      throw new Error(method === 'targets.list'
-        ? 'Invalid existing browser target list request'
-        : 'Invalid existing browser target create request');
+      throw new Error('Invalid existing browser no-target request');
     }
   } else if (typeof row.targetId !== 'string' || !TARGET_ID.test(row.targetId)) {
     throw new Error('Invalid existing browser target id');
