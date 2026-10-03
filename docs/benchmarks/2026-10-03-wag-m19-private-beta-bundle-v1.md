@@ -50,13 +50,36 @@ Produce one reproducible, integrity-checked Windows private-beta bundle for exte
 - Private beta installer PowerShell parse: PASS.
 - `git diff --check`: PASS.
 
-## Release gate still to run after commit
+## Exact bundle packaging acceptance
 
-The packager intentionally refuses a dirty worktree. After this milestone is committed:
-1. package two ZIPs from the exact committed M19 HEAD;
-2. prove identical outer ZIP SHA-256;
-3. extract one ZIP;
-4. run the bundled `INSTALL-WAG-BETA.ps1 -VerifyOnly`;
-5. record exact bundle/package/extension SHA evidence.
+The packager intentionally refuses a dirty worktree. That release gate was exercised on committed M19 code HEAD:
+
+`490b6a6c65fb9e402666e9c7b61a4930986d1708`
+
+Two independent bundle runs produced the same release identity and exact hashes:
+
+- release id: `0.1.0-beta-490b6a6c65fb`
+- outer ZIP SHA-256: `1132fce70bad45d5d278441daa967a4d7d8f44264bd06ad105eb7c126430dab1`
+- npm package SHA-256: `058454a9ae42b10083b9d467feaf050611aa4bfe10a0ced16e9f0e1db8f27725`
+- extension tree SHA-256: `e394804ceeb88b36b349fe1118a952ba3d16073c02e1a7a5130499db3196b217`
+- ZIP entries: 48
+- forbidden secret/tunnel-client payload paths: 0
+- bundled `INSTALL-WAG-BETA.ps1 -VerifyOnly`: PASS
+
+The live release gate exposed and closed two implementation defects before acceptance:
+
+1. direct Node `spawnSync('npm.cmd', ...)` failed on Windows; the packager now uses the established PowerShell argv-JSON command-shim path;
+2. locale collation disagreed with the deterministic ZIP helper's ordinal ordering; packager and installer extension-tree hashing now use canonical ordinal ordering.
+
+Post-fix acceptance:
+
+- TypeScript typecheck: PASS.
+- Build: PASS.
+- M19 targeted tests: 3/3 PASS.
+- Full `test:wag-product`: 85/85 PASS.
+- Private beta installer PowerShell parse: PASS.
+- `git diff --check`: PASS.
+
+This evidence update itself changes the Git source SHA, so any distributed beta ZIP must be rebuilt from the final published source/merge commit. The final distribution SHA belongs in the external release/handoff record rather than creating an infinite evidence-commit/repackage loop.
 
 No public push, PR, merge, or live promotion is claimed by this document yet.
