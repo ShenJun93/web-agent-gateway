@@ -53,7 +53,7 @@
     "wag:doctor": "npm run build && node dist/cli.js doctor",
     "wag:health": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/wag-local-product-health.ps1",
     "wag:clean-install-acceptance": "tsx src/cli.ts clean-install-acceptance --stage baseline",
-    "test:wag-product": "tsx --test test/wag-local-product-health.test.ts test/wag-local-doctor.test.ts test/product-doctor-mcp.test.ts test/wag-local-release.test.ts test/wag-local-launcher.test.ts test/wag-local-setup.test.ts test/wag-local-clean-install-acceptance.test.ts test/document-ops.test.ts test/local-machine-document-runtime.test.ts test/product-ux.test.ts test/product-update-discovery.test.ts"
+    "test:wag-product": "tsx --test test/wag-local-product-health.test.ts test/wag-local-doctor.test.ts test/product-doctor-mcp.test.ts test/wag-local-release.test.ts test/wag-local-launcher.test.ts test/wag-local-setup.test.ts test/wag-local-clean-install-acceptance.test.ts test/document-ops.test.ts test/local-machine-document-runtime.test.ts test/product-ux.test.ts test/product-update-discovery.test.ts test/product-update-feed.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
