@@ -80,6 +80,35 @@ function windowsPowerShellChildEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+function spawnWindowsCommandShim(
+  file: string,
+  args: readonly string[],
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    timeout: number;
+    maxBuffer: number;
+  },
+) {
+  return spawnSync('pwsh.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-Command',
+    '$argv = @(ConvertFrom-Json -InputObject $env:WAG_BETA_BUNDLE_ARGS); & $env:WAG_BETA_BUNDLE_COMMAND @argv; exit $LASTEXITCODE',
+  ], {
+    cwd: options.cwd,
+    env: {
+      ...options.env,
+      WAG_BETA_BUNDLE_COMMAND: file,
+      WAG_BETA_BUNDLE_ARGS: JSON.stringify(args),
+    },
+    windowsHide: true,
+    encoding: 'utf8',
+    maxBuffer: options.maxBuffer,
+    timeout: options.timeout,
+  });
+}
+
 async function sha256File(path: string): Promise<string> {
   return createHash('sha256').update(await readFile(path)).digest('hex');
 }
@@ -326,19 +355,21 @@ export async function packagePrivateBetaBundle(options: {
   try {
     const packRoot = join(tempRoot, 'pack');
     await mkdir(packRoot, { recursive: true });
-    const pack = spawnSync('npm.cmd', ['pack', '--silent', '--pack-destination', packRoot], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        WAG_RELEASE_CHANNEL: 'beta',
-        WAG_RELEASE_ID: releaseId,
-        WAG_RELEASE_SOURCE_PROVENANCE: 'git:' + options.sourceSha,
+    const pack = spawnWindowsCommandShim(
+      'npm.cmd',
+      ['pack', '--silent', '--pack-destination', packRoot],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          WAG_RELEASE_CHANNEL: 'beta',
+          WAG_RELEASE_ID: releaseId,
+          WAG_RELEASE_SOURCE_PROVENANCE: 'git:' + options.sourceSha,
+        },
+        maxBuffer: 4 * 1024 * 1024,
+        timeout: 120_000,
       },
-      windowsHide: true,
-      encoding: 'utf8',
-      maxBuffer: 4 * 1024 * 1024,
-      timeout: 120_000,
-    });
+    );
     if (pack.error || pack.status !== 0) throw new Error('npm pack failed for private beta bundle');
 
     const tarballs = (await readdir(packRoot)).filter((name) => name.endsWith('.tgz'));
