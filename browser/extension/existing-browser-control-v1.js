@@ -23,7 +23,7 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
   const attached = new Set();
   const continuityWatches = new Map();
   const targetActivity = new Map();
-  const downloadEventListeners = new Set();
+  const controlEventListeners = new Set();
   let activitySequence = 0;
 
   function rememberTab(tab, sequence = 0) {
@@ -55,19 +55,19 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
   debuggerApi.onEvent?.addListener?.((source, method, params) => {
     const tabId = source?.tabId;
     if (!Number.isInteger(tabId) || !attached.has(tabId)) return;
-    const event = sanitizeDownloadEvent(tabId, method, params);
+    const event = sanitizeControlEvent(tabId, method, params);
     if (!event) return;
-    for (const listener of downloadEventListeners) {
+    for (const listener of controlEventListeners) {
       try { listener(event); } catch {}
     }
   });
 
-  function onDownloadEvent(listener) {
+  function onControlEvent(listener) {
     if (typeof listener !== 'function') {
-      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Download event listener is invalid');
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Browser control event listener is invalid');
     }
-    downloadEventListeners.add(listener);
-    return () => downloadEventListeners.delete(listener);
+    controlEventListeners.add(listener);
+    return () => controlEventListeners.delete(listener);
   }
 
   async function listTargets() {
@@ -177,7 +177,9 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     if (!attached.has(tabId)) {
       try {
         await debuggerApi.attach({ tabId }, protocolVersion);
+        await debuggerApi.sendCommand({ tabId }, 'Page.enable');
       } catch (error) {
+        try { await debuggerApi.detach({ tabId }); } catch {}
         throw normalizeAttachError(error);
       }
       attached.add(tabId);
@@ -264,7 +266,7 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
     screenshot,
     release,
     close,
-    onDownloadEvent,
+    onControlEvent,
     isAttached,
   };
 }
@@ -381,6 +383,7 @@ const ALLOWED_CDP_METHODS = new Set([
   'Input.insertText',
   'DOM.setFileInputFiles',
   'Page.captureScreenshot',
+  'Page.handleJavaScriptDialog',
   'Browser.setDownloadBehavior',
 ]);
 
@@ -396,6 +399,45 @@ const FIXED_CONTENTEDITABLE_SELECT_ALL_FUNCTION = "function(){if(!(this instance
 const FIXED_MEDIA_INSPECT_FUNCTION = "function(){if(!(this instanceof HTMLMediaElement))return {supported:false};const decoded=typeof this.webkitAudioDecodedByteCount===\"number\"?this.webkitAudioDecodedByteCount:null;const tracks=this.audioTracks&&typeof this.audioTracks.length===\"number\"?this.audioTracks.length:null;let captured=null;try{const stream=typeof this.captureStream===\"function\"?this.captureStream():null;captured=stream&&typeof stream.getAudioTracks===\"function\"?stream.getAudioTracks().length:null;}catch{}const duration=Number.isFinite(this.duration)?this.duration:null;const currentTime=Number.isFinite(this.currentTime)?this.currentTime:null;const error=this.error?{code:this.error.code,message:String(this.error.message||\"\").slice(0,256)}:null;return {supported:true,tag:String(this.tagName||\"\").toLowerCase(),paused:this.paused===true,ended:this.ended===true,muted:this.muted===true,volume:this.volume,duration,currentTime,playbackRate:this.playbackRate,readyState:this.readyState,networkState:this.networkState,error,audioDecodedBytes:decoded,audioTrackCount:tracks,capturedAudioTrackCount:captured,videoWidth:typeof this.videoWidth===\"number\"?this.videoWidth:null,videoHeight:typeof this.videoHeight===\"number\"?this.videoHeight:null};}";
 const MAX_FILL_TEXT_BYTES = 64 * 1024;
 const DOWNLOAD_GUID = /^[A-Za-z0-9._-]{1,200}$/;
+const DIALOG_TYPES = new Set(['alert', 'confirm', 'prompt', 'beforeunload']);
+
+function boundedUtf8(value, maxBytes) {
+  if (typeof value !== 'string' || value.includes('\0')) return null;
+  const bytes = new TextEncoder().encode(value);
+  if (bytes.byteLength > maxBytes) return null;
+  return value;
+}
+
+function sanitizeControlEvent(tabId, method, params) {
+  return sanitizeDownloadEvent(tabId, method, params)
+    ?? sanitizeDialogEvent(tabId, method, params);
+}
+
+function sanitizeDialogEvent(tabId, method, params) {
+  if (method === 'Page.javascriptDialogOpening') {
+    const message = boundedUtf8(params?.message, 8 * 1024);
+    const type = params?.type;
+    const defaultPrompt = params?.defaultPrompt === undefined
+      ? ''
+      : boundedUtf8(params.defaultPrompt, 4 * 1024);
+    if (message === null || !DIALOG_TYPES.has(type) || defaultPrompt === null) return null;
+    return {
+      tabId,
+      method,
+      params: {
+        url: sanitizeUrl(params?.url)?.url ?? null,
+        message,
+        type,
+        defaultPrompt,
+      },
+    };
+  }
+  if (method === 'Page.javascriptDialogClosed') {
+    if (typeof params?.result !== 'boolean') return null;
+    return { tabId, method, params: { result: params.result } };
+  }
+  return null;
+}
 
 function sanitizeDownloadEvent(tabId, method, params) {
   if (method === 'Browser.downloadWillBegin') {
@@ -424,6 +466,17 @@ function sanitizeDownloadEvent(tabId, method, params) {
 }
 
 function assertBoundedRuntimeCommand(method, params) {
+  if (method === 'Page.handleJavaScriptDialog') {
+    const keys = Object.keys(params ?? {}).sort();
+    const shape = keys.join(',');
+    if ((shape !== 'accept' && shape !== 'accept,promptText')
+        || typeof params?.accept !== 'boolean'
+        || (params?.promptText !== undefined
+          && boundedUtf8(params.promptText, 4 * 1024) === null)) {
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'JavaScript dialog response params are invalid');
+    }
+    return;
+  }
   if (method === 'Browser.setDownloadBehavior') {
     const keys = Object.keys(params ?? {}).sort();
     if (keys.join(',') !== 'behavior,downloadPath,eventsEnabled'

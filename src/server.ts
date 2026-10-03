@@ -1294,6 +1294,41 @@ export function createGatewayMcpServer(
       });
     });
 
+    registerTool('browser.dialog.get', {
+      description: 'Read the currently open JavaScript dialog for one caller-owned attached browser session. Returns a stale-safe dialog_id and never responds to the dialog.',
+      inputSchema: z.object({ browser_session_id: browserSessionId }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    }, async ({ browser_session_id }) => {
+      const dialog = await browserContext.dialogGet(browser_session_id);
+      return toolResult(dialog.open ? {
+        open: true,
+        dialog_id: dialog.dialogId,
+        type: dialog.type,
+        message: dialog.message,
+        url: dialog.url,
+        default_prompt: dialog.defaultPrompt,
+      } : { open: false });
+    });
+
+    registerTool('browser.dialog.respond', {
+      description: 'Accept or dismiss exactly the observed JavaScript dialog identified by dialog_id. Stale ids fail closed; prompt_text is accepted only for prompt dialogs.',
+      inputSchema: z.object({
+        browser_session_id: browserSessionId,
+        dialog_id: z.string().regex(/^dialog_[0-9a-f-]{36}$/),
+        accept: z.boolean(),
+        prompt_text: z.string().max(4096).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ browser_session_id, dialog_id, accept, prompt_text }) => {
+      const result = await browserContext.dialogRespond(browser_session_id, dialog_id, accept, prompt_text);
+      return toolResult({
+        dialog_id: result.dialogId,
+        type: result.type,
+        accepted: result.accepted,
+        prompt_text_provided: result.promptTextProvided,
+      });
+    });
+
     registerTool('browser.effect.get', {
       description: 'Read the durable exact-once state for one caller-owned browser effect after a response-stream interruption; this never replays the effect.',
       inputSchema: z.object({ effect_id: effectId }).strict(),

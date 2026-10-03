@@ -498,7 +498,10 @@ test('browser download captures one attached-tab download into an authority-owne
     artifact.filename,
   ));
   assert.deepEqual(persisted, bytes);
-  assert.equal(listeners.size, 0, 'download event subscriptions must be released after completion');
+  assert.equal(listeners.has('tab_7:Browser.downloadWillBegin'), false, 'download begin subscription must be released after completion');
+  assert.equal(listeners.has('tab_7:Browser.downloadProgress'), false, 'download progress subscription must be released after completion');
+  assert.equal(listeners.has('tab_7:Page.javascriptDialogOpening'), true, 'session dialog opening watcher stays active');
+  assert.equal(listeners.has('tab_7:Page.javascriptDialogClosed'), true, 'session dialog closed watcher stays active');
 });
 
 test('browser download fails before click when the attached control bridge cannot stream download events', async (t) => {
@@ -562,4 +565,147 @@ test('browser download fails before click when the attached control bridge canno
     /download capture is unavailable/i,
   );
   assert.equal(clicks, 0, 'missing event bridge must fail before the download-triggering click');
+});
+
+
+test('browser dialogs use stale-safe ids, exact target fencing, and prompt-only text', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-dialog-runtime-'));
+  const sessionId = 'browser_00000000-0000-4000-8000-000000000892';
+  const handle = {
+    browserSessionId: sessionId,
+    profileId: 'dialog',
+    owner: OWNER,
+    backend: 'cdp' as const,
+    executionMode: 'AI_TAB_GROUP' as const,
+    ownershipMode: 'WAG_OWNED' as const,
+    controlState: 'RUNNING' as const,
+    targetId: 'tab_7',
+    claimEpoch: 3,
+    claimExpiresAt: Date.now() + 30_000,
+    createdAt: 1,
+    lastSeenAt: 1,
+    state: 'ACTIVE' as const,
+  };
+  const port: BrowserPort = {
+    async open() { return handle; },
+    async describe() { return handle; },
+    async snapshot() { throw new Error('unused'); },
+    async exec() { throw new Error('unused'); },
+    async screenshot() { throw new Error('unused'); },
+    async close() { return { ...handle, state: 'CLOSED' as const }; },
+  };
+  const listeners = new Map<string, Set<(params: Readonly<Record<string, unknown>>) => void>>();
+  const commands: Array<{ targetId: string; method: string; params?: Readonly<Record<string, unknown>> }> = [];
+  const control = {
+    async exec(targetId: string, method: string, params?: Readonly<Record<string, unknown>>) {
+      commands.push({ targetId, method, params });
+      return {};
+    },
+    onEvent(targetId: string, method: string, listener: (params: Readonly<Record<string, unknown>>) => void) {
+      const key = targetId + ':' + method;
+      const set = listeners.get(key) ?? new Set();
+      set.add(listener);
+      listeners.set(key, set);
+      return () => {
+        set.delete(listener);
+        if (set.size === 0) listeners.delete(key);
+      };
+    },
+  } as any;
+  const emit = (method: string, params: Readonly<Record<string, unknown>>) => {
+    for (const listener of listeners.get('tab_7:' + method) ?? []) listener(params);
+  };
+  const semantic: SemanticBrowser = {
+    async snapshot() { throw new Error('unused'); },
+    async navigate() { throw new Error('unused'); },
+    async click() { throw new Error('unused'); },
+    async fill() { throw new Error('unused'); },
+    async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
+    async press() { throw new Error('unused'); },
+  };
+  const runtime = createPrivateBrowserMcpContext({
+    owner: OWNER,
+    edgeExecutablePath: join(root, 'msedge.exe'),
+    profileRoot: join(root, 'profiles'),
+    effectStatePath: join(root, 'effects.sqlite'),
+    killSwitch: () => false,
+    port,
+    semantic,
+    control,
+  });
+  t.after(async () => {
+    await runtime.closeAll();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await runtime.open('dialog', 'AI_TAB_GROUP', undefined, 'WAG M13');
+  assert.deepEqual(await runtime.dialogGet(sessionId), { open: false });
+  assert.equal(listeners.has('tab_7:Page.javascriptDialogOpening'), true);
+  assert.equal(listeners.has('tab_7:Page.javascriptDialogClosed'), true);
+
+  emit('Page.javascriptDialogOpening', {
+    url: 'https://example.test/',
+    message: 'Continue?',
+    type: 'confirm',
+    defaultPrompt: '',
+  });
+  const confirm = await runtime.dialogGet(sessionId);
+  assert.equal(confirm.open, true);
+  if (!confirm.open) throw new Error('confirm dialog missing');
+  assert.match(confirm.dialogId, /^dialog_[0-9a-f-]{36}$/);
+  assert.equal(confirm.type, 'confirm');
+  assert.equal(confirm.message, 'Continue?');
+
+  await assert.rejects(
+    () => runtime.dialogRespond(
+      sessionId,
+      'dialog_00000000-0000-4000-8000-000000000999',
+      true,
+    ),
+    /dialog id is stale/i,
+  );
+  assert.equal(commands.length, 0, 'stale dialog ids must never dispatch CDP');
+
+  await assert.rejects(
+    () => runtime.dialogRespond(sessionId, confirm.dialogId, true, 'not-allowed'),
+    /prompt text is only valid for prompt dialogs/i,
+  );
+  assert.equal(commands.length, 0);
+
+  const dismissed = await runtime.dialogRespond(sessionId, confirm.dialogId, false);
+  assert.deepEqual(dismissed, {
+    dialogId: confirm.dialogId,
+    type: 'confirm',
+    accepted: false,
+    promptTextProvided: false,
+  });
+  assert.deepEqual(commands.at(-1), {
+    targetId: 'tab_7',
+    method: 'Page.handleJavaScriptDialog',
+    params: { accept: false },
+  });
+  assert.deepEqual(await runtime.dialogGet(sessionId), { open: false });
+
+  emit('Page.javascriptDialogOpening', {
+    url: 'https://example.test/',
+    message: 'Name?',
+    type: 'prompt',
+    defaultPrompt: 'WAG',
+  });
+  const prompt = await runtime.dialogGet(sessionId);
+  assert.equal(prompt.open, true);
+  if (!prompt.open) throw new Error('prompt dialog missing');
+  const accepted = await runtime.dialogRespond(sessionId, prompt.dialogId, true, 'Agent');
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.promptTextProvided, true);
+  assert.deepEqual(commands.at(-1), {
+    targetId: 'tab_7',
+    method: 'Page.handleJavaScriptDialog',
+    params: { accept: true, promptText: 'Agent' },
+  });
+
+  await runtime.close(sessionId);
+  assert.equal(listeners.has('tab_7:Page.javascriptDialogOpening'), false);
+  assert.equal(listeners.has('tab_7:Page.javascriptDialogClosed'), false);
 });

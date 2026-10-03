@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import type { GatewayAuthority } from '../caller-context.js';
 import { ArtifactPort } from '../artifact-harness/artifact-port.js';
@@ -112,6 +112,26 @@ export interface BrowserMcpDownload {
   readonly sha256: string;
 }
 
+export type BrowserMcpDialogType = 'alert' | 'confirm' | 'prompt' | 'beforeunload';
+
+export type BrowserMcpDialogState =
+  | { readonly open: false }
+  | {
+      readonly open: true;
+      readonly dialogId: string;
+      readonly type: BrowserMcpDialogType;
+      readonly message: string;
+      readonly url: string | null;
+      readonly defaultPrompt: string;
+    };
+
+export interface BrowserMcpDialogResponse {
+  readonly dialogId: string;
+  readonly type: BrowserMcpDialogType;
+  readonly accepted: boolean;
+  readonly promptTextProvided: boolean;
+}
+
 export interface BrowserMcpEffect {
   readonly effectId: string;
   readonly kind: string;
@@ -144,6 +164,13 @@ export interface BrowserMcpContext {
     paths: readonly string[],
   ): Promise<BrowserMcpEffect>;
   download(browserSessionId: string, ref: string, timeoutMs?: number): Promise<BrowserMcpDownload>;
+  dialogGet(browserSessionId: string): Promise<BrowserMcpDialogState>;
+  dialogRespond(
+    browserSessionId: string,
+    dialogId: string,
+    accept: boolean,
+    promptText?: string,
+  ): Promise<BrowserMcpDialogResponse>;
   waitFor(
     browserSessionId: string,
     conditions: readonly BrowserSemanticCondition[],
@@ -344,6 +371,12 @@ export function createPrivateBrowserMcpContext(options: {
   const sessions = new Set<string>();
   const byProfile = new Map<string, string>();
   const fencing = new Map<string, { targetId: string; claimEpoch: number }>();
+  const dialogs = new Map<string, Exclude<BrowserMcpDialogState, { open: false }>>();
+  const dialogSubscriptions = new Map<string, {
+    targetId: string;
+    unsubscribeOpening: () => void;
+    unsubscribeClosed: () => void;
+  }>();
   const artifacts = options.artifactPort ?? new ArtifactPort({
     root: options.effectStatePath + '.browser-artifacts',
     authorizeSource: async () => { throw new Error('Browser download artifacts do not import arbitrary source paths'); },
@@ -373,6 +406,53 @@ export function createPrivateBrowserMcpContext(options: {
   const downloads = createBrowserDownloadController({ driver: downloadDriver, artifacts });
   let closed = false;
 
+  function clearDialogSubscription(browserSessionId: string): void {
+    const subscription = dialogSubscriptions.get(browserSessionId);
+    if (subscription) {
+      try { subscription.unsubscribeOpening(); } catch {}
+      try { subscription.unsubscribeClosed(); } catch {}
+      dialogSubscriptions.delete(browserSessionId);
+    }
+    dialogs.delete(browserSessionId);
+  }
+
+  function syncDialogSubscription(browserSessionId: string, targetId: string | undefined): void {
+    const current = dialogSubscriptions.get(browserSessionId);
+    if (!control?.onEvent || targetId === undefined) {
+      if (current) clearDialogSubscription(browserSessionId);
+      return;
+    }
+    if (current?.targetId === targetId) return;
+    if (current) clearDialogSubscription(browserSessionId);
+
+    const unsubscribeOpening = control.onEvent(
+      targetId,
+      'Page.javascriptDialogOpening',
+      (params) => {
+        const type = params.type;
+        if (!['alert', 'confirm', 'prompt', 'beforeunload'].includes(String(type))) return;
+        dialogs.set(browserSessionId, Object.freeze({
+          open: true as const,
+          dialogId: 'dialog_' + randomUUID(),
+          type: type as BrowserMcpDialogType,
+          message: typeof params.message === 'string' ? params.message : '',
+          url: typeof params.url === 'string' ? params.url : null,
+          defaultPrompt: typeof params.defaultPrompt === 'string' ? params.defaultPrompt : '',
+        }));
+      },
+    );
+    const unsubscribeClosed = control.onEvent(
+      targetId,
+      'Page.javascriptDialogClosed',
+      () => { dialogs.delete(browserSessionId); },
+    );
+    dialogSubscriptions.set(browserSessionId, {
+      targetId,
+      unsubscribeOpening,
+      unsubscribeClosed,
+    });
+  }
+
   function rememberFencing(handle: BrowserSessionHandle): boolean {
     const previous = fencing.get(handle.browserSessionId);
     if (handle.targetId !== undefined && handle.claimEpoch !== undefined) {
@@ -380,9 +460,11 @@ export function createPrivateBrowserMcpContext(options: {
         targetId: handle.targetId,
         claimEpoch: handle.claimEpoch,
       });
+      syncDialogSubscription(handle.browserSessionId, handle.targetId);
       return previous !== undefined && previous.targetId !== handle.targetId;
     }
     fencing.delete(handle.browserSessionId);
+    clearDialogSubscription(handle.browserSessionId);
     return false;
   }
 
@@ -433,6 +515,7 @@ export function createPrivateBrowserMcpContext(options: {
         if (!(routeLost && broker && attachedSessions && fencing.has(browserSessionId))) throw error;
         sessions.delete(browserSessionId);
         fencing.delete(browserSessionId);
+        clearDialogSubscription(browserSessionId);
         for (const [key, value] of byProfile) {
           if (value === browserSessionId) byProfile.delete(key);
         }
@@ -510,6 +593,7 @@ export function createPrivateBrowserMcpContext(options: {
           byProfile.delete(key);
           sessions.delete(existing);
           fencing.delete(existing);
+          clearDialogSubscription(existing);
         }
       }
       if ((resolvedMode === 'ATTACH_EXISTING' || resolvedMode === 'AI_TAB_GROUP')
@@ -842,6 +926,94 @@ export function createPrivateBrowserMcpContext(options: {
       }
     },
 
+    async dialogGet(browserSessionId) {
+      assertOpen();
+      await ensureSession(browserSessionId);
+      if (!control?.onEvent) {
+        throw new Error('Browser dialog observation is unavailable for this session backend');
+      }
+      const expectedFence = fencing.get(browserSessionId);
+      if (!expectedFence) {
+        throw new Error('Browser dialog observation requires an attached existing browser target');
+      }
+      const binding = await port.describe(options.owner, browserSessionId);
+      if (binding.targetId !== expectedFence.targetId || binding.claimEpoch !== expectedFence.claimEpoch) {
+        throw new Error('Browser target fencing binding changed');
+      }
+      const finish = diagnostics.begin({
+        actionType: 'dialog_get',
+        browserSessionId,
+        targetId: expectedFence.targetId,
+        ownershipMode: binding.ownershipMode,
+      });
+      try {
+        const result: BrowserMcpDialogState = dialogs.get(browserSessionId)
+          ?? Object.freeze({ open: false as const });
+        finish(true, undefined, {
+          targetId: expectedFence.targetId,
+          ownershipMode: binding.ownershipMode,
+          targetChanged: false,
+        });
+        return result;
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
+    },
+
+    async dialogRespond(browserSessionId, dialogId, accept, promptText) {
+      assertEffectAllowed();
+      await ensureSession(browserSessionId);
+      if (!/^dialog_[0-9a-f-]{36}$/.test(dialogId)) throw new Error('Browser dialog id is invalid');
+      if (promptText !== undefined
+          && (Buffer.byteLength(promptText, 'utf8') > 4 * 1024 || promptText.includes('\0'))) {
+        throw new Error('Browser dialog prompt text is invalid');
+      }
+      if (!control?.onEvent) {
+        throw new Error('Browser dialog response is unavailable for this session backend');
+      }
+      const expectedFence = fencing.get(browserSessionId);
+      if (!expectedFence) {
+        throw new Error('Browser dialog response requires an attached existing browser target');
+      }
+      const binding = await port.describe(options.owner, browserSessionId);
+      if (binding.targetId !== expectedFence.targetId || binding.claimEpoch !== expectedFence.claimEpoch) {
+        throw new Error('Browser target fencing binding changed');
+      }
+      const current = dialogs.get(browserSessionId);
+      if (!current || current.dialogId !== dialogId) throw new Error('Browser dialog id is stale');
+      if (current.type !== 'prompt' && promptText !== undefined) {
+        throw new Error('Browser dialog prompt text is only valid for prompt dialogs');
+      }
+      const finish = diagnostics.begin({
+        actionType: 'dialog_respond',
+        browserSessionId,
+        targetId: expectedFence.targetId,
+        ownershipMode: binding.ownershipMode,
+      });
+      try {
+        await control.exec(expectedFence.targetId, 'Page.handleJavaScriptDialog', {
+          accept,
+          ...(promptText === undefined ? {} : { promptText }),
+        });
+        if (dialogs.get(browserSessionId)?.dialogId === dialogId) dialogs.delete(browserSessionId);
+        finish(true, undefined, {
+          targetId: expectedFence.targetId,
+          ownershipMode: binding.ownershipMode,
+          targetChanged: false,
+        });
+        return Object.freeze({
+          dialogId,
+          type: current.type,
+          accepted: accept,
+          promptTextProvided: promptText !== undefined,
+        });
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
+    },
+
     async waitFor(browserSessionId, conditions, mode = 'all', timeoutMs = DEFAULT_WAIT_TIMEOUT_MS, intervalMs = DEFAULT_WAIT_INTERVAL_MS) {
       assertOpen();
       if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_TIMEOUT_MS) {
@@ -1014,6 +1186,7 @@ export function createPrivateBrowserMcpContext(options: {
       const handle = await port.close(options.owner, browserSessionId);
       sessions.delete(browserSessionId);
       fencing.delete(browserSessionId);
+      clearDialogSubscription(browserSessionId);
       for (const [key, value] of byProfile) {
         if (value === browserSessionId) byProfile.delete(key);
       }
@@ -1059,6 +1232,7 @@ export function createPrivateBrowserMcpContext(options: {
           failure ??= error;
         }
       }
+      for (const browserSessionId of [...dialogSubscriptions.keys()]) clearDialogSubscription(browserSessionId);
       sessions.clear();
       byProfile.clear();
       fencing.clear();
@@ -1075,6 +1249,7 @@ export function createPrivateBrowserMcpContext(options: {
       for (const browserSessionId of [...sessions]) {
         await port.close(options.owner, browserSessionId).catch(() => undefined);
       }
+      for (const browserSessionId of [...dialogSubscriptions.keys()]) clearDialogSubscription(browserSessionId);
       sessions.clear();
       byProfile.clear();
       fencing.clear();

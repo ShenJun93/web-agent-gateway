@@ -25,6 +25,8 @@ const BROWSER_TOOLS = [
   'browser.exec',
   'browser.upload_file',
   'browser.download',
+  'browser.dialog.get',
+  'browser.dialog.respond',
   'browser.effect.get',
   'browser.screenshot',
   'browser.close',
@@ -173,6 +175,26 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
         sha256: 'a'.repeat(64),
       };
     },
+    async dialogGet(browserSessionId) {
+      calls.push(['dialogGet', browserSessionId]);
+      return {
+        open: true,
+        dialogId: 'dialog_00000000-0000-4000-8000-000000000021',
+        type: 'confirm' as const,
+        message: 'Continue?',
+        url: 'https://example.test/',
+        defaultPrompt: '',
+      };
+    },
+    async dialogRespond(browserSessionId, dialogId, accept, promptText) {
+      calls.push(['dialogRespond', browserSessionId, dialogId, accept, promptText]);
+      return {
+        dialogId,
+        type: 'confirm' as const,
+        accepted: accept,
+        promptTextProvided: promptText !== undefined,
+      };
+    },
     async waitFor(browserSessionId, conditions, mode, timeoutMs, intervalMs) {
       calls.push(['waitFor', browserSessionId, conditions, mode, timeoutMs, intervalMs]);
       return {
@@ -309,6 +331,22 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
     idempotentHint: false,
     openWorldHint: true,
   });
+  const dialogGetTool = tools.find((tool) => tool.name === 'browser.dialog.get');
+  const dialogRespondTool = tools.find((tool) => tool.name === 'browser.dialog.respond');
+  assert.ok(dialogGetTool);
+  assert.ok(dialogRespondTool);
+  assert.deepEqual(dialogGetTool.annotations, {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  });
+  assert.deepEqual(dialogRespondTool.annotations, {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: true,
+  });
 
   const targets = await client.callTool({ name: 'browser.targets', arguments: {} });
   assert.equal(targets.isError === true, false);
@@ -379,6 +417,44 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
     sha256: 'a'.repeat(64),
   });
   assert.equal(JSON.stringify(downloaded.structuredContent).includes('internalPath'), false);
+
+  const dialog = await client.callTool({
+    name: 'browser.dialog.get',
+    arguments: { browser_session_id: sessionId },
+  });
+  assert.equal(dialog.isError === true, false);
+  assert.deepEqual(calls.at(-1), ['dialogGet', sessionId]);
+  assert.deepEqual(dialog.structuredContent, {
+    open: true,
+    dialog_id: 'dialog_00000000-0000-4000-8000-000000000021',
+    type: 'confirm',
+    message: 'Continue?',
+    url: 'https://example.test/',
+    default_prompt: '',
+  });
+
+  const responded = await client.callTool({
+    name: 'browser.dialog.respond',
+    arguments: {
+      browser_session_id: sessionId,
+      dialog_id: 'dialog_00000000-0000-4000-8000-000000000021',
+      accept: false,
+    },
+  });
+  assert.equal(responded.isError === true, false);
+  assert.deepEqual(calls.at(-1), [
+    'dialogRespond',
+    sessionId,
+    'dialog_00000000-0000-4000-8000-000000000021',
+    false,
+    undefined,
+  ]);
+  assert.deepEqual(responded.structuredContent, {
+    dialog_id: 'dialog_00000000-0000-4000-8000-000000000021',
+    type: 'confirm',
+    accepted: false,
+    prompt_text_provided: false,
+  });
 
   const waitConditions = [{ kind: 'title', operator: 'contains', value: 'Example' }] as const;
   const waited = await client.callTool({

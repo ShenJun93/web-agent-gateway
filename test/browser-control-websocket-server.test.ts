@@ -186,6 +186,35 @@ test('Browser Control WebSocket routes only bounded download events to the exact
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(observed, [{ guid: 'download-1', state: 'completed' }]);
 
+  const dialogs: unknown[] = [];
+  const unsubscribeDialog = server.client.onEvent!(
+    'tab_7',
+    'Page.javascriptDialogOpening',
+    (params) => dialogs.push(params),
+  );
+  socket.send(JSON.stringify({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_8',
+    method: 'Page.javascriptDialogOpening',
+    params: { url: 'https://example.test/', message: 'Wrong tab', type: 'alert', defaultPrompt: '' },
+  }));
+  socket.send(JSON.stringify({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Page.javascriptDialogOpening',
+    params: { url: 'https://example.test/', message: 'Continue?', type: 'confirm', defaultPrompt: '' },
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(dialogs, [{
+    url: 'https://example.test/',
+    message: 'Continue?',
+    type: 'confirm',
+    defaultPrompt: '',
+  }]);
+  unsubscribeDialog();
+
   unsubscribe();
   socket.send(JSON.stringify({
     version: 1,

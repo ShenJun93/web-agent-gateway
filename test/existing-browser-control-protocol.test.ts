@@ -83,6 +83,40 @@ test('existing browser control protocol accepts bounded target and semantic tran
   assert.equal(event.targetId, 'tab_7');
   assert.equal(event.method, 'Browser.downloadWillBegin');
 
+  const dialogResponse = parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Page.handleJavaScriptDialog',
+    params: { accept: true, promptText: 'approved' },
+  });
+  assert.equal(dialogResponse.cdpMethod, 'Page.handleJavaScriptDialog');
+
+  const dialogOpening = parseExistingBrowserControlEvent({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Page.javascriptDialogOpening',
+    params: {
+      url: 'https://example.test/',
+      message: 'Continue?',
+      type: 'confirm',
+      defaultPrompt: '',
+    },
+  });
+  assert.equal(dialogOpening.method, 'Page.javascriptDialogOpening');
+
+  const dialogClosed = parseExistingBrowserControlEvent({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Page.javascriptDialogClosed',
+    params: { result: true },
+  });
+  assert.equal(dialogClosed.method, 'Page.javascriptDialogClosed');
+
   assert.equal(parseExistingBrowserTarget({
     targetId: 'tab_7',
     windowId: 'window_3',
@@ -127,7 +161,7 @@ test('existing browser control protocol denies raw CDP and malformed target iden
     targetId: 'tab_7',
     method: 'Runtime.consoleAPICalled',
     params: {},
-  }), /download event method/);
+  }), /control event method/);
 
   assert.throws(() => parseExistingBrowserControlEvent({
     version: 1,
@@ -136,6 +170,29 @@ test('existing browser control protocol denies raw CDP and malformed target iden
     method: 'Browser.downloadWillBegin',
     params: { guid: 'download-1', url: 'https://example.test/report.pdf?token=secret', suggestedFilename: 'report.pdf' },
   }), /download begin event/);
+
+  assert.throws(() => parseExistingBrowserControlEvent({
+    version: 1,
+    type: 'control.event',
+    targetId: 'tab_7',
+    method: 'Page.javascriptDialogOpening',
+    params: {
+      url: 'https://example.test/?token=secret',
+      message: 'Continue?',
+      type: 'confirm',
+      defaultPrompt: '',
+    },
+  }), /dialog opening event/);
+
+  assert.throws(() => parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Page.handleJavaScriptDialog',
+    params: { accept: 'yes' },
+  }), /dialog response params/);
 
   assert.throws(() => parseExistingBrowserControlRequest({
     version: 1,

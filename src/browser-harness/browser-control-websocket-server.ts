@@ -9,8 +9,8 @@ import {
   parseExistingBrowserControlEvent,
   parseExistingBrowserControlResponse,
   parseExistingBrowserTarget,
+  type ExistingBrowserControlEventMethod,
   type ExistingBrowserControlRequest,
-  type ExistingBrowserDownloadEventMethod,
   type ExistingBrowserTarget,
 } from '../browser-adapter/existing-browser-control-protocol.js';
 import type { ExistingBrowserControlClient } from './existing-browser-control-client.js';
@@ -127,7 +127,7 @@ export async function startBrowserControlWebSocketServer(options: {
   let authenticated = false;
   let closing = false;
   const eventListeners = new Map<string, Set<(params: Readonly<Record<string, unknown>>) => void>>();
-  const eventKey = (targetId: string, method: ExistingBrowserDownloadEventMethod) => targetId + '\0' + method;
+  const eventKey = (targetId: string, method: ExistingBrowserControlEventMethod) => targetId + '\0' + method;
   const pending = new Map<string, {
     method: ExistingBrowserControlRequest['method'];
     maxResponseBytes: number;
@@ -414,7 +414,12 @@ export async function startBrowserControlWebSocketServer(options: {
     exec: (targetId, method, params) => request('target.exec', targetId, undefined, undefined, method, params),
     onEvent(targetId, method, listener) {
       if (!/^tab_[0-9]+$/.test(targetId)
-          || !['Browser.downloadWillBegin', 'Browser.downloadProgress'].includes(method)
+          || ![
+            'Browser.downloadWillBegin',
+            'Browser.downloadProgress',
+            'Page.javascriptDialogOpening',
+            'Page.javascriptDialogClosed',
+          ].includes(method)
           || typeof listener !== 'function') {
         throw new Error('Browser control event subscription is invalid');
       }

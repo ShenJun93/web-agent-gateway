@@ -15,6 +15,7 @@ const ALLOWED_CDP = new Set([
   'Input.insertText',
   'DOM.setFileInputFiles',
   'Page.captureScreenshot',
+  'Page.handleJavaScriptDialog',
   'Browser.setDownloadBehavior',
 ]);
 
