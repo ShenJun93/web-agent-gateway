@@ -1977,6 +1977,12 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async () => toolResult(productContext.betaSummary()));
 
+    registerTool('product.beta.receipt', {
+      description: 'Create a local privacy-safe private-beta receipt only after explicit consent. The receipt uses a random pseudonymous installation id and performs no network upload or machine fingerprinting.',
+      inputSchema: z.object({ consent: z.literal(true) }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ consent }) => toolResult(productContext.betaReceipt({ consent })));
+
     registerTool('product.update.check', {
       description: 'Check the configured signed WAG update feed without downloading, staging, switching, or mutating the installed runtime.',
       inputSchema: z.object({}).strict(),

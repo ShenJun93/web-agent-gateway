@@ -110,6 +110,7 @@ const DECLARED_SURFACE: ReadonlyArray<readonly [string, Hints]> = [
   ['product.activity.recent', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['product.usage', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['product.beta.summary', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+  ['product.beta.receipt', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['product.update.check', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }],
   ['product.doctor', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['product.help', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
@@ -195,7 +196,8 @@ async function openDirectSurface(t: TestContext) {
       configUpdate: () => ({}),
       activityRecent: () => ({}),
       usage: () => ({}),
-      betaSummary: () => ({}),
+      betaSummary: () => ({} as never),
+      betaReceipt: () => ({} as never),
       updateCheck: async () => ({}),
       help: () => ({}),
     },
@@ -457,4 +459,25 @@ test('a direct client cannot smuggle an identity past the schema', async (t) => 
   });
   assert.equal(injected.isError, true);
   assert.match(JSON.stringify(injected.content), /Invalid arguments for tool repo\.snapshot/);
+});
+
+test('private beta receipt MCP boundary requires literal consent=true', async (t) => {
+  const { client } = await openDirectSurface(t);
+  const missing = await client.callTool({
+    name: 'product.beta.receipt',
+    arguments: {},
+  });
+  assert.equal(missing.isError, true);
+
+  const refused = await client.callTool({
+    name: 'product.beta.receipt',
+    arguments: { consent: false },
+  });
+  assert.equal(refused.isError, true);
+
+  const accepted = await client.callTool({
+    name: 'product.beta.receipt',
+    arguments: { consent: true },
+  });
+  assert.equal(accepted.isError === true, false);
 });
