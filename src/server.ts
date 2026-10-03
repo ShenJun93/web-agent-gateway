@@ -1971,6 +1971,12 @@ export function createGatewayMcpServer(
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async () => toolResult(productContext.usage()));
 
+    registerTool('product.beta.summary', {
+      description: 'Return privacy-safe local beta evidence from the bounded WAG diagnostics ring. No arguments, paths, contents, user/session identities, exception messages, or network upload are included.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, async () => toolResult(productContext.betaSummary()));
+
     registerTool('product.update.check', {
       description: 'Check the configured signed WAG update feed without downloading, staging, switching, or mutating the installed runtime.',
       inputSchema: z.object({}).strict(),
