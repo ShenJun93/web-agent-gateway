@@ -212,6 +212,13 @@ export function createExistingBrowserControlV1(chromeApi, options = {}) {
       throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Browser command params are invalid');
     }
     assertBoundedRuntimeCommand(method, params);
+    if (method === 'Browser.setPermission') {
+      const tab = await getAttachableTab(tabs, tabId);
+      const currentOrigin = describeTab(tab).origin;
+      if (!currentOrigin || params?.origin !== currentOrigin) {
+        throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Browser permission origin is stale or mismatched');
+      }
+    }
     return debuggerApi.sendCommand({ tabId }, method, params);
   }
 
@@ -385,6 +392,7 @@ const ALLOWED_CDP_METHODS = new Set([
   'Page.captureScreenshot',
   'Page.handleJavaScriptDialog',
   'Browser.setDownloadBehavior',
+  'Browser.setPermission',
 ]);
 
 function assertAllowedCdpMethod(method) {
@@ -400,6 +408,15 @@ const FIXED_MEDIA_INSPECT_FUNCTION = "function(){if(!(this instanceof HTMLMediaE
 const MAX_FILL_TEXT_BYTES = 64 * 1024;
 const DOWNLOAD_GUID = /^[A-Za-z0-9._-]{1,200}$/;
 const DIALOG_TYPES = new Set(['alert', 'confirm', 'prompt', 'beforeunload']);
+const BROWSER_PERMISSION_NAMES = new Set([
+  'notifications',
+  'clipboard-write',
+  'camera',
+  'microphone',
+  'geolocation',
+  'clipboard-read',
+]);
+const SAFE_PERMISSION_GRANTS = new Set(['notifications', 'clipboard-write']);
 
 function boundedUtf8(value, maxBytes) {
   if (typeof value !== 'string' || value.includes('\0')) return null;
@@ -487,6 +504,32 @@ function assertBoundedRuntimeCommand(method, params) {
         || params.downloadPath.includes('\0')
         || params?.eventsEnabled !== true) {
       throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Browser download behavior params are invalid');
+    }
+    return;
+  }
+  if (method === 'Browser.setPermission') {
+    const keys = Object.keys(params ?? {}).sort();
+    const permission = params?.permission;
+    const permissionKeys = permission && typeof permission === 'object' && !Array.isArray(permission)
+      ? Object.keys(permission).sort()
+      : [];
+    const name = permission?.name;
+    const setting = params?.setting;
+    let originValid = false;
+    try {
+      const origin = new URL(params?.origin);
+      originValid = (origin.protocol === 'http:' || origin.protocol === 'https:')
+        && origin.origin === params.origin
+        && origin.username === '' && origin.password === ''
+        && origin.search === '' && origin.hash === '';
+    } catch {}
+    if (keys.join(',') !== 'origin,permission,setting'
+        || permissionKeys.join(',') !== 'name'
+        || typeof name !== 'string' || !BROWSER_PERMISSION_NAMES.has(name)
+        || !['granted', 'denied', 'prompt'].includes(setting)
+        || (setting === 'granted' && !SAFE_PERMISSION_GRANTS.has(name))
+        || !originValid) {
+      throw new ExistingBrowserControlError('CONTROL_PARAMS_INVALID', 'Browser permission params are invalid');
     }
     return;
   }

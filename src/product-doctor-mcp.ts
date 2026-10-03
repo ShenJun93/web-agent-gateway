@@ -195,6 +195,7 @@ function nextAction(check: ProductDoctorCheck): string | null {
     browser_upload: 'Restore browser.upload_file before workflows that require file upload.',
     browser_download: 'Restore browser.download before workflows that require file downloads.',
     browser_dialog: 'Restore browser.dialog.get and browser.dialog.respond for bounded JavaScript dialog handling.',
+    browser_permission: 'Restore browser.permission.set for origin-bound permission policy handling.',
     artifact_lifecycle: 'Restore artifact.list, artifact.describe, and artifact.export so downloaded artifacts remain usable.',
     browser_reliability: 'Restore browser.wait_for, browser.assert, and browser.media.inspect.',
     mcp_surface: 'Restart WAG with a coherent published MCP surface.',
@@ -357,6 +358,14 @@ export function buildProductDoctorMcpReport(input: ProductDoctorMcpInput): objec
         ? 'Bounded JavaScript dialog observation and response tools are published.'
         : 'Browser dialog tools are not required while browser integration is disabled.')
       : makeCheck('browser_dialog', 'FAIL', 'WAG_DOCTOR_BROWSER_DIALOG_MISSING', 'Browser dialog handling surface is incomplete.'),
+  );
+
+  checks.push(
+    !browserEnabled || toolSet.has('browser.permission.set')
+      ? makeCheck('browser_permission', 'PASS', 'WAG_DOCTOR_BROWSER_PERMISSION_READY', browserEnabled
+        ? 'Origin-bound browser permission policy control is published.'
+        : 'Browser permission control is not required while browser integration is disabled.')
+      : makeCheck('browser_permission', 'FAIL', 'WAG_DOCTOR_BROWSER_PERMISSION_MISSING', 'Browser permission policy surface is incomplete.'),
   );
 
   checks.push(

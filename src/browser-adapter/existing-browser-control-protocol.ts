@@ -96,6 +96,7 @@ const ALLOWED_CDP = new Set([
   'Page.captureScreenshot',
   'Page.handleJavaScriptDialog',
   'Browser.setDownloadBehavior',
+  'Browser.setPermission',
 ]);
 
 export function isAllowedExistingBrowserCdpMethod(method: string): boolean {
@@ -170,6 +171,16 @@ export function parseExistingBrowserControlRequest(value: unknown): ExistingBrow
           || params.downloadPath.includes('\0')
           || params.eventsEnabled !== true) {
         throw new Error('Invalid browser download behavior params');
+      }
+    }
+    if (row.cdpMethod === 'Browser.setPermission') {
+      const params = record(row.params, 'permission params');
+      exactKeys(params, ['permission', 'setting', 'origin']);
+      const permission = record(params.permission, 'permission descriptor');
+      exactKeys(permission, ['name']);
+      if (!validPermissionOrigin(params.origin)
+          || !validBrowserPermissionSetting(permission.name, params.setting)) {
+        throw new Error('Invalid browser permission params');
       }
     }
   } else if (row.cdpMethod !== undefined || row.params !== undefined) {
@@ -293,6 +304,34 @@ export function parseExistingBrowserTarget(value: unknown): ExistingBrowserTarge
     throw new Error('Invalid existing browser target');
   }
   return row as unknown as ExistingBrowserTarget;
+}
+
+const BROWSER_PERMISSION_NAMES = new Set([
+  'notifications',
+  'clipboard-write',
+  'camera',
+  'microphone',
+  'geolocation',
+  'clipboard-read',
+]);
+const SAFE_PERMISSION_GRANTS = new Set(['notifications', 'clipboard-write']);
+
+function validBrowserPermissionSetting(name: unknown, setting: unknown): boolean {
+  if (typeof name !== 'string' || !BROWSER_PERMISSION_NAMES.has(name)) return false;
+  if (setting !== 'granted' && setting !== 'denied' && setting !== 'prompt') return false;
+  return setting !== 'granted' || SAFE_PERMISSION_GRANTS.has(name);
+}
+
+function validPermissionOrigin(value: unknown): boolean {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 2048) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && url.origin === value
+      && url.username === '' && url.password === '' && url.search === '' && url.hash === '';
+  } catch {
+    return false;
+  }
 }
 
 function validSanitizedDialogUrl(value: unknown): boolean {

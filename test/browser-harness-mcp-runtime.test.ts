@@ -709,3 +709,138 @@ test('browser dialogs use stale-safe ids, exact target fencing, and prompt-only 
   assert.equal(listeners.has('tab_7:Page.javascriptDialogOpening'), false);
   assert.equal(listeners.has('tab_7:Page.javascriptDialogClosed'), false);
 });
+
+
+test('browser permission policy binds current origin and denies sensitive grants before CDP', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'wag-browser-permission-runtime-'));
+  const sessionId = 'browser_00000000-0000-4000-8000-000000000893';
+  let epoch = 5;
+  const describeEpochs: number[] = [];
+  const handle = (claimEpoch = epoch) => ({
+    browserSessionId: sessionId,
+    profileId: 'permission',
+    owner: OWNER,
+    backend: 'cdp' as const,
+    executionMode: 'AI_TAB_GROUP' as const,
+    ownershipMode: 'WAG_OWNED' as const,
+    controlState: 'RUNNING' as const,
+    targetId: 'tab_7',
+    claimEpoch,
+    claimExpiresAt: Date.now() + 30_000,
+    createdAt: 1,
+    lastSeenAt: 1,
+    state: 'ACTIVE' as const,
+  });
+  const port: BrowserPort = {
+    async open() { return handle(); },
+    async describe() {
+      const claimed = describeEpochs.length > 0 ? describeEpochs.shift()! : epoch;
+      return handle(claimed);
+    },
+    async snapshot() { throw new Error('unused'); },
+    async exec() { throw new Error('unused'); },
+    async screenshot() { throw new Error('unused'); },
+    async close() { return { ...handle(), state: 'CLOSED' as const }; },
+  };
+  const commands: Array<{ targetId: string; method: string; params?: Readonly<Record<string, unknown>> }> = [];
+  let origin: string | null = 'https://example.test';
+  const control = {
+    async describe(targetId: string) {
+      assert.equal(targetId, 'tab_7');
+      return {
+        targetId,
+        windowId: 'window_5',
+        title: 'Example',
+        url: origin ? origin + '/account' : null,
+        origin,
+        active: false,
+        attachable: true,
+        ownership: 'USER_EXISTING' as const,
+        attached: true,
+      };
+    },
+    async exec(targetId: string, method: string, params?: Readonly<Record<string, unknown>>) {
+      commands.push({ targetId, method, params });
+      return {};
+    },
+  } as any;
+  const semantic: SemanticBrowser = {
+    async snapshot() { throw new Error('unused'); },
+    async navigate() { throw new Error('unused'); },
+    async click() { throw new Error('unused'); },
+    async fill() { throw new Error('unused'); },
+    async setFiles() { throw new Error('unused'); },
+    async inspectMedia() { throw new Error('unused'); },
+    async press() { throw new Error('unused'); },
+  };
+  const runtime = createPrivateBrowserMcpContext({
+    owner: OWNER,
+    edgeExecutablePath: join(root, 'msedge.exe'),
+    profileRoot: join(root, 'profiles'),
+    effectStatePath: join(root, 'effects.sqlite'),
+    killSwitch: () => false,
+    port,
+    semantic,
+    control,
+  });
+  t.after(async () => {
+    await runtime.closeAll();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await runtime.open('permission', 'AI_TAB_GROUP', undefined, 'WAG M14');
+
+  const granted = await runtime.permissionSet(sessionId, 'notifications', 'granted');
+  assert.deepEqual(granted, {
+    permission: 'notifications',
+    setting: 'granted',
+    origin: 'https://example.test',
+  });
+  assert.deepEqual(commands.at(-1), {
+    targetId: 'tab_7',
+    method: 'Browser.setPermission',
+    params: {
+      permission: { name: 'notifications' },
+      setting: 'granted',
+      origin: 'https://example.test',
+    },
+  });
+
+  const countAfterNotification = commands.length;
+  await assert.rejects(
+    () => runtime.permissionSet(sessionId, 'camera', 'granted'),
+    /permission grant is denied by WAG policy/i,
+  );
+  assert.equal(commands.length, countAfterNotification, 'sensitive grant must fail before CDP');
+
+  const denied = await runtime.permissionSet(sessionId, 'camera', 'denied');
+  assert.deepEqual(denied, {
+    permission: 'camera',
+    setting: 'denied',
+    origin: 'https://example.test',
+  });
+  assert.deepEqual(commands.at(-1), {
+    targetId: 'tab_7',
+    method: 'Browser.setPermission',
+    params: {
+      permission: { name: 'camera' },
+      setting: 'denied',
+      origin: 'https://example.test',
+    },
+  });
+
+  origin = null;
+  await assert.rejects(
+    () => runtime.permissionSet(sessionId, 'notifications', 'prompt'),
+    /current http\/https origin/i,
+  );
+
+  origin = 'https://example.test';
+  const countBeforeRebound = commands.length;
+  describeEpochs.push(6, 7);
+  await assert.rejects(
+    () => runtime.permissionSet(sessionId, 'notifications', 'prompt'),
+    /target fencing binding changed/i,
+  );
+  assert.equal(commands.length, countBeforeRebound);
+});

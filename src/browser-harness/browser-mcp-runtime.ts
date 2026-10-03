@@ -132,6 +132,22 @@ export interface BrowserMcpDialogResponse {
   readonly promptTextProvided: boolean;
 }
 
+export type BrowserMcpPermission =
+  | 'notifications'
+  | 'clipboard_write'
+  | 'camera'
+  | 'microphone'
+  | 'geolocation'
+  | 'clipboard_read';
+
+export type BrowserMcpPermissionSetting = 'granted' | 'denied' | 'prompt';
+
+export interface BrowserMcpPermissionResult {
+  readonly permission: BrowserMcpPermission;
+  readonly setting: BrowserMcpPermissionSetting;
+  readonly origin: string;
+}
+
 export interface BrowserMcpEffect {
   readonly effectId: string;
   readonly kind: string;
@@ -171,6 +187,11 @@ export interface BrowserMcpContext {
     accept: boolean,
     promptText?: string,
   ): Promise<BrowserMcpDialogResponse>;
+  permissionSet(
+    browserSessionId: string,
+    permission: BrowserMcpPermission,
+    setting: BrowserMcpPermissionSetting,
+  ): Promise<BrowserMcpPermissionResult>;
   waitFor(
     browserSessionId: string,
     conditions: readonly BrowserSemanticCondition[],
@@ -203,6 +224,15 @@ const MAX_WAIT_TIMEOUT_MS = 120_000;
 const DEFAULT_WAIT_INTERVAL_MS = 250;
 const MIN_WAIT_INTERVAL_MS = 50;
 const MAX_WAIT_INTERVAL_MS = 5_000;
+const BROWSER_PERMISSION_DESCRIPTOR = Object.freeze({
+  notifications: 'notifications',
+  clipboard_write: 'clipboard-write',
+  camera: 'camera',
+  microphone: 'microphone',
+  geolocation: 'geolocation',
+  clipboard_read: 'clipboard-read',
+} satisfies Readonly<Record<BrowserMcpPermission, string>>);
+const SAFE_PERMISSION_GRANTS = new Set<BrowserMcpPermission>(['notifications', 'clipboard_write']);
 
 function truncateUtf8(value: string, maxBytes: number): string {
   const bytes = Buffer.from(value, 'utf8');
@@ -1008,6 +1038,57 @@ export function createPrivateBrowserMcpContext(options: {
           accepted: accept,
           promptTextProvided: promptText !== undefined,
         });
+      } catch (error) {
+        finish(false, error);
+        throw error;
+      }
+    },
+
+    async permissionSet(browserSessionId, permission, setting) {
+      assertEffectAllowed();
+      await ensureSession(browserSessionId);
+      if (!(permission in BROWSER_PERMISSION_DESCRIPTOR)) {
+        throw new Error('Browser permission is invalid');
+      }
+      if (setting !== 'granted' && setting !== 'denied' && setting !== 'prompt') {
+        throw new Error('Browser permission setting is invalid');
+      }
+      if (setting === 'granted' && !SAFE_PERMISSION_GRANTS.has(permission)) {
+        throw new Error('Browser permission grant is denied by WAG policy');
+      }
+      if (!control) {
+        throw new Error('Browser permission control is unavailable for this session backend');
+      }
+      const expectedFence = fencing.get(browserSessionId);
+      if (!expectedFence) {
+        throw new Error('Browser permission control requires an attached existing browser target');
+      }
+      const binding = await port.describe(options.owner, browserSessionId);
+      if (binding.targetId !== expectedFence.targetId || binding.claimEpoch !== expectedFence.claimEpoch) {
+        throw new Error('Browser target fencing binding changed');
+      }
+      const target = await control.describe(expectedFence.targetId);
+      if (!target.attached || !target.origin) {
+        throw new Error('Browser permission control requires a current http/https origin');
+      }
+      const finish = diagnostics.begin({
+        actionType: 'permission_set',
+        browserSessionId,
+        targetId: expectedFence.targetId,
+        ownershipMode: binding.ownershipMode,
+      });
+      try {
+        await control.exec(expectedFence.targetId, 'Browser.setPermission', {
+          permission: { name: BROWSER_PERMISSION_DESCRIPTOR[permission] },
+          setting,
+          origin: target.origin,
+        });
+        finish(true, undefined, {
+          targetId: expectedFence.targetId,
+          ownershipMode: binding.ownershipMode,
+          targetChanged: false,
+        });
+        return Object.freeze({ permission, setting, origin: target.origin });
       } catch (error) {
         finish(false, error);
         throw error;

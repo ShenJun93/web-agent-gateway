@@ -59,6 +59,7 @@ function healthyInput(): ProductDoctorMcpInput {
       'browser.download',
       'browser.dialog.get',
       'browser.dialog.respond',
+      'browser.permission.set',
       'artifact.list',
       'artifact.describe',
       'artifact.export',
@@ -159,7 +160,7 @@ test('MCP product doctor does not require browser-only capabilities when browser
   };
 
   assert.equal(report.status, 'PASS');
-  for (const id of ['extension_release', 'browser_upload', 'browser_download', 'browser_dialog', 'artifact_lifecycle', 'browser_reliability']) {
+  for (const id of ['extension_release', 'browser_upload', 'browser_download', 'browser_dialog', 'browser_permission', 'artifact_lifecycle', 'browser_reliability']) {
     assert.equal(report.checks.find((check) => check.id === id)?.status, 'PASS');
   }
 });
@@ -227,6 +228,29 @@ test('MCP product doctor fails when artifact lifecycle is missing from a browser
       status: 'FAIL',
       code: 'WAG_DOCTOR_ARTIFACT_LIFECYCLE_MISSING',
       message: 'Artifact lifecycle/export surface is incomplete.',
+    },
+  );
+});
+
+
+test('MCP product doctor fails when browser permission capability is missing from a browser-enabled surface', () => {
+  const input = healthyInput();
+  input.mcpTools = input.mcpTools.filter((name) => name !== 'browser.permission.set');
+  const report = buildProductDoctorMcpReport(input) as {
+    status: string;
+    blockers: string[];
+    checks: Array<{ id: string; status: string; code: string; message?: string }>;
+  };
+
+  assert.equal(report.status, 'FAIL');
+  assert.ok(report.blockers.includes('browser_permission'));
+  assert.deepEqual(
+    report.checks.find((check) => check.id === 'browser_permission'),
+    {
+      id: 'browser_permission',
+      status: 'FAIL',
+      code: 'WAG_DOCTOR_BROWSER_PERMISSION_MISSING',
+      message: 'Browser permission policy surface is incomplete.',
     },
   );
 });
