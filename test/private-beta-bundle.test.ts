@@ -21,7 +21,7 @@ function sha256(bytes: Uint8Array): string {
 
 function extensionTree(files: readonly { path: string; bytes: Uint8Array }[]): string {
   const hash = createHash('sha256');
-  for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path, 'en'))) {
+  for (const file of [...files].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
     hash.update(file.path, 'utf8');
     hash.update('\0');
     hash.update(file.bytes);

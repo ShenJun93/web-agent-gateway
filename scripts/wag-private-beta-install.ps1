@@ -23,7 +23,9 @@ param(
         $sha = [Security.Cryptography.SHA256]::Create()
         $zero = [byte[]]@(0)
         try {
-            foreach ($relative in @($RelativePaths | Sort-Object)) {
+            $ordered = @($RelativePaths)
+            [Array]::Sort($ordered, [StringComparer]::Ordinal)
+            foreach ($relative in $ordered) {
                 $pathBytes = [Text.Encoding]::UTF8.GetBytes($relative)
                 if ($pathBytes.Length -gt 0) {
                     [void]$sha.TransformBlock($pathBytes, 0, $pathBytes.Length, $pathBytes, 0)

@@ -148,7 +148,7 @@ async function collectExtensionFiles(root: string): Promise<PrivateBetaExtension
   const files: Array<{ relative: string; absolute: string }> = [];
   async function visit(directory: string): Promise<void> {
     const children = (await readdir(directory, { withFileTypes: true }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'en'));
+      .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     for (const child of children) {
       const absolute = join(directory, child.name);
       const info = await lstat(absolute);
@@ -164,7 +164,7 @@ async function collectExtensionFiles(root: string): Promise<PrivateBetaExtension
   await visit(root);
 
   const result: PrivateBetaExtensionFile[] = [];
-  for (const file of files.sort((a, b) => a.relative.localeCompare(b.relative, 'en'))) {
+  for (const file of files.sort((a, b) => a.relative < b.relative ? -1 : a.relative > b.relative ? 1 : 0)) {
     const info = await stat(file.absolute);
     result.push({
       path: file.relative,
@@ -430,7 +430,7 @@ export async function packagePrivateBetaBundle(options: {
         'browser-extension/' + file.path,
       ));
     }
-    entries.sort((a, b) => a.archivePath.localeCompare(b.archivePath, 'en'));
+    entries.sort((a, b) => a.archivePath < b.archivePath ? -1 : a.archivePath > b.archivePath ? 1 : 0);
     if (entries.length > 256) throw new Error('Private beta bundle has too many entries');
     if (entries.some((entry) => /(?:^|\/)(?:tunnel-client|secrets?)(?:$|\/)/i.test(entry.archivePath))) {
       throw new Error('Private beta bundle attempted to include a credential or tunnel-client payload');
