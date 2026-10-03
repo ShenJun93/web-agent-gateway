@@ -1,0 +1,42 @@
+{
+  "schema": "WAG_M15_CLEAN_INSTALL_FIXTURE_V1",
+  "generatedAtUtc": "2026-10-03T01:55:11.6508220Z",
+  "pass": true,
+  "error": null,
+  "stages": {
+    "baseline": {
+      "exit": 0,
+      "status": "PASS"
+    },
+    "install": {
+      "exit": 2,
+      "status": "ACTION_REQUIRED_CHATGPT_CONNECTOR"
+    },
+    "connectorProof": {
+      "exit": 0,
+      "status": "PASS"
+    },
+    "postRebootWithoutReboot": {
+      "exit": 2,
+      "status": "FAIL"
+    }
+  },
+  "checks": {
+    "baselinePass": true,
+    "installStopsAtConnector": true,
+    "connectorProofPass": true,
+    "postRebootFailsWithoutRealReboot": true,
+    "postRebootChallengeNotIssued": true,
+    "fixtureNeverExternalEligible": true,
+    "connectorResponseVerified": true,
+    "connectorMarkerWritten": true,
+    "runtimeSecretProtected": true,
+    "runtimeSecretNotInState": true,
+    "liveStartupUnchanged": true,
+    "liveStarterUnchanged": true,
+    "liveSupervisorUnchanged": true,
+    "liveTunnelLauncherUnchanged": true,
+    "liveStackReadyBefore": true,
+    "liveStackReadyAfter": true
+  }
+}
