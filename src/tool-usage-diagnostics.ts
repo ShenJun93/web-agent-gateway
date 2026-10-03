@@ -42,6 +42,45 @@ export interface RecentToolUsage {
   capacity: number;
 }
 
+export interface ToolUsageBetaSummary {
+  schema: 'WAG_LOCAL_BETA_USAGE_SUMMARY_V1';
+  retained_events: number;
+  capacity: number;
+  window: {
+    first_seen_at_utc: string | null;
+    last_seen_at_utc: string | null;
+    active_utc_days: number;
+  };
+  totals: {
+    calls: number;
+    successes: number;
+    failures: number;
+    success_rate: number | null;
+  };
+  useful_workflow: {
+    completed: boolean;
+    successful_calls: number;
+  };
+  repeat_usage_signal: {
+    observed: boolean;
+    repeated_tool_families: string[];
+    definition: 'TWO_OR_MORE_SUCCESSFUL_CALLS_IN_RETAINED_WINDOW';
+  };
+  tool_families: Array<{
+    family: string;
+    calls: number;
+    successes: number;
+    failures: number;
+  }>;
+  privacy: {
+    arguments_retained: false;
+    paths_retained: false;
+    contents_retained: false;
+    owner_or_session_ids_retained: false;
+    exception_messages_retained: false;
+  };
+}
+
 export interface ToolUsageCorrelation {
   readonly effectId?: string;
   readonly attemptId?: string;
@@ -177,6 +216,65 @@ export class ToolUsageDiagnostics {
     };
   }
 
+  betaSummary(): ToolUsageBetaSummary {
+    const families = new Map<string, { calls: number; successes: number; failures: number }>();
+    let usefulSuccessfulCalls = 0;
+    const activeDays = new Set<string>();
+    for (const event of this.events) {
+      const family = toolFamily(event.tool);
+      const current = families.get(family) ?? { calls: 0, successes: 0, failures: 0 };
+      current.calls += 1;
+      current.successes += event.success ? 1 : 0;
+      current.failures += event.success ? 0 : 1;
+      families.set(family, current);
+      if (event.success && isUsefulWorkflowTool(event.tool)) usefulSuccessfulCalls += 1;
+      const day = event.started_at_utc.slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) activeDays.add(day);
+    }
+    const successes = this.events.filter((event) => event.success).length;
+    const failures = this.events.length - successes;
+    const toolFamilies = [...families.entries()]
+      .map(([family, value]) => ({ family, ...value }))
+      .sort((a, b) => b.calls - a.calls || a.family.localeCompare(b.family));
+    const repeatedFamilies = toolFamilies
+      .filter((entry) => entry.successes >= 2 && !['system', 'product', 'diagnostics', 'other'].includes(entry.family))
+      .map((entry) => entry.family)
+      .sort();
+    return {
+      schema: 'WAG_LOCAL_BETA_USAGE_SUMMARY_V1',
+      retained_events: this.events.length,
+      capacity: this.capacity,
+      window: {
+        first_seen_at_utc: this.events[0]?.started_at_utc ?? null,
+        last_seen_at_utc: this.events.at(-1)?.started_at_utc ?? null,
+        active_utc_days: activeDays.size,
+      },
+      totals: {
+        calls: this.events.length,
+        successes,
+        failures,
+        success_rate: this.events.length === 0 ? null : roundRate(successes / this.events.length),
+      },
+      useful_workflow: {
+        completed: usefulSuccessfulCalls > 0,
+        successful_calls: usefulSuccessfulCalls,
+      },
+      repeat_usage_signal: {
+        observed: repeatedFamilies.length > 0,
+        repeated_tool_families: repeatedFamilies,
+        definition: 'TWO_OR_MORE_SUCCESSFUL_CALLS_IN_RETAINED_WINDOW',
+      },
+      tool_families: toolFamilies,
+      privacy: {
+        arguments_retained: false,
+        paths_retained: false,
+        contents_retained: false,
+        owner_or_session_ids_retained: false,
+        exception_messages_retained: false,
+      },
+    };
+  }
+
   usage(): {
     total_calls: number;
     successes: number;
@@ -264,6 +362,27 @@ export class ToolUsageDiagnostics {
     });
     renameSync(temp, this.statePath);
   }
+}
+
+function toolFamily(tool: string): string {
+  const prefix = tool.split('.')[0] ?? '';
+  if (prefix === 'machine') return 'machine';
+  if (prefix === 'browser') return 'browser';
+  if (prefix === 'artifact') return 'artifact';
+  if (['repo', 'file', 'mutation', 'change', 'git', 'verify', 'command'].includes(prefix)) return 'repository';
+  if (prefix === 'product') return 'product';
+  if (prefix === 'diagnostics') return 'diagnostics';
+  if (['health', 'workspace', 'capabilities', 'result'].includes(prefix)) return 'system';
+  return 'other';
+}
+
+function isUsefulWorkflowTool(tool: string): boolean {
+  const family = toolFamily(tool);
+  return !['system', 'product', 'diagnostics', 'other'].includes(family);
+}
+
+function roundRate(value: number): number {
+  return Math.round(value * 10_000) / 10_000;
 }
 
 function sanitizeCorrelation(value: ToolUsageCorrelation | undefined): ToolUsageCorrelation {

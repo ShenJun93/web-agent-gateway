@@ -234,3 +234,60 @@ test('product activity and usage reuse sanitized bounded diagnostics and help pe
   assert.ok(help.workflows.some((entry) => entry.id === 'documents'));
   assert.ok(help.workflows.some((entry) => entry.id === 'lifecycle'));
 });
+
+
+test('private beta summary reports bounded local adoption signals without inventing user metrics', async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.stateDir, 'release-state.json'), JSON.stringify({
+    schema: 'WAG_LOCAL_RELEASE_STATE_V1',
+    activeReleaseId: 'release-beta',
+    previousReleaseId: null,
+    channel: 'beta',
+    migrationVersion: 1,
+    updatedAtUtc: '2026-10-03T00:00:00.000Z',
+  }, null, 2), 'utf8');
+  await writeFile(join(f.stateDir, 'chatgpt-connector.confirmed'), 'confirmed\n', 'utf8');
+
+  f.diagnostics.begin('machine.read')(true);
+  f.diagnostics.begin('machine.read')(true);
+  f.diagnostics.begin('product.usage')(true);
+
+  const product = createProductMcpContext({
+    configPath: f.configPath,
+    config: f.config,
+    diagnostics: f.diagnostics,
+  });
+  const summary = product.betaSummary() as {
+    schema: string;
+    scope: Record<string, boolean>;
+    adoption_signals: Record<string, boolean | number>;
+    usage: { repeat_usage_signal: { observed: boolean }; privacy: Record<string, boolean> };
+    not_collected: Record<string, string>;
+    interpretation: Record<string, boolean>;
+  };
+
+  assert.equal(summary.schema, 'WAG_LOCAL_PRIVATE_BETA_SUMMARY_V1');
+  assert.deepEqual(summary.scope, {
+    local_install_only: true,
+    external_upload_performed: false,
+    retained_event_window_only: true,
+  });
+  assert.equal(summary.adoption_signals.installed_release_observed, true);
+  assert.equal(summary.adoption_signals.connector_confirmed, true);
+  assert.equal(summary.adoption_signals.first_useful_workflow_completed, true);
+  assert.equal(summary.adoption_signals.repeat_usage_signal_observed, true);
+  assert.equal(summary.not_collected.activation_rate, 'NOT_COLLECTED');
+  assert.equal(summary.not_collected.first_useful_workflow_rate, 'NOT_COLLECTED');
+  assert.equal(summary.not_collected.repeat_workflow_rate, 'NOT_COLLECTED');
+  assert.equal(summary.not_collected.weekly_active_users, 'NOT_COLLECTED');
+  assert.equal(summary.not_collected.retention_rate, 'NOT_COLLECTED');
+  assert.equal(summary.not_collected.uninstall_reasons, 'NOT_COLLECTED');
+  assert.equal(summary.interpretation.local_active_utc_days_is_not_wau, true);
+  assert.equal(summary.interpretation.repeat_usage_signal_is_not_retention, true);
+
+  const serialized = JSON.stringify(summary);
+  assert.equal(serialized.includes(f.rootMarker), false);
+  assert.equal(serialized.includes(f.secretMarker), false);
+  assert.equal(serialized.includes('session_11111111-2222-3333-4444-555555555555'), false);
+  assert.equal(serialized.includes('github.com/example/private.git'), false);
+});

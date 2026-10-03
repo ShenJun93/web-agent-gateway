@@ -377,3 +377,47 @@ test('malformed durable diagnostics never blocks startup and is replaced by the 
   assert.deepEqual(parsed.events.map((event) => [event.sequence, event.tool]), [[1, 'health']]);
   assert.match(parsed.events[0]?.request_id ?? '', /^request_[0-9a-f-]{36}$/);
 });
+
+
+test('beta usage summary exposes only aggregate local signals and never raw diagnostic identities', () => {
+  const diagnostics = new ToolUsageDiagnostics(16);
+  diagnostics.begin('health')(true);
+  diagnostics.begin('browser.snapshot')(true);
+  diagnostics.begin('browser.snapshot')(true);
+  diagnostics.begin('machine.command.run')(false, new Error('secret-message-never-retained'));
+
+  const summary = diagnostics.betaSummary();
+  assert.equal(summary.schema, 'WAG_LOCAL_BETA_USAGE_SUMMARY_V1');
+  assert.equal(summary.totals.calls, 4);
+  assert.equal(summary.totals.successes, 3);
+  assert.equal(summary.totals.failures, 1);
+  assert.equal(summary.totals.success_rate, 0.75);
+  assert.equal(summary.useful_workflow.completed, true);
+  assert.equal(summary.useful_workflow.successful_calls, 2);
+  assert.equal(summary.repeat_usage_signal.observed, true);
+  assert.deepEqual(summary.repeat_usage_signal.repeated_tool_families, ['browser']);
+  assert.deepEqual(
+    summary.tool_families.map((entry) => [entry.family, entry.calls]),
+    [['browser', 2], ['machine', 1], ['system', 1]],
+  );
+  assert.deepEqual(summary.privacy, {
+    arguments_retained: false,
+    paths_retained: false,
+    contents_retained: false,
+    owner_or_session_ids_retained: false,
+    exception_messages_retained: false,
+  });
+  const serialized = JSON.stringify(summary);
+  assert.equal(serialized.includes('secret-message-never-retained'), false);
+  assert.equal(serialized.includes('request_'), false);
+  assert.equal(serialized.includes('effect_'), false);
+});
+
+test('beta repeat-usage signal ignores unknown tool families rather than treating them as adoption evidence', () => {
+  const diagnostics = new ToolUsageDiagnostics(16);
+  diagnostics.begin('unknown.alpha')(true);
+  diagnostics.begin('unknown.beta')(true);
+  const summary = diagnostics.betaSummary();
+  assert.equal(summary.repeat_usage_signal.observed, false);
+  assert.deepEqual(summary.repeat_usage_signal.repeated_tool_families, []);
+});
