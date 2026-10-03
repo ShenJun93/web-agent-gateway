@@ -10,6 +10,11 @@ import { dirname, join, resolve } from 'node:path';
 import type { PrivateGatewayConfig } from './private-config.js';
 import { checkProductUpdate } from './product-update-discovery.js';
 import type { ToolUsageDiagnostics } from './tool-usage-diagnostics.js';
+import {
+  createPrivateBetaReceipt,
+  type PrivateBetaReceipt,
+  type PrivateBetaSummary,
+} from './private-beta-receipt.js';
 
 export type ProductUpdateChannel = 'stable' | 'beta' | 'development';
 
@@ -30,7 +35,8 @@ export interface ProductMcpContext {
   configUpdate(input: ProductConfigUpdate): object;
   activityRecent(options?: { limit?: number; afterSequence?: number }): object;
   usage(): object;
-  betaSummary(): object;
+  betaSummary(): PrivateBetaSummary;
+  betaReceipt(input: { consent: boolean }): PrivateBetaReceipt;
   updateCheck(): Promise<object>;
   help(): object;
 }
@@ -178,6 +184,45 @@ export function createProductMcpContext(options: ProductUxOptions): ProductMcpCo
   const diagnostics = options.diagnostics;
   let writeInProgress = false;
 
+  const buildBetaSummary = (): PrivateBetaSummary => {
+    const usage = diagnostics.betaSummary();
+    const release = readReleaseSummary(configPath) as { state?: unknown } | null;
+    const connectorConfirmed = existsSync(join(installRoot, 'state', 'chatgpt-connector.confirmed'));
+    return {
+      schema: 'WAG_LOCAL_PRIVATE_BETA_SUMMARY_V1',
+      generated_at_utc: new Date().toISOString(),
+      scope: {
+        local_install_only: true,
+        external_upload_performed: false,
+        retained_event_window_only: true,
+      },
+      adoption_signals: {
+        installed_release_observed: release?.state === 'READY',
+        connector_confirmed: connectorConfirmed,
+        first_useful_workflow_completed: usage.useful_workflow.completed,
+        local_active_utc_days: usage.window.active_utc_days,
+        repeat_usage_signal_observed: usage.repeat_usage_signal.observed,
+      },
+      usage,
+      not_collected: {
+        external_user_count: 'NOT_COLLECTED',
+        activation_rate: 'NOT_COLLECTED',
+        first_useful_workflow_rate: 'NOT_COLLECTED',
+        repeat_workflow_rate: 'NOT_COLLECTED',
+        weekly_active_users: 'NOT_COLLECTED',
+        retention_rate: 'NOT_COLLECTED',
+        recovery_rate: 'NOT_COLLECTED',
+        uninstall_reasons: 'NOT_COLLECTED',
+        support_incidents: 'NOT_COLLECTED',
+      },
+      interpretation: {
+        local_active_utc_days_is_not_wau: true,
+        repeat_usage_signal_is_not_retention: true,
+        aggregation_requires_explicit_receipt_collection: true,
+      },
+    };
+  };
+
   return {
     configGet() {
       const current = readSettings(settingsPath, fallback);
@@ -271,42 +316,15 @@ export function createProductMcpContext(options: ProductUxOptions): ProductMcpCo
     },
 
     betaSummary() {
-      const usage = diagnostics.betaSummary();
-      const release = readReleaseSummary(configPath) as { state?: unknown } | null;
-      const connectorConfirmed = existsSync(join(installRoot, 'state', 'chatgpt-connector.confirmed'));
-      return {
-        schema: 'WAG_LOCAL_PRIVATE_BETA_SUMMARY_V1',
-        generated_at_utc: new Date().toISOString(),
-        scope: {
-          local_install_only: true,
-          external_upload_performed: false,
-          retained_event_window_only: true,
-        },
-        adoption_signals: {
-          installed_release_observed: release?.state === 'READY',
-          connector_confirmed: connectorConfirmed,
-          first_useful_workflow_completed: usage.useful_workflow.completed,
-          local_active_utc_days: usage.window.active_utc_days,
-          repeat_usage_signal_observed: usage.repeat_usage_signal.observed,
-        },
-        usage,
-        not_collected: {
-          external_user_count: 'NOT_COLLECTED',
-          activation_rate: 'NOT_COLLECTED',
-          first_useful_workflow_rate: 'NOT_COLLECTED',
-          repeat_workflow_rate: 'NOT_COLLECTED',
-          weekly_active_users: 'NOT_COLLECTED',
-          retention_rate: 'NOT_COLLECTED',
-          recovery_rate: 'NOT_COLLECTED',
-          uninstall_reasons: 'NOT_COLLECTED',
-          support_incidents: 'NOT_COLLECTED',
-        },
-        interpretation: {
-          local_active_utc_days_is_not_wau: true,
-          repeat_usage_signal_is_not_retention: true,
-          aggregation_requires_explicit_receipt_collection: true,
-        },
-      };
+      return buildBetaSummary();
+    },
+
+    betaReceipt(input) {
+      return createPrivateBetaReceipt({
+        installRoot,
+        summary: buildBetaSummary(),
+        consent: input.consent,
+      });
     },
 
     async updateCheck() {
@@ -323,7 +341,7 @@ export function createProductMcpContext(options: ProductUxOptions): ProductMcpCo
           { id: 'terminal', description: 'Run bounded argv commands and manage WAG-owned process/terminal sessions.' },
           { id: 'repository', description: 'Inspect repositories, apply reviewed mutations, verify, commit and use bounded remote push.' },
           { id: 'browser', description: 'Use the BrowserPort surface when the local browser harness is configured.' },
-          { id: 'diagnostics', description: 'Use product.doctor for one-shot local readiness, product activity/usage for telemetry, product.beta.summary for privacy-safe local beta evidence, and CLI wag doctor --repair for bounded repair.' },
+          { id: 'diagnostics', description: 'Use product.doctor for readiness, product.beta.summary for privacy-safe local evidence, product.beta.receipt only with explicit beta-user consent, and CLI wag doctor --repair for bounded repair.' },
           { id: 'lifecycle', description: 'Check signed update metadata, then use explicit update/rollback/uninstall lifecycle commands for installed releases.' },
         ],
       };

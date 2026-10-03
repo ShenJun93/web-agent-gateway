@@ -291,3 +291,42 @@ test('private beta summary reports bounded local adoption signals without invent
   assert.equal(serialized.includes('session_11111111-2222-3333-4444-555555555555'), false);
   assert.equal(serialized.includes('github.com/example/private.git'), false);
 });
+
+
+test('private beta receipt requires explicit consent and reuses one pseudonymous installation id without leaking local identity', async (t) => {
+  const f = await fixture(t);
+  f.diagnostics.begin('machine.read')(true);
+  f.diagnostics.begin('machine.read')(true);
+
+  const product = createProductMcpContext({
+    configPath: f.configPath,
+    config: f.config,
+    diagnostics: f.diagnostics,
+  });
+
+  assert.throws(
+    () => product.betaReceipt({ consent: false }),
+    /CONSENT_REQUIRED/,
+  );
+
+  const first = product.betaReceipt({ consent: true });
+  const second = product.betaReceipt({ consent: true });
+  assert.equal(first.schema, 'WAG_LOCAL_PRIVATE_BETA_RECEIPT_V1');
+  assert.match(first.installation_id, /^beta_install_[0-9a-f-]{36}$/);
+  assert.equal(second.installation_id, first.installation_id);
+  assert.deepEqual(first.privacy, {
+    pseudonymous_install_id: true,
+    user_identity_collected: false,
+    machine_fingerprint_collected: false,
+    automatic_upload_performed: false,
+  });
+
+  const persisted = (await readFile(join(f.stateDir, 'private-beta-installation-id'), 'utf8')).trim();
+  assert.equal(persisted, first.installation_id);
+
+  const serialized = JSON.stringify(first);
+  assert.equal(serialized.includes(f.rootMarker), false);
+  assert.equal(serialized.includes(f.secretMarker), false);
+  assert.equal(serialized.includes('session_11111111-2222-3333-4444-555555555555'), false);
+  assert.equal(serialized.includes('github.com/example/private.git'), false);
+});
