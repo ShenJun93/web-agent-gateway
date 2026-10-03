@@ -73,6 +73,36 @@ test('existing browser control protocol accepts bounded target and semantic tran
   });
   assert.equal(downloadBehavior.cdpMethod, 'Browser.setDownloadBehavior');
 
+  const notificationPermission = parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Browser.setPermission',
+    params: {
+      permission: { name: 'notifications' },
+      setting: 'granted',
+      origin: 'https://example.test',
+    },
+  });
+  assert.equal(notificationPermission.cdpMethod, 'Browser.setPermission');
+
+  const cameraDenied = parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Browser.setPermission',
+    params: {
+      permission: { name: 'camera' },
+      setting: 'denied',
+      origin: 'https://example.test',
+    },
+  });
+  assert.equal(cameraDenied.cdpMethod, 'Browser.setPermission');
+
   const event = parseExistingBrowserControlEvent({
     version: 1,
     type: 'control.event',
@@ -154,6 +184,36 @@ test('existing browser control protocol denies raw CDP and malformed target iden
     cdpMethod: 'Browser.setDownloadBehavior',
     params: { behavior: 'allow', downloadPath: 'C:\\WAG\\capture', eventsEnabled: true },
   }), /download behavior/);
+
+  assert.throws(() => parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Browser.setPermission',
+    params: { permission: { name: 'camera' }, setting: 'granted', origin: 'https://example.test' },
+  }), /permission params/);
+
+  assert.throws(() => parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Browser.setPermission',
+    params: { permission: { name: 'notifications' }, setting: 'granted', origin: 'https://example.test/path?token=secret' },
+  }), /permission params/);
+
+  assert.throws(() => parseExistingBrowserControlRequest({
+    version: 1,
+    type: 'control.request',
+    requestId: ID,
+    method: 'target.exec',
+    targetId: 'tab_7',
+    cdpMethod: 'Browser.setPermission',
+    params: { permission: { name: 'notifications', extra: true }, setting: 'granted', origin: 'https://example.test' },
+  }), /Unexpected/);
 
   assert.throws(() => parseExistingBrowserControlEvent({
     version: 1,

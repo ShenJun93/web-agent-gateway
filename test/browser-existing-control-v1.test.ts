@@ -252,6 +252,67 @@ test('download control is bounded and forwards only sanitized events for an atta
   unsubscribe();
 });
 
+test('browser permission control is origin-bound and denies sensitive grants before CDP dispatch', async () => {
+  const f = fixture();
+  const control = createExistingBrowserControlV1(f.chromeApi);
+  await control.attach(11);
+
+  await control.exec(11, 'Browser.setPermission', {
+    permission: { name: 'notifications' },
+    setting: 'granted',
+    origin: 'https://app.example.test',
+  });
+  assert.deepEqual(f.calls.at(-1), [
+    'sendCommand',
+    { tabId: 11 },
+    'Browser.setPermission',
+    { permission: { name: 'notifications' }, setting: 'granted', origin: 'https://app.example.test' },
+  ]);
+
+  const dispatchedAfterNotification = f.calls.filter((row) => row[0] === 'sendCommand' && row[2] === 'Browser.setPermission').length;
+  await assert.rejects(
+    () => control.exec(11, 'Browser.setPermission', {
+      permission: { name: 'notifications' },
+      setting: 'granted',
+      origin: 'https://other.example.test',
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+  assert.equal(
+    f.calls.filter((row) => row[0] === 'sendCommand' && row[2] === 'Browser.setPermission').length,
+    dispatchedAfterNotification,
+    'origin mismatch must fail before CDP dispatch',
+  );
+
+  await assert.rejects(
+    () => control.exec(11, 'Browser.setPermission', {
+      permission: { name: 'camera' },
+      setting: 'granted',
+      origin: 'https://app.example.test',
+    }),
+    (error: unknown) => error instanceof ExistingBrowserControlError
+      && error.code === 'CONTROL_PARAMS_INVALID',
+  );
+  assert.equal(
+    f.calls.filter((row) => row[0] === 'sendCommand' && row[2] === 'Browser.setPermission').length,
+    dispatchedAfterNotification,
+    'sensitive grant must fail before CDP dispatch',
+  );
+
+  await control.exec(11, 'Browser.setPermission', {
+    permission: { name: 'camera' },
+    setting: 'denied',
+    origin: 'https://app.example.test',
+  });
+  assert.deepEqual(f.calls.at(-1), [
+    'sendCommand',
+    { tabId: 11 },
+    'Browser.setPermission',
+    { permission: { name: 'camera' }, setting: 'denied', origin: 'https://app.example.test' },
+  ]);
+});
+
 test('external debugger detach invalidates local attachment state', async () => {
   const f = fixture();
   const control = createExistingBrowserControlV1(f.chromeApi);

@@ -17,6 +17,7 @@ const ALLOWED_CDP = new Set([
   'Page.captureScreenshot',
   'Page.handleJavaScriptDialog',
   'Browser.setDownloadBehavior',
+  'Browser.setPermission',
 ]);
 
 export function createNativeBrowserControlV1({

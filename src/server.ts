@@ -1329,6 +1329,18 @@ export function createGatewayMcpServer(
       });
     });
 
+    registerTool('browser.permission.set', {
+      description: 'Set one bounded browser permission for the current attached tab origin. WAG policy permits grants only for notifications and clipboard_write; camera, microphone, geolocation, and clipboard_read may only be denied or returned to prompt.',
+      inputSchema: z.object({
+        browser_session_id: browserSessionId,
+        permission: z.enum(['notifications', 'clipboard_write', 'camera', 'microphone', 'geolocation', 'clipboard_read']),
+        setting: z.enum(['granted', 'denied', 'prompt']),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    }, async ({ browser_session_id, permission, setting }) => toolResult(
+      await browserContext.permissionSet(browser_session_id, permission, setting),
+    ));
+
     registerTool('browser.effect.get', {
       description: 'Read the durable exact-once state for one caller-owned browser effect after a response-stream interruption; this never replays the effect.',
       inputSchema: z.object({ effect_id: effectId }).strict(),

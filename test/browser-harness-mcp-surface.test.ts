@@ -27,6 +27,7 @@ const BROWSER_TOOLS = [
   'browser.download',
   'browser.dialog.get',
   'browser.dialog.respond',
+  'browser.permission.set',
   'browser.effect.get',
   'browser.screenshot',
   'browser.close',
@@ -195,6 +196,10 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
         promptTextProvided: promptText !== undefined,
       };
     },
+    async permissionSet(browserSessionId, permission, setting) {
+      calls.push(['permissionSet', browserSessionId, permission, setting]);
+      return { permission, setting, origin: 'https://example.test' };
+    },
     async waitFor(browserSessionId, conditions, mode, timeoutMs, intervalMs) {
       calls.push(['waitFor', browserSessionId, conditions, mode, timeoutMs, intervalMs]);
       return {
@@ -333,8 +338,10 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
   });
   const dialogGetTool = tools.find((tool) => tool.name === 'browser.dialog.get');
   const dialogRespondTool = tools.find((tool) => tool.name === 'browser.dialog.respond');
+  const permissionTool = tools.find((tool) => tool.name === 'browser.permission.set');
   assert.ok(dialogGetTool);
   assert.ok(dialogRespondTool);
+  assert.ok(permissionTool);
   assert.deepEqual(dialogGetTool.annotations, {
     readOnlyHint: true,
     destructiveHint: false,
@@ -342,6 +349,12 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
     openWorldHint: true,
   });
   assert.deepEqual(dialogRespondTool.annotations, {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: true,
+  });
+  assert.deepEqual(permissionTool.annotations, {
     readOnlyHint: false,
     destructiveHint: true,
     idempotentHint: false,
@@ -454,6 +467,22 @@ test('browser exact-once recovery correlates diagnostics to durable effect state
     type: 'confirm',
     accepted: false,
     prompt_text_provided: false,
+  });
+
+  const permission = await client.callTool({
+    name: 'browser.permission.set',
+    arguments: {
+      browser_session_id: sessionId,
+      permission: 'notifications',
+      setting: 'granted',
+    },
+  });
+  assert.equal(permission.isError === true, false);
+  assert.deepEqual(calls.at(-1), ['permissionSet', sessionId, 'notifications', 'granted']);
+  assert.deepEqual(permission.structuredContent, {
+    permission: 'notifications',
+    setting: 'granted',
+    origin: 'https://example.test',
   });
 
   const waitConditions = [{ kind: 'title', operator: 'contains', value: 'Example' }] as const;
