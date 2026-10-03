@@ -83,6 +83,48 @@ test('setup dispatches without --config and maps only bounded installer argument
   assert.match(bad.stderr.text(), /"code":"CLI_USAGE"/);
 });
 
+test('clean-install acceptance dispatches only bounded non-secret arguments', async () => {
+  const h = makeCliHarness();
+  let observed: string[] | undefined;
+  h.deps.runCleanInstallAcceptance = async (args) => { observed = args; return 2; };
+  const root = resolve('wag-clean-workspace');
+  const output = resolve('clean-install.json');
+  const tunnel = 'tunnel_0123456789abcdef0123456789abcdef';
+  assert.equal(await main([
+    'clean-install-acceptance',
+    '--stage', 'install',
+    '--tunnel-id', tunnel,
+    '--runtime-key-ref', 'env:CONTROL_PLANE_API_KEY',
+    '--allowed-root', root,
+    '--output', output,
+  ], h.deps), 2);
+  assert.deepEqual(observed, [
+    '-Stage', 'Install',
+    '-TunnelId', tunnel,
+    '-RuntimeKeyRef', 'env:CONTROL_PLANE_API_KEY',
+    '-AllowedRoot', root,
+    '-Output', output,
+  ]);
+  assert.equal(h.stderr.text(), '');
+
+  const noStage = makeCliHarness();
+  let noStageCalled = 0;
+  noStage.deps.runCleanInstallAcceptance = async () => { noStageCalled += 1; return 0; };
+  assert.equal(await main(['clean-install-acceptance'], noStage.deps), 1);
+  assert.equal(noStageCalled, 0);
+  assert.match(noStage.stderr.text(), /"code":"CLI_USAGE"/);
+
+  const rawSecret = makeCliHarness();
+  let rawSecretCalled = 0;
+  rawSecret.deps.runCleanInstallAcceptance = async () => { rawSecretCalled += 1; return 0; };
+  assert.equal(await main([
+    'clean-install-acceptance', '--stage', 'install',
+    '--runtime-key-ref', 'raw-secret-value',
+  ], rawSecret.deps), 1);
+  assert.equal(rawSecretCalled, 0);
+  assert.match(rawSecret.stderr.text(), /"code":"CLI_USAGE"/);
+});
+
 test('product doctor dispatches without --config and maps only bounded arguments', async () => {
   const h = makeCliHarness();
   let observed: string[] | undefined;

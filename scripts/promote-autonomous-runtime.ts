@@ -41,6 +41,7 @@ const RuntimeSupportFiles = [
   'scripts/install-wag-local-launchers.ps1',
   'scripts/wag-local-doctor.ps1',
   'scripts/wag-local-product-health.ps1',
+  'scripts/wag-local-clean-install-acceptance.ps1',
   'scripts/wag-local-provision.ps1',
   'scripts/wag-local-setup.ps1',
   'scripts/wag-local-start.ps1',

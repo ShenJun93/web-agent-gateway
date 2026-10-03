@@ -48,6 +48,8 @@ export interface CliDependencies {
   telemetry: TelemetrySink;
   /** Per-user installer bootstrap; injected by setup tests. */
   runSetup?: (argv: string[]) => Promise<number>;
+  /** External clean-install acceptance runner; injected by acceptance tests. */
+  runCleanInstallAcceptance?: (argv: string[]) => Promise<number>;
   /** Product doctor entrypoint; injected by doctor tests. */
   runDoctor?: (argv: string[]) => Promise<number>;
   /** Transactional product update; injected by product lifecycle tests. */
@@ -149,6 +151,16 @@ export async function main(
       return await (deps.runSetup ?? ((args) => runSetupPowerShell(args, deps.stdout, deps.stderr)))(setupArgs);
     } catch (error) {
       emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'SETUP_FAILED', error);
+      return 1;
+    }
+  }
+  if (argv[0] === 'clean-install-acceptance') {
+    try {
+      const acceptanceArgs = mapCleanInstallAcceptanceArgs(argv.slice(1));
+      return await (deps.runCleanInstallAcceptance
+        ?? ((args) => runCleanInstallAcceptancePowerShell(args, deps.stdout, deps.stderr)))(acceptanceArgs);
+    } catch (error) {
+      emitError(deps.stderr, error instanceof CliUsageError ? 'CLI_USAGE' : 'CLEAN_INSTALL_ACCEPTANCE_FAILED', error);
       return 1;
     }
   }
@@ -609,6 +621,56 @@ function mapSetupArgs(argv: string[]): string[] {
   return mapped;
 }
 
+function mapCleanInstallAcceptanceArgs(argv: string[]): string[] {
+  const mapped: string[] = [];
+  const stages = new Set(['baseline', 'install', 'connector-proof', 'post-reboot', 'post-reboot-proof']);
+  let stageSeen = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    const names: Record<string, string> = {
+      '--allowed-root': '-AllowedRoot',
+      '--output': '-Output',
+      '--tunnel-client-path': '-TunnelClientPath',
+      '--tunnel-id': '-TunnelId',
+      '--runtime-key-ref': '-RuntimeKeyRef',
+    };
+    if (arg === '--stage') {
+      const value = argv[index + 1]?.toLowerCase();
+      if (!value || !stages.has(value)) throw new CliUsageError('Invalid or missing value after --stage');
+      const psStage = value.split('-').map((part) => part[0]!.toUpperCase() + part.slice(1)).join('');
+      mapped.push('-Stage', psStage);
+      stageSeen = true;
+      index += 1;
+      continue;
+    }
+    const mappedName = names[arg];
+    if (mappedName) {
+      const value = argv[index + 1];
+      if (!value) throw new CliUsageError(`Missing value after ${arg}`);
+      if (arg === '--runtime-key-ref' && value !== 'env:CONTROL_PLANE_API_KEY') {
+        throw new CliUsageError('--runtime-key-ref must be env:CONTROL_PLANE_API_KEY');
+      }
+      mapped.push(mappedName, value);
+      index += 1;
+      continue;
+    }
+    throw new CliUsageError(`Unknown clean-install-acceptance argument: ${arg}`);
+  }
+  if (!stageSeen) throw new CliUsageError('clean-install-acceptance requires --stage');
+  return mapped;
+}
+
+async function runCleanInstallAcceptancePowerShell(argv: string[], stdout: Writable, stderr: Writable): Promise<number> {
+  const script = fileURLToPath(new URL('../scripts/wag-local-clean-install-acceptance.ps1', import.meta.url));
+  const result = spawnSync('pwsh.exe', [
+    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...argv,
+  ], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.error) throw result.error;
+  if (result.stdout) stdout.write(result.stdout);
+  if (result.stderr) stderr.write(result.stderr);
+  return result.status ?? 1;
+}
+
 async function runSetupPowerShell(argv: string[], stdout: Writable, stderr: Writable): Promise<number> {
   const script = fileURLToPath(new URL('../scripts/wag-local-provision.ps1', import.meta.url));
   const result = spawnSync('pwsh.exe', [
@@ -624,6 +686,7 @@ function usageText(): string {
   return [
     'Usage:',
     '  web-agent-gateway setup [--check-only] [--tunnel-id <tunnel_...>] [--runtime-key-ref env:CONTROL_PLANE_API_KEY] [--connector-confirmed] [--allowed-root <absolute-path>] [--no-start] [--no-autostart]',
+    '  web-agent-gateway clean-install-acceptance --stage <baseline|install|connector-proof|post-reboot|post-reboot-proof> [--tunnel-id <tunnel_...>] [--runtime-key-ref env:CONTROL_PLANE_API_KEY] [--allowed-root <absolute-path>] [--tunnel-client-path <path>] [--output <absolute-path>]',
     '  web-agent-gateway update --package-root <absolute-path> [--manifest <absolute-path>] [--output <absolute-path>]',
     '  web-agent-gateway rollback [--output <absolute-path>]',
     '  web-agent-gateway uninstall [--keep-state] [--remove-managed-devspace] [--output <absolute-path>]',
